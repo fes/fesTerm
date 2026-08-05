@@ -1,5 +1,9 @@
 # fesTerm — Project Outline
 
+> **Historical document:** This was the initial project outline. The active
+> direction now lives in [DESIGN.md](DESIGN.md), [REQUIREMENTS.md](REQUIREMENTS.md),
+> and [COMPATIBILITY.md](COMPATIBILITY.md).
+
 ## What This Is
 
 fesTerm is a scratch (from-scratch, learning-oriented) implementation of a
@@ -7,11 +11,9 @@ multi-platform terminal emulator with built-in SSH client capability, written
 in Rust. It is a personal project for exploring terminal emulation, GUI
 programming, and network protocol implementation in Rust.
 
-This document is a rough outline of intent, not a finalized design. A formal
-design document will be produced later, once outstanding questions
-(architecture, feature scope, prioritization) have been discussed and
-resolved. Consider this the "table of contents" for that future
-conversation.
+This document records the rough initial intent that preceded the first design
+discussion. It is retained for historical context rather than used as the
+current specification.
 
 ## Goals
 
@@ -32,16 +34,15 @@ conversation.
 
 ## Rough Scope / Building Blocks
 
-These are areas we expect the project to need. Sizing, sequencing, and
-"build vs. use a crate" decisions for each are open questions for the design
-document.
+These are areas the project is expected to need. Current details and priorities
+are maintained in the active design documents.
 
 1. **GUI shell** — window, tabs/panes for multiple sessions, input handling,
    rendering surface. (Started: `eframe`/`egui` scaffold in place.)
 2. **Terminal core** — character grid model, cursor state, scrollback,
    ANSI/VT escape sequence parsing, resizing behavior.
 3. **PTY / local process backend** — spawning and driving a local shell
-   (platform-specific: conpty on Windows, pty on Unix-likes).
+   (platform-specific: ConPTY on Windows, PTY on Unix-likes).
 4. **SSH backend** — SSH protocol client (auth methods, channels, PTY
    request, exec), likely via an existing Rust SSH crate rather than a
    hand-rolled protocol implementation.
@@ -54,26 +55,31 @@ document.
 8. **Packaging/distribution** — how the app is built and distributed per
    platform.
 
-## Explicit Non-Goals (for now)
+## Explicit Non-Goals at Project Creation
 
 - Not aiming to be a drop-in replacement for a specific existing terminal
-  (e.g. iTerm2, Windows Terminal, Alacritty) — scope will be driven by what's
-  useful to build and learn from.
-- Not committing yet to advanced features (tmux-like multiplexing, plugins,
-  scripting) until core functionality is solid.
+  such as iTerm2, Windows Terminal, or Alacritty.
+- Not committing initially to advanced features such as tmux-like
+  multiplexing, plugins, or scripting before core functionality is solid.
 
-## Status
+The active documents refine these points. In particular, plugins remain a
+future area that the architecture should not unnecessarily preclude.
+
+## Status at Time of Outline
 
 - Repository created, Rust toolchain installed and verified.
-- Minimal `eframe`/`egui` GUI scaffold compiles and runs (single window,
-  placeholder content).
-- No terminal emulation or SSH functionality implemented yet.
+- Minimal `eframe`/`egui` GUI scaffold compiled and ran with placeholder
+  content.
+- No terminal emulation or SSH functionality had been implemented.
 
-## Next Step
+## Superseding Documents
 
-A dedicated design discussion (separate session) will walk through
-clarifying questions on architecture and scope, resulting in a `DESIGN.md`
-that this outline will be superseded/expanded by.
+The initial design discussion produced:
+
+- [DESIGN.md](DESIGN.md)
+- [REQUIREMENTS.md](REQUIREMENTS.md)
+- [COMPATIBILITY.md](COMPATIBILITY.md)
+- [Architecture decision records](docs/adr/)
 
 [egui]: https://github.com/emilk/egui
 [eframe]: https://github.com/emilk/egui/tree/master/crates/eframe
