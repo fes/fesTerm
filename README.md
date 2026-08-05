@@ -4,7 +4,8 @@ A scratch implementation of a multi-platform SSH/terminal program, written in Ru
 
 ## Status
 
-Early scaffolding — work in progress.
+Early scaffolding — work in progress. See [OUTLINE.md](OUTLINE.md) for the
+project outline; a full design document will follow.
 
 ## Building
 
