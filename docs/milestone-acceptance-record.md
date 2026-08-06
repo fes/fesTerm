@@ -8,6 +8,10 @@ creation time, 2026-08-06). Other M6 work packages (A, D, E, F, G) are landing v
 separate concurrent PRs; this record must be updated as those PRs merge and the SHA
 baseline advances.
 
+> **Work Package E update (2026-08-06):** Windows ConPTY smoke tests added and executed
+> locally on this date.  See §Work-package completion status and §Native/manual scenarios
+> for updated evidence.  SHA will advance once this PR merges.
+
 **Status vocabulary:** As defined in
 [`docs/m6-validation-gate.md`](m6-validation-gate.md):
 - **Implemented** — the capability exists in code with focused automated tests.
@@ -146,7 +150,7 @@ All figures below are from a local Windows run at SHA `527c327` (see §Validatio
 | P1 — M6 protocol behavior in session integration | **Implemented** | Tab-stop, cursor-style, OSC-title, and device-attribute fixtures; controlled Unix app-path PTY scenario (alternate-screen, cursor replies, focus, bracketed paste, SGR mouse, resize). Unix headless evidence. |
 | P2 — Headless UI event/layout coverage | **Implemented** | `headless_harness_drives_terminal_view_input_resize_and_diagnostics` using `egui_kittest` 0.36. Drives pointer focus, text input, semantic Diagnostics, resize; asserts sink bytes and geometry. No native window required. |
 | P3 — Visual snapshots | **Not started** | Blocked; pending P2 (now done) and a focused baseline decision. In-progress in a concurrent separate session (not yet landed). macOS will remain advisory initially. |
-| P4 — Native smoke flows | **Not started** | Work Package E ([#8](https://github.com/fes/fesTerm/issues/8)). One bounded flow per platform: controlled shell, deterministic prompt, input, resize sequence, screenshot on failure. Initially nightly/release-candidate, not PR-blocking. |
+| P4 — Native smoke flows | **Implemented — Windows executed locally** | Work Package E ([#8](https://github.com/fes/fesTerm/issues/8)). Two Windows ConPTY tests (`windows_conpty_smoke_flow_with_test_child_and_issue3_resizes`, `windows_conpty_bounded_shutdown_terminates_process_tree`) executed locally on 2026-08-06 — both pass. Linux/macOS tests written and configuration committed; execution pending first nightly CI run via `.github/workflows/native-smoke.yml`. See `docs/native-smoke-policy.md` and PR for real observed Windows results. |
 | P5 — Reference-application and vttest evidence | **Manual gate — not run** | Checklist in [`docs/m6-compatibility-checklist.md`](m6-compatibility-checklist.md). Record "not run" — do not infer pass. |
 | P6 — Ligature/fallback correctness | **Blocked by design** | Cell-to-glyph contract not yet specified. Do not enable ligatures until P6 mapping and automated evidence exist. |
 
@@ -178,7 +182,7 @@ a pass without actually running and observing the scenario._
 | B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented |
 | C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; Windows native runtime pending |
 | D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | Open (in progress in concurrent session, not yet landed) |
-| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | Open |
+| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | **Implemented — Windows executed locally; Linux/macOS pending CI** |
 | F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Open |
 | G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Open |
 | H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | This document |
@@ -219,8 +223,8 @@ From [`docs/m6-validation-gate.md`](m6-validation-gate.md):
 - [x] Issue #3 has a deterministic rendered-frame regression (Work Package C — headless)
 - [x] Structural viewport assertions pass on normal CI matrix (P0 test passes locally)
 - [ ] Stable Windows and Linux snapshots exist or explicitly deferred with evidence (P3 — in progress, not landed)
-- [ ] Native Windows smoke flow passes recorded resize scenario (Work Package E)
-- [ ] Platform smoke strategy exists for Linux and macOS (Work Package E)
+- [x] Native Windows smoke flow passes recorded resize scenario (Work Package E — `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` passes locally, 2026-08-06)
+- [x] Platform smoke strategy exists for Linux and macOS (Work Package E — tests written, Xvfb config committed, nightly workflow deployed; execution pending CI)
 - [ ] Controlled PTY tests use repository-owned test child for principal scenarios (Work Package F)
 - [x] M4 and M5 have evidence-based acceptance status (this document — "Implemented, native validation pending")
 - [x] M6 has visible candidate-SHA acceptance record before being declared complete (this document)
