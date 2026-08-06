@@ -11,7 +11,7 @@ use std::{
 
 use egui::{
     text::{LayoutJob, TextFormat},
-    Color32, FontFamily, FontId, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2,
+    Color32, FontFamily, FontId, Label, Pos2, Rect, Response, Sense, Stroke, TextStyle, Ui, Vec2,
 };
 use festerm_core::{
     Attributes, Cell, CellWidth, Color, Cursor, Dimensions, FocusEvent, InputEvent,
@@ -23,6 +23,13 @@ const DEFAULT_FOREGROUND: Color32 = Color32::from_rgb(220, 220, 220);
 const DEFAULT_BACKGROUND: Color32 = Color32::from_rgb(24, 24, 24);
 const SELECTION_BACKGROUND: Color32 = Color32::from_rgb(52, 91, 135);
 const GLYPH_CACHE_CAPACITY: usize = 4_096;
+
+fn grid_view_size(available: Vec2, reserved_footer_height: f32) -> ViewSize {
+    ViewSize {
+        width: available.x,
+        height: (available.y - reserved_footer_height).max(0.0),
+    }
+}
 
 /// A read-only, renderer-facing view of the currently visible terminal grid.
 ///
@@ -732,6 +739,7 @@ pub struct TerminalView {
     selection: Selection,
     resize: ResizeTracker,
     diagnostics: FrameDiagnostics,
+    show_diagnostics: bool,
     keyboard: KeyboardOwnership,
     pointer: TerminalPointerState,
 }
@@ -757,26 +765,49 @@ impl TerminalView {
             terminal,
             sink,
             "No session attached: encoded input is not sent or retained.",
+            "No session diagnostics are available.",
         );
     }
 
-    /// Shows the terminal and an application-provided session status line.
+    /// Shows the terminal and application-provided compact and detailed status.
     pub fn show_with_status(
         &mut self,
         context: &egui::Context,
         terminal: &mut Terminal,
         sink: &mut impl EncodedInputSink,
         session_status: &str,
+        session_diagnostics: &str,
     ) {
         egui::CentralPanel::default().show(context, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("fesTerm");
-                ui.small(session_status);
+                if ui
+                    .selectable_label(self.show_diagnostics, "Diagnostics")
+                    .clicked()
+                {
+                    self.show_diagnostics = !self.show_diagnostics;
+                }
+                ui.add_sized(
+                    [
+                        ui.available_width(),
+                        ui.text_style_height(&TextStyle::Small),
+                    ],
+                    Label::new(session_status).truncate(),
+                );
             });
             ui.separator();
-            self.show_in_ui(ui, terminal, sink);
-            ui.separator();
-            self.show_diagnostics(ui);
+            let footer_height = if self.show_diagnostics {
+                ui.text_style_height(&TextStyle::Small)
+            } else {
+                0.0
+            };
+            let grid_size = grid_view_size(ui.available_size_before_wrap(), footer_height);
+            ui.allocate_ui(Vec2::new(grid_size.width, grid_size.height), |ui| {
+                self.show_in_ui(ui, terminal, sink);
+            });
+            if self.show_diagnostics {
+                self.show_diagnostics(ui, session_diagnostics);
+            }
         });
     }
 
@@ -808,6 +839,8 @@ impl TerminalView {
                 self.resize.apply(terminal, dimensions),
                 ResizeOutcome::Resized(_)
             ) {
+                self.selection.clear();
+                self.pointer = TerminalPointerState::default();
                 sink.record_terminal_resize(dimensions);
             }
         }
@@ -865,7 +898,7 @@ impl TerminalView {
         self.diagnostics.frame_time = Some(frame_started.elapsed());
     }
 
-    fn show_diagnostics(&self, ui: &mut Ui) {
+    fn show_diagnostics(&self, ui: &mut Ui, session_diagnostics: &str) {
         let dimensions = self
             .diagnostics
             .calculated_dimensions
@@ -893,13 +926,17 @@ impl TerminalView {
                 )
             },
         );
-        ui.small(format!(
-            "frame {frame}; size {dimensions}; dirty rows {}; input {:?}; queue {}; \
-             input→paint submission {input_to_paint_submission} (not presentation); {sink}",
-            self.diagnostics.dirty_rows,
-            self.diagnostics.last_input_outcome,
-            self.diagnostics.input_queue_depth,
-        ));
+        ui.add(
+            Label::new(format!(
+                "{session_diagnostics}; frame {frame}; size {dimensions}; dirty rows {}; \
+             input {:?}; queue {}; input→paint submission \
+             {input_to_paint_submission} (not presentation); {sink}",
+                self.diagnostics.dirty_rows,
+                self.diagnostics.last_input_outcome,
+                self.diagnostics.input_queue_depth,
+            ))
+            .truncate(),
+        );
     }
 }
 
@@ -944,14 +981,18 @@ fn route_egui_events(
                 }
             }
             egui::Event::Paste(text) if keyboard_focused => {
-                reports.record(
+                record_terminal_input(
+                    &mut reports,
+                    selection,
                     Instant::now(),
                     route_input(terminal, InputEvent::Paste(text), sink),
                 );
             }
             egui::Event::Text(text) if keyboard_focused => {
                 for character in text.chars() {
-                    reports.record(
+                    record_terminal_input(
+                        &mut reports,
+                        selection,
                         Instant::now(),
                         route_input(terminal, InputEvent::Key(Key::Character(character)), sink),
                     );
@@ -961,7 +1002,9 @@ fn route_egui_events(
                 key, pressed: true, ..
             } if keyboard_focused => {
                 if let Some(key) = translate_key(key) {
-                    reports.record(
+                    record_terminal_input(
+                        &mut reports,
+                        selection,
                         Instant::now(),
                         route_input(terminal, InputEvent::Key(key), sink),
                     );
@@ -1059,6 +1102,18 @@ fn route_egui_events(
     }
 
     reports
+}
+
+fn record_terminal_input(
+    reports: &mut InputRoutingReports,
+    selection: &mut Selection,
+    observed: Instant,
+    route: InputRoute,
+) {
+    if matches!(route.outcome, InputEventOutcome::Encoded { .. }) {
+        selection.clear();
+    }
+    reports.record(observed, route);
 }
 
 #[derive(Default)]
@@ -1518,6 +1573,24 @@ mod tests {
     }
 
     #[test]
+    fn grid_view_reserves_the_diagnostics_footer() {
+        assert_eq!(
+            grid_view_size(Vec2::new(800.0, 600.0), 18.0),
+            ViewSize {
+                width: 800.0,
+                height: 582.0,
+            }
+        );
+        assert_eq!(
+            grid_view_size(Vec2::new(800.0, 12.0), 18.0),
+            ViewSize {
+                width: 800.0,
+                height: 0.0,
+            }
+        );
+    }
+
+    #[test]
     fn point_mapping_uses_zero_based_cell_coordinates() {
         let dimensions = Dimensions::new(4, 2).unwrap();
         let cell = CellMetrics::new(10.0, 20.0).unwrap();
@@ -1809,6 +1882,32 @@ mod tests {
     }
 
     #[test]
+    fn accepted_typed_input_clears_local_selection() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"selected");
+        let mut selection = Selection::default();
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition { column: 3, row: 0 });
+        selection.finish();
+        let mut sink = Sink::default();
+        let mut reports = InputRoutingReports::default();
+
+        record_terminal_input(
+            &mut reports,
+            &mut selection,
+            Instant::now(),
+            route_input(
+                &mut terminal,
+                InputEvent::Key(Key::Character('x')),
+                &mut sink,
+            ),
+        );
+
+        assert_eq!(selection.range(), None);
+        assert_eq!(sink.0, vec![b"x".to_vec()]);
+    }
+
+    #[test]
     fn routing_uses_core_paste_and_focus_modes() {
         let mut terminal = terminal(8, 1);
         terminal.ingest(b"\x1b[?2004h\x1b[?1004h");
@@ -1964,5 +2063,38 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "representative output path became unexpectedly slow"
         );
+    }
+
+    #[test]
+    fn repeated_resize_refreshes_cached_banner_and_prompt_cells() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"Windows cmd\r\nCopyright\r\nC:\\Users\\fes>");
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+        let mut resize = ResizeTracker::default();
+
+        for dimensions in [
+            Dimensions::new(11, 4).unwrap(),
+            Dimensions::new(12, 3).unwrap(),
+            Dimensions::new(11, 3).unwrap(),
+            Dimensions::new(12, 3).unwrap(),
+            Dimensions::new(11, 4).unwrap(),
+        ] {
+            assert_eq!(
+                resize.apply(&mut terminal, dimensions),
+                ResizeOutcome::Resized(dimensions)
+            );
+            let dirty_rows = terminal.take_dirty_rows();
+            let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+            assert!(update.full_refresh);
+            assert_eq!(cache.row(0).unwrap()[0].text(), "W");
+            assert_eq!(cache.row(1).unwrap()[0].text(), "C");
+            assert_eq!(cache.row(2).unwrap()[0].text(), "C");
+        }
     }
 }

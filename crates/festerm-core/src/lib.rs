@@ -2914,6 +2914,31 @@ mod tests {
     }
 
     #[test]
+    fn repeated_resize_preserves_visible_banner_and_prompt_cells() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"Windows cmd\r\nCopyright\r\nC:\\Users\\fes>");
+
+        for dimensions in [
+            Dimensions::new(11, 4).unwrap(),
+            Dimensions::new(12, 3).unwrap(),
+            Dimensions::new(11, 3).unwrap(),
+            Dimensions::new(12, 3).unwrap(),
+            Dimensions::new(11, 4).unwrap(),
+        ] {
+            terminal.resize(dimensions).unwrap();
+            assert!(terminal
+                .row_text(0)
+                .is_some_and(|row| row.starts_with("Windows cmd")));
+            assert!(terminal
+                .row_text(1)
+                .is_some_and(|row| row.starts_with("Copyright")));
+            assert!(terminal
+                .row_text(2)
+                .is_some_and(|row| row.starts_with("C:\\Users\\")));
+        }
+    }
+
+    #[test]
     fn transport_queues_are_bounded_observable_and_preserve_accepted_order() {
         let mut terminal = terminal(2, 1);
         assert_eq!(

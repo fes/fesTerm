@@ -73,11 +73,13 @@ impl eframe::App for FesTermApp {
         self.local_session.flush_pending_writes();
         self.local_session.flush_pending_resize();
         let session_status = self.local_session.status_line();
+        let session_diagnostics = self.local_session.diagnostics_line();
         self.terminal_view.show_with_status(
             context,
             &mut self.terminal,
             &mut self.local_session,
             &session_status,
+            &session_diagnostics,
         );
         self.local_session
             .forward_terminal_replies(&mut self.terminal);
@@ -438,6 +440,32 @@ impl LocalSessionSink {
     }
 
     fn status_line(&self) -> String {
+        if let Some(error) = &self.startup_error {
+            return format!("Local shell unavailable: {error}");
+        }
+        let Some(_session) = &self.session else {
+            return "No local session".to_owned();
+        };
+        let lifecycle = self
+            .last_lifecycle
+            .as_ref()
+            .unwrap_or(&SessionLifecycle::Starting);
+        let latest_error = self
+            .last_error
+            .as_deref()
+            .map(|error| format!("; error: {error}"))
+            .unwrap_or_default();
+        let latest_resize = self
+            .last_resize
+            .map(|size| format!("; resize {}x{}", size.columns(), size.rows()))
+            .unwrap_or_default();
+        format!(
+            "Local shell {lifecycle:?}{latest_resize}{latest_error}",
+            lifecycle = lifecycle
+        )
+    }
+
+    fn diagnostics_line(&self) -> String {
         if let Some(error) = &self.startup_error {
             return format!("Local shell unavailable: {error}");
         }

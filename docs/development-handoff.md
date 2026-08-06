@@ -37,10 +37,11 @@ cargo check --workspace
 git diff --check
 ```
 
-For a manual local-PTY smoke check, run the app, type `printf 'hello\n'`, resize
-the window, then exit the shell. Unix integration tests also exercise controlled
-PTY I/O, resize, exit, descendant shutdown, and bounded shutdown without a
-native window. Windows CI runs a cfg-gated ConPTY test for spawn, output/input,
+For a manual local-PTY smoke check, run the app, type `printf 'hello\n'` on a
+Unix shell or `echo hello` in the default Windows `cmd.exe`, resize the window,
+then exit the shell. Unix integration tests also exercise controlled PTY I/O,
+resize, exit, descendant shutdown, and bounded shutdown without a native
+window. Windows CI runs a cfg-gated ConPTY test for spawn, output/input,
 resize, exit, and shutdown.
 
 ## Diagnostics and Safety
@@ -49,9 +50,10 @@ resize, exit, and shutdown.
   `festerm=info,warn`.
 - `FESTERM_PROTOCOL_TRACE=1` only reports that tracing was requested; terminal
   content tracing is intentionally not implemented.
-- The app displays lifecycle, queue pressure, bytes, errors, resize, and
-  input-to-paint-submission diagnostics. Backend event delivery requests an
-  egui repaint, so an idle window does not need a polling timer to show output.
+- The normal status line is compact; use the **Diagnostics** control to reveal
+  lifecycle, queue pressure, bytes, errors, resize, and input-to-paint-
+  submission details. Backend event delivery requests an egui repaint, so an
+  idle window does not need a polling timer to show output.
 - Terminal content, clipboard values, and credentials are sensitive. Do not add
   them to fixtures, logs, or diagnostics by default.
 
