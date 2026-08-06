@@ -42,6 +42,8 @@ device-identity and future custom-terminfo strategy.
   runtime behavior, diagnostics, manual checks, and resuming work.
 - [M6 compatibility checklist](docs/m6-compatibility-checklist.md) — reference
   application scenarios, `TERM` strategy, and regression triage.
+- [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
+  interaction, rendering, PTY, and platform validation strategy.
 - [Project design](DESIGN.md) — product direction, principles, experience,
   priorities, and open questions.
 - [System architecture](ARCHITECTURE.md) — proposed crates, dependency

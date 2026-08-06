@@ -11,6 +11,7 @@ Read `README.md`, then use the document that matches the task:
 | Required behavior | `REQUIREMENTS.md`, `COMPATIBILITY.md` |
 | Standards and security decisions | `docs/standards-and-implementation-notes.md`, `docs/adr/` |
 | Golden fixtures | `tests/fixtures/README.md` |
+| UI, rendering, and platform test strategy | `docs/ui-test-plan.md` |
 | Bootstrap and manual checks | `docs/development-handoff.md` |
 
 ## Current Structure
