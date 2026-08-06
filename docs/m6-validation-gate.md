@@ -12,14 +12,14 @@ updates this plan's status or acceptance evidence.
 
 | Package | Issue | Status |
 | --- | --- | --- |
-| A — Application session controller | [#4](https://github.com/fes/fesTerm/issues/4) | Open |
+| A — Application session controller | [#4](https://github.com/fes/fesTerm/issues/4) | Implemented (merged #13) |
 | B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented |
-| C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; Windows native runtime validation pending (see Work Package E) |
+| C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; Windows native runtime validation now covered by Work Package E's PTY/session smoke tests (PR #15) |
 | D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | In progress; Windows baseline committed, Linux CI confirmation pending |
-| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | Open |
-| F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Open |
-| G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Open |
-| H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | Open |
+| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | In progress (PR #15): PTY/`SessionController` timing layer implemented and executed on Windows (real ConPTY, issue #3 resize sequence, bounded shutdown all pass). Remaining scope: a real windowed (egui/winit) compositor, DPI, and native-focus smoke test — headless and PTY-layer tests cannot prove this. Linux/macOS PTY variants are written but unexecuted pending CI recovery. |
+| F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Implemented (merged #14) |
+| G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | In progress |
+| H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | Implemented (merged #12); will need a follow-up update once D, E, and G land |
 
 This table is kept in sync with the P0-P6 status in
 [the M6 automation backlog](ui-test-plan.md#m6-automation-backlog): Package B
@@ -200,6 +200,24 @@ Establish fixed rendering inputs for Windows and Linux covering:
 ### Goal
 
 Validate compositor, DPI, native focus, PTY timing, and real window behavior that headless frames cannot prove.
+
+### Progress and remaining scope
+
+PR #15 implemented and executed the **PTY/session timing half** of this
+package: real `LocalPtySession` + ConPTY (Windows, executed) and Unix PTY
+(written, execution pending CI) driven through `festerm-pty-test-child`
+(Work Package F), covering the issue #3 resize sequence, input/output
+survival across resizes, and bounded process-tree shutdown — all through
+`SessionController::for_test()` (Work Package A's test seam), with no real
+window involved.
+
+The **remaining scope** is the real windowed half of this package's own
+goal: an actual egui/winit window (not the `SessionController` test seam
+alone) proving compositor presentation, DPI scaling, and native focus
+behavior together with the same resize sequence. Headless frames (Work
+Package B/C) and the PTY/session smoke tests above cannot prove this —
+only a genuine native window can. This remaining work stays under issue #8;
+it is not a new package.
 
 ### Common bounded flow
 
