@@ -1,0 +1,130 @@
+name: Native Smoke
+
+# Nightly and on-demand native-platform smoke flows (Tier 6).
+#
+# NOT part of the PR-blocking CI matrix — this workflow is intentionally
+# separate from ci.yml and is triggered only on a schedule and manually.
+# See docs/native-smoke-policy.md for the rationale.
+
+on:
+  schedule:
+    # Runs every night at 02:17 UTC (off-peak to avoid runner contention).
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      verbose:
+        description: "Set RUST_LOG=debug for the smoke run"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+env:
+  FESTERM_SMOKE_SCREENSHOT_ON_FAIL: "1"
+
+jobs:
+  # ── Windows ConPTY smoke ─────────────────────────────────────────────────────
+  smoke-windows:
+    name: Windows ConPTY smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Build the whole workspace so the test-child binary exists alongside
+      # the test executable.
+      - name: Build workspace
+        run: cargo build --workspace
+
+      # Run the ignored smoke tests explicitly with --include-ignored.
+      # No retries — one run, one result (see docs/native-smoke-policy.md).
+      - name: Run Windows ConPTY smoke tests
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm -- --include-ignored `
+            windows_conpty_smoke_flow_with_test_child_and_issue3_resizes `
+            windows_conpty_bounded_shutdown_terminates_process_tree `
+            --nocapture
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-smoke-artifacts-windows
+          path: |
+            native-smoke-artifacts/
+          if-no-files-found: ignore
+
+  # ── Linux PTY smoke (Xvfb environment for future native-window component) ───
+  smoke-linux:
+    name: Linux PTY smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Install Xvfb for any future native-window smoke step.  The PTY tests
+      # themselves do not require a display, but the job is already configured
+      # here so adding a display-requiring step later is a one-line change.
+      - name: Install Xvfb
+        run: sudo apt-get install -y xvfb
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      # Run with a virtual display available (DISPLAY=:99) even though the
+      # current PTY tests don't require it.
+      - name: Run Linux PTY smoke tests
+        env:
+          DISPLAY: ":99"
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 1
+          cargo test -p festerm -- --include-ignored \
+            unix_pty_smoke_flow_with_test_child_and_issue3_resizes \
+            unix_pty_bounded_shutdown_terminates_process_tree \
+            --nocapture
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-smoke-artifacts-linux
+          path: |
+            native-smoke-artifacts/
+          if-no-files-found: ignore
+
+  # ── macOS PTY smoke (advisory — not blocking) ────────────────────────────────
+  smoke-macos:
+    name: macOS PTY smoke (advisory)
+    runs-on: macos-latest
+    # Advisory: macOS failure does not block a release decision.  See
+    # docs/ui-test-plan.md platform matrix and docs/native-smoke-policy.md.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run macOS PTY smoke tests (advisory)
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm -- --include-ignored \
+            unix_pty_smoke_flow_with_test_child_and_issue3_resizes \
+            unix_pty_bounded_shutdown_terminates_process_tree \
+            --nocapture
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-smoke-artifacts-macos
+          path: |
+            native-smoke-artifacts/
+          if-no-files-found: ignore

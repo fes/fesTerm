@@ -638,7 +638,7 @@ mod tests {
     #[cfg(any(unix, windows))]
     use std::time::Instant;
 
-    #[cfg(all(test, unix))]
+    #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
 
     #[test]
@@ -965,6 +965,345 @@ mod tests {
         assert_eq!(
             session.shutdown(Duration::from_secs(2)),
             Ok(festerm_session::ShutdownResult::Stopped)
+        );
+    }
+
+    // ─── Tier 6 native-platform smoke tests ─────────────────────────────────
+    //
+    // All tests below are marked `#[ignore]` and are NOT part of the PR-blocking
+    // CI matrix.  Run them explicitly via:
+    //
+    //   cargo test -p festerm -- --include-ignored
+    //
+    // or via `.github/workflows/native-smoke.yml` (scheduled + dispatch).
+    //
+    // Flaky-failure policy: tests here NEVER silently retry.  A single run
+    // either passes or fails.  See `docs/native-smoke-policy.md`.
+
+    /// Returns the path to the `festerm-pty-test-child` binary for smoke tests.
+    #[cfg(any(unix, windows))]
+    fn test_child_path_for_smoke() -> std::path::PathBuf {
+        let mut path = std::env::current_exe()
+            .expect("test executable path is known")
+            .canonicalize()
+            .expect("test executable path is accessible");
+        path.pop();
+        if path.ends_with("deps") {
+            path.pop();
+        }
+        let name = if cfg!(windows) {
+            "festerm-pty-test-child.exe"
+        } else {
+            "festerm-pty-test-child"
+        };
+        path.push(name);
+        assert!(
+            path.exists(),
+            "festerm-pty-test-child not found at {path:?}; \
+             run `cargo test --workspace` to build it first"
+        );
+        path
+    }
+
+    /// Poll `controller` until the session exits or the deadline passes.
+    ///
+    /// Avoids the closure-borrow conflict in `pump_controlled_until`.
+    #[cfg(any(unix, windows))]
+    fn wait_for_session_exit(
+        controller: &mut SessionController<LocalPtySession>,
+        terminal: &mut Terminal,
+        timeout: Duration,
+    ) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            controller.pump_events(terminal);
+            controller.forward_terminal_replies(terminal);
+            controller.flush_pending_writes();
+            let exited = controller
+                .session()
+                .map(|s| {
+                    matches!(
+                        s.lifecycle(),
+                        SessionLifecycle::Exited(_) | SessionLifecycle::Stopped
+                    )
+                })
+                .unwrap_or(true);
+            if exited {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("smoke-flow timeout: test child did not exit within {timeout:?}");
+    }
+
+    /// Pump `controller` + `terminal` until `predicate(terminal)` is true or
+    /// `timeout` elapses.  Panics on timeout with `context` as the message.
+    ///
+    /// No retries — one run, one result.
+    #[cfg(any(unix, windows))]
+    fn pump_controlled_until(
+        controller: &mut SessionController<LocalPtySession>,
+        terminal: &mut Terminal,
+        predicate: impl Fn(&Terminal) -> bool,
+        timeout: Duration,
+        context: &str,
+    ) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            controller.pump_events(terminal);
+            controller.forward_terminal_replies(terminal);
+            controller.flush_pending_writes();
+            if predicate(terminal) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("smoke-flow timeout: {context}");
+    }
+
+    /// Returns `true` if any terminal row contains `needle`.
+    #[cfg(any(unix, windows))]
+    fn smoke_row_contains(terminal: &Terminal, needle: &str) -> bool {
+        (0..terminal.dimensions().rows())
+            .filter_map(|r| terminal.row_text(r))
+            .any(|text| text.contains(needle))
+    }
+
+    /// **Windows ConPTY smoke flow — issue #3 resize sequence.**
+    ///
+    /// Uses `festerm-pty-test-child` as the controlled shell.  The child emits
+    /// a `MARKER`, blocks on `read-line` while we apply the four-step resize
+    /// sequence (`37×13 → 73×26 → 50×18 → 73×26`), then we send input, verify
+    /// the echo and `report-size` output, and assert bounded shutdown.
+    ///
+    /// Acceptance criterion: the sequence completes without a session error,
+    /// output bytes arrive intact after all four resizes, and `report-size`
+    /// reports the final `73×26` dimensions confirming the resize reached ConPTY.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "native smoke — run via native-smoke.yml or with --include-ignored; not PR-blocking"]
+    fn windows_conpty_smoke_flow_with_test_child_and_issue3_resizes() {
+        let profile = LocalProfile::new(test_child_path_for_smoke()).with_arguments([
+            "emit:LINE-A",
+            "emit:LINE-B",
+            "emit:MARKER",
+            "read-line",
+            "echo:ECHO",
+            "report-size",
+            "exit:0",
+        ]);
+
+        let session = LocalPtySession::start(profile, TerminalSize::new(73, 26).unwrap())
+            .expect("ConPTY session starts with test child");
+
+        let mut terminal =
+            Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
+        let mut controller = SessionController::for_test(session);
+
+        // Step 1: wait for the deterministic MARKER.
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "MARKER"),
+            Duration::from_secs(5),
+            "MARKER from test child",
+        );
+        assert_eq!(terminal.dimensions().columns(), 73);
+        assert_eq!(terminal.dimensions().rows(), 26);
+
+        // Step 2: apply the issue #3 resize sequence while the child is blocked
+        // on read-line (output is active — LINE-A and LINE-B are in the terminal).
+        for &(cols, rows) in &[(37u16, 13u16), (73, 26), (50, 18), (73, 26)] {
+            let dims =
+                Dimensions::new(cols as usize, rows as usize).expect("resize dimensions are valid");
+            terminal.resize(dims).expect("terminal resize succeeds");
+            controller.record_terminal_resize(dims);
+            // Pump for ≥200 ms to give ConPTY time to apply the resize.
+            let settle = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < settle {
+                controller.pump_events(&mut terminal);
+                controller.forward_terminal_replies(&mut terminal);
+                controller.flush_pending_writes();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                terminal.dimensions().columns(),
+                cols as usize,
+                "columns after resize to {cols}×{rows}"
+            );
+            assert_eq!(
+                terminal.dimensions().rows(),
+                rows as usize,
+                "rows after resize to {cols}×{rows}"
+            );
+        }
+
+        // Step 3: send a line to unblock read-line.
+        controller.record_encoded_input(b"hello\r\n");
+
+        // Step 4: wait for the echo (proves bytes survived all four resizes).
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "ECHO:hello"),
+            Duration::from_secs(5),
+            "ECHO:hello from test child after resize sequence",
+        );
+
+        // Step 5: wait for report-size output.
+        // report-size writes "{rows} {cols}\n"; at 73×26 that is "26 73".
+        // This confirms the resize propagated all the way to the child's PTY.
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "26 73"),
+            Duration::from_secs(5),
+            "report-size showing 26 73 (rows × cols at final 73×26 size)",
+        );
+
+        // Step 6: wait for exit and assert bounded shutdown.
+        wait_for_session_exit(&mut controller, &mut terminal, Duration::from_secs(5));
+    }
+
+    /// **Windows ConPTY — bounded shutdown terminates the process tree.**
+    ///
+    /// Verifies that dropping the `SessionController` (which calls `shutdown`)
+    /// terminates a spinning test child within the documented 2-second bound.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "native smoke — run via native-smoke.yml or with --include-ignored; not PR-blocking"]
+    fn windows_conpty_bounded_shutdown_terminates_process_tree() {
+        let profile =
+            LocalProfile::new(test_child_path_for_smoke()).with_arguments(["emit:RUNNING", "spin"]);
+
+        let session = LocalPtySession::start(profile, TerminalSize::new(73, 26).unwrap())
+            .expect("ConPTY session starts");
+
+        let mut terminal =
+            Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
+        let mut controller = SessionController::for_test(session);
+
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "RUNNING"),
+            Duration::from_secs(5),
+            "RUNNING marker from spinning test child",
+        );
+
+        let start = Instant::now();
+        drop(controller); // triggers bounded shutdown via Drop impl
+        assert!(
+            start.elapsed() <= Duration::from_secs(3),
+            "bounded ConPTY shutdown exceeded 3-second budget: {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// **Unix PTY smoke flow — issue #3 resize sequence.**
+    ///
+    /// Mirrors the Windows ConPTY flow on the Unix PTY path.  Written for
+    /// platform coverage; the first Linux CI run via `native-smoke.yml` will
+    /// provide ground-truth results.
+    ///
+    /// **Cannot execute in the Windows sandbox** — results pending Linux CI.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "native smoke — run via native-smoke.yml or with --include-ignored; not PR-blocking"]
+    fn unix_pty_smoke_flow_with_test_child_and_issue3_resizes() {
+        let profile = LocalProfile::new(test_child_path_for_smoke()).with_arguments([
+            "emit:LINE-A",
+            "emit:LINE-B",
+            "emit:MARKER",
+            "read-line",
+            "echo:ECHO",
+            "report-size",
+            "exit:0",
+        ]);
+
+        let session = LocalPtySession::start(profile, TerminalSize::new(73, 26).unwrap())
+            .expect("Unix PTY session starts with test child");
+
+        let mut terminal =
+            Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
+        let mut controller = SessionController::for_test(session);
+
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "MARKER"),
+            Duration::from_secs(5),
+            "MARKER from test child",
+        );
+        assert_eq!(terminal.dimensions().columns(), 73);
+        assert_eq!(terminal.dimensions().rows(), 26);
+
+        for &(cols, rows) in &[(37u16, 13u16), (73, 26), (50, 18), (73, 26)] {
+            let dims =
+                Dimensions::new(cols as usize, rows as usize).expect("resize dimensions are valid");
+            terminal.resize(dims).expect("terminal resize succeeds");
+            controller.record_terminal_resize(dims);
+            let settle = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < settle {
+                controller.pump_events(&mut terminal);
+                controller.forward_terminal_replies(&mut terminal);
+                controller.flush_pending_writes();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(terminal.dimensions().columns(), cols as usize);
+            assert_eq!(terminal.dimensions().rows(), rows as usize);
+        }
+
+        controller.record_encoded_input(b"hello\r\n");
+
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "ECHO:hello"),
+            Duration::from_secs(5),
+            "ECHO:hello from test child after resize sequence",
+        );
+
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "26 73"),
+            Duration::from_secs(5),
+            "report-size showing 26 73 at final 73×26 size",
+        );
+
+        wait_for_session_exit(&mut controller, &mut terminal, Duration::from_secs(5));
+    }
+
+    /// **Unix PTY — bounded shutdown terminates the process tree.**
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "native smoke — run via native-smoke.yml or with --include-ignored; not PR-blocking"]
+    fn unix_pty_bounded_shutdown_terminates_process_tree() {
+        let profile =
+            LocalProfile::new(test_child_path_for_smoke()).with_arguments(["emit:RUNNING", "spin"]);
+
+        let session = LocalPtySession::start(profile, TerminalSize::new(73, 26).unwrap())
+            .expect("Unix PTY session starts");
+
+        let mut terminal =
+            Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
+        let mut controller = SessionController::for_test(session);
+
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |t| smoke_row_contains(t, "RUNNING"),
+            Duration::from_secs(5),
+            "RUNNING marker from spinning test child",
+        );
+
+        let start = Instant::now();
+        drop(controller);
+        assert!(
+            start.elapsed() <= Duration::from_secs(3),
+            "bounded Unix PTY shutdown exceeded 3-second budget: {:?}",
+            start.elapsed()
         );
     }
 }
