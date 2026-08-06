@@ -211,7 +211,9 @@ and initial renderer styling are stable.
 ### Rules
 
 - Keep snapshots small and deterministic; use a fixed theme, scale factor,
-  dimensions, and bundled/test font if one is selected.
+  dimensions, renderer configuration, and bundled/test font. Record those
+  choices with the snapshot harness; do not rely on an installed user font or
+  desktop theme.
 - Maintain per-platform baselines or platform-specific tolerances. Font
   rasterization differs across DirectWrite, FreeType, and Core Text.
 - Commit only reviewed baseline images. A snapshot update must show the old,
@@ -222,6 +224,32 @@ and initial renderer styling are stable.
 
 P3 will use the adopted `egui_kittest` snapshot support or a small test-only
 renderer after a focused visual-baseline decision.
+
+### P3 completion evidence
+
+P3 is complete only when all of the following are true:
+
+1. Every snapshot uses repository-owned terminal input or the structured P0
+   replay. A full-screen or high-output image must not depend on an installed
+   reference application, shell profile, clipboard, or host font.
+2. Windows and Linux each compare a reviewed baseline for the empty/default
+   grid; attributes and colors; local selection; wide and combining cells;
+   primary/alternate-screen state; visible block, underline, and bar cursor
+   styles; and all four P0 resize viewports. Hidden and blinking cursor state
+   remains a structural assertion when a deterministic frame cannot represent
+   time-dependent blinking.
+3. Each snapshot invokes the P0 cache, row-width, clip, and viewport-coverage
+   assertions first. A snapshot comparison must not be the only assertion for
+   geometry, terminal state, or Unicode cell allocation.
+4. The Windows and Linux jobs reproduce their baselines across repeated clean
+   CI runs without tolerance changes. A deliberate controlled pixel change
+   produces reviewable baseline, actual, and diff artifacts.
+5. Emoji or fallback images assert cell and selection geometry, not the glyph
+   selected by an unbundled platform fallback font. Platform-specific glyph
+   appearance requires a bundled test font or its own reviewed baseline.
+
+P3 does not validate DPI transitions, compositor behavior, native focus,
+clipboard integration, or real PTY timing; those remain Tier 6/P4 evidence.
 
 ## Tier 6: Native-Window Smoke Tests
 
@@ -281,7 +309,7 @@ overlapping checklist entry.
 | P0 | Issue #3: resize can blank or fragment the terminal view | Implemented: a structured UI replay interleaves partial output, point-space resizes, selection, and cursor movement, checking viewport/grid clipping geometry, cache dimensions, row widths, dirty-row bounds, and cursor geometry after every step. Controlled Unix PTY coverage verifies child-observed size and output between resizes; the Windows ConPTY app-path test emits and awaits a deterministic marker after each resize. | Windows, Linux, macOS | Implemented; Windows runtime pending |
 | P1 | M6 protocol behavior must survive renderer and session integration | Implemented: the tab-stop, cursor-style, OSC-title, and device-attribute fixtures remain the deterministic baseline. A controlled Unix app-path PTY scenario now verifies alternate-screen restoration, cursor replies, focus, bracketed paste, SGR mouse, and resize forwarding together. Add selected libvterm/WezTerm cases only when their behavior is in scope. | Windows, Linux, macOS | Implemented; Unix headless evidence |
 | P2 | Headless UI event/layout coverage is absent | Implemented: `egui_kittest` 0.36 drives production `TerminalView` frames with pointer focus, text input, semantic Diagnostics control activation, and resize. The test asserts encoded sink bytes plus content-free grid, terminal, and cache geometry. It is test-only; snapshot rendering remains P3. | Windows, Linux, macOS | Implemented |
-| P3 | Visual promises are not exercised by the current structural tests | In progress: fixed-scale WGPU snapshots cover the default background, attributes/colors, Unicode selection, alternate screen, and every P0 resize viewport. Structural cache and geometry assertions run first; Windows baselines are committed and Linux CI confirmation is pending. | Windows, Linux; macOS advisory | In progress |
+| P3 | Visual promises are not exercised by the current structural tests | In progress: fixed-scale WGPU snapshots cover the default background, attributes/colors, Unicode selection, alternate screen, and every P0 resize viewport. Structural cache and geometry assertions run first; Windows baselines are committed and Linux CI confirmation is pending. Complete the explicit P3 evidence above before treating the visual layer as stable. | Windows, Linux; macOS advisory | In progress |
 | P4 | Native desktop focus, DPI, compositor, and PTY timing remain unverified | Add one bounded native smoke flow per platform: controlled shell, deterministic prompt, input, active-output resize sequence, screenshot on failure, and bounded shutdown. Schedule it nightly and for release candidates before making it PR-blocking. | Windows, Linux, macOS | Not started |
 | P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. Run `vttest` and external `tack` before expanding capability or terminfo claims. | Platform-specific; release candidate | Manual gate |
 | P6 | Ligature and fallback correctness has no defined oracle | First specify the cell-to-glyph, cursor, selection, and hit-testing contract. Then add renderer mapping tests and snapshots before enabling ligatures. Do not use manual appearance as the only acceptance evidence. | Windows, Linux, macOS | Blocked by design and implementation |
