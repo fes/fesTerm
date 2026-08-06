@@ -13,13 +13,19 @@ updates this plan's status or acceptance evidence.
 | Package | Issue | Status |
 | --- | --- | --- |
 | A — Application session controller | [#4](https://github.com/fes/fesTerm/issues/4) | Open |
-| B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented; closes with this change |
-| C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Open |
-| D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | Open |
+| B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented |
+| C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; Windows native runtime validation pending (see Work Package E) |
+| D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | Open; ready to start now that B and C are implemented |
 | E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | Open |
 | F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Open |
 | G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Open |
 | H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | Open |
+
+This table is kept in sync with the P0-P6 status in
+[the M6 automation backlog](ui-test-plan.md#m6-automation-backlog): Package B
+and C correspond to backlog P2 and P0, both implemented in code
+(`crates/festerm-ui-egui/src/lib.rs`, `headless_harness_drives_terminal_view_input_resize_and_diagnostics`
+and `viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes`).
 
 ## Why This Gate Exists
 
