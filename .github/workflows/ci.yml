@@ -24,3 +24,11 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo check --workspace
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-diff-${{ matrix.os }}
+          path: |
+            crates/festerm-ui-egui/tests/snapshots/*.diff.png
+            crates/festerm-ui-egui/tests/snapshots/*.new.png
+          if-no-files-found: ignore

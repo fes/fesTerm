@@ -1611,7 +1611,7 @@ fn ansi_color(index: u8) -> Color32 {
 mod tests {
     use std::path::PathBuf;
 
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
     use festerm_test_support::load_fixture;
 
     use super::*;
@@ -1707,6 +1707,14 @@ mod tests {
                 sink: Sink::default(),
             }
         }
+
+        fn with_terminal(terminal: Terminal) -> Self {
+            Self {
+                view: TerminalView::default(),
+                terminal,
+                sink: Sink::default(),
+            }
+        }
     }
 
     #[test]
@@ -1776,6 +1784,154 @@ mod tests {
             .diagnostics()
             .grid_rect
             .is_some_and(|grid| grid.is_finite()));
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn visual_harness(terminal: Terminal) -> Harness<'static, HeadlessViewState> {
+        Harness::builder()
+            .with_size(Vec2::new(640.0, 360.0))
+            .with_pixels_per_point(1.0)
+            .with_theme(egui::Theme::Dark)
+            .wgpu()
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_status(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        "snapshot session",
+                        "snapshot diagnostics",
+                    );
+                },
+                HeadlessViewState::with_terminal(terminal),
+            )
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn assert_snapshot_invariants(harness: &Harness<'_, HeadlessViewState>) {
+        let state = harness.state();
+        assert_eq!(
+            state.view.diagnostics().calculated_dimensions,
+            Some(state.terminal.dimensions())
+        );
+        assert_eq!(
+            state.view.cache.dimensions(),
+            Some(state.terminal.dimensions())
+        );
+        assert!(state
+            .view
+            .diagnostics()
+            .grid_rect
+            .is_some_and(|grid| grid.is_finite() && grid.width() > 0.0 && grid.height() > 0.0));
+        for row in 0..state.terminal.dimensions().rows() {
+            assert_eq!(
+                state.view.cache.row(row).map(<[RenderedCell]>::len),
+                Some(state.terminal.dimensions().columns())
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn snapshot_after_structural_assertions(
+        harness: &mut Harness<'_, HeadlessViewState>,
+        name: &str,
+        snapshots: &mut SnapshotResults,
+    ) {
+        assert_snapshot_invariants(harness);
+        snapshots.add(harness.try_snapshot(name));
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn rendered_terminal_frames_match_reviewed_snapshots() {
+        let mut snapshots = SnapshotResults::new();
+        let mut empty = visual_harness(terminal(80, 24));
+        snapshot_after_structural_assertions(&mut empty, "terminal-empty", &mut snapshots);
+
+        let mut attributes_terminal = terminal(80, 24);
+        attributes_terminal.ingest(
+            b"\x1b[31mred \x1b[38;5;39mindexed \x1b[38;2;70;150;240mrgb \
+              \x1b[7minverse \x1b[4munderline \x1b[9mstrike\x1b[0m",
+        );
+        let mut attributes = visual_harness(attributes_terminal);
+        snapshot_after_structural_assertions(
+            &mut attributes,
+            "terminal-attributes",
+            &mut snapshots,
+        );
+
+        let mut unicode_terminal = terminal(80, 24);
+        unicode_terminal.ingest("wide \u{754c} combining e\u{301}".as_bytes());
+        let mut unicode = visual_harness(unicode_terminal);
+        unicode
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 5, row: 0 });
+        unicode
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 10, row: 0 });
+        unicode.state_mut().view.selection.finish();
+        unicode.step();
+        snapshot_after_structural_assertions(
+            &mut unicode,
+            "terminal-unicode-selection",
+            &mut snapshots,
+        );
+
+        let mut alternate_terminal = terminal(80, 24);
+        alternate_terminal.ingest(b"primary\x1b[?1049h\x1b[6 qalternate screen");
+        let mut alternate = visual_harness(alternate_terminal);
+        snapshot_after_structural_assertions(
+            &mut alternate,
+            "terminal-alternate-screen",
+            &mut snapshots,
+        );
+
+        let mut resize_terminal = terminal(80, 24);
+        resize_terminal.ingest(b"banner\r\nprompt> ");
+        let mut resize = visual_harness(resize_terminal);
+        resize
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        resize
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 5, row: 0 });
+        resize.state_mut().view.selection.finish();
+        for (name, size, output) in [
+            (
+                "terminal-resize-narrow",
+                Vec2::new(370.0, 300.0),
+                b"\x1b[2;1Hpartial narrow".as_slice(),
+            ),
+            (
+                "terminal-resize-wide",
+                Vec2::new(730.0, 560.0),
+                b"\x1b[3;1Hpartial wide".as_slice(),
+            ),
+            (
+                "terminal-resize-medium",
+                Vec2::new(500.0, 400.0),
+                b"\x1b[4;1Hpartial medium".as_slice(),
+            ),
+            (
+                "terminal-resize-wide-repeat",
+                Vec2::new(730.0, 560.0),
+                b"\x1b[5;1Hpartial wide repeat".as_slice(),
+            ),
+        ] {
+            resize.set_size(size);
+            resize.state_mut().terminal.ingest(output);
+            resize.step();
+            snapshot_after_structural_assertions(&mut resize, name, &mut snapshots);
+        }
+        snapshots.unwrap();
     }
 
     #[test]

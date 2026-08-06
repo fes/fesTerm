@@ -15,7 +15,7 @@ updates this plan's status or acceptance evidence.
 | A — Application session controller | [#4](https://github.com/fes/fesTerm/issues/4) | Open |
 | B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented |
 | C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; Windows native runtime validation pending (see Work Package E) |
-| D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | Open; ready to start now that B and C are implemented |
+| D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | In progress; Windows baseline committed, Linux CI confirmation pending |
 | E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | Open |
 | F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Open |
 | G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Open |
