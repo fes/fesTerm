@@ -12,7 +12,8 @@ use std::{
 
 use egui::{
     text::{LayoutJob, TextFormat},
-    Color32, FontFamily, FontId, Label, Pos2, Rect, Response, Sense, Stroke, TextStyle, Ui, Vec2,
+    Color32, FontFamily, FontId, Label, Pos2, Rect, Response, Sense, Stroke, StrokeKind, TextStyle,
+    Ui, Vec2,
 };
 use festerm_core::{
     Attributes, Cell, CellWidth, Color, Cursor, CursorStyle, Dimensions, FocusEvent, InputEvent,
@@ -681,6 +682,7 @@ pub struct FrameDiagnostics {
     /// egui. This does not measure GPU presentation or pixels on screen.
     pub input_to_paint_submission: Option<Duration>,
     pub calculated_dimensions: Option<Dimensions>,
+    pub grid_rect: Option<Rect>,
     pub dirty_rows: usize,
     pub last_input_outcome: Option<InputEventOutcome>,
     pub input_queue_depth: usize,
@@ -809,14 +811,9 @@ impl TerminalView {
     }
 
     /// Shows the terminal with the compatibility no-session status text.
-    pub fn show(
-        &mut self,
-        context: &egui::Context,
-        terminal: &mut Terminal,
-        sink: &mut impl EncodedInputSink,
-    ) {
+    pub fn show(&mut self, ui: &mut Ui, terminal: &mut Terminal, sink: &mut impl EncodedInputSink) {
         self.show_with_status(
-            context,
+            ui,
             terminal,
             sink,
             "No session attached: encoded input is not sent or retained.",
@@ -827,7 +824,7 @@ impl TerminalView {
     /// Shows the terminal and application-provided compact and detailed status.
     pub fn show_with_status(
         &mut self,
-        context: &egui::Context,
+        ui: &mut Ui,
         terminal: &mut Terminal,
         sink: &mut impl EncodedInputSink,
         session_status: &str,
@@ -835,37 +832,48 @@ impl TerminalView {
     ) {
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(DEFAULT_BACKGROUND))
-            .show(context, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("fesTerm");
-                    if ui
-                        .selectable_label(self.show_diagnostics, "Diagnostics")
-                        .clicked()
-                    {
-                        self.show_diagnostics = !self.show_diagnostics;
-                    }
-                    ui.add_sized(
-                        [
-                            ui.available_width(),
-                            ui.text_style_height(&TextStyle::Small),
-                        ],
-                        Label::new(session_status).truncate(),
-                    );
-                });
-                ui.separator();
-                let footer_height = if self.show_diagnostics {
-                    ui.text_style_height(&TextStyle::Small)
-                } else {
-                    0.0
-                };
-                let grid_size = grid_view_size(ui.available_size_before_wrap(), footer_height);
-                ui.allocate_ui(Vec2::new(grid_size.width, grid_size.height), |ui| {
-                    self.show_in_ui(ui, terminal, sink);
-                });
-                if self.show_diagnostics {
-                    self.show_diagnostics(ui, session_diagnostics);
-                }
+            .show(ui, |ui| {
+                self.show_in_panel(ui, terminal, sink, session_status, session_diagnostics);
             });
+    }
+
+    fn show_in_panel(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+        session_status: &str,
+        session_diagnostics: &str,
+    ) {
+        ui.horizontal(|ui| {
+            ui.heading("fesTerm");
+            if ui
+                .selectable_label(self.show_diagnostics, "Diagnostics")
+                .clicked()
+            {
+                self.show_diagnostics = !self.show_diagnostics;
+            }
+            ui.add_sized(
+                [
+                    ui.available_width(),
+                    ui.text_style_height(&TextStyle::Small),
+                ],
+                Label::new(session_status).truncate(),
+            );
+        });
+        ui.separator();
+        let footer_height = if self.show_diagnostics {
+            ui.text_style_height(&TextStyle::Small)
+        } else {
+            0.0
+        };
+        let grid_size = grid_view_size(ui.available_size_before_wrap(), footer_height);
+        ui.allocate_ui(Vec2::new(grid_size.width, grid_size.height), |ui| {
+            self.show_in_ui(ui, terminal, sink);
+        });
+        if self.show_diagnostics {
+            self.show_diagnostics(ui, session_diagnostics);
+        }
     }
 
     /// Shows the cell grid inside an existing `egui` UI.
@@ -903,6 +911,7 @@ impl TerminalView {
             .rect_filled(viewport_rect, 0.0, DEFAULT_BACKGROUND);
         let viewport_layout =
             viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
+        self.diagnostics.grid_rect = Some(viewport_layout.grid);
         if response.clicked() {
             response.request_focus();
         }
@@ -1505,7 +1514,12 @@ fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCa
 fn paint_cursor(painter: egui::Painter, cell: Rect, style: CursorStyle, color: Color32) {
     match style {
         CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock => {
-            painter.rect_stroke(cell.shrink(0.5), 0.0, Stroke::new(1.0_f32, color));
+            painter.rect_stroke(
+                cell.shrink(0.5),
+                0.0,
+                Stroke::new(1.0_f32, color),
+                StrokeKind::Inside,
+            );
         }
         CursorStyle::BlinkingUnderline | CursorStyle::SteadyUnderline => {
             painter.line_segment(
@@ -1597,6 +1611,7 @@ fn ansi_color(index: u8) -> Color32 {
 mod tests {
     use std::path::PathBuf;
 
+    use egui_kittest::{kittest::Queryable, Harness};
     use festerm_test_support::load_fixture;
 
     use super::*;
@@ -1676,6 +1691,91 @@ mod tests {
                 height: 0.0,
             }
         );
+    }
+
+    struct HeadlessViewState {
+        view: TerminalView,
+        terminal: Terminal,
+        sink: Sink,
+    }
+
+    impl HeadlessViewState {
+        fn new() -> Self {
+            Self {
+                view: TerminalView::default(),
+                terminal: terminal(80, 24),
+                sink: Sink::default(),
+            }
+        }
+    }
+
+    #[test]
+    fn headless_harness_drives_terminal_view_input_resize_and_diagnostics() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_status(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        "headless session",
+                        "headless diagnostics",
+                    );
+                },
+                HeadlessViewState::new(),
+            );
+
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("headless frame records grid geometry");
+        assert_eq!(
+            harness.state().view.diagnostics().calculated_dimensions,
+            Some(harness.state().terminal.dimensions())
+        );
+        assert!(grid.is_finite());
+
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![b"Q".to_vec()]);
+
+        {
+            harness.get_by_label("Diagnostics").click();
+        }
+        harness.run();
+        assert!(harness.state().view.show_diagnostics);
+
+        harness.set_size(Vec2::new(730.0, 520.0));
+        harness.run();
+        let state = harness.state();
+        assert_eq!(
+            state.view.diagnostics().calculated_dimensions,
+            Some(state.terminal.dimensions())
+        );
+        assert_eq!(
+            state.view.cache.dimensions(),
+            Some(state.terminal.dimensions())
+        );
+        assert!(state
+            .view
+            .diagnostics()
+            .grid_rect
+            .is_some_and(|grid| grid.is_finite()));
     }
 
     #[test]

@@ -27,6 +27,24 @@ The first run opens the platform default local shell. It is intentionally a
 single session, not yet a tabbed workstation. If shell creation fails, the UI
 shows the session error rather than substituting a demo shell.
 
+## Toolchain and Dependency Currency
+
+Use the current stable Rust toolchain. Before starting a milestone work package
+and before a release candidate, update the toolchain and resolve the current
+stable releases of direct dependencies and their lockfile graph. A breaking
+dependency update is a focused, cross-platform validated change rather than a
+reason to retain an obsolete version constraint. Exact pins are allowed only
+when behavior depends on versioned external data; document their rationale and
+review them when updating the data.
+
+```sh
+rustup update stable
+cargo update
+```
+
+The core's Unicode dependencies remain exact pins so cell-width behavior is
+reproducible; update their fixtures and standards note in the same change.
+
 ## Validation
 
 ```sh

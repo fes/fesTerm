@@ -167,11 +167,17 @@ ConPTY cursor-position replies and resize rendering failures.
 
 ## Tier 4: Headless Egui Frames
 
-Adopt a headless egui harness only after a small spike verifies compatibility
-with the pinned `egui`/`eframe` version. The candidate is
-[egui_kittest](https://github.com/emilk/egui/tree/main/crates/egui_kittest),
-which can drive frames and inspect semantic/accessibility state without a
-native window.
+**Decision: adopted.** [egui_kittest](https://github.com/emilk/egui/tree/main/crates/egui_kittest)
+0.36 is a test-only dependency paired with `egui` and `eframe` 0.36. The
+stable Rust toolchain satisfies its Rust 1.95 minimum. The initial harness
+test drives the production `TerminalView` through real frames, pointer focus,
+text input, a semantic Diagnostics control, and resize; it inspects
+content-free frame geometry, calculated terminal dimensions, and cache
+dimensions without opening a native window.
+
+The harness is suitable for structural and semantic testing. It does not
+replace native-window coverage, and its optional snapshot renderer remains P3
+work.
 
 The first harness tests should:
 
@@ -214,9 +220,8 @@ and initial renderer styling are stable.
   make them public by default when they can contain command output.
 - Run structural assertions first so a pixel difference is diagnosable.
 
-Candidate tooling includes `egui_kittest` with its rendering/snapshot support,
-or a small test-only renderer that captures egui paint output. Selection is a
-future engineering decision; no dependency is introduced by this plan.
+P3 will use the adopted `egui_kittest` snapshot support or a small test-only
+renderer after a focused visual-baseline decision.
 
 ## Tier 6: Native-Window Smoke Tests
 
@@ -275,7 +280,7 @@ overlapping checklist entry.
 | --- | --- | --- | --- | --- |
 | P0 | Issue #3: resize can blank or fragment the terminal view | Implemented: a structured UI replay interleaves partial output, point-space resizes, selection, and cursor movement, checking viewport/grid clipping geometry, cache dimensions, row widths, dirty-row bounds, and cursor geometry after every step. Controlled Unix PTY coverage verifies child-observed size and output between resizes; the Windows ConPTY app-path test emits and awaits a deterministic marker after each resize. | Windows, Linux, macOS | Implemented; Windows runtime pending |
 | P1 | M6 protocol behavior must survive renderer and session integration | Implemented: the tab-stop, cursor-style, OSC-title, and device-attribute fixtures remain the deterministic baseline. A controlled Unix app-path PTY scenario now verifies alternate-screen restoration, cursor replies, focus, bracketed paste, SGR mouse, and resize forwarding together. Add selected libvterm/WezTerm cases only when their behavior is in scope. | Windows, Linux, macOS | Implemented; Unix headless evidence |
-| P2 | Headless UI event/layout coverage is absent | Spike `egui_kittest` against the pinned dependency versions. If it is suitable, add frame-driven resize/input/selection/title tests and semantic Diagnostics assertions without changing production dependencies. Reject it explicitly if it cannot inject the required events or inspect layout. | Windows, Linux, macOS | Not started |
+| P2 | Headless UI event/layout coverage is absent | Implemented: `egui_kittest` 0.36 drives production `TerminalView` frames with pointer focus, text input, semantic Diagnostics control activation, and resize. The test asserts encoded sink bytes plus content-free grid, terminal, and cache geometry. It is test-only; snapshot rendering remains P3. | Windows, Linux, macOS | Implemented |
 | P3 | Visual promises are not exercised by the current structural tests | After P2, establish fixed-font Windows and Linux snapshots for default-background coverage, cursor shapes, selection, wide cells, colors, and the P0 resize sequence. Require structural assertions before snapshot comparisons. | Windows, Linux; macOS advisory | Blocked by P2 |
 | P4 | Native desktop focus, DPI, compositor, and PTY timing remain unverified | Add one bounded native smoke flow per platform: controlled shell, deterministic prompt, input, active-output resize sequence, screenshot on failure, and bounded shutdown. Schedule it nightly and for release candidates before making it PR-blocking. | Windows, Linux, macOS | Not started |
 | P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. Run `vttest` and external `tack` before expanding capability or terminfo claims. | Platform-specific; release candidate | Manual gate |
@@ -293,10 +298,8 @@ overlapping checklist entry.
 - Introduce property tests for grid dimensions, dirty-row bounds, transport
   bounds, and double/continuation integrity.
 
-### After a harness spike
+### After adopting the headless harness
 
-- Decide whether `egui_kittest` supports the pinned egui version and required
-  event injection.
 - Add headless frame/layout tests before adding pixel snapshots.
 - Establish one stable Linux and one stable Windows visual baseline.
 

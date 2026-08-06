@@ -4,6 +4,23 @@
 
 This document converts the current architectural review into discrete work packages that can be assigned to coding agents. It is a stabilization gate for Milestone 6, not a new product milestone.
 
+## Execution Issues
+
+This document is the canonical scope and acceptance record. The linked issues
+are thin execution wrappers; each completing pull request closes one issue and
+updates this plan's status or acceptance evidence.
+
+| Package | Issue | Status |
+| --- | --- | --- |
+| A — Application session controller | [#4](https://github.com/fes/fesTerm/issues/4) | Open |
+| B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented; closes with this change |
+| C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Open |
+| D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | Open |
+| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | Open |
+| F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Open |
+| G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Open |
+| H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | Open |
+
 ## Why This Gate Exists
 
 The implementation has advanced through the terminal core, graphical view, and local PTY integration faster than the native validation evidence has matured. The main risk is no longer missing functionality; it is declaring milestone confidence before the rendered application has been proven across the relevant layers and platforms.
@@ -22,7 +39,7 @@ Use these terms consistently in milestone and agent reports:
 
 Until this gate completes, M4 and M5 should be treated as implemented with native validation pending rather than unconditionally accepted.
 
-## Work Package A — Extract the Application Session Controller
+## Work Package A — Extract the Application Session Controller ([#4](https://github.com/fes/fesTerm/issues/4))
 
 ### Goal
 
@@ -68,7 +85,7 @@ The exact names may differ, but `main.rs` should trend toward window/bootstrap c
 - `main.rs` is materially smaller and contains no new protocol or queue policy.
 - Formatting, Clippy, and all workspace tests pass on Windows, Linux, and macOS.
 
-## Work Package B — Headless Egui Harness Spike
+## Work Package B — Headless Egui Harness Spike ([#5](https://github.com/fes/fesTerm/issues/5))
 
 ### Goal
 
@@ -87,10 +104,11 @@ Create a test-only spike that verifies the harness can:
 
 ### Decision output
 
-The agent must produce one of two explicit outcomes:
-
-1. **Adopt:** add the dependency only for tests and document the supported operations and limitations.
-2. **Reject:** record the concrete incompatibility and propose the smallest alternative headless-frame harness.
+**Adopted:** `egui_kittest` 0.36 is a test-only dependency paired with
+`egui`/`eframe` 0.36. It drives production `TerminalView` frames with pointer
+focus, text input, a semantic Diagnostics control, and resize while exposing
+content-free grid, terminal, and cache geometry. It does not replace
+native-window tests, and snapshot rendering remains Work Package D.
 
 Do not add a production dependency on the test harness.
 
@@ -101,7 +119,7 @@ Do not add a production dependency on the test harness.
 - A resize frame reports the expected core dimensions and render-cache dimensions.
 - The adoption or rejection decision is documented in `docs/ui-test-plan.md`.
 
-## Work Package C — Reproduce Issue #3 in a Headless Frame
+## Work Package C — Reproduce Issue #3 in a Headless Frame ([#6](https://github.com/fes/fesTerm/issues/6))
 
 ### Goal
 
@@ -137,7 +155,7 @@ Use a repository-owned, content-free replay that includes:
 - The test runs headlessly in the normal CI matrix.
 - Issue #3 links to the regression test before closure.
 
-## Work Package D — Deterministic Visual Snapshot Layer
+## Work Package D — Deterministic Visual Snapshot Layer ([#7](https://github.com/fes/fesTerm/issues/7))
 
 ### Goal
 
@@ -171,7 +189,7 @@ Establish fixed rendering inputs for Windows and Linux covering:
 - A controlled pixel change produces a useful diff artifact.
 - No snapshot can pass while structural viewport assertions fail.
 
-## Work Package E — Native Platform Smoke Flows
+## Work Package E — Native Platform Smoke Flows ([#8](https://github.com/fes/fesTerm/issues/8))
 
 ### Goal
 
@@ -205,7 +223,7 @@ Validate compositor, DPI, native focus, PTY timing, and real window behavior tha
 - Each supported platform has one reproducible bounded smoke flow.
 - Flaky failures are tracked quantitatively rather than silently retried into apparent success.
 
-## Work Package F — Repository-Owned PTY Test Child
+## Work Package F — Repository-Owned PTY Test Child ([#9](https://github.com/fes/fesTerm/issues/9))
 
 ### Goal
 
@@ -237,7 +255,7 @@ Add a small workspace crate or test binary that can be launched through a real P
 - Windows and Unix can share the same protocol script where platform behavior permits.
 - Failures report the expected and observed test-child protocol state clearly.
 
-## Work Package G — Internal Module Decomposition
+## Work Package G — Internal Module Decomposition ([#10](https://github.com/fes/fesTerm/issues/10))
 
 ### Goal
 
@@ -282,7 +300,7 @@ festerm-ui-egui/src/
 - No replacement module becomes a new unstructured catch-all.
 - Workspace validation remains green after each extraction.
 
-## Work Package H — Milestone Acceptance Evidence
+## Work Package H — Milestone Acceptance Evidence ([#11](https://github.com/fes/fesTerm/issues/11))
 
 ### Goal
 

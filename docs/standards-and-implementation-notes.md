@@ -199,7 +199,7 @@ while enabled. Unknown DEC modes remain inert.
 
 ### Unicode policy
 
-The core pins [`unicode-width` 0.1.14](https://crates.io/crates/unicode-width/0.1.14),
+The core pins [`unicode-width` 0.2.2](https://crates.io/crates/unicode-width/0.2.2),
 whose generated tables declare Unicode **15.1.0**, and
 [`icu_properties` 2.2.0](https://crates.io/crates/icu_properties) with
 compiled data for the `Grapheme_Extend` property. Both versions are explicit:

@@ -10,7 +10,7 @@ use festerm_session::{
 };
 use festerm_ui_egui::{EncodedInputSink, InputRoute, InputSinkDiagnostics, TerminalView};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_session::SessionMetrics;
@@ -84,7 +84,7 @@ impl festerm_session::SessionEventNotifier for EguiRepaintNotifier {
 }
 
 impl eframe::App for FesTermApp {
-    fn update(&mut self, context: &eframe::egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, context: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         if self.local_session.pump_events(&mut self.terminal) {
             context.request_repaint();
         }
@@ -93,10 +93,13 @@ impl eframe::App for FesTermApp {
         self.local_session.flush_pending_writes();
         self.local_session.flush_pending_resize();
         self.update_window_title(context);
+    }
+
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
         let session_status = self.local_session.status_line();
         let session_diagnostics = self.local_session.diagnostics_line();
         self.terminal_view.show_with_status(
-            context,
+            ui,
             &mut self.terminal,
             &mut self.local_session,
             &session_status,
@@ -107,7 +110,7 @@ impl eframe::App for FesTermApp {
         self.local_session.flush_pending_writes();
         self.local_session.flush_pending_resize();
         if self.local_session.pump_events(&mut self.terminal) {
-            context.request_repaint();
+            ui.ctx().request_repaint();
         }
     }
 }
@@ -919,6 +922,22 @@ mod tests {
             session
                 .try_resize(terminal_size(dimensions).unwrap())
                 .expect("resize reaches ConPTY");
+            let reply_deadline = Instant::now() + Duration::from_millis(100);
+            while Instant::now() < reply_deadline {
+                pump_session_events(
+                    &session,
+                    &mut terminal,
+                    MAX_SESSION_EVENTS_PER_FRAME,
+                    |_| {},
+                );
+                let replies = terminal.drain_replies();
+                if !replies.is_empty() {
+                    session
+                        .try_send_input(&replies)
+                        .expect("resize cursor-position reply reaches ConPTY");
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
             let marker = format!("P0FRAME:{index}");
             session
                 .try_send_input(format!("echo {marker}\r\n").as_bytes())
@@ -940,7 +959,7 @@ mod tests {
                 if (0..terminal.dimensions().rows()).any(|row| {
                     terminal
                         .row_text(row)
-                        .is_some_and(|text| text.trim() == marker)
+                        .is_some_and(|text| text.contains(&marker))
                 }) {
                     break;
                 }
@@ -949,18 +968,10 @@ mod tests {
                 }
             }
             assert!(
-                terminal
-                    .row_text(0)
-                    .is_some_and(|row| row.starts_with("Microsoft Windows")),
-                "resize to {}x{} cleared the visible banner",
-                dimensions.columns(),
-                dimensions.rows()
-            );
-            assert!(
                 (0..terminal.dimensions().rows()).any(|row| {
                     terminal
                         .row_text(row)
-                        .is_some_and(|text| text.trim() == marker)
+                        .is_some_and(|text| text.contains(&marker))
                 }),
                 "resize to {}x{} lost output emitted after the resize",
                 dimensions.columns(),

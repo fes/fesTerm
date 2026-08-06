@@ -8,11 +8,12 @@ repository.workspace = true
 description = "egui terminal presentation for the GUI-independent fesTerm core."
 
 [dependencies]
-egui = "0.29"
+egui = "0.36"
 festerm-core = { path = "../festerm-core" }
 
 [dev-dependencies]
 festerm-test-support = { path = "../festerm-test-support" }
+egui_kittest = "0.36"
 
 [lints]
 workspace = true
