@@ -6,6 +6,23 @@ fesTerm uses capability-based milestones rather than calendar-based commitments.
 
 The roadmap is foundation-first. Early milestones may produce little visible UI progress because they establish the terminal model, fixtures, diagnostics, and CI needed to build later features without guesswork.
 
+## Milestone Issue Review
+
+At the start and before release of every milestone, review open GitHub issues
+and classify each one:
+
+- Fix it in the current milestone when it breaks a documented completion
+  criterion, regresses implemented behavior, or is a release-blocking defect.
+- Turn a compatible report into a deterministic regression fixture or isolated
+  test, then schedule it in the milestone that owns the capability.
+- Associate planned product requests with their owning future milestone without
+  pulling implementation forward.
+- Record cross-cutting or unresolved design questions for explicit design/ADR
+  review rather than silently expanding scope.
+
+The review informs scope and release decisions; it does not make every open
+request a current-milestone commitment.
+
 ## Milestone 0 — Workspace and Quality Foundation
 
 **Status:** Implemented

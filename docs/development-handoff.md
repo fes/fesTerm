@@ -60,11 +60,15 @@ resize, exit, and shutdown.
 ## Resuming Work
 
 1. Check `git status --short` and the latest `ROADMAP.md` milestone status.
-2. Read the matching requirements and compatibility sections before editing.
-3. Preserve the ownership flow: PTY output -> app -> core -> UI, and UI input
+2. Review open GitHub issues at milestone start and before release; classify
+   defects against current completion criteria, schedule compatible reports in
+   their owning milestone, and retain future product requests without pulling
+   them into the current scope.
+3. Read the matching requirements and compatibility sections before editing.
+4. Preserve the ownership flow: PTY output -> app -> core -> UI, and UI input
    -> core encoder -> app -> session.
-4. Add deterministic fixtures or isolated tests for compatibility fixes.
-5. Keep status documentation current only after the corresponding behavior and
+5. Add deterministic fixtures or isolated tests for compatibility fixes.
+6. Keep status documentation current only after the corresponding behavior and
    validation exist.
 
 The next planned milestone is the full-screen TUI compatibility pass. It should

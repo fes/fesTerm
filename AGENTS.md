@@ -62,6 +62,9 @@ macOS, and Linux.
 
 - Keep the active milestone status accurate in `ROADMAP.md` and the concise
   status in `README.md`.
+- Review open GitHub issues when starting and releasing a milestone. Fix
+  current-criterion regressions now; assign compatible reports to their owning
+  milestone; do not pull future product requests into the current scope.
 - Do not duplicate long design documents in new summaries; link to the source
   of truth instead.
 - Treat terminal output and protocol input as untrusted. Preserve parser,
