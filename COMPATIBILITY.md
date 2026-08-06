@@ -2,7 +2,7 @@
 
 **Status:** Draft
 
-fesTerm measures compatibility in terms of observable application behavior. Recognizing an escape sequence is not sufficient if screen state, input reporting, cursor behavior, or restoration semantics are wrong.
+fesTerm measures compatibility in terms of observable application behavior. Recognizing an escape sequence is not sufficient if screen state, input reporting, cursor behavior, shaping, resize, or restoration semantics are wrong.
 
 ## Compatibility Baseline
 
@@ -13,40 +13,53 @@ The initial target includes:
 - ANSI and VT control functions used by contemporary command-line applications.
 - Primary and alternate screen buffers.
 - Cursor movement, save and restore behavior, visibility, and style where practical.
-- Scrolling regions, insert and delete operations, erasure, and wrapping modes.
+- Scrolling regions, insert and delete operations, erasure, wrapping, and origin modes.
 - Standard, bright, 256-color, and true-color attributes.
 - Bracketed paste.
 - Focus-in and focus-out reporting.
 - Mouse tracking and SGR mouse encoding.
 - Correct row and column resize propagation.
 - Keyboard encoding required by interactive applications.
-- Unicode cell-width behavior sufficient for common modern terminal use.
+- Practical Unicode cell-width and combining-character behavior.
+- Ligature-capable shaping that preserves terminal cell semantics.
+
+## Validation Principles
+
+- Core behavior is tested without a GUI, PTY, or SSH connection wherever possible.
+- Fixtures are stored in the repository from the beginning.
+- Every corrected compatibility defect should gain a regression fixture.
+- Real-application tests demonstrate combinations of behavior but do not replace lower-level assertions.
+- Compatibility status is capability-based rather than date-based.
+- CI should run deterministic compatibility fixtures on every change.
 
 ## Priority Tiers
 
-### Tier 0 — Test infrastructure
+### Tier 0 — Test and diagnostic infrastructure
 
 Before broad feature implementation:
 
 - A GUI-independent terminal-core test harness.
-- Data-driven input and expected-state fixtures.
-- Helpers to inspect grid, cursor, modes, scrollback, and emitted replies.
-- Regression fixtures for every fixed compatibility defect.
+- A human-reviewable golden-fixture format.
+- Helpers to inspect grid, cursor, modes, scrollback, titles, dirty regions, and emitted replies.
+- Expected-versus-actual output that makes fixture failures understandable.
+- Regression fixtures stored in the repository.
+- Structured logging and opt-in parser or protocol tracing.
+- CI discovery and execution of the complete deterministic fixture corpus.
 
 ### Tier 1 — Essential full-screen TUI behavior
 
 Required for the first meaningful compatibility milestone:
 
 - Primary and alternate screen switching and restoration.
-- Cursor addressing, movement, save and restore.
+- Cursor addressing, movement, save, and restore.
 - Erase, insert, delete, scroll, and scrolling-region behavior.
-- Autowrap and origin-related modes used by full-screen applications.
+- Autowrap, pending-wrap, origin, and margin behavior.
 - Standard SGR attributes and 256-color support.
 - True color.
 - Resize events and terminal-dimension reporting.
 - Bracketed paste.
 - Focus reporting.
-- Mouse button, motion, wheel, modifier, and SGR coordinate reporting.
+- Mouse button, release, motion, wheel, modifier, and SGR coordinate reporting.
 - Application cursor-key and keypad modes as required by tested applications.
 
 ### Tier 2 — Broad everyday compatibility
@@ -57,9 +70,11 @@ Required for the first meaningful compatibility milestone:
 - Hyperlinks where they can be supported safely.
 - Clipboard-related sequences only after a security and consent design.
 - Broader device-status and terminal-identification replies.
-- Refined Unicode width, combining-character, and grapheme behavior.
+- Refined Unicode width, combining-character, emoji, and grapheme behavior.
+- Font fallback.
+- Ligatures with correct cell, cursor, selection, and mouse-coordinate mapping.
 
-### Tier 3 — Optional extensions
+### Tier 3 — Optional protocol extensions
 
 These require separate design decisions and are not implied by the xterm baseline:
 
@@ -69,11 +84,11 @@ These require separate design decisions and are not implied by the xterm baselin
 - Shell integration sequences.
 - Semantic prompt or command zones.
 - Terminal notifications.
-- Advanced ligatures and complex text shaping.
+- Application-specific private protocols.
 
 ## Behavioral Matrix
 
-The matrix below is intentionally scenario-oriented. Status values are `planned`, `partial`, `passing`, or `deferred`.
+Status values are `planned`, `partial`, `passing`, or `deferred`.
 
 | Area | Scenario | Initial status | Verification approach |
 | --- | --- | --- | --- |
@@ -96,8 +111,14 @@ The matrix below is intentionally scenario-oriented. Status values are `planned`
 | Keyboard modes | Encode cursor and keypad keys according to active modes | planned | Input-encoding test |
 | Titles | Apply title changes without affecting terminal state | planned | Core and GUI integration tests |
 | Unicode width | Keep common wide and combining characters aligned | planned | Grid fixtures |
+| Emoji and fallback | Preserve cell layout across fallback fonts | planned | Renderer fixture and visual test |
+| Ligatures | Shape supported runs without moving cursor or selection boundaries | planned | Renderer mapping and visual tests |
 | High output | Remain interactive under sustained output | planned | Benchmark and integration test |
 | Scrollback | Scroll and select smoothly near configured limits | planned | Benchmark and GUI integration test |
+| Dirty rendering | Redraw changed content without mandatory full-grid copying | planned | Renderer integration and benchmark |
+| Local PTY | Run, resize, and exit a full-screen local application | planned | Cross-platform PTY integration test |
+| SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | planned | Controlled OpenSSH integration test |
+| OpenSSH config | Map supported host directives into an internal profile | planned | Configuration fixtures |
 
 ## Reference Applications
 
@@ -105,15 +126,16 @@ Compatibility should be evaluated against a deliberately varied application set.
 
 Initial candidates:
 
-- GitHub Copilot CLI, as a motivating advanced interactive application.
-- Neovim and Helix, for full-screen editing, alternate screens, cursor modes, mouse input, and color.
+- GitHub Copilot CLI, as the motivating advanced interactive application.
+- Neovim and Helix, for alternate screens, cursor modes, mouse input, color, and editing behavior.
 - Lazygit, for complex TUI layout and interaction.
 - `less`, for common pager behavior.
 - `tmux`, for terminal negotiation and nested terminal behavior.
 - `htop` or a platform-equivalent process monitor, for frequent screen updates and mouse use.
-- A shell line editor such as Readline, for cursor keys, editing, paste, and Unicode.
+- Shell line editors such as Readline and PSReadLine, for editing, paste, history, and Unicode.
+- A controlled high-output generator for flow-control and rendering measurements.
 
-Passing a reference application does not replace lower-level tests. It demonstrates that combinations of behaviors work together.
+Passing a reference application demonstrates that combinations of behaviors work together. It does not replace lower-level tests.
 
 ## Test Fixture Model
 
@@ -123,19 +145,44 @@ A terminal-core fixture should be able to describe:
 2. Bytes received from the session.
 3. User input or resize events where relevant.
 4. Expected grid contents and attributes.
-5. Expected cursor, modes, title, and scrollback.
+5. Expected cursor, modes, title, scrollback, and dirty regions.
 6. Expected replies or encoded input bytes emitted toward the session.
+7. Optional diagnostic context describing the user-visible scenario.
 
 Fixtures should be readable enough to review in code changes. Binary recordings may supplement them, but should not be the only description of expected behavior.
 
+## Renderer Compatibility Tests
+
+Renderer tests should distinguish terminal state correctness from visual mapping:
+
+- The core fixture proves which cells, attributes, and cursor state exist.
+- The renderer test proves how those cells map to shaped glyph runs, font fallback, pixel positions, selection geometry, and dirty regions.
+- Ligature tests must verify that a visual glyph spanning multiple characters does not collapse or shift terminal cells.
+- Visual snapshots may supplement structural assertions but should not be the sole source of truth.
+
+## PTY and SSH Compatibility Tests
+
+Local PTY integration tests should verify process launch, terminal-size propagation, byte flow, exit, cancellation, and cleanup on each platform.
+
+SSH tests should use:
+
+1. Fake or in-process transports for state-machine and reconnect scenarios.
+2. In-process server tests where the selected Rust SSH implementation supports them.
+3. A thin containerized OpenSSH `sshd` suite covering host keys, authentication, PTY allocation, resize, shell I/O, disconnect, and reconnect.
+
+The test environment must own its configuration and credentials and must not consume a developer's SSH setup.
+
 ## Compatibility Decisions Still Needed
 
-- Exact xterm feature/version references used for ambiguous behavior.
+- Exact xterm feature or version references used for ambiguous behavior.
 - Terminal identity and `TERM` value exposed by local and SSH sessions.
 - Terminfo distribution or installation strategy.
 - Unicode width table source and update policy.
+- Grapheme and complex-script policy.
 - Reflow semantics when the terminal width changes.
 - Clipboard escape-sequence policy.
 - Support level for OSC 8 hyperlinks.
-- Whether Kitty keyboard support belongs in the early compatibility target.
-- Whether nested `tmux` compatibility requires additional extensions beyond the initial baseline.
+- Whether Kitty keyboard support belongs in an early post-foundation target.
+- Whether nested `tmux` compatibility requires additional extensions.
+- Ligature defaults and per-font controls.
+- Manual versus automated acceptance criteria for each reference application.
