@@ -1,12 +1,12 @@
 # Native Smoke Flow Policy
 
 **Document status:** Active policy  
-**Scope:** Tier 6 native-platform smoke tests (Work Package E, issue [#8](https://github.com/fes/fesTerm/issues/8))
+**Scope:** PTY/session smoke coverage for Work Package E, issue [#8](https://github.com/fes/fesTerm/issues/8)
 
-## What native smoke tests prove
+## What the current smoke tests prove
 
-Tier 6 smoke tests validate properties that headless frames (Tier 4) and
-rendered snapshots (Tier 5) cannot prove:
+The current smoke tests validate real PTY/session properties that headless
+frames and rendered snapshots cannot prove:
 
 - **Real PTY byte delivery:** ConPTY (Windows) and Unix PTY bytes arrive at the
   terminal in order and intact during resize operations.
@@ -19,9 +19,14 @@ rendered snapshots (Tier 5) cannot prove:
   tree within the documented 2-second budget.
 
 These tests do **not** replace the headless structural assertions (P0 replay)
-or the visual snapshot layer (P3).  They are additional evidence that the
+or the visual snapshot layer (P3). They are additional evidence that the
 production code path — real ConPTY/PTY, real `SessionController`, real
 `Terminal` — behaves correctly end-to-end.
+
+They do **not** create an egui/winit window and therefore do not prove native
+compositor presentation, DPI scaling, or OS focus behavior. That real-window
+half remains open under Work Package E and must not be described as Tier 6
+native-window validation until it exists.
 
 ## CI placement
 
@@ -79,8 +84,8 @@ screenshots alone cannot diagnose.
 
 | Platform | Test | Execution status |
 | --- | --- | --- |
-| Windows | `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed locally — see PR description for real result** |
-| Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally — see PR description for real result** |
+| Windows | `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed locally; PTY/session evidence only, not real-window proof** |
+| Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally; PTY/session evidence only, not real-window proof** |
 | Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **pending first Linux CI run** |
 | Linux | `unix_pty_bounded_shutdown_terminates_process_tree` | Written; **pending first Linux CI run** |
 | macOS | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **advisory — pending macOS CI run** |

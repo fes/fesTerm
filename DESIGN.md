@@ -236,8 +236,8 @@ The Cargo workspace, GUI-independent `festerm-core`, test-support crate,
 `festerm-ui-egui` cell renderer, application composition shell, fixture
 harness, diagnostics scaffold, cross-platform CI, M2 ANSI/VT
 primary-and-alternate-screen core, and M3 interactive-input/initial-Unicode
-core are in place. M4 renders a controlled no-session stream; it does not
-pretend to provide a shell or session. M5 now adds a bounded local-session
+core are in place. M4 originally rendered a controlled no-session stream; M5
+now runs one bounded default local-shell session through its local-session
 boundary and one default local shell; its backend produces bytes/events while
 the application remains the only terminal-core writer. Current work proceeds
 from that foundation:

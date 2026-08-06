@@ -1,6 +1,7 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestones 0 through 5 are implemented.
+**Status:** Milestones 0 through 5 are implemented with native-window
+validation pending; Milestone 6 is in progress.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 

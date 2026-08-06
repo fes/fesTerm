@@ -25,15 +25,18 @@ supported platform.
 The implementation sequence and acceptance evidence live in the
 [M6 automation backlog](ui-test-plan.md#m6-automation-backlog). The current
 fixture baseline covers tab stops, cursor styles, OSC titles, and conservative
-device attributes. P0 adds deterministic UI resize replay and controlled Unix
-PTY output-between-resizes evidence, plus a Windows ConPTY counterpart that
-must run on Windows. This does not yet prove a real renderer frame or native
-window preserves those features together.
+device attributes. P0 is implemented: deterministic UI resize replay and
+controlled Unix PTY output-between-resizes evidence exist, with a Windows
+ConPTY counterpart. P1 is also implemented with a controlled Unix app-path
+session covering alternate-screen restoration, cursor replies, focus,
+bracketed paste, SGR mouse input, and resize forwarding.
 
-P1 adds a controlled Unix app-path session that combines alternate-screen
-restoration, cursor replies, focus, bracketed paste, SGR mouse input, and
-resize forwarding. Its Windows equivalent remains covered only by the basic
-ConPTY path until native Windows validation runs.
+P2 is implemented through headless production `TerminalView` frames. P3 has
+committed Windows visual baselines and awaits Linux confirmation. P4 has a
+Windows-executed real PTY/ConPTY timing layer, but a real egui/winit window
+test is still required to prove compositor, DPI, and native-focus behavior.
+These layers do not yet prove that a native rendered window preserves all
+features together.
 
 Before considering this milestone complete:
 

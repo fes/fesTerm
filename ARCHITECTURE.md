@@ -54,9 +54,11 @@ change, but the responsibilities should remain distinct.
     festerm-core/
     festerm-session/       # implemented M5 common lifecycle boundary
     festerm-pty/           # implemented M5 local PTY/ConPTY backend
+    festerm-pty-test-child/ # implemented M6 deterministic PTY test child
     festerm-ssh/
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
+    festerm-windows-job/   # Windows process-tree shutdown support
     festerm-test-support/
   app/
     festerm/
@@ -89,13 +91,16 @@ bytes -> decoder/parser -> TerminalOp -> TerminalState::apply
 
 The implementation may fuse steps where profiling or simplicity justifies it, provided parser and state behavior remain independently testable.
 
-The current M3 implementation provides a bounded ESC/CSI parser, primary and
-alternate grid buffers, scrolling regions, basic SGR state, resize without
-reflow, terminal replies, typed mode-aware keyboard/paste/focus/mouse input,
-and dirty-row inspection. Cells retain leading text with attached common
-combining code points and a width role with explicit width-two continuation
-cells. Scrollback, renderer shaping, and full grapheme segmentation remain
-later work.
+The current implementation through M6 provides a bounded ESC/CSI parser,
+primary and alternate grid buffers, scrolling regions, SGR state, tab stops,
+DECSCUSR cursor styles, sanitized OSC titles, conservative device-attribute
+replies, resize without reflow, typed mode-aware keyboard/paste/focus/mouse
+input, and dirty-row inspection. Cells retain leading text with attached
+common combining code points and a width role with explicit width-two
+continuation cells. The application-level `SessionController` is the
+production and controlled-test seam while remaining the single logical
+terminal writer. Scrollback, renderer shaping, and full grapheme segmentation
+remain later work; native rendered-window validation remains an M6 gate.
 
 ### `festerm-session`
 

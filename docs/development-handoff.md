@@ -6,7 +6,8 @@ for a compact document map.
 
 ## Current State
 
-Milestones 0 through 5 are implemented. The application opens one local,
+Milestones 0 through 5 are implemented with native-window validation pending.
+The application opens one local,
 in-memory shell session through a platform PTY and renders it with `egui`.
 The terminal core, UI, session lifecycle, and PTY backend are separate crates.
 
@@ -92,5 +93,7 @@ resize, exit, and shutdown.
 Milestone 6 is in progress. Use the
 [compatibility checklist](m6-compatibility-checklist.md) for reference-
 application scenarios and the [M6 automation backlog](ui-test-plan.md#m6-automation-backlog)
-for implementation order. Start with P0, then convert every corrected failure
-into a concrete regression before moving to the next milestone.
+for implementation order. P0 through P2 are implemented; prioritize P3 visual
+evidence, P4 real-window validation, and P5 manual reference-application
+evidence. Convert every corrected failure into a concrete regression before
+moving to the next milestone.

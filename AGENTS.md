@@ -26,6 +26,8 @@ Read `README.md`, then use the document that matches the task:
 - `crates/festerm-session`: runtime-independent session lifecycle and bounded
   transport contract.
 - `crates/festerm-pty`: local shell backend using `portable-pty`.
+- `crates/festerm-pty-test-child`: deterministic repository-owned child used
+  by controlled PTY and smoke tests.
 - `crates/festerm-windows-job`: cfg-gated safe wrapper around the Windows Job
   Object required for whole-ConPTY-tree shutdown.
 - `app/festerm`: composition root; the only owner that mutates a terminal from

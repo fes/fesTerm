@@ -94,14 +94,14 @@ Each terminal instance shall have one logical writer responsible for terminal-st
 
 ### Milestone 4 implementation status
 
-M4 satisfies the initial graphical rendering boundary with
+M4 implements the initial graphical rendering boundary with
 `festerm-ui-egui`, while `festerm-core` remains free of GUI dependencies. The
 view receives borrowed terminal state, preserves width-two/continuation cells,
 uses a dirty-row cache, routes typed core input, and reports non-content
 diagnostics. M5 installs one default local-session sink that forwards encoded
 input and accepted cell dimensions through the application; the UI remains
-session-backend-free. Scrollback history, tabs, profiles, and SSH are not
-implied by this status.
+session-backend-free. Native-window validation remains an M6 gate; scrollback
+history, tabs, profiles, and SSH are not implied by this status.
 The initial monospace renderer has no ligature-run shaping, which remains the
 later REQ-UI-009 capability.
 

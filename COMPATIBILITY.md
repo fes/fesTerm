@@ -93,6 +93,8 @@ These require separate design decisions and are not implied by the xterm baselin
 ## Behavioral Matrix
 
 Status values are `planned`, `partial`, `passing`, or `deferred`.
+`passing` denotes the listed deterministic evidence, not M6
+reference-application acceptance; P5 remains a manual release gate.
 
 | Area | Scenario | Initial status | Verification approach |
 | --- | --- | --- | --- |
