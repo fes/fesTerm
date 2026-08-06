@@ -32,6 +32,13 @@ fn grid_view_size(available: Vec2, reserved_footer_height: f32) -> ViewSize {
     }
 }
 
+fn dimensions_from_viewport(available: ViewSize, cell: CellMetrics) -> Option<Dimensions> {
+    if available.width < cell.width * 2.0 || available.height < cell.height {
+        return None;
+    }
+    dimensions_from_points(available, cell)
+}
+
 /// A read-only, renderer-facing view of the currently visible terminal grid.
 ///
 /// It borrows core state and therefore cannot outlive or mutate the terminal.
@@ -451,6 +458,17 @@ impl ResizeTracker {
             Err(_) => ResizeOutcome::Rejected,
         }
     }
+
+    fn apply_viewport(
+        &mut self,
+        terminal: &mut Terminal,
+        available: ViewSize,
+        cell: CellMetrics,
+    ) -> ResizeOutcome {
+        dimensions_from_viewport(available, cell).map_or(ResizeOutcome::Unchanged, |dimensions| {
+            self.apply(terminal, dimensions)
+        })
+    }
 }
 
 /// The observable result of routing an event through the core.
@@ -794,37 +812,39 @@ impl TerminalView {
         session_status: &str,
         session_diagnostics: &str,
     ) {
-        egui::CentralPanel::default().show(context, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("fesTerm");
-                if ui
-                    .selectable_label(self.show_diagnostics, "Diagnostics")
-                    .clicked()
-                {
-                    self.show_diagnostics = !self.show_diagnostics;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(DEFAULT_BACKGROUND))
+            .show(context, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("fesTerm");
+                    if ui
+                        .selectable_label(self.show_diagnostics, "Diagnostics")
+                        .clicked()
+                    {
+                        self.show_diagnostics = !self.show_diagnostics;
+                    }
+                    ui.add_sized(
+                        [
+                            ui.available_width(),
+                            ui.text_style_height(&TextStyle::Small),
+                        ],
+                        Label::new(session_status).truncate(),
+                    );
+                });
+                ui.separator();
+                let footer_height = if self.show_diagnostics {
+                    ui.text_style_height(&TextStyle::Small)
+                } else {
+                    0.0
+                };
+                let grid_size = grid_view_size(ui.available_size_before_wrap(), footer_height);
+                ui.allocate_ui(Vec2::new(grid_size.width, grid_size.height), |ui| {
+                    self.show_in_ui(ui, terminal, sink);
+                });
+                if self.show_diagnostics {
+                    self.show_diagnostics(ui, session_diagnostics);
                 }
-                ui.add_sized(
-                    [
-                        ui.available_width(),
-                        ui.text_style_height(&TextStyle::Small),
-                    ],
-                    Label::new(session_status).truncate(),
-                );
             });
-            ui.separator();
-            let footer_height = if self.show_diagnostics {
-                ui.text_style_height(&TextStyle::Small)
-            } else {
-                0.0
-            };
-            let grid_size = grid_view_size(ui.available_size_before_wrap(), footer_height);
-            ui.allocate_ui(Vec2::new(grid_size.width, grid_size.height), |ui| {
-                self.show_in_ui(ui, terminal, sink);
-            });
-            if self.show_diagnostics {
-                self.show_diagnostics(ui, session_diagnostics);
-            }
-        });
     }
 
     /// Shows the cell grid inside an existing `egui` UI.
@@ -842,32 +862,29 @@ impl TerminalView {
             return;
         };
         let available = ui.available_size_before_wrap();
-        let calculated = dimensions_from_points(
-            ViewSize {
-                width: available.x,
-                height: available.y,
-            },
-            metrics,
-        );
+        let viewport = ViewSize {
+            width: available.x,
+            height: available.y,
+        };
+        let calculated = dimensions_from_viewport(viewport, metrics);
         self.diagnostics.calculated_dimensions = calculated;
-        if let Some(dimensions) = calculated {
-            if matches!(
-                self.resize.apply(terminal, dimensions),
-                ResizeOutcome::Resized(_)
-            ) {
-                self.selection.clear();
-                self.pointer = TerminalPointerState::default();
-                sink.record_terminal_resize(dimensions);
-            }
+        if matches!(
+            self.resize.apply_viewport(terminal, viewport, metrics),
+            ResizeOutcome::Resized(_)
+        ) {
+            self.selection.clear();
+            self.pointer = TerminalPointerState::default();
+            sink.record_terminal_resize(terminal.dimensions());
         }
 
         let dimensions = terminal.dimensions();
-        let (grid_rect, response) =
-            ui.allocate_exact_size(metrics.size_for(dimensions), Sense::click_and_drag());
+        let (viewport_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
+        ui.painter()
+            .rect_filled(viewport_rect, 0.0, DEFAULT_BACKGROUND);
+        let grid_rect = Rect::from_min_size(viewport_rect.min, metrics.size_for(dimensions));
         if response.clicked() {
             response.request_focus();
         }
-
         let layout = GridLayout {
             rect: grid_rect,
             dimensions,
@@ -897,7 +914,7 @@ impl TerminalView {
         let (_, input_to_paint_submission) =
             measure_input_to_paint_submission(reports.input_observed, || {
                 paint_grid(
-                    ui.painter().with_clip_rect(grid_rect),
+                    ui.painter().with_clip_rect(viewport_rect),
                     GridPaint {
                         layout,
                         snapshot,
@@ -1638,6 +1655,51 @@ mod tests {
                 height: 0.0,
             }
         );
+    }
+
+    #[test]
+    fn undersized_viewport_does_not_shrink_the_terminal_or_lose_cached_content() {
+        let cell = CellMetrics::new(10.0, 20.0).unwrap();
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"Windows banner\r\nC:\\Users\\fes>");
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+        let mut resize = ResizeTracker::default();
+
+        for viewport in [
+            ViewSize {
+                width: 370.0,
+                height: 260.0,
+            },
+            ViewSize {
+                width: 0.0,
+                height: 0.0,
+            },
+            ViewSize {
+                width: 8.0,
+                height: 19.0,
+            },
+            ViewSize {
+                width: 730.0,
+                height: 520.0,
+            },
+        ] {
+            resize.apply_viewport(&mut terminal, viewport, cell);
+            let dirty_rows = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+            assert!(terminal
+                .row_text(0)
+                .is_some_and(|row| row.starts_with("Windows banner")));
+            assert!(cache
+                .row(0)
+                .is_some_and(|row| row.first().is_some_and(|cell| cell.text() == "W")));
+        }
+        assert_eq!(terminal.dimensions(), Dimensions::new(73, 26).unwrap());
     }
 
     #[test]
