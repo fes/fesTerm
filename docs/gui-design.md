@@ -125,7 +125,7 @@ The default window has three conceptual zones:
 
 ```text
 +------------------------------------------------------+
-| Tab strip, session identity, global window actions   |
+| Integrated chrome: session chips + global actions   |
 +------------------------------------------------------+
 |                                                      |
 | Terminal viewport or launcher content                |
@@ -137,7 +137,7 @@ The default window has three conceptual zones:
 
 ### Tab strip
 
-The tab strip provides session switching and identity. It should be compact and visually integrated with the upper application chrome.
+The chip row provides session switching and identity. It is part of the upper application chrome, sharing the top-of-window band with New Tab and compact global controls. The chips remain visually independent through spacing, shape, border, and elevation—not by moving them onto a separate shelf.
 
 ### Main content
 
@@ -148,7 +148,7 @@ The main content is either a terminal viewport, launcher, settings page, or diag
 Global application actions and session-specific context are separate concerns.
 
 - The upper application chrome owns compact global actions: New Tab/Launcher, command palette or search, session-inspector toggle, and a deliberately small overflow menu.
-- The session chips sit on a distinct surface below or within the chrome with enough separation to appear as independent objects.
+- The session chips live inside the upper application chrome, in the same top-of-window band as New Tab and compact global controls. They are independent because each lozenge has visible space around it—not because the row is separated from the chrome.
 - The right-side session inspector is normally hidden and shows context for the active session: connection state, host/profile metadata, environment, diagnostics, and relevant actions.
 - Global Settings do not live in the inspector. Settings open as an application surface represented by their own chip, and remain reachable from the command palette and compact overflow menu.
 
@@ -175,6 +175,7 @@ Session tabs are independent lozenges or chips, not connected browser-style or r
 
 Implementation requirements:
 
+- Place the chip row inside the top window-chrome band; terminal, launcher, or settings content begins immediately below that integrated chrome.
 - Preserve visible space around every chip; adjacent chips must never merge into a continuous tab strip.
 - Keep chip surfaces neutral. Connection color belongs in a small status indicator, not across the whole chip.
 - Indicate the active chip with a slightly brighter surface, stronger border, subtle elevation, and optionally a small height difference. Do not depend on a saturated accent fill.
@@ -184,7 +185,7 @@ Implementation requirements:
 - Design chip layout for both horizontal overflow and an optional multi-row wrapping mode. Wrapping must remain user-configurable because some users will prefer a single scrolling row.
 - Preserve semantic tab roles, keyboard order, accessible names, focus indication, and close behavior even when the visual treatment is chip-like.
 
-The wireframe in [Canonical Wireframe](#canonical-wireframe) is the visual contract for these requirements. Connected browser tabs, file-folder tabs, full-chip status colors, and constantly changing primary labels are non-conforming implementations.
+The wireframe in [Canonical Wireframe](#canonical-wireframe) is the visual contract for these requirements. A detached chip shelf below a separate title bar, connected browser tabs, file-folder tabs, full-chip status colors, and constantly changing primary labels are non-conforming implementations.
 
 ### Tab anatomy
 

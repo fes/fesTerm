@@ -69,8 +69,10 @@ macOS, and Linux.
   milestone; do not pull future product requests into the current scope.
 - Treat `docs/gui-design.md` and its canonical wireframe as the source of truth
   for application chrome and session-tab work. Session tabs are independent,
-  neutral lozenge/chip objects; preserve stable identity and use compact status
-  indicators instead of full-chip state colors.
+  neutral lozenge/chip objects embedded directly in the upper window chrome,
+  alongside New Tab and compact global controls. Do not place them on a
+  detached shelf below a separate title bar. Preserve stable identity and use
+  compact status indicators instead of full-chip state colors.
 - Do not duplicate long design documents in new summaries; link to the source
   of truth instead.
 - Treat terminal output and protocol input as untrusted. Preserve parser,
