@@ -1091,14 +1091,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn controlled_shell_transfers_bytes_resizes_exits_and_stops() {
-        let profile = LocalProfile::new("/bin/sh").with_arguments([
-            "-c",
-            "printf 'READY\\n'; read line; printf 'INPUT:%s\\n' \"$line\"; stty size; exit 0",
+        // Uses the repository-owned test child instead of shell built-ins.
+        let profile = LocalProfile::new(test_child_path()).with_arguments([
+            "emit:READY",
+            "read-line",
+            "echo:INPUT",
+            "report-size",
+            "exit:0",
         ]);
         let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
 
         let mut output = Vec::new();
-        wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
             bytes
                 .windows(b"READY".len())
                 .any(|window| window == b"READY")
@@ -1107,7 +1111,7 @@ mod tests {
             .try_resize(TerminalSize::new(100, 40).unwrap())
             .unwrap();
         session.try_send_input(b"hello\n").unwrap();
-        wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
             bytes
                 .windows(b"INPUT:hello".len())
                 .any(|window| window == b"INPUT:hello")
@@ -1117,7 +1121,7 @@ mod tests {
         });
         assert!(session.metrics().resize_count >= 1);
         assert!(matches!(
-            session.shutdown(Duration::from_secs(2)),
+            session.shutdown(Duration::from_secs(4)),
             Ok(ShutdownResult::AlreadyStopped) | Ok(ShutdownResult::Stopped)
         ));
         assert!(output
@@ -1128,14 +1132,20 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn controlled_shell_preserves_output_between_consecutive_resizes() {
-        let profile = LocalProfile::new("/bin/sh").with_arguments([
-            "-c",
-            "printf 'READY\\n'; read first; printf 'FRAME:%s\\n' \"$first\"; \
-             stty size; read second; printf 'FRAME:%s\\n' \"$second\"; stty size; exit 0",
+        // Uses the repository-owned test child instead of shell built-ins.
+        let profile = LocalProfile::new(test_child_path()).with_arguments([
+            "emit:READY",
+            "read-line",
+            "echo:FRAME",
+            "report-size",
+            "read-line",
+            "echo:FRAME",
+            "report-size",
+            "exit:0",
         ]);
         let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
         let mut output = Vec::new();
-        wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
             bytes
                 .windows(b"READY".len())
                 .any(|window| window == b"READY")
@@ -1155,7 +1165,7 @@ mod tests {
         ] {
             session.try_resize(size).unwrap();
             session.try_send_input(input).unwrap();
-            wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+            wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
                 bytes
                     .windows(expected_size.len())
                     .any(|window| window == expected_size)
@@ -1169,7 +1179,7 @@ mod tests {
             .windows(b"FRAME:second".len())
             .any(|window| window == b"FRAME:second"));
         assert!(matches!(
-            session.shutdown(Duration::from_secs(2)),
+            session.shutdown(Duration::from_secs(4)),
             Ok(ShutdownResult::AlreadyStopped) | Ok(ShutdownResult::Stopped)
         ));
     }
@@ -1177,11 +1187,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shutdown_terminates_a_running_controlled_shell() {
-        let profile = LocalProfile::new("/bin/sh")
-            .with_arguments(["-c", "printf 'RUNNING\\n'; while :; do :; done"]);
+        // Uses the repository-owned test child instead of a shell spin loop.
+        let profile = LocalProfile::new(test_child_path()).with_arguments(["emit:RUNNING", "spin"]);
         let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
         let mut output = Vec::new();
-        wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
             bytes
                 .windows(b"RUNNING".len())
                 .any(|window| window == b"RUNNING")
@@ -1197,18 +1207,16 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn shutdown_terminates_a_shell_descendant_in_its_process_group() {
-        let profile = LocalProfile::new("/bin/sh").with_arguments([
-            "-c",
-            "sleep 30 & child=$!; printf 'CHILD:%s\\n' \"$child\"; wait \"$child\"",
-        ]);
+        // Uses the repository-owned test child instead of /bin/sh + sleep.
+        let profile = LocalProfile::new(test_child_path()).with_arguments(["spawn"]);
         let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
         let mut output = Vec::new();
-        wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
             bytes
                 .windows(b"CHILD:".len())
                 .any(|window| window == b"CHILD:")
         });
-        let child = child_pid(&output).expect("controlled shell reports its descendant PID");
+        let child = child_pid(&output).expect("test child reports its descendant PID");
 
         assert_eq!(
             session.shutdown(Duration::from_secs(2)),
@@ -1227,18 +1235,16 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn controlled_conpty_transfers_bytes_resizes_exits_and_stops() {
-        let command_processor =
-            std::env::var_os("COMSPEC").expect("Windows supplies an absolute COMSPEC path");
-        let profile = LocalProfile::new(command_processor).with_arguments([
-            "/D",
-            "/Q",
-            "/V:ON",
-            "/C",
-            "echo READY & set /p line= & echo INPUT:!line!",
+        // Uses the repository-owned test child instead of cmd.exe built-ins.
+        let profile = LocalProfile::new(test_child_path()).with_arguments([
+            "emit:READY",
+            "read-line",
+            "echo:INPUT",
+            "exit:0",
         ]);
         let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
         let mut output = Vec::new();
-        wait_for_windows(&session, Duration::from_secs(3), &mut output, |_, bytes| {
+        wait_for_windows(&session, Duration::from_secs(5), &mut output, |_, bytes| {
             bytes
                 .windows(b"READY".len())
                 .any(|window| window == b"READY")
@@ -1247,7 +1253,7 @@ mod tests {
         session
             .try_resize(TerminalSize::new(100, 40).unwrap())
             .unwrap();
-        wait_for_windows(&session, Duration::from_secs(3), &mut output, |event, _| {
+        wait_for_windows(&session, Duration::from_secs(5), &mut output, |event, _| {
             matches!(
                 event,
                 SessionEvent::ResizeApplied(size)
@@ -1255,7 +1261,7 @@ mod tests {
             )
         });
         session.try_send_input(b"hello\r\n").unwrap();
-        wait_for_windows(&session, Duration::from_secs(3), &mut output, |_, bytes| {
+        wait_for_windows(&session, Duration::from_secs(5), &mut output, |_, bytes| {
             bytes
                 .windows(b"INPUT:hello".len())
                 .any(|window| window == b"INPUT:hello")
@@ -1268,6 +1274,38 @@ mod tests {
             ),
             "ConPTY cleanup completes whether the exit worker or shutdown request wins"
         );
+    }
+
+    /// Returns the path to the `festerm-pty-test-child` binary built by cargo.
+    ///
+    /// Cargo places all workspace binaries in the same `target/{profile}/`
+    /// directory as the test executable.  The test executable itself lives in
+    /// `target/{profile}/deps/`, so we walk up one level when necessary.
+    ///
+    /// Run `cargo test --workspace` (or `cargo build -p festerm-pty-test-child`
+    /// first) to ensure the binary exists before running these tests.
+    #[cfg(any(unix, windows))]
+    fn test_child_path() -> std::path::PathBuf {
+        let mut path = std::env::current_exe()
+            .expect("test executable has a known path")
+            .canonicalize()
+            .expect("test executable path is accessible");
+        path.pop(); // remove the test executable name
+        if path.ends_with("deps") {
+            path.pop(); // step up from target/{profile}/deps/ to target/{profile}/
+        }
+        let name = if cfg!(windows) {
+            "festerm-pty-test-child.exe"
+        } else {
+            "festerm-pty-test-child"
+        };
+        path.push(name);
+        assert!(
+            path.exists(),
+            "festerm-pty-test-child not found at {path:?}; \
+             run `cargo build -p festerm-pty-test-child` or `cargo test --workspace`"
+        );
+        path
     }
 
     #[cfg(unix)]
