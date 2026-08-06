@@ -265,12 +265,27 @@ correctness gates until hardware-independent budgets are agreed.
 
 ## Phased Adoption
 
+## M6 Automation Backlog
+
+This is the implementation order for the remaining M6 verification work. Its
+statuses describe test-harness readiness, not whether the product capability is
+complete. Update the row when an item lands; move a discovered reference-app
+failure into the smallest applicable regression instead of adding a second,
+overlapping checklist entry.
+
+| Priority | Verification gap | Automated implementation and acceptance evidence | Platforms | Status |
+| --- | --- | --- | --- | --- |
+| P0 | Issue #3: resize can blank or fragment the terminal view | Add a structured UI replay that interleaves partial output, point-space resizes, selection, and cursor movement. Assert terminal-rectangle coverage, clipping, cache dimensions, row widths, dirty-row bounds, and cursor geometry after every frame. Extend the existing Windows app-level ConPTY test with output between resizes and add the Unix counterpart. | Windows, Linux, macOS | Next |
+| P1 | M6 protocol behavior must survive renderer and session integration | Keep the tab-stop, cursor-style, OSC-title, and device-attribute fixtures as the deterministic baseline. Add selected libvterm/WezTerm cases only when their behavior is in scope, then run representative alternate-screen, focus, paste, mouse, resize, and reply sequences through controlled PTYs. | Windows, Linux, macOS | In progress |
+| P2 | Headless UI event/layout coverage is absent | Spike `egui_kittest` against the pinned dependency versions. If it is suitable, add frame-driven resize/input/selection/title tests and semantic Diagnostics assertions without changing production dependencies. Reject it explicitly if it cannot inject the required events or inspect layout. | Windows, Linux, macOS | Not started |
+| P3 | Visual promises are not exercised by the current structural tests | After P2, establish fixed-font Windows and Linux snapshots for default-background coverage, cursor shapes, selection, wide cells, colors, and the P0 resize sequence. Require structural assertions before snapshot comparisons. | Windows, Linux; macOS advisory | Blocked by P2 |
+| P4 | Native desktop focus, DPI, compositor, and PTY timing remain unverified | Add one bounded native smoke flow per platform: controlled shell, deterministic prompt, input, active-output resize sequence, screenshot on failure, and bounded shutdown. Schedule it nightly and for release candidates before making it PR-blocking. | Windows, Linux, macOS | Not started |
+| P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. Run `vttest` and external `tack` before expanding capability or terminfo claims. | Platform-specific; release candidate | Manual gate |
+| P6 | Ligature and fallback correctness has no defined oracle | First specify the cell-to-glyph, cursor, selection, and hit-testing contract. Then add renderer mapping tests and snapshots before enabling ligatures. Do not use manual appearance as the only acceptance evidence. | Windows, Linux, macOS | Blocked by design and implementation |
+
 ### Immediate: close the current resize/render gap
 
-- Add the Tier 2 replay and presentation invariants for issue #3.
-- Expand the existing Windows app-level ConPTY test to include output arriving
-  between every resize step.
-- Add a controlled Unix equivalent.
+- Implement P0 from the M6 automation backlog.
 - Preserve the issue recording as a diagnosis artifact, not a test baseline.
 
 ### Next: broaden deterministic compatibility

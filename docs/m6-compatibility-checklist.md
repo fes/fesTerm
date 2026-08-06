@@ -20,6 +20,26 @@ identity); M6 regressions define the supported subset. A custom `festerm`
 terminfo entry is deferred until packaging can install it reliably on every
 supported platform.
 
+## Automation Status
+
+The implementation sequence and acceptance evidence live in the
+[M6 automation backlog](ui-test-plan.md#m6-automation-backlog). The current
+fixture baseline covers tab stops, cursor styles, OSC titles, and conservative
+device attributes. That does not yet prove a real renderer frame, local PTY,
+or native window preserves those features together.
+
+Before considering this milestone complete:
+
+1. Complete P0 through P4, or explicitly defer an item in `ROADMAP.md` with a
+   reason and replacement validation.
+2. Run the reference scenarios below, recording each as pass, fail, or not
+   run with the reason.
+3. Convert every reproducible failure into the smallest deterministic
+   fixture, replay, controlled-PTY test, or snapshot before closing it.
+4. Complete P5 evidence before making broader terminal or terminfo claims.
+5. Do not enable ligatures until P6's mapping contract and automated evidence
+   exist.
+
 ## Reference Scenarios
 
 | Application | Scenario | Required observations |

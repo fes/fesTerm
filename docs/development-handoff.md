@@ -73,5 +73,6 @@ resize, exit, and shutdown.
 
 Milestone 6 is in progress. Use the
 [compatibility checklist](m6-compatibility-checklist.md) for reference-
-application scenarios and convert every corrected failure into a concrete
-regression before moving to the next milestone.
+application scenarios and the [M6 automation backlog](ui-test-plan.md#m6-automation-backlog)
+for implementation order. Start with P0, then convert every corrected failure
+into a concrete regression before moving to the next milestone.
