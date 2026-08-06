@@ -1,0 +1,14 @@
+[package]
+name = "festerm-test-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Golden fixture and test support utilities for fesTerm."
+
+[dependencies]
+festerm-core = { path = "../festerm-core" }
+
+[lints]
+workspace = true

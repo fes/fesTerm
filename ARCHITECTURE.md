@@ -2,7 +2,11 @@
 
 **Status:** Draft
 
-This document defines the proposed subsystem boundaries, dependency direction, runtime data flow, and initial Rust workspace structure for fesTerm. It is a target architecture rather than a claim that the current scaffold already implements these components.
+This document defines the proposed subsystem boundaries, dependency direction,
+runtime data flow, and Rust workspace structure for fesTerm. The repository
+already contains the initial workspace foundation (`festerm-core`,
+`festerm-test-support`, and the application shell); the remaining crates and
+subsystems are target architecture rather than implemented components.
 
 ## Architectural Goals
 
@@ -37,9 +41,12 @@ festerm-test-support -> festerm-core and session implementations
 
 `festerm-core` must not depend on GUI, PTY, SSH, operating-system keychain, cloud identity, or persistence implementations.
 
-## Proposed Workspace Layout
+## Current and Target Workspace Layout
 
-The repository should evolve from the current single binary crate into a Cargo workspace. Exact names may change, but the responsibilities should remain distinct.
+The repository is a Cargo workspace. The initial core, test-support, and
+application crates establish the dependency direction below; additional crates
+will be introduced when their responsibilities are implemented. Exact names may
+change, but the responsibilities should remain distinct.
 
 ```text
 /

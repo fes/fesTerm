@@ -231,15 +231,18 @@ Raw protocol traces can expose passwords, tokens, commands, and private output. 
 
 ## Current Priorities
 
-1. Establish the Cargo workspace, CI, test-support crate, fixture format, and diagnostics scaffolding.
-2. Define and test the terminal-core model.
-3. Implement ANSI/VT parsing and essential full-screen screen-state behavior.
-4. Implement keyboard modes, alternate screens, mouse reporting, bracketed paste, focus events, resizing, color, and Unicode cell behavior.
-5. Integrate the core with an `egui` renderer.
-6. Add local PTY sessions.
-7. Complete a full-screen TUI compatibility pass, including a safe ligature-capable rendering design.
-8. Add native SSH with OpenSSH interoperability and controlled integration tests.
-9. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace persistence.
+The Cargo workspace, initial `festerm-core`, test-support crate, application
+shell, fixture harness, diagnostics scaffold, and cross-platform CI are in
+place. Current work proceeds from that foundation:
+
+1. Complete and test the terminal-core model.
+2. Implement ANSI/VT parsing and essential full-screen screen-state behavior.
+3. Implement keyboard modes, alternate screens, mouse reporting, bracketed paste, focus events, resizing, color, and Unicode cell behavior.
+4. Integrate the core with an `egui` renderer.
+5. Add local PTY sessions.
+6. Complete a full-screen TUI compatibility pass, including a safe ligature-capable rendering design.
+7. Add native SSH with OpenSSH interoperability and controlled integration tests.
+8. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace persistence.
 
 ## Deferred or Open Questions
 

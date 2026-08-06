@@ -1,12 +1,14 @@
 # fesTerm Capability Roadmap
 
-**Status:** Draft
+**Status:** Milestone 0 is implemented; Milestone 1 is in progress.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
 The roadmap is foundation-first. Early milestones may produce little visible UI progress because they establish the terminal model, fixtures, diagnostics, and CI needed to build later features without guesswork.
 
 ## Milestone 0 — Workspace and Quality Foundation
+
+**Status:** Implemented
 
 ### Outcome
 
@@ -29,6 +31,8 @@ The repository is ready for sustained multi-crate development with automated val
 - The application scaffold still builds and runs.
 
 ## Milestone 1 — Terminal Core Skeleton
+
+**Status:** In progress (initial grid, cursor, dirty-row, and basic C0 support)
 
 ### Outcome
 

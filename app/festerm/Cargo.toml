@@ -1,0 +1,17 @@
+[package]
+name = "festerm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A scratch, multi-platform SSH/terminal client."
+
+[dependencies]
+eframe = "0.29"
+festerm-core = { path = "../../crates/festerm-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

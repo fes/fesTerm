@@ -1,0 +1,9 @@
+# The initial fixture format is intentionally small, readable, and versioned
+# alongside terminal behavior.
+name: basic printable text and C0 controls
+size: 10x2
+input: "abc\rZ\n\x08!\tQ"
+grid:
+  - "Zbc       "
+  - "!       Q "
+cursor: 9,1

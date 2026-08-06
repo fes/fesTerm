@@ -8,6 +8,10 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 
+The sourced implementation references and cross-project lessons that guide this
+plan are collected in
+[Standards and Implementation Notes](docs/standards-and-implementation-notes.md).
+
 The initial target includes:
 
 - ANSI and VT control functions used by contemporary command-line applications.

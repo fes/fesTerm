@@ -5,14 +5,14 @@ native SSH client, written in Rust.
 
 ## Status
 
-Early scaffolding — work in progress. The current application is a minimal
-`egui`/`eframe` window; terminal emulation, PTY integration, and SSH are not yet
-implemented.
+Foundation work is in place: the repository is a Cargo workspace with a
+GUI-independent terminal-core crate, repository-owned golden fixtures,
+diagnostics scaffolding, and cross-platform CI. The current application remains
+an early `egui`/`eframe` shell; PTY integration and SSH are not yet implemented.
 
-The project is following a foundation-first, capability-based roadmap. The
-first implementation work will establish a GUI-independent terminal core,
-repository-owned golden fixtures, diagnostics, and continuous integration
-before broad UI and session features.
+The terminal core handles basic printable ASCII and C0 controls as a thin start
+to Milestone 1. ANSI/VT escape sequences, rendering, PTY, and session features
+remain upcoming work.
 
 ## Documentation
 
@@ -27,6 +27,9 @@ before broad UI and session features.
   completion criteria.
 - [Compatibility plan](COMPATIBILITY.md) — xterm-oriented behavior, feature
   tiers, fixtures, reference applications, PTY/SSH tests, and ligature rules.
+- [Standards and implementation notes](docs/standards-and-implementation-notes.md)
+  — primary specifications, interoperability guidance, security boundaries,
+  and lessons from other terminal implementations.
 - [Product positioning](PRODUCT_POSITIONING.md) — terminal landscape notes and
   the selected middle-ground product posture.
 - [Architecture decision records](docs/adr/) — accepted decisions and their
