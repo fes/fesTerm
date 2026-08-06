@@ -1,0 +1,8 @@
+name: alternate 47 retains its own buffer and primary remains preserved
+size: 6x1
+input: "P\x1b[?47hab\x1b[?47l\x1b[?47hc"
+grid:
+  - "abc   "
+cursor: 3,0
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=true,cursor_visible=true"
+replies: ""

@@ -1,0 +1,10 @@
+name: erase line and character insertion deletion
+size: 6x3
+input: "\x1b[1;1HAAAAA\x1b[2;1HBBBBB\x1b[3;1HCCCCC\x1b[2;3H\x1b[2X\x1b[3;3H\x1b[2@XY\x1b[1P"
+grid:
+  - "AAAAA "
+  - "BB  B "
+  - "CCXYC "
+cursor: 4,2
+dirty: "0,1,2"
+replies: ""

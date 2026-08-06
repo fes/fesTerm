@@ -1,0 +1,9 @@
+name: basic device status replies
+size: 5x3
+input: "\x1b[2;3H\x1b[5n\x1b[6n\x1b[c"
+grid:
+  - "     "
+  - "     "
+  - "     "
+cursor: 2,1
+replies: "\x1b[0n\x1b[2;3R"

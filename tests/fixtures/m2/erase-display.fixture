@@ -1,0 +1,9 @@
+name: erase display and line ranges
+size: 5x3
+input: "\x1b[1;1HAAAA\x1b[2;1HBBBB\x1b[3;1HCCCC\x1b[2;3H\x1b[1K\x1b[2;4H\x1b[0J"
+grid:
+  - "AAAA "
+  - "     "
+  - "     "
+cursor: 3,1
+replies: ""

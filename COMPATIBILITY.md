@@ -96,15 +96,15 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 
 | Area | Scenario | Initial status | Verification approach |
 | --- | --- | --- | --- |
-| Screen buffers | Enter alternate screen, draw, leave, and recover primary contents and cursor | planned | Core fixture plus real TUI |
-| Cursor | Save, move, modify state, and restore correctly | planned | Core fixture |
-| Scrolling | Respect margins and scroll only the active region | planned | Core fixture |
-| Wrapping | Handle right-margin wrap and pending-wrap semantics | planned | Core fixture |
-| Erasure | Erase line and display ranges without corrupting unaffected cells | planned | Core fixture |
-| Attributes | Apply and reset style and color attributes | planned | Core fixture and visual smoke test |
-| 256 color | Render indexed foreground and background colors | planned | Fixture and palette test |
-| True color | Render RGB foreground and background colors | planned | Fixture and palette test |
-| Resize | Propagate rows and columns and preserve valid state | planned | Core and PTY integration tests |
+| Screen buffers | Enter alternate screen, draw, leave, and recover primary contents and cursor | passing | Core fixture; real TUI later |
+| Cursor | Save, move, modify state, and restore correctly | passing | Core fixture |
+| Scrolling | Respect margins and scroll only the active region | passing | Core fixture |
+| Wrapping | Handle right-margin wrap and pending-wrap semantics | passing | Core fixture |
+| Erasure | Erase line and display ranges without corrupting unaffected cells | passing | Core fixture |
+| Attributes | Apply and reset style and color attributes | passing | Core fixture; visual smoke test later |
+| 256 color | Render indexed foreground and background colors | passing | Core fixture; renderer palette test later |
+| True color | Render RGB foreground and background colors | passing | Core fixture; renderer palette test later |
+| Resize | Propagate rows and columns and preserve valid state | passing | Core fixture; PTY integration later |
 | Bracketed paste | Wrap pasted data only while the mode is enabled | planned | Input-encoding test |
 | Focus | Emit focus events only while requested | planned | Input-encoding test |
 | Mouse buttons | Report presses and releases according to active mode | planned | Input-encoding test |
@@ -154,6 +154,20 @@ A terminal-core fixture should be able to describe:
 7. Optional diagnostic context describing the user-visible scenario.
 
 Fixtures should be readable enough to review in code changes. Binary recordings may supplement them, but should not be the only description of expected behavior.
+
+### M2 fixture fields
+
+The repository fixture parser keeps the format deliberately small. `size`,
+`input`, `grid`, `cursor`, and `replies` are required. `input` and `replies`
+accept `\xNN` raw-byte escapes. `resize` applies one post-input resize, and
+optional `modes` and `dirty` assertions inspect all currently implemented mode
+flags and input-caused dirty rows.
+
+Optional `cells` assertions make colors and attributes reviewable without
+repeating every blank cell. Each quoted entry has the form
+`column,row|character|foreground|background|attributes`; colors are
+`default`, `indexed:n`, or `rgb:r,g,b`, and attributes are `none` or a
+comma-separated list. M2 has no scrollback, so fixtures do not claim one.
 
 ## Renderer Compatibility Tests
 

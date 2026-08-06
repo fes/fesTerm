@@ -6,16 +6,38 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use festerm_core::{Dimensions, Terminal};
+use festerm_core::{Attributes, Color, Dimensions, Terminal, TerminalModes};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fixture {
     pub name: String,
     pub dimensions: Dimensions,
     pub input: Vec<u8>,
+    pub resize: Option<Dimensions>,
     pub expected_grid: Vec<String>,
+    pub expected_cells: Vec<CellExpectation>,
     pub expected_cursor: (usize, usize),
+    pub expected_modes: Option<ModeExpectation>,
+    pub expected_dirty_rows: Option<Vec<usize>>,
     pub expected_replies: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CellExpectation {
+    column: usize,
+    row: usize,
+    character: char,
+    foreground: Color,
+    background: Color,
+    attributes: Attributes,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModeExpectation {
+    auto_wrap: bool,
+    origin_mode: bool,
+    alternate_screen: bool,
+    cursor_visible: bool,
 }
 
 pub fn discover_fixtures(directory: &Path) -> Result<Vec<PathBuf>, FixtureError> {
@@ -38,9 +60,23 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
                 fixture.name
             ),
         })?;
+    // Constructor dirtiness is not part of an input scenario. Fixtures that
+    // assert `dirty` observe only the bytes and optional resize below.
+    terminal.take_dirty_rows();
     terminal.ingest(&fixture.input);
+    if let Some(dimensions) = fixture.resize {
+        terminal
+            .resize(dimensions)
+            .map_err(|error| FixtureAssertionError {
+                message: format!(
+                    "golden fixture `{}` could not resize the terminal: {error}",
+                    fixture.name
+                ),
+            })?;
+    }
 
-    let actual_grid = (0..fixture.dimensions.rows())
+    let actual_dimensions = fixture.resize.unwrap_or(fixture.dimensions);
+    let actual_grid = (0..actual_dimensions.rows())
         .map(|row| {
             terminal
                 .row_text(row)
@@ -48,10 +84,48 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
         })
         .collect::<Vec<_>>();
     let actual_cursor = (terminal.cursor().column(), terminal.cursor().row());
+    let actual_modes = terminal.modes();
+    let actual_dirty_rows = fixture
+        .expected_dirty_rows
+        .as_ref()
+        .map(|_| terminal.take_dirty_rows());
     let actual_replies = terminal.drain_replies();
+    let cell_mismatches = fixture
+        .expected_cells
+        .iter()
+        .filter_map(|expected| {
+            let actual = terminal.cell(expected.column, expected.row)?;
+            (actual.character() != expected.character
+                || actual.foreground() != expected.foreground
+                || actual.background() != expected.background
+                || actual.attributes() != expected.attributes)
+                .then(|| {
+                    format!(
+                        "({}, {}): expected {:?}/{:?}/{:?}/{:?}, actual {:?}/{:?}/{:?}/{:?}",
+                        expected.column,
+                        expected.row,
+                        expected.character,
+                        expected.foreground,
+                        expected.background,
+                        expected.attributes,
+                        actual.character(),
+                        actual.foreground(),
+                        actual.background(),
+                        actual.attributes()
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    let modes_match = fixture
+        .expected_modes
+        .as_ref()
+        .is_none_or(|expected| expected.matches(actual_modes));
 
     if actual_grid != fixture.expected_grid
         || actual_cursor != fixture.expected_cursor
+        || !cell_mismatches.is_empty()
+        || !modes_match
+        || actual_dirty_rows.as_ref() != fixture.expected_dirty_rows.as_ref()
         || actual_replies != fixture.expected_replies
     {
         return Err(FixtureAssertionError {
@@ -61,6 +135,12 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
              actual grid:\n{}\n\
              expected cursor: {:?}\n\
              actual cursor: {:?}\n\
+             expected cell attributes: {}\n\
+             actual cell mismatches: {}\n\
+             expected modes: {}\n\
+             actual modes: {}\n\
+             expected dirty rows: {}\n\
+             actual dirty rows: {}\n\
              expected replies: {}\n\
              actual replies: {}",
                 fixture.name,
@@ -68,6 +148,20 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
                 render_grid(&actual_grid),
                 fixture.expected_cursor,
                 actual_cursor,
+                render_cells(&fixture.expected_cells),
+                render_items(&cell_mismatches),
+                fixture
+                    .expected_modes
+                    .as_ref()
+                    .map_or_else(|| "(not asserted)".to_owned(), |modes| modes.to_string()),
+                render_modes(actual_modes),
+                fixture
+                    .expected_dirty_rows
+                    .as_ref()
+                    .map_or_else(|| "(not asserted)".to_owned(), |rows| format!("{rows:?}")),
+                actual_dirty_rows
+                    .as_ref()
+                    .map_or_else(|| "(not asserted)".to_owned(), |rows| format!("{rows:?}")),
                 render_bytes(&fixture.expected_replies),
                 render_bytes(&actual_replies),
             ),
@@ -101,10 +195,15 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
     let mut name = None;
     let mut dimensions = None;
     let mut input = None;
+    let mut resize = None;
     let mut expected_grid = Vec::new();
+    let mut expected_cells = Vec::new();
     let mut expected_cursor = None;
+    let mut expected_modes = None;
+    let mut expected_dirty_rows = None;
     let mut expected_replies = None;
     let mut in_grid = false;
+    let mut in_cells = false;
 
     for (index, raw_line) in source.lines().enumerate() {
         let line_number = index + 1;
@@ -115,13 +214,24 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
 
         if line == "grid:" {
             in_grid = true;
+            in_cells = false;
             continue;
         }
         if in_grid && line.starts_with('-') {
             expected_grid.push(parse_quoted(path, line_number, line[1..].trim())?);
             continue;
         }
+        if line == "cells:" {
+            in_cells = true;
+            in_grid = false;
+            continue;
+        }
+        if in_cells && line.starts_with('-') {
+            expected_cells.push(parse_cell_expectation(path, line_number, line[1..].trim())?);
+            continue;
+        }
         in_grid = false;
+        in_cells = false;
 
         let (key, value) = line
             .split_once(':')
@@ -130,7 +240,12 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
             "name" => name = Some(value.trim().to_owned()),
             "size" => dimensions = Some(parse_dimensions(path, line_number, value.trim())?),
             "input" => input = Some(parse_quoted_bytes(path, line_number, value.trim())?),
+            "resize" => resize = Some(parse_dimensions(path, line_number, value.trim())?),
             "cursor" => expected_cursor = Some(parse_cursor(path, line_number, value.trim())?),
+            "modes" => expected_modes = Some(parse_modes(path, line_number, value.trim())?),
+            "dirty" => {
+                expected_dirty_rows = Some(parse_dirty_rows(path, line_number, value.trim())?)
+            }
             "replies" => {
                 expected_replies = Some(parse_quoted_bytes(path, line_number, value.trim())?)
             }
@@ -153,16 +268,21 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
         name: name.unwrap_or_else(|| path.display().to_string()),
         dimensions,
         input: input.ok_or_else(|| FixtureError::parse(path, 0, "missing `input`"))?,
+        resize,
         expected_grid,
+        expected_cells,
         expected_cursor,
+        expected_modes,
+        expected_dirty_rows,
         expected_replies,
     };
 
-    if fixture.expected_grid.len() != fixture.dimensions.rows()
+    let expected_dimensions = fixture.resize.unwrap_or(fixture.dimensions);
+    if fixture.expected_grid.len() != expected_dimensions.rows()
         || fixture
             .expected_grid
             .iter()
-            .any(|row| row.chars().count() != fixture.dimensions.columns())
+            .any(|row| row.chars().count() != expected_dimensions.columns())
     {
         return Err(FixtureError::parse(
             path,
@@ -170,14 +290,37 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
             "grid rows must exactly match the declared dimensions",
         ));
     }
-    if fixture.expected_cursor.0 >= fixture.dimensions.columns()
-        || fixture.expected_cursor.1 >= fixture.dimensions.rows()
+    if fixture.expected_cursor.0 >= expected_dimensions.columns()
+        || fixture.expected_cursor.1 >= expected_dimensions.rows()
     {
         return Err(FixtureError::parse(
             path,
             0,
             "cursor must lie within the declared dimensions",
         ));
+    }
+    for expected in &fixture.expected_cells {
+        if expected.column >= expected_dimensions.columns()
+            || expected.row >= expected_dimensions.rows()
+        {
+            return Err(FixtureError::parse(
+                path,
+                0,
+                "cell assertion must lie within the declared dimensions",
+            ));
+        }
+    }
+    if let Some(dirty_rows) = &fixture.expected_dirty_rows {
+        if dirty_rows
+            .iter()
+            .any(|row| *row >= expected_dimensions.rows())
+        {
+            return Err(FixtureError::parse(
+                path,
+                0,
+                "dirty row assertion must lie within the declared dimensions",
+            ));
+        }
     }
 
     Ok(fixture)
@@ -201,6 +344,173 @@ fn parse_cursor(path: &Path, line: usize, value: &str) -> Result<(usize, usize),
         parse_usize(path, line, column, "cursor column")?,
         parse_usize(path, line, row, "cursor row")?,
     ))
+}
+
+fn parse_cell_expectation(
+    path: &Path,
+    line: usize,
+    value: &str,
+) -> Result<CellExpectation, FixtureError> {
+    let value = parse_quoted(path, line, value)?;
+    let mut parts = value.split('|');
+    let coordinates = parts
+        .next()
+        .ok_or_else(|| FixtureError::parse(path, line, "cell assertion is missing coordinates"))?;
+    let (column, row) = parse_cursor(path, line, coordinates)?;
+    let character = parts
+        .next()
+        .ok_or_else(|| FixtureError::parse(path, line, "cell assertion is missing a character"))?;
+    let mut characters = character.chars();
+    let character = characters
+        .next()
+        .filter(|_| characters.next().is_none())
+        .ok_or_else(|| {
+            FixtureError::parse(path, line, "cell character must be exactly one character")
+        })?;
+    let foreground = parse_color(
+        path,
+        line,
+        parts.next().ok_or_else(|| {
+            FixtureError::parse(path, line, "cell assertion is missing foreground")
+        })?,
+    )?;
+    let background = parse_color(
+        path,
+        line,
+        parts.next().ok_or_else(|| {
+            FixtureError::parse(path, line, "cell assertion is missing background")
+        })?,
+    )?;
+    let attributes = parse_attributes(
+        path,
+        line,
+        parts.next().ok_or_else(|| {
+            FixtureError::parse(path, line, "cell assertion is missing attributes")
+        })?,
+    )?;
+    if parts.next().is_some() {
+        return Err(FixtureError::parse(
+            path,
+            line,
+            "cell assertion has too many `|`-separated fields",
+        ));
+    }
+    Ok(CellExpectation {
+        column,
+        row,
+        character,
+        foreground,
+        background,
+        attributes,
+    })
+}
+
+fn parse_color(path: &Path, line: usize, value: &str) -> Result<Color, FixtureError> {
+    let value = value.trim();
+    if value == "default" {
+        return Ok(Color::Default);
+    }
+    if let Some(value) = value.strip_prefix("indexed:") {
+        return value.parse().map(Color::Indexed).map_err(|error| {
+            FixtureError::parse(path, line, format!("invalid indexed color: {error}"))
+        });
+    }
+    if let Some(value) = value.strip_prefix("rgb:") {
+        let components = value
+            .split(',')
+            .map(|component| {
+                component.trim().parse::<u8>().map_err(|error| {
+                    FixtureError::parse(path, line, format!("invalid RGB component: {error}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if let [red, green, blue] = components.as_slice() {
+            return Ok(Color::Rgb {
+                red: *red,
+                green: *green,
+                blue: *blue,
+            });
+        }
+    }
+    Err(FixtureError::parse(
+        path,
+        line,
+        "color must be `default`, `indexed:<0-255>`, or `rgb:<r>,<g>,<b>`",
+    ))
+}
+
+fn parse_attributes(path: &Path, line: usize, value: &str) -> Result<Attributes, FixtureError> {
+    let value = value.trim();
+    if value == "none" {
+        return Ok(Attributes::NONE);
+    }
+
+    value
+        .split(',')
+        .try_fold(Attributes::NONE, |attributes, name| {
+            let attribute = match name.trim() {
+                "bold" => Attributes::BOLD,
+                "faint" => Attributes::FAINT,
+                "italic" => Attributes::ITALIC,
+                "underline" => Attributes::UNDERLINE,
+                "double-underline" => Attributes::DOUBLE_UNDERLINE,
+                "slow-blink" => Attributes::SLOW_BLINK,
+                "rapid-blink" => Attributes::RAPID_BLINK,
+                "inverse" => Attributes::INVERSE,
+                "concealed" => Attributes::CONCEALED,
+                "strikethrough" => Attributes::STRIKETHROUGH,
+                other => {
+                    return Err(FixtureError::parse(
+                        path,
+                        line,
+                        format!("unsupported attribute `{other}`"),
+                    ));
+                }
+            };
+            Ok(Attributes::from_bits(attributes.bits() | attribute.bits()))
+        })
+}
+
+fn parse_modes(path: &Path, line: usize, value: &str) -> Result<ModeExpectation, FixtureError> {
+    let mut expected = ModeExpectation {
+        auto_wrap: true,
+        origin_mode: false,
+        alternate_screen: false,
+        cursor_visible: true,
+    };
+    for assignment in parse_quoted(path, line, value)?.split(',') {
+        let (name, value) = assignment.split_once('=').ok_or_else(|| {
+            FixtureError::parse(path, line, "mode must use `name=true` or `name=false`")
+        })?;
+        let value = value.trim().parse::<bool>().map_err(|error| {
+            FixtureError::parse(path, line, format!("invalid mode value `{value}`: {error}"))
+        })?;
+        match name.trim() {
+            "auto_wrap" => expected.auto_wrap = value,
+            "origin_mode" => expected.origin_mode = value,
+            "alternate_screen" => expected.alternate_screen = value,
+            "cursor_visible" => expected.cursor_visible = value,
+            other => {
+                return Err(FixtureError::parse(
+                    path,
+                    line,
+                    format!("unsupported mode `{other}`"),
+                ));
+            }
+        }
+    }
+    Ok(expected)
+}
+
+fn parse_dirty_rows(path: &Path, line: usize, value: &str) -> Result<Vec<usize>, FixtureError> {
+    let value = parse_quoted(path, line, value)?;
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(',')
+        .map(|row| parse_usize(path, line, row, "dirty row"))
+        .collect()
 }
 
 fn parse_usize(path: &Path, line: usize, value: &str, label: &str) -> Result<usize, FixtureError> {
@@ -260,12 +570,69 @@ fn unescape_bytes(path: &Path, line: usize, value: &str) -> Result<Vec<u8>, Fixt
     Ok(output)
 }
 
+impl ModeExpectation {
+    fn matches(&self, modes: TerminalModes) -> bool {
+        self.auto_wrap == modes.auto_wrap()
+            && self.origin_mode == modes.origin_mode()
+            && self.alternate_screen == modes.alternate_screen()
+            && self.cursor_visible == modes.cursor_visible()
+    }
+}
+
+impl fmt::Display for ModeExpectation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}",
+            self.auto_wrap, self.origin_mode, self.alternate_screen, self.cursor_visible
+        )
+    }
+}
+
 fn render_grid(grid: &[String]) -> String {
     grid.iter()
         .enumerate()
         .map(|(row, content)| format!("  {row:>3} |{content}|"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn render_cells(cells: &[CellExpectation]) -> String {
+    if cells.is_empty() {
+        return "(none)".to_owned();
+    }
+    cells
+        .iter()
+        .map(|cell| {
+            format!(
+                "({}, {}): {:?}/{:?}/{:?}/{:?}",
+                cell.column,
+                cell.row,
+                cell.character,
+                cell.foreground,
+                cell.background,
+                cell.attributes
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_items(items: &[String]) -> String {
+    if items.is_empty() {
+        return "(none)".to_owned();
+    }
+    items.join(", ")
+}
+
+fn render_modes(modes: TerminalModes) -> String {
+    format!(
+        "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}",
+        modes.auto_wrap(),
+        modes.origin_mode(),
+        modes.alternate_screen(),
+        modes.cursor_visible()
+    )
 }
 
 fn render_bytes(bytes: &[u8]) -> String {

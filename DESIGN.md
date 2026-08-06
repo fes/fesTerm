@@ -232,23 +232,26 @@ Raw protocol traces can expose passwords, tokens, commands, and private output. 
 ## Current Priorities
 
 The Cargo workspace, initial `festerm-core`, test-support crate, application
-shell, fixture harness, diagnostics scaffold, and cross-platform CI are in
-place. Current work proceeds from that foundation:
+shell, fixture harness, diagnostics scaffold, cross-platform CI, and M2
+ANSI/VT primary-and-alternate-screen core are in place. Current work proceeds
+from that foundation:
 
-1. Complete and test the terminal-core model.
-2. Implement ANSI/VT parsing and essential full-screen screen-state behavior.
-3. Implement keyboard modes, alternate screens, mouse reporting, bracketed paste, focus events, resizing, color, and Unicode cell behavior.
-4. Integrate the core with an `egui` renderer.
-5. Add local PTY sessions.
-6. Complete a full-screen TUI compatibility pass, including a safe ligature-capable rendering design.
-7. Add native SSH with OpenSSH interoperability and controlled integration tests.
-8. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace persistence.
+1. Implement keyboard modes, bracketed paste, focus, mouse reporting, and
+   initial Unicode cell behavior.
+2. Integrate the tested core with an `egui` renderer.
+3. Add local PTY sessions.
+4. Complete a full-screen TUI compatibility pass, including a safe
+   ligature-capable rendering design.
+5. Add native SSH with OpenSSH interoperability and controlled integration
+   tests.
+6. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
+   persistence.
 
 ## Deferred or Open Questions
 
 - Exact workspace and crate names after the first implementation spike.
-- Parser implementation strategy and supporting crates.
-- Grid and scrollback data structures.
+- Future parser extensions and supporting crates, if they become necessary.
+- Scrollback data structures.
 - PTY and SSH crate selection.
 - Async runtime, cancellation, and bounded-channel choices.
 - Unicode width table source and update policy.

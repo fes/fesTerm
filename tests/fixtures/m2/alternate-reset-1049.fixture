@@ -1,0 +1,9 @@
+name: 1049 exit resets the alternate buffer
+size: 5x2
+input: "main\x1b[?47hold\x1b[?1049l\x1b[?47hX"
+grid:
+  - "X    "
+  - "     "
+cursor: 1,0
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=true,cursor_visible=true"
+replies: ""

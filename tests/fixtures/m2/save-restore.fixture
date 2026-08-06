@@ -1,0 +1,10 @@
+name: DEC and ANSI cursor save restore
+size: 6x2
+input: "\x1b[31;1mAB\x1b7\x1b[2;6H\x1b[0mZ\x1b8C\x1b[s\x1b[2;1H\x1b[uD"
+grid:
+  - "ABCD  "
+  - "     Z"
+cells:
+  - "2,0|C|indexed:1|default|bold"
+cursor: 4,0
+replies: ""

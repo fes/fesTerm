@@ -38,6 +38,12 @@ only when it is covered by the requirements, compatibility plan, or an ADR.
 - Keep parser work and session-to-core queues bounded. Resume upstream PTY/SSH
   reads below a low watermark after pausing at a high watermark.
 
+M2's input and reply transport queues each have a 65,536-byte high watermark.
+Writes are accepted atomically or rejected, preserving the exact order of
+accepted bytes. `QueuePushResult` and the terminal's sticky, take-and-clear
+overflow indicators make rejection observable to the session owner; this
+includes automatically generated DSR replies.
+
 The limits above are security requirements, not just optimizations. Unbounded
 terminal writes and parameters have caused memory exhaustion in
 [xterm.js #2108](https://github.com/xtermjs/xterm.js/issues/2108) and
@@ -104,6 +110,59 @@ and the historical DECRQSS issues documented in
 OSC 8 parsing must split only the first parameter separator, as illustrated by
 [xterm.js #4944](https://github.com/xtermjs/xterm.js/issues/4944).
 
+## Milestone 2 Implemented Behavior
+
+M2 is intentionally an ASCII/C0 terminal core. Printable bytes are accepted
+only in the ASCII `0x20..=0x7e` range. Raw C1 bytes, including `0x9b`, are
+ignored rather than interpreted as controls, so malformed or partial UTF-8
+cannot become an escape sequence. The explicit parser has ground, ESC, CSI,
+CSI-ignore, and discard-string states. CSI retains at most 32 parameters
+(five decimal digits each) and two intermediate bytes. Unsupported OSC, DCS,
+APC, PM, and SOS payloads are never stored; they are discarded through their
+terminator or after 4096 bytes, at which point parsing returns to ground.
+CR, LF, BS, and TAB still execute while a string is being discarded and leave
+the parser in that string state.
+
+CSI coordinates are one based. CUP/HVP and VPA apply relative to the top
+margin while DECOM is set; their vertical range, and CUU/CUD/CNL/CPL under
+DECOM, is the scrolling region. ED, EL, ECH, ICH, DCH, IL, DL, SU, and SD
+operate on the active buffer. Erasure and newly exposed scroll rows use a
+space with the current SGR rendition. `CSI r` accepts only a valid increasing
+region and homes the cursor; index/reverse-index scroll only at that region's
+boundary.
+
+Pending wrap is explicit. A printable byte in the final column sets it only
+when DECAWM is enabled; the next printable byte indexes and writes at column
+one. SGR does not cancel pending wrap, which permits an application to change
+rendition between a right-margin character and its continuation. CR, LF, BS,
+TAB, cursor movement, home/margin changes, and disabling DECAWM cancel it.
+
+M2 supports `ESC 7`/`ESC 8` and DEC private `?1048` save/restore of the
+cursor, pending-wrap state, rendition, DECOM, and DECAWM for the saved buffer.
+`CSI s`/`CSI u` save/restore cursor position only. `?47` switches to a
+retained alternate buffer; `?1047` switches to and clears it; `?1049` saves
+DEC state, enters a cleared alternate buffer, then returns to primary and
+restores DEC state. Exiting either `?1047` or `?1049` resets the alternate
+buffer, so a later `?47` cannot reveal its prior content. Primary and
+alternate buffers each retain their cursor, scrolling region, and independent
+DEC/ANSI saved cursor slots. A restored DECOM cursor is clamped to the active
+buffer's current margins. Switching to a buffer dirties all of its rows. M2 also
+tracks DECTCEM (`?25`) visibility but has no renderer.
+
+SGR supports reset, the standard text flags (including double underline for
+21 and bold/faint reset for 22), ANSI 16-color palettes, 256 indexed color,
+and semicolon true color (`38;2;r;g;b` and `48;2;r;g;b`). Canonical colon
+extended-color parameters are structurally retained and accepted with an
+empty color-space subparameter. The only M2 replies are `CSI 5 n` (`CSI 0 n`)
+and `CSI 6 n` (cursor position); device attributes and terminal identity
+remain unsupported.
+
+Resize does not reflow. It preserves the upper-left rectangular intersection
+of both allocated buffers, initializes newly exposed cells to default blank
+cells, clamps cursors and saved cursors, clamps margins (resetting a collapsed
+multi-row region to full screen), adjusts pending wrap to the new right
+margin, and marks every row dirty. M2 deliberately has no scrollback.
+
 ## Session and SSH Implementation Notes
 
 ### Local PTYs
@@ -160,8 +219,7 @@ channel flow control, PTY request, resize, and terminal mode encoding.
 
 These require a focused design decision before implementation:
 
-- Exact maximum limits for protocol strings, CSI parameters, queue watermarks,
-  clipboard payloads, and repeat counts.
+- Exact maximum limits for clipboard payloads and repeat counts.
 - Unicode data source, version update policy, emoji tailoring, private-use
   width option, and complex-script scope.
 - Back-color erase behavior, which determines whether the future terminfo entry

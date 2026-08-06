@@ -1,0 +1,9 @@
+name: DECAWM disabled overwrites the right margin
+size: 3x2
+input: "abc\x1b[?7ld\x1b[?7hef"
+grid:
+  - "abe"
+  - "f  "
+cursor: 1,1
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=false,cursor_visible=true"
+replies: ""

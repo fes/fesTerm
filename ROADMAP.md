@@ -1,6 +1,6 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestones 0 and 1 are implemented.
+**Status:** Milestones 0 through 2 are implemented.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -53,11 +53,13 @@ A GUI-independent terminal instance can consume basic input and expose determini
 - No GUI, PTY, or SSH dependency is required to run the core tests.
 - Core behavior is deterministic across supported platforms.
 
-The completed implementation intentionally stops at printable ASCII and C0
-controls. CSI/ANSI parsing, colors and attributes application, Unicode cell
-semantics, alternate screens, PTY, and SSH remain later milestones.
+M1 established printable ASCII and C0 controls. M2 subsequently added bounded
+ESC/CSI parsing, colors and attributes application, and alternate screens.
+Unicode cell semantics, PTY, and SSH remain later milestones.
 
 ## Milestone 2 — Essential ANSI/VT State Behavior
+
+**Status:** Implemented
 
 ### Outcome
 

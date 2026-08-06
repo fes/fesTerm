@@ -10,10 +10,12 @@ GUI-independent terminal-core crate, repository-owned golden fixtures,
 diagnostics scaffolding, and cross-platform CI. The current application remains
 an early `egui`/`eframe` shell; PTY integration and SSH are not yet implemented.
 
-Milestone 1 is complete: the GUI-independent terminal core has deterministic
-primary-screen state, M1 ASCII/C0 parsing, fixtures, dirty-state inspection,
-and transport output queues. ANSI/VT escape sequences, rendering, PTY, and
-session features remain upcoming work.
+Milestones 1 and 2 are complete: the GUI-independent terminal core has
+deterministic ASCII/C0 and bounded ESC/CSI parsing, primary and alternate
+screens, cursor and scrolling-region behavior, SGR colors and attributes,
+non-reflow resize, fixtures, dirty-state inspection, and transport output
+queues. Unicode cell semantics, rendering, interactive input protocols, PTY,
+and session features remain upcoming work.
 
 ## Documentation
 

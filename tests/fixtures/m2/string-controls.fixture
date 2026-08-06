@@ -1,0 +1,9 @@
+name: C0 controls execute inside discarded strings
+size: 10x3
+input: "abc\x1b]ignored\rignored\x07R\x1bPignored\nignored\x1b\\L\x1b_ignored\x08ignored\x1b\\B\x1b^ignored\tignored\x1b\\T\x1bXignored\rignored\x1b\\S"
+grid:
+  - "Rbc       "
+  - "SB      T "
+  - "          "
+cursor: 1,1
+replies: ""

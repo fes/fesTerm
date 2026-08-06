@@ -1,0 +1,11 @@
+name: DEC restore clamps origin cursor before CPR
+size: 5x4
+input: "\x1b[2;3r\x1b[?6h\x1b7\x1b[?6l\x1b[3;4r\x1b8\x1b[6n"
+grid:
+  - "     "
+  - "     "
+  - "     "
+  - "     "
+cursor: 0,2
+modes: "auto_wrap=true,origin_mode=true,alternate_screen=false,cursor_visible=true"
+replies: "\x1b[1;1R"

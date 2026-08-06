@@ -1,0 +1,11 @@
+# ?47 preserves the alternate contents across a switch, ?1047 clears it on
+# entry, ?1048 saves/restores the DEC state, and ?1049 restores primary state.
+name: alternate screen mode restoration
+size: 6x2
+input: "main\x1b[?47halt\x1b[?47l\x1b[?1047hclear\x1b[?1047l\x1b[?1048h\x1b[2;1H\x1b[?1048l\x1b[?1049halt\x1b[?1049lX"
+grid:
+  - "mainX "
+  - "      "
+cursor: 5,0
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=false,cursor_visible=true"
+replies: ""

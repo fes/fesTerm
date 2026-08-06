@@ -1,0 +1,19 @@
+name: scrolling operations alter distinct seeded regions
+size: 5x12
+input: "\x1b[1;1HAAAAA\x1b[2;1HBBBBB\x1b[3;1HCCCCC\x1b[4;1HDDDDD\x1b[5;1HEEEEE\x1b[6;1HFFFFF\x1b[7;1HGGGGG\x1b[8;1HHHHHH\x1b[9;1HIIIII\x1b[10;1HJJJJJ\x1b[11;1HKKKKK\x1b[12;1HLLLLL\x1b[1;2r\x1b[1;1H\x1b[1L\x1b[3;4r\x1b[3;1H\x1b[1M\x1b[5;6r\x1b[1S\x1b[7;8r\x1b[1T\x1b[9;10r\x1b[10;1H\x1bD\x1b[11;12r\x1b[11;1H\x1bM"
+grid:
+  - "     "
+  - "AAAAA"
+  - "DDDDD"
+  - "     "
+  - "FFFFF"
+  - "     "
+  - "     "
+  - "GGGGG"
+  - "JJJJJ"
+  - "     "
+  - "     "
+  - "KKKKK"
+cursor: 0,10
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=false,cursor_visible=true"
+replies: ""

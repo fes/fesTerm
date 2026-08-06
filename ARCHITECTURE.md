@@ -90,6 +90,11 @@ bytes -> decoder/parser -> TerminalOp -> TerminalState::apply
 
 The implementation may fuse steps where profiling or simplicity justifies it, provided parser and state behavior remain independently testable.
 
+The current M2 implementation provides a bounded ESC/CSI parser, primary and
+alternate grid buffers, scrolling regions, basic SGR state, resize without
+reflow, terminal replies, and dirty-row inspection. Scrollback, Unicode cell
+semantics, and interactive input encoders remain later work.
+
 ### `festerm-session`
 
 Defines session-facing abstractions and lifecycle types shared by local and remote backends:

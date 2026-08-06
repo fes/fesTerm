@@ -1,0 +1,15 @@
+# The SGR between the right-margin byte and the next printable byte does not
+# cancel pending wrap. Origin addressing and scrolling stay inside rows 2..3.
+name: origin mode pending wrap and scrolling region
+size: 4x4
+input: "\x1b[1;1Htop\x1b[2;1Hone\x1b[3;1Htwo\x1b[4;1Hbot\x1b[2;3r\x1b[?6h\x1b[1;1HABCD\x1b[31mZWXYQ"
+grid:
+  - "top "
+  - "ZWXY"
+  - "Q   "
+  - "bot "
+cells:
+  - "0,2|Q|indexed:1|default|none"
+cursor: 1,2
+modes: "auto_wrap=true,origin_mode=true,alternate_screen=false,cursor_visible=true"
+replies: ""

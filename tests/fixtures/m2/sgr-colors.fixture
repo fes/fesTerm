@@ -1,0 +1,13 @@
+name: standard indexed and true color attributes
+size: 6x1
+input: "\x1b[1;4;31;48;5;200mA\x1b[38;2;1;2;3;49mB\x1b[21mC\x1b[0mD\x1b[38:2::4:5:6mE"
+grid:
+  - "ABCDE "
+cells:
+  - "0,0|A|indexed:1|indexed:200|bold,underline"
+  - "1,0|B|rgb:1,2,3|default|bold,underline"
+  - "2,0|C|rgb:1,2,3|default|bold,double-underline"
+  - "3,0|D|default|default|none"
+  - "4,0|E|rgb:4,5,6|default|none"
+cursor: 5,0
+replies: ""

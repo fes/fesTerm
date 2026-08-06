@@ -1,0 +1,10 @@
+name: alternate 1047 entry clears an independently dirty buffer
+size: 4x2
+input: "main\x1b[?1047habcd\x1b[?1047l\x1b[?1047h"
+grid:
+  - "    "
+  - "    "
+cursor: 0,0
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=true,cursor_visible=true"
+dirty: "0,1"
+replies: ""

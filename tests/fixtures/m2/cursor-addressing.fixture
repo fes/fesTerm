@@ -1,0 +1,13 @@
+# CUP/HVP, relative movement, CHA/HPA/VPA, CNL, and CPL use one-based CSI
+# coordinates and clamp at the active screen boundaries.
+name: cursor addressing and movement
+size: 8x4
+input: "\x1b[2;3HA\x1b[1A\x1b[3CB\x1b[4DC\x1b[4d\x1b[2GD\x1b[3EE\x1b[2FF\x1b[6`G\x1b[?25l"
+grid:
+  - "   C  B "
+  - "F A  G  "
+  - "        "
+  - "ED      "
+cursor: 6,1
+modes: "auto_wrap=true,origin_mode=false,alternate_screen=false,cursor_visible=false"
+replies: ""
