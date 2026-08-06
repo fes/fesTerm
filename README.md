@@ -9,21 +9,40 @@ Early scaffolding — work in progress. The current application is a minimal
 `egui`/`eframe` window; terminal emulation, PTY integration, and SSH are not yet
 implemented.
 
-The first implementation priority is a GUI-independent, well-tested terminal
-core with behavior suitable for advanced full-screen terminal applications.
+The project is following a foundation-first, capability-based roadmap. The
+first implementation work will establish a GUI-independent terminal core,
+repository-owned golden fixtures, diagnostics, and continuous integration
+before broad UI and session features.
 
 ## Documentation
 
-- [Project design](DESIGN.md) — product direction, principles, conceptual
-  architecture, priorities, and open questions.
-- [Requirements](REQUIREMENTS.md) — initial functional, architectural,
-  performance, security, and testing requirements.
-- [Compatibility plan](COMPATIBILITY.md) — xterm-oriented behavioral target,
-  feature tiers, application scenarios, and test strategy.
-- [Original project outline](OUTLINE.md) — early project framing retained for
-  historical context.
+- [Project design](DESIGN.md) — product direction, principles, experience,
+  priorities, and open questions.
+- [System architecture](ARCHITECTURE.md) — proposed crates, dependency
+  direction, runtime data flow, rendering boundary, concurrency, and
+  invariants.
+- [Requirements](REQUIREMENTS.md) — functional, architectural, performance,
+  security, diagnostics, and testing requirements.
+- [Capability roadmap](ROADMAP.md) — foundation-first milestones and their
+  completion criteria.
+- [Compatibility plan](COMPATIBILITY.md) — xterm-oriented behavior, feature
+  tiers, fixtures, reference applications, PTY/SSH tests, and ligature rules.
+- [Product positioning](PRODUCT_POSITIONING.md) — terminal landscape notes and
+  the selected middle-ground product posture.
 - [Architecture decision records](docs/adr/) — accepted decisions and their
   rationale.
+- [Original project outline](OUTLINE.md) — early framing retained for
+  historical context.
+
+## Current Direction
+
+- Behavioral compatibility with advanced full-screen terminal applications.
+- Cross-platform `egui` front end with a GUI-independent terminal engine.
+- First-class local PTY and native in-process SSH session types.
+- Human-readable, versioned TOML configuration with safe hot reload.
+- Fast interactive behavior, ligature-capable rendering, and privacy-aware
+  diagnostics.
+- Local-first operation with optional future metadata synchronization.
 
 ## Building
 
