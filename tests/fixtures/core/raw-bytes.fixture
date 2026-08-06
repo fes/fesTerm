@@ -1,9 +1,10 @@
-# \xNN input escapes are raw bytes. The ASCII-only M1 parser ignores raw C1,
-# malformed UTF-8, and the UTF-8 encoding of C1 controls.
-name: raw C1 and malformed UTF-8 input is preserved exactly
+# \xNN input escapes are raw bytes. M3 uses strict incremental UTF-8:
+# malformed leading/continuation sequences become U+FFFD, while the unfinished
+# final sequence remains buffered for a later ingest call.
+name: raw C1 and malformed UTF-8 input uses replacement characters
 size: 5x1
 input: "\x80A\xC3\x28B\xC2\x9B"
 grid:
-  - "A(B  "
-cursor: 3,0
+  - "�A�(B"
+cursor: 4,0
 replies: ""

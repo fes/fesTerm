@@ -1,0 +1,10 @@
+name: character insertion preserves a wide leading and continuation pair
+size: 6x1
+input: "A界BC\x1b[1;2H\x1b[@"
+grid:
+  - "A 界 BC"
+cells:
+  - "2,0|界|default|default|none|double"
+  - "3,0||default|default|none|continuation"
+cursor: 1,0
+replies: ""

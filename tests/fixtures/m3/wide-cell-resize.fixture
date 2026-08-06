@@ -1,0 +1,10 @@
+name: resize clears a cropped wide-cell half conservatively
+size: 5x1
+input: "A界"
+resize: 2x1
+grid:
+  - "A "
+cells:
+  - "1,0| |default|default|none|single"
+cursor: 1,0
+replies: ""

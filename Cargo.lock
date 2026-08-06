@@ -1069,6 +1069,10 @@ dependencies = [
 [[package]]
 name = "festerm-core"
 version = "0.1.0"
+dependencies = [
+ "icu_properties",
+ "unicode-width",
+]
 
 [[package]]
 name = "festerm-test-support"

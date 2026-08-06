@@ -1,0 +1,11 @@
+name: wide-cell insert repair retains the current erase rendition
+size: 5x1
+input: "\x1b[31m界\x1b[1;2H\x1b[@"
+grid:
+  - "     "
+cells:
+  - "0,0| |indexed:1|default|none|single"
+  - "1,0| |indexed:1|default|none|single"
+  - "2,0| |indexed:1|default|none|single"
+cursor: 1,0
+replies: ""

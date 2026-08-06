@@ -1,6 +1,6 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestones 0 through 2 are implemented.
+**Status:** Milestones 0 through 3 are implemented.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -84,6 +84,8 @@ The terminal core supports the screen manipulation needed for an initial full-sc
 
 ## Milestone 3 — Interactive Input Protocols
 
+**Status:** Implemented
+
 ### Outcome
 
 The core can encode the interactive modes required by modern TUIs.
@@ -99,9 +101,14 @@ The core can encode the interactive modes required by modern TUIs.
 
 ### Completion criteria
 
-- Input fixtures verify exact bytes emitted for each supported mode.
+- Input tests verify exact bytes emitted for each supported mode.
 - Coordinates beyond legacy mouse limits are correctly represented with SGR mouse encoding.
 - Common wide and combining-character fixtures maintain cell alignment.
+
+M3 supplies the typed core input boundary, bounded atomic input queue results,
+and focused exact-byte input tests. It also adds repository fixtures for
+wide-cell continuations, combining text, and conservative wide-cell repair on
+editing and resize.
 
 ## Milestone 4 — First Graphical Terminal View
 

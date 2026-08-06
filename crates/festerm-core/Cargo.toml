@@ -10,6 +10,11 @@ description = "GUI-independent terminal state and protocol primitives for fesTer
 [lints]
 workspace = true
 
+[dependencies]
+# Pinned Unicode width and grapheme property data; see standards notes.
+icu_properties = { version = "=2.2.0", default-features = false, features = ["compiled_data"] }
+unicode-width = "=0.1.14"
+
 [[bench]]
 name = "sustained_output"
 harness = false

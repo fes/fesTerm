@@ -1,0 +1,8 @@
+name: interactive DEC modes expose typed input encoder state
+size: 2x1
+input: "\x1b[?1h\x1b=\x1b[?2004h\x1b[?1004h\x1b[?1002h\x1b[?1006h"
+grid:
+  - "  "
+cursor: 0,0
+modes: "application_cursor=true,application_keypad=true,bracketed_paste=true,focus_reporting=true,mouse_tracking=button-motion,sgr_mouse=true"
+replies: ""

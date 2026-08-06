@@ -1,0 +1,8 @@
+name: colon-separated private modes are ignored
+size: 3x1
+input: "\x1b[?7:1lA"
+grid:
+  - "A  "
+cursor: 1,0
+modes: "auto_wrap=true"
+replies: ""

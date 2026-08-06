@@ -163,6 +163,73 @@ cells, clamps cursors and saved cursors, clamps margins (resetting a collapsed
 multi-row region to full screen), adjusts pending wrap to the new right
 margin, and marks every row dirty. M2 deliberately has no scrollback.
 
+## Milestone 3 Implemented Behavior
+
+M3 retains M2's bounded parser and transport queues while adding the input and
+initial Unicode behavior below. Kitty keyboard, OSC/DCS handling, rendering,
+shaping, scrollback, and reflow remain unsupported.
+
+### Typed input and mouse policy
+
+`festerm-core` owns `InputEvent` handling for `Key`, `Paste`, `Focus`, and
+`Mouse` values. `InputEventOutcome` is the UI boundary: it distinguishes
+encoded bytes, `SelectionAllowed`, `SelectionClaimed`, queue overflow, and
+rejection. A UI starts local selection only after `SelectionAllowed`; any
+enabled application mouse tracking mode claims pointer events, including an
+event that its reporting level intentionally does not send.
+
+`MouseEvent.column` and `.row` are zero-based terminal-cell coordinates.
+SGR reports add one to both coordinates (`CSI < Cb ; Cx ; Cy M` or `m`) and
+use unbounded decimal values apart from `usize` overflow. In legacy encoding,
+the zero-based coordinates must fit `0..=222`; a larger coordinate is rejected
+instead of truncating or wrapping. SGR releases use the actual button code and
+final `m`; legacy releases use code 3 and final `M`. Shift, Alt, and Control
+set bits 4, 8, and 16. Wheel up/down set 64/65 and motion sets 32.
+
+DECSET `?9`, `?1000`, `?1002`, and `?1003` select respectively X10,
+button-event, button-motion, and any-motion tracking. Enabling one replaces
+the previous tracking level; resetting only the currently active level
+disables it. `?1006` independently selects SGR rather than legacy encoding.
+`?1` selects application cursor keys, and `ESC =`/`ESC >` select/reset
+application keypad. `?2004` wraps a paste in `CSI 200~` and `CSI 201~`;
+the wrapper and complete payload are one atomic bounded-queue write, so a
+rejected paste cannot leave an unmatched marker. Literal marker-looking bytes
+in the pasted payload are preserved. `?1004` emits `CSI I` and `CSI O` only
+while enabled. Unknown DEC modes remain inert.
+
+### Unicode policy
+
+The core pins [`unicode-width` 0.1.14](https://crates.io/crates/unicode-width/0.1.14),
+whose generated tables declare Unicode **15.1.0**, and
+[`icu_properties` 2.2.0](https://crates.io/crates/icu_properties) with
+compiled data for the `Grapheme_Extend` property. Both versions are explicit:
+updating either Unicode data source requires compatibility review and fixture
+coverage. It uses `UnicodeWidthChar::width`, so East Asian Ambiguous code
+points use the crate's non-CJK one-cell policy. A printable width-one
+character occupies one leading cell; a width-two character occupies a leading
+`Double` cell plus an empty `Continuation` cell. Width-two output at the right
+margin wraps before writing with DECAWM enabled; with DECAWM disabled it is
+conservatively replaced with U+FFFD.
+
+UTF-8 decoding is strict and incremental across `ingest` calls. At most four
+bytes are retained; invalid starts, invalid continuations, overlong forms,
+surrogates, and values above U+10FFFF emit U+FFFD without becoming controls.
+An incomplete final sequence remains pending for the next call. Raw C1 bytes
+are therefore invalid UTF-8 and become U+FFFD, rather than being interpreted
+as C1 controls.
+
+This is intentionally not a claim of full UAX #29 extended-grapheme
+segmentation. Every `Grapheme_Extend` character, including variation
+selectors and Bengali sign nukta (U+09BC), plus U+200D attaches to the most
+recently written leading cell in that buffer; orphan marks are ignored. Other
+zero-width controls do not attach. Simple Unicode-width-table emoji occupy
+their reported two cells, but a multi-code-point ZWJ emoji sequence is
+allocated by code point and may consume more than two cells. Complex-script
+shaping and font fallback belong to the renderer. Every M2 edit, erase,
+scroll, and resize operation repairs invalid leading/continuation
+relationships. A repair clears an orphan or clipped half to a blank cell
+rather than exposing an invalid grid.
+
 ## Session and SSH Implementation Notes
 
 ### Local PTYs

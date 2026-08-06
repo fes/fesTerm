@@ -1,0 +1,16 @@
+# `row_text` shows one scalar per display cell: continuation cells render as
+# spaces there, while `cells` asserts the retained cluster and cell role.
+name: Unicode wide cells and Grapheme Extend marks retain cell alignment
+size: 8x1
+input: "A界é😀b়"
+grid:
+  - "A界 e😀 b "
+cells:
+  - "1,0|界|default|default|none|double"
+  - "2,0||default|default|none|continuation"
+  - "3,0|é|default|default|none|single"
+  - "4,0|😀|default|default|none|double"
+  - "5,0||default|default|none|continuation"
+  - "6,0|b়|default|default|none|single"
+cursor: 7,0
+replies: ""

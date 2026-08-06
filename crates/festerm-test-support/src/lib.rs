@@ -6,7 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use festerm_core::{Attributes, Color, Dimensions, Terminal, TerminalModes};
+use festerm_core::{
+    Attributes, CellWidth, Color, Dimensions, MouseTrackingMode, Terminal, TerminalModes,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fixture {
@@ -26,7 +28,8 @@ pub struct Fixture {
 pub struct CellExpectation {
     column: usize,
     row: usize,
-    character: char,
+    text: String,
+    width: Option<CellWidth>,
     foreground: Color,
     background: Color,
     attributes: Attributes,
@@ -38,6 +41,12 @@ pub struct ModeExpectation {
     origin_mode: bool,
     alternate_screen: bool,
     cursor_visible: bool,
+    application_cursor: bool,
+    application_keypad: bool,
+    bracketed_paste: bool,
+    focus_reporting: bool,
+    mouse_tracking: MouseTrackingMode,
+    sgr_mouse: bool,
 }
 
 pub fn discover_fixtures(directory: &Path) -> Result<Vec<PathBuf>, FixtureError> {
@@ -95,20 +104,23 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
         .iter()
         .filter_map(|expected| {
             let actual = terminal.cell(expected.column, expected.row)?;
-            (actual.character() != expected.character
+            (actual.text() != expected.text
+                || expected.width.is_some_and(|width| actual.width() != width)
                 || actual.foreground() != expected.foreground
                 || actual.background() != expected.background
                 || actual.attributes() != expected.attributes)
                 .then(|| {
                     format!(
-                        "({}, {}): expected {:?}/{:?}/{:?}/{:?}, actual {:?}/{:?}/{:?}/{:?}",
+                        "({}, {}): expected {:?}/{:?}/{:?}/{:?}/{:?}, actual {:?}/{:?}/{:?}/{:?}/{:?}",
                         expected.column,
                         expected.row,
-                        expected.character,
+                        expected.text,
+                        expected.width,
                         expected.foreground,
                         expected.background,
                         expected.attributes,
-                        actual.character(),
+                        actual.text(),
+                        actual.width(),
                         actual.foreground(),
                         actual.background(),
                         actual.attributes()
@@ -357,16 +369,10 @@ fn parse_cell_expectation(
         .next()
         .ok_or_else(|| FixtureError::parse(path, line, "cell assertion is missing coordinates"))?;
     let (column, row) = parse_cursor(path, line, coordinates)?;
-    let character = parts
+    let text = parts
         .next()
-        .ok_or_else(|| FixtureError::parse(path, line, "cell assertion is missing a character"))?;
-    let mut characters = character.chars();
-    let character = characters
-        .next()
-        .filter(|_| characters.next().is_none())
-        .ok_or_else(|| {
-            FixtureError::parse(path, line, "cell character must be exactly one character")
-        })?;
+        .ok_or_else(|| FixtureError::parse(path, line, "cell assertion is missing text"))?
+        .to_owned();
     let foreground = parse_color(
         path,
         line,
@@ -388,6 +394,10 @@ fn parse_cell_expectation(
             FixtureError::parse(path, line, "cell assertion is missing attributes")
         })?,
     )?;
+    let width = parts
+        .next()
+        .map(|width| parse_cell_width(path, line, width))
+        .transpose()?;
     if parts.next().is_some() {
         return Err(FixtureError::parse(
             path,
@@ -398,11 +408,25 @@ fn parse_cell_expectation(
     Ok(CellExpectation {
         column,
         row,
-        character,
+        text,
+        width,
         foreground,
         background,
         attributes,
     })
+}
+
+fn parse_cell_width(path: &Path, line: usize, value: &str) -> Result<CellWidth, FixtureError> {
+    match value.trim() {
+        "single" => Ok(CellWidth::Single),
+        "double" => Ok(CellWidth::Double),
+        "continuation" => Ok(CellWidth::Continuation),
+        _ => Err(FixtureError::parse(
+            path,
+            line,
+            "cell width must be `single`, `double`, or `continuation`",
+        )),
+    }
 }
 
 fn parse_color(path: &Path, line: usize, value: &str) -> Result<Color, FixtureError> {
@@ -477,19 +501,34 @@ fn parse_modes(path: &Path, line: usize, value: &str) -> Result<ModeExpectation,
         origin_mode: false,
         alternate_screen: false,
         cursor_visible: true,
+        application_cursor: false,
+        application_keypad: false,
+        bracketed_paste: false,
+        focus_reporting: false,
+        mouse_tracking: MouseTrackingMode::None,
+        sgr_mouse: false,
     };
     for assignment in parse_quoted(path, line, value)?.split(',') {
         let (name, value) = assignment.split_once('=').ok_or_else(|| {
             FixtureError::parse(path, line, "mode must use `name=true` or `name=false`")
         })?;
-        let value = value.trim().parse::<bool>().map_err(|error| {
-            FixtureError::parse(path, line, format!("invalid mode value `{value}`: {error}"))
-        })?;
         match name.trim() {
-            "auto_wrap" => expected.auto_wrap = value,
-            "origin_mode" => expected.origin_mode = value,
-            "alternate_screen" => expected.alternate_screen = value,
-            "cursor_visible" => expected.cursor_visible = value,
+            "mouse_tracking" => {
+                expected.mouse_tracking = parse_mouse_tracking(path, line, value.trim())?
+            }
+            "auto_wrap" => expected.auto_wrap = parse_mode_bool(path, line, value)?,
+            "origin_mode" => expected.origin_mode = parse_mode_bool(path, line, value)?,
+            "alternate_screen" => expected.alternate_screen = parse_mode_bool(path, line, value)?,
+            "cursor_visible" => expected.cursor_visible = parse_mode_bool(path, line, value)?,
+            "application_cursor" => {
+                expected.application_cursor = parse_mode_bool(path, line, value)?
+            }
+            "application_keypad" => {
+                expected.application_keypad = parse_mode_bool(path, line, value)?
+            }
+            "bracketed_paste" => expected.bracketed_paste = parse_mode_bool(path, line, value)?,
+            "focus_reporting" => expected.focus_reporting = parse_mode_bool(path, line, value)?,
+            "sgr_mouse" => expected.sgr_mouse = parse_mode_bool(path, line, value)?,
             other => {
                 return Err(FixtureError::parse(
                     path,
@@ -500,6 +539,31 @@ fn parse_modes(path: &Path, line: usize, value: &str) -> Result<ModeExpectation,
         }
     }
     Ok(expected)
+}
+
+fn parse_mode_bool(path: &Path, line: usize, value: &str) -> Result<bool, FixtureError> {
+    value.trim().parse::<bool>().map_err(|error| {
+        FixtureError::parse(path, line, format!("invalid mode value `{value}`: {error}"))
+    })
+}
+
+fn parse_mouse_tracking(
+    path: &Path,
+    line: usize,
+    value: &str,
+) -> Result<MouseTrackingMode, FixtureError> {
+    match value {
+        "none" => Ok(MouseTrackingMode::None),
+        "x10" => Ok(MouseTrackingMode::X10),
+        "button-event" => Ok(MouseTrackingMode::ButtonEvent),
+        "button-motion" => Ok(MouseTrackingMode::ButtonMotion),
+        "any-motion" => Ok(MouseTrackingMode::AnyMotion),
+        _ => Err(FixtureError::parse(
+            path,
+            line,
+            "mouse tracking must be `none`, `x10`, `button-event`, `button-motion`, or `any-motion`",
+        )),
+    }
 }
 
 fn parse_dirty_rows(path: &Path, line: usize, value: &str) -> Result<Vec<usize>, FixtureError> {
@@ -576,6 +640,12 @@ impl ModeExpectation {
             && self.origin_mode == modes.origin_mode()
             && self.alternate_screen == modes.alternate_screen()
             && self.cursor_visible == modes.cursor_visible()
+            && self.application_cursor == modes.application_cursor()
+            && self.application_keypad == modes.application_keypad()
+            && self.bracketed_paste == modes.bracketed_paste()
+            && self.focus_reporting == modes.focus_reporting()
+            && self.mouse_tracking == modes.mouse_tracking()
+            && self.sgr_mouse == modes.sgr_mouse()
     }
 }
 
@@ -583,8 +653,17 @@ impl fmt::Display for ModeExpectation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}",
-            self.auto_wrap, self.origin_mode, self.alternate_screen, self.cursor_visible
+            "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}, application_cursor={}, application_keypad={}, bracketed_paste={}, focus_reporting={}, mouse_tracking={:?}, sgr_mouse={}",
+            self.auto_wrap,
+            self.origin_mode,
+            self.alternate_screen,
+            self.cursor_visible,
+            self.application_cursor,
+            self.application_keypad,
+            self.bracketed_paste,
+            self.focus_reporting,
+            self.mouse_tracking,
+            self.sgr_mouse
         )
     }
 }
@@ -605,10 +684,11 @@ fn render_cells(cells: &[CellExpectation]) -> String {
         .iter()
         .map(|cell| {
             format!(
-                "({}, {}): {:?}/{:?}/{:?}/{:?}",
+                "({}, {}): {:?}/{:?}/{:?}/{:?}/{:?}",
                 cell.column,
                 cell.row,
-                cell.character,
+                cell.text,
+                cell.width,
                 cell.foreground,
                 cell.background,
                 cell.attributes
@@ -627,11 +707,17 @@ fn render_items(items: &[String]) -> String {
 
 fn render_modes(modes: TerminalModes) -> String {
     format!(
-        "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}",
+        "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}, application_cursor={}, application_keypad={}, bracketed_paste={}, focus_reporting={}, mouse_tracking={:?}, sgr_mouse={}",
         modes.auto_wrap(),
         modes.origin_mode(),
         modes.alternate_screen(),
-        modes.cursor_visible()
+        modes.cursor_visible(),
+        modes.application_cursor(),
+        modes.application_keypad(),
+        modes.bracketed_paste(),
+        modes.focus_reporting(),
+        modes.mouse_tracking(),
+        modes.sgr_mouse()
     )
 }
 

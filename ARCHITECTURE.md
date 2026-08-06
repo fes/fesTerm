@@ -90,10 +90,13 @@ bytes -> decoder/parser -> TerminalOp -> TerminalState::apply
 
 The implementation may fuse steps where profiling or simplicity justifies it, provided parser and state behavior remain independently testable.
 
-The current M2 implementation provides a bounded ESC/CSI parser, primary and
+The current M3 implementation provides a bounded ESC/CSI parser, primary and
 alternate grid buffers, scrolling regions, basic SGR state, resize without
-reflow, terminal replies, and dirty-row inspection. Scrollback, Unicode cell
-semantics, and interactive input encoders remain later work.
+reflow, terminal replies, typed mode-aware keyboard/paste/focus/mouse input,
+and dirty-row inspection. Cells retain leading text with attached common
+combining code points and a width role with explicit width-two continuation
+cells. Scrollback, renderer shaping, and full grapheme segmentation remain
+later work.
 
 ### `festerm-session`
 
@@ -206,7 +209,8 @@ PTY or SSH read
 ```text
 OS/egui input event
   -> UI command and key mapping
-  -> terminal input encoder consults active modes
+  -> terminal input encoder consults active modes and returns an explicit
+     encoded/selection/overflow outcome
   -> encoded bytes written to active session
 ```
 

@@ -1,9 +1,10 @@
 # Colon parameters are not accepted by non-SGR CSI commands. A malformed
-# over-parameter CSI and unsupported OSC are discarded rather than printed.
+# over-parameter CSI and unsupported OSC are discarded; invalid UTF-8 becomes
+# a visible replacement character rather than a control sequence.
 name: malformed parser sequences recover safely
 size: 6x1
 input: "\x1b[1:2H\x1b[1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1;1m\x1b]ignored\x07\x80ok"
 grid:
-  - "ok    "
-cursor: 2,0
+  - "�ok   "
+cursor: 3,0
 replies: ""

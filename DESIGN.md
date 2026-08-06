@@ -232,19 +232,17 @@ Raw protocol traces can expose passwords, tokens, commands, and private output. 
 ## Current Priorities
 
 The Cargo workspace, initial `festerm-core`, test-support crate, application
-shell, fixture harness, diagnostics scaffold, cross-platform CI, and M2
-ANSI/VT primary-and-alternate-screen core are in place. Current work proceeds
-from that foundation:
+shell, fixture harness, diagnostics scaffold, cross-platform CI, M2 ANSI/VT
+primary-and-alternate-screen core, and M3 interactive-input/initial-Unicode
+core are in place. Current work proceeds from that foundation:
 
-1. Implement keyboard modes, bracketed paste, focus, mouse reporting, and
-   initial Unicode cell behavior.
-2. Integrate the tested core with an `egui` renderer.
-3. Add local PTY sessions.
-4. Complete a full-screen TUI compatibility pass, including a safe
+1. Integrate the tested core with an `egui` renderer.
+2. Add local PTY sessions.
+3. Complete a full-screen TUI compatibility pass, including a safe
    ligature-capable rendering design.
-5. Add native SSH with OpenSSH interoperability and controlled integration
+4. Add native SSH with OpenSSH interoperability and controlled integration
    tests.
-6. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
+5. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
    persistence.
 
 ## Deferred or Open Questions

@@ -1,10 +1,14 @@
 //! GUI-independent ANSI/VT terminal state primitives.
 //!
-//! The parser accepts printable ASCII and C0 controls plus 7-bit ESC/CSI
-//! syntax. Raw C1 bytes are deliberately not controls: treating them as such
-//! would make UTF-8 continuation bytes ambiguous.
+//! The parser accepts C0 controls plus 7-bit ESC/CSI syntax. The terminal
+//! incrementally decodes printable UTF-8 while the parser is in ground state.
+//! Raw C1 bytes are deliberately not controls: treating them as such would
+//! make UTF-8 continuation bytes ambiguous.
 
 use std::fmt;
+
+use icu_properties::{props::GraphemeExtend, CodePointSetData};
+use unicode_width::UnicodeWidthChar;
 
 /// The largest screen that the core will allocate.
 pub const MAX_CELL_COUNT: usize = 4 * 1024 * 1024;
@@ -195,28 +199,64 @@ impl Cursor {
     }
 }
 
+/// The display-cell role occupied by a [`Cell`].
+///
+/// A double-width character owns a leading `Double` cell and the following
+/// `Continuation` cell. Continuations never carry text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CellWidth {
+    Single,
+    Double,
+    Continuation,
+}
+
+impl CellWidth {
+    pub const fn columns(self) -> usize {
+        match self {
+            Self::Single => 1,
+            Self::Double => 2,
+            Self::Continuation => 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Cell {
-    character: char,
+    text: String,
+    width: CellWidth,
     foreground: Color,
     background: Color,
     attributes: Attributes,
 }
 
 impl Cell {
-    pub const fn character(self) -> char {
-        self.character
+    /// Returns the leading character, or a space for a continuation.
+    pub fn character(&self) -> char {
+        self.text.chars().next().unwrap_or(' ')
     }
 
-    pub const fn foreground(self) -> Color {
+    /// Returns the leading character and any attached combining marks.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub const fn width(&self) -> CellWidth {
+        self.width
+    }
+
+    pub const fn is_continuation(&self) -> bool {
+        matches!(self.width, CellWidth::Continuation)
+    }
+
+    pub const fn foreground(&self) -> Color {
         self.foreground
     }
 
-    pub const fn background(self) -> Color {
+    pub const fn background(&self) -> Color {
         self.background
     }
 
-    pub const fn attributes(self) -> Attributes {
+    pub const fn attributes(&self) -> Attributes {
         self.attributes
     }
 }
@@ -255,7 +295,7 @@ impl Screen {
     }
 
     pub fn cell(&self, column: usize, row: usize) -> Option<Cell> {
-        self.cells.get(self.cell_index(column, row)?).copied()
+        self.cells.get(self.cell_index(column, row)?).cloned()
     }
 
     pub fn row_text(&self, row: usize) -> Option<String> {
@@ -265,12 +305,7 @@ impl Screen {
 
         let start = row * self.dimensions.columns();
         let end = start + self.dimensions.columns();
-        Some(
-            self.cells[start..end]
-                .iter()
-                .map(|cell| cell.character)
-                .collect(),
-        )
+        Some(self.cells[start..end].iter().map(Cell::character).collect())
     }
 
     pub fn is_row_dirty(&self, row: usize) -> Option<bool> {
@@ -300,8 +335,9 @@ impl Screen {
             let old_start = row * self.dimensions.columns();
             let new_start = row * dimensions.columns();
             resized.cells[new_start..new_start + preserved_columns]
-                .copy_from_slice(&self.cells[old_start..old_start + preserved_columns]);
+                .clone_from_slice(&self.cells[old_start..old_start + preserved_columns]);
         }
+        resized.repair_wide_cells();
         Ok(resized)
     }
 
@@ -313,15 +349,48 @@ impl Screen {
         self.mark_dirty(row);
     }
 
+    fn replace_cluster(&mut self, column: usize, row: usize, cell: Cell) {
+        let index = self
+            .cell_index(column, row)
+            .expect("terminal cursor must remain within screen dimensions");
+        let cluster_columns = cell.width.columns();
+        debug_assert!(matches!(cluster_columns, 1 | 2));
+        let foreground = cell.foreground;
+        let background = cell.background;
+        let attributes = cell.attributes;
+        self.cells[index] = cell;
+        if cluster_columns == 2 {
+            let continuation = self
+                .cell_index(column + 1, row)
+                .expect("wide terminal character must fit in the screen");
+            self.cells[continuation] = Cell {
+                text: String::new(),
+                width: CellWidth::Continuation,
+                foreground,
+                background,
+                attributes,
+            };
+        }
+        self.mark_dirty(row);
+        let fill = blank_cell();
+        self.repair_neighborhood(row, column, &fill);
+        self.repair_neighborhood(row, column + cluster_columns, &fill);
+    }
+
     fn fill_linear(&mut self, start: usize, end: usize, cell: Cell) {
         if start >= end {
             return;
         }
-        self.cells[start..end].fill(cell);
         let columns = self.dimensions.columns();
-        for row in start / columns..=(end - 1) / columns {
-            self.mark_dirty(row);
-        }
+        let first_row = start / columns;
+        let last_row = (end - 1) / columns;
+        let first_column = start % columns;
+        let last_column = end - last_row * columns;
+        self.cells[start..end].fill(cell.clone());
+        self.mark_dirty_range(first_row, last_row);
+        // A contiguous fill can split a pair only at either range boundary.
+        self.repair_neighborhood(first_row, first_column, &cell);
+        self.repair_neighborhood(last_row, last_column, &cell);
     }
 
     fn clear_all(&mut self, cell: Cell) {
@@ -335,10 +404,12 @@ impl Screen {
         let row_start = row * columns;
         let row_end = row_start + columns;
         let start = row_start + column;
-        self.cells
-            .copy_within(start..row_end - count, start + count);
-        self.cells[start..start + count].fill(cell);
+        self.move_cells(start..row_end - count, start + count);
+        self.cells[start..start + count].fill(cell.clone());
         self.mark_dirty(row);
+        self.repair_neighborhood(row, column, &cell);
+        self.repair_neighborhood(row, column + count, &cell);
+        self.repair_neighborhood(row, columns, &cell);
     }
 
     fn delete_characters(&mut self, column: usize, row: usize, count: usize, cell: Cell) {
@@ -347,17 +418,18 @@ impl Screen {
         let row_start = row * columns;
         let row_end = row_start + columns;
         let start = row_start + column;
-        self.cells.copy_within(start + count..row_end, start);
-        self.cells[row_end - count..row_end].fill(cell);
+        self.move_cells(start + count..row_end, start);
+        self.cells[row_end - count..row_end].fill(cell.clone());
         self.mark_dirty(row);
+        self.repair_neighborhood(row, column, &cell);
+        self.repair_neighborhood(row, columns - count, &cell);
     }
 
     fn insert_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
         let columns = self.dimensions.columns();
         let count = count.min(bottom - row + 1);
         let source_end = (bottom + 1 - count) * columns;
-        self.cells
-            .copy_within(row * columns..source_end, (row + count) * columns);
+        self.move_cells(row * columns..source_end, (row + count) * columns);
         self.cells[row * columns..(row + count) * columns].fill(cell);
         self.mark_dirty_range(row, bottom);
     }
@@ -365,7 +437,7 @@ impl Screen {
     fn delete_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
         let columns = self.dimensions.columns();
         let count = count.min(bottom - row + 1);
-        self.cells.copy_within(
+        self.move_cells(
             (row + count) * columns..(bottom + 1) * columns,
             row * columns,
         );
@@ -379,8 +451,7 @@ impl Screen {
         let region_start = top * columns;
         let region_end = (bottom + 1) * columns;
         let shifted_cells = count * columns;
-        self.cells
-            .copy_within(region_start + shifted_cells..region_end, region_start);
+        self.move_cells(region_start + shifted_cells..region_end, region_start);
         self.cells[region_end - shifted_cells..region_end].fill(cell);
         self.mark_dirty_range(top, bottom);
     }
@@ -391,7 +462,7 @@ impl Screen {
         let region_start = top * columns;
         let region_end = (bottom + 1) * columns;
         let shifted_cells = count * columns;
-        self.cells.copy_within(
+        self.move_cells(
             region_start..region_end - shifted_cells,
             region_start + shifted_cells,
         );
@@ -402,6 +473,19 @@ impl Screen {
     fn cell_index(&self, column: usize, row: usize) -> Option<usize> {
         (column < self.dimensions.columns() && row < self.dimensions.rows())
             .then_some(row * self.dimensions.columns() + column)
+    }
+
+    fn move_cells(&mut self, source: std::ops::Range<usize>, destination: usize) {
+        let length = source.end - source.start;
+        if destination > source.start {
+            for offset in (0..length).rev() {
+                self.cells[destination + offset] = self.cells[source.start + offset].clone();
+            }
+        } else {
+            for offset in 0..length {
+                self.cells[destination + offset] = self.cells[source.start + offset].clone();
+            }
+        }
     }
 
     fn mark_dirty(&mut self, row: usize) {
@@ -415,15 +499,78 @@ impl Screen {
     fn mark_all_dirty(&mut self) {
         self.dirty_rows.fill(true);
     }
+
+    fn repair_wide_cells(&mut self) {
+        for row in 0..self.dimensions.rows() {
+            self.repair_row(row);
+        }
+    }
+
+    fn repair_row(&mut self, row: usize) {
+        let fill = blank_cell();
+        for column in 0..self.dimensions.columns() {
+            self.repair_cell(row, column, &fill);
+        }
+    }
+
+    fn repair_neighborhood(&mut self, row: usize, boundary: usize, fill: &Cell) {
+        let columns = self.dimensions.columns();
+        let first = boundary.saturating_sub(1);
+        let last = boundary.saturating_add(1).min(columns - 1);
+        if first > last {
+            return;
+        }
+        for column in first..=last {
+            self.repair_cell(row, column, fill);
+        }
+    }
+
+    fn repair_cell(&mut self, row: usize, column: usize, fill: &Cell) {
+        let columns = self.dimensions.columns();
+        let index = row * columns + column;
+        let invalid = match self.cells[index].width {
+            CellWidth::Double => {
+                column + 1 == columns || self.cells[index + 1].width != CellWidth::Continuation
+            }
+            CellWidth::Continuation => {
+                column == 0 || self.cells[index - 1].width != CellWidth::Double
+            }
+            CellWidth::Single => false,
+        };
+        if invalid {
+            self.cells[index] = fill.clone();
+        }
+    }
 }
 
-/// Terminal modes implemented by this milestone.
+/// Mouse tracking mode requested by the terminal application.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MouseTrackingMode {
+    #[default]
+    None,
+    /// DECSET `?9`: button presses only.
+    X10,
+    /// DECSET `?1000`: button presses and releases.
+    ButtonEvent,
+    /// DECSET `?1002`: button events and motion while a button is held.
+    ButtonMotion,
+    /// DECSET `?1003`: all pointer motion.
+    AnyMotion,
+}
+
+/// Terminal modes implemented through Milestone 3.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalModes {
     auto_wrap: bool,
     origin_mode: bool,
     alternate_screen: bool,
     cursor_visible: bool,
+    application_cursor: bool,
+    application_keypad: bool,
+    bracketed_paste: bool,
+    focus_reporting: bool,
+    mouse_tracking: MouseTrackingMode,
+    sgr_mouse: bool,
 }
 
 impl TerminalModes {
@@ -442,6 +589,30 @@ impl TerminalModes {
     pub const fn cursor_visible(self) -> bool {
         self.cursor_visible
     }
+
+    pub const fn application_cursor(self) -> bool {
+        self.application_cursor
+    }
+
+    pub const fn application_keypad(self) -> bool {
+        self.application_keypad
+    }
+
+    pub const fn bracketed_paste(self) -> bool {
+        self.bracketed_paste
+    }
+
+    pub const fn focus_reporting(self) -> bool {
+        self.focus_reporting
+    }
+
+    pub const fn mouse_tracking(self) -> MouseTrackingMode {
+        self.mouse_tracking
+    }
+
+    pub const fn sgr_mouse(self) -> bool {
+        self.sgr_mouse
+    }
 }
 
 impl Default for TerminalModes {
@@ -451,8 +622,142 @@ impl Default for TerminalModes {
             origin_mode: false,
             alternate_screen: false,
             cursor_visible: true,
+            application_cursor: false,
+            application_keypad: false,
+            bracketed_paste: false,
+            focus_reporting: false,
+            mouse_tracking: MouseTrackingMode::None,
+            sgr_mouse: false,
         }
     }
+}
+
+/// A named non-text terminal key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Key {
+    Character(char),
+    Enter,
+    Tab,
+    Backspace,
+    Escape,
+    ArrowUp,
+    ArrowDown,
+    ArrowRight,
+    ArrowLeft,
+    Keypad(KeypadKey),
+}
+
+/// A keypad key whose encoding depends on DECKPAM/DECKPNM.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeypadKey {
+    Digit(u8),
+    Decimal,
+    Enter,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Equal,
+    Separator,
+}
+
+/// A focus change reported by `DECSET ?1004`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FocusEvent {
+    In,
+    Out,
+}
+
+/// Mouse buttons recognized by xterm-style mouse reporting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// Mouse-wheel direction recognized by xterm-style mouse reporting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MouseWheel {
+    Up,
+    Down,
+}
+
+/// Pointer activity received at the UI boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MouseEventKind {
+    Press(MouseButton),
+    Release(MouseButton),
+    /// `button` is the held button, if any, while the pointer moved.
+    Move {
+        button: Option<MouseButton>,
+    },
+    Wheel(MouseWheel),
+}
+
+/// Keyboard modifiers encoded in xterm mouse reports.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Modifiers {
+    bits: u8,
+}
+
+impl Modifiers {
+    pub const NONE: Self = Self { bits: 0 };
+    pub const SHIFT: Self = Self { bits: 1 << 0 };
+    pub const ALT: Self = Self { bits: 1 << 1 };
+    pub const CONTROL: Self = Self { bits: 1 << 2 };
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.bits & other.bits == other.bits
+    }
+
+    pub const fn with(self, other: Self) -> Self {
+        Self {
+            bits: self.bits | other.bits,
+        }
+    }
+
+    const fn mouse_bits(self) -> u8 {
+        (if self.contains(Self::SHIFT) { 4 } else { 0 })
+            | (if self.contains(Self::ALT) { 8 } else { 0 })
+            | (if self.contains(Self::CONTROL) { 16 } else { 0 })
+    }
+}
+
+/// A mouse event in zero-based terminal-cell coordinates.
+///
+/// `column` and `row` name the cell under the pointer. SGR reports add one to
+/// both values because its wire format is one based.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MouseEvent {
+    pub kind: MouseEventKind,
+    pub column: usize,
+    pub row: usize,
+    pub modifiers: Modifiers,
+}
+
+/// Typed UI input accepted by the terminal core.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InputEvent {
+    Key(Key),
+    Paste(String),
+    Focus(FocusEvent),
+    Mouse(MouseEvent),
+}
+
+/// Observable result of handling a typed input event.
+///
+/// A UI may start local selection only after `SelectionAllowed`. An enabled
+/// terminal mouse mode claims every mouse event, including one that its
+/// tracking level does not report, so `SelectionClaimed` means no local
+/// selection even though no bytes were queued.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputEventOutcome {
+    Encoded { bytes: usize },
+    SelectionAllowed,
+    SelectionClaimed,
+    QueueOverflow,
+    Rejected,
 }
 
 /// The separator preceding a retained CSI parameter.
@@ -557,6 +862,7 @@ pub enum TerminalOp {
     ReverseIndex,
     SaveDec,
     RestoreDec,
+    SetApplicationKeypad(bool),
     CursorUp(CsiParameters),
     CursorDown(CsiParameters),
     CursorForward(CsiParameters),
@@ -607,7 +913,7 @@ enum ParserState {
     StringEscape { kind: StringKind, bytes: usize },
 }
 
-/// A bounded state-machine parser for M2 ESC and CSI input.
+/// A bounded state-machine parser for ESC and CSI input.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Parser {
     state: ParserState,
@@ -638,6 +944,10 @@ impl Parser {
             intermediates: [0; MAX_CSI_INTERMEDIATES],
             intermediate_length: 0,
         }
+    }
+
+    fn is_ground(&self) -> bool {
+        self.state == ParserState::Ground
     }
 
     /// Advances one byte and returns at most one fully typed operation.
@@ -715,6 +1025,8 @@ impl Parser {
             b'M' => TerminalOp::ReverseIndex,
             b'7' => TerminalOp::SaveDec,
             b'8' => TerminalOp::RestoreDec,
+            b'=' => TerminalOp::SetApplicationKeypad(true),
+            b'>' => TerminalOp::SetApplicationKeypad(false),
             _ => TerminalOp::Ignored,
         }
     }
@@ -828,7 +1140,7 @@ impl Parser {
         self.state = ParserState::Ground;
         self.clear_csi();
 
-        if has_intermediates {
+        if has_intermediates || (parameters.has_colon() && final_byte != b'm') {
             return TerminalOp::Ignored;
         }
         if private {
@@ -846,10 +1158,6 @@ impl Parser {
                 _ => TerminalOp::Ignored,
             };
         }
-        if parameters.has_colon() && final_byte != b'm' {
-            return TerminalOp::Ignored;
-        }
-
         match final_byte {
             b'A' => TerminalOp::CursorUp(parameters),
             b'B' => TerminalOp::CursorDown(parameters),
@@ -912,6 +1220,82 @@ fn c0_operation(byte: u8) -> Option<TerminalOp> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Utf8Advance {
+    Pending,
+    Character(char),
+    Invalid,
+}
+
+/// A deliberately small, strict UTF-8 decoder that retains at most four
+/// bytes across [`Terminal::ingest`] calls.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Utf8Decoder {
+    bytes: [u8; 4],
+    length: usize,
+    expected: usize,
+}
+
+impl Utf8Decoder {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; 4],
+            length: 0,
+            expected: 0,
+        }
+    }
+
+    const fn pending(&self) -> bool {
+        self.expected != 0
+    }
+
+    /// Starts a UTF-8 sequence. `false` means the byte cannot begin one.
+    fn start(&mut self, byte: u8) -> bool {
+        self.expected = match byte {
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => return false,
+        };
+        self.bytes[0] = byte;
+        self.length = 1;
+        true
+    }
+
+    fn advance(&mut self, byte: u8) -> Utf8Advance {
+        debug_assert!(self.pending());
+        let is_second_byte = self.length == 1;
+        let valid_second_byte = match self.bytes[0] {
+            0xe0 => (0xa0..=0xbf).contains(&byte),
+            0xed => (0x80..=0x9f).contains(&byte),
+            0xf0 => (0x90..=0xbf).contains(&byte),
+            0xf4 => (0x80..=0x8f).contains(&byte),
+            _ => (0x80..=0xbf).contains(&byte),
+        };
+        if !(0x80..=0xbf).contains(&byte) || (is_second_byte && !valid_second_byte) {
+            self.reset();
+            return Utf8Advance::Invalid;
+        }
+
+        self.bytes[self.length] = byte;
+        self.length += 1;
+        if self.length < self.expected {
+            return Utf8Advance::Pending;
+        }
+
+        let character = std::str::from_utf8(&self.bytes[..self.expected])
+            .ok()
+            .and_then(|text| text.chars().next());
+        self.reset();
+        character.map_or(Utf8Advance::Invalid, Utf8Advance::Character)
+    }
+
+    fn reset(&mut self) {
+        self.length = 0;
+        self.expected = 0;
+    }
+}
+
 #[derive(Debug)]
 pub struct TerminalError {
     message: String,
@@ -946,6 +1330,7 @@ struct BufferState {
     scroll_top: usize,
     scroll_bottom: usize,
     pending_wrap: bool,
+    combining_anchor: Option<Cursor>,
     dec_saved: Option<SavedDecState>,
     ansi_saved: Option<SavedAnsiCursor>,
 }
@@ -958,6 +1343,7 @@ impl BufferState {
             scroll_top: 0,
             scroll_bottom: dimensions.rows() - 1,
             pending_wrap: false,
+            combining_anchor: None,
             dec_saved: None,
             ansi_saved: None,
         })
@@ -973,6 +1359,9 @@ impl BufferState {
             scroll_top: self.scroll_top.min(dimensions.rows() - 1),
             scroll_bottom: self.scroll_bottom.min(dimensions.rows() - 1),
             pending_wrap: self.pending_wrap,
+            combining_anchor: self
+                .combining_anchor
+                .filter(|anchor| self.combining_anchor_survives_resize(*anchor, dimensions)),
             dec_saved: self.dec_saved,
             ansi_saved: self.ansi_saved,
         };
@@ -985,12 +1374,30 @@ impl BufferState {
         Ok(resized)
     }
 
+    fn combining_anchor_survives_resize(&self, anchor: Cursor, dimensions: Dimensions) -> bool {
+        if anchor.column >= dimensions.columns() || anchor.row >= dimensions.rows() {
+            return false;
+        }
+        match self.screen.cell(anchor.column, anchor.row) {
+            Some(cell) if cell.width() == CellWidth::Single => true,
+            Some(cell) if cell.width() == CellWidth::Double => {
+                anchor.column + 1 < dimensions.columns()
+                    && self
+                        .screen
+                        .cell(anchor.column + 1, anchor.row)
+                        .is_some_and(|next| next.is_continuation())
+            }
+            _ => false,
+        }
+    }
+
     fn reset(&mut self) {
         self.screen.clear_all(blank_cell());
         self.cursor = Cursor { column: 0, row: 0 };
         self.scroll_top = 0;
         self.scroll_bottom = self.screen.dimensions().rows() - 1;
         self.pending_wrap = false;
+        self.combining_anchor = None;
         self.dec_saved = None;
         self.ansi_saved = None;
     }
@@ -1027,10 +1434,11 @@ struct SavedAnsiCursor {
     cursor: Cursor,
 }
 
-/// GUI-independent M2 terminal state. The terminal owns one logical writer.
+/// GUI-independent terminal state. The terminal owns one logical writer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Terminal {
     parser: Parser,
+    utf8: Utf8Decoder,
     primary: BufferState,
     alternate: Option<BufferState>,
     active_screen: ActiveScreen,
@@ -1048,6 +1456,7 @@ impl Terminal {
     pub fn new(dimensions: Dimensions) -> Result<Self, TerminalError> {
         Ok(Self {
             parser: Parser::new(),
+            utf8: Utf8Decoder::new(),
             primary: BufferState::new(dimensions)?,
             alternate: None,
             active_screen: ActiveScreen::Primary,
@@ -1117,10 +1526,36 @@ impl Terminal {
     }
 
     pub fn ingest(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            let operation = self.parser.advance(*byte);
-            self.apply(operation);
+        for &byte in bytes {
+            self.ingest_byte(byte);
         }
+    }
+
+    fn ingest_byte(&mut self, byte: u8) {
+        if self.utf8.pending() {
+            match self.utf8.advance(byte) {
+                Utf8Advance::Pending => return,
+                Utf8Advance::Character(character) => {
+                    self.print(character);
+                    return;
+                }
+                Utf8Advance::Invalid => {
+                    self.print(char::REPLACEMENT_CHARACTER);
+                    self.ingest_byte(byte);
+                    return;
+                }
+            }
+        }
+
+        if self.parser.is_ground() && byte >= 0x80 {
+            if !self.utf8.start(byte) {
+                self.print(char::REPLACEMENT_CHARACTER);
+            }
+            return;
+        }
+
+        let operation = self.parser.advance(byte);
+        self.apply(operation);
     }
 
     /// Resizes grids without reflow, retaining the upper-left intersection.
@@ -1190,7 +1625,81 @@ impl Terminal {
         std::mem::take(&mut self.reply_queue_overflowed)
     }
 
+    /// Encodes one typed UI event according to the active terminal modes.
+    ///
+    /// Paste is always queued as one atomic write. In bracketed-paste mode the
+    /// delimiters and payload therefore either all enter the bounded queue or
+    /// none do; marker-looking bytes inside the payload are preserved exactly.
+    pub fn handle_input(&mut self, event: InputEvent) -> InputEventOutcome {
+        let encoded = match event {
+            InputEvent::Key(key) => encode_key(key, self.modes),
+            InputEvent::Paste(text) => return self.handle_paste(text),
+            InputEvent::Focus(focus) => self.modes.focus_reporting.then(|| match focus {
+                FocusEvent::In => b"\x1b[I".to_vec(),
+                FocusEvent::Out => b"\x1b[O".to_vec(),
+            }),
+            InputEvent::Mouse(event) => return self.handle_mouse(event),
+        };
+
+        let Some(encoded) = encoded else {
+            return InputEventOutcome::Rejected;
+        };
+        self.queue_encoded_input(&encoded)
+    }
+
+    fn handle_paste(&mut self, text: String) -> InputEventOutcome {
+        let Some(length) = paste_encoded_length(&text, self.modes) else {
+            self.input_queue_overflowed = true;
+            return InputEventOutcome::QueueOverflow;
+        };
+        if length > TRANSPORT_QUEUE_HIGH_WATERMARK {
+            self.input_queue_overflowed = true;
+            return InputEventOutcome::QueueOverflow;
+        }
+        let Some(encoded) = encode_paste(text, self.modes) else {
+            self.input_queue_overflowed = true;
+            return InputEventOutcome::QueueOverflow;
+        };
+        self.queue_encoded_input(&encoded)
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent) -> InputEventOutcome {
+        let tracking = self.modes.mouse_tracking;
+        if tracking == MouseTrackingMode::None {
+            return InputEventOutcome::SelectionAllowed;
+        }
+        if !mouse_event_is_reported(event.kind, tracking) {
+            return InputEventOutcome::SelectionClaimed;
+        }
+        let encoded = if self.modes.sgr_mouse {
+            encode_sgr_mouse(event)
+        } else {
+            encode_legacy_mouse(event)
+        };
+        match encoded {
+            Some(encoded) => self.queue_encoded_input(&encoded),
+            None => InputEventOutcome::Rejected,
+        }
+    }
+
+    fn queue_encoded_input(&mut self, encoded: &[u8]) -> InputEventOutcome {
+        let result = self.queue_input(encoded);
+        if result.overflowed() {
+            InputEventOutcome::QueueOverflow
+        } else {
+            InputEventOutcome::Encoded {
+                bytes: result.accepted(),
+            }
+        }
+    }
+
     pub fn apply(&mut self, operation: TerminalOp) {
+        if !matches!(
+            operation,
+            TerminalOp::Print(_) | TerminalOp::SetGraphicsRendition(_) | TerminalOp::Ignored
+        ) {
+            self.clear_combining_anchor();
+        }
         match operation {
             TerminalOp::Print(character) => self.print(character),
             TerminalOp::CarriageReturn => {
@@ -1221,6 +1730,7 @@ impl Terminal {
             }
             TerminalOp::SaveDec => self.save_dec(),
             TerminalOp::RestoreDec => self.restore_dec(),
+            TerminalOp::SetApplicationKeypad(enabled) => self.modes.application_keypad = enabled,
             TerminalOp::CursorUp(parameters) => self.move_vertical(parameters, false),
             TerminalOp::CursorDown(parameters) => self.move_vertical(parameters, true),
             TerminalOp::CursorForward(parameters) => self.move_horizontal(parameters, true),
@@ -1285,7 +1795,8 @@ impl Terminal {
 
     fn erase_cell(&self) -> Cell {
         Cell {
-            character: ' ',
+            text: " ".to_owned(),
+            width: CellWidth::Single,
             foreground: self.current_foreground,
             background: self.current_background,
             attributes: self.current_attributes,
@@ -1293,7 +1804,13 @@ impl Terminal {
     }
 
     fn print(&mut self, character: char) {
-        if !character.is_ascii() || !(' '..='~').contains(&character) {
+        if is_combining_character(character) {
+            self.append_combining(character);
+            return;
+        }
+        let width = UnicodeWidthChar::width(character).unwrap_or(0);
+        if width == 0 {
+            self.clear_combining_anchor();
             return;
         }
         if self.active_buffer().pending_wrap && self.modes.auto_wrap {
@@ -1303,23 +1820,67 @@ impl Terminal {
             self.index();
         }
 
-        let cell = Cell {
-            character,
-            foreground: self.current_foreground,
-            background: self.current_background,
-            attributes: self.current_attributes,
-        };
         let columns = self.dimensions().columns();
         let auto_wrap = self.modes.auto_wrap;
+        let width = width.min(2);
+        if width == 2 && self.cursor().column() + 1 == columns {
+            if auto_wrap {
+                let buffer = self.active_buffer_mut();
+                buffer.cursor.column = 0;
+                buffer.pending_wrap = false;
+                self.index();
+            } else {
+                self.print(char::REPLACEMENT_CHARACTER);
+                return;
+            }
+        }
+
+        let cursor = self.cursor();
+        let foreground = self.current_foreground;
+        let background = self.current_background;
+        let attributes = self.current_attributes;
         let buffer = self.active_buffer_mut();
-        buffer
-            .screen
-            .replace_cell(buffer.cursor.column, buffer.cursor.row, cell);
-        if buffer.cursor.column + 1 == columns {
+        buffer.screen.replace_cluster(
+            cursor.column,
+            cursor.row,
+            Cell {
+                text: character.to_string(),
+                width: if width == 2 {
+                    CellWidth::Double
+                } else {
+                    CellWidth::Single
+                },
+                foreground,
+                background,
+                attributes,
+            },
+        );
+        buffer.combining_anchor = Some(cursor);
+        if cursor.column + width == columns {
             buffer.pending_wrap = auto_wrap;
         } else {
-            buffer.cursor.column += 1;
+            buffer.cursor.column += width;
         }
+    }
+
+    fn append_combining(&mut self, character: char) {
+        let Some(anchor) = self.active_buffer().combining_anchor else {
+            return;
+        };
+        let Some(mut cell) = self.active_buffer().screen.cell(anchor.column, anchor.row) else {
+            return;
+        };
+        if cell.is_continuation() {
+            return;
+        }
+        cell.text.push(character);
+        self.active_buffer_mut()
+            .screen
+            .replace_cell(anchor.column, anchor.row, cell);
+    }
+
+    fn clear_combining_anchor(&mut self) {
+        self.active_buffer_mut().combining_anchor = None;
     }
 
     fn index(&mut self) {
@@ -1801,6 +2362,7 @@ impl Terminal {
                 continue;
             };
             match mode {
+                1 => self.modes.application_cursor = enabled,
                 6 => {
                     self.modes.origin_mode = enabled;
                     self.home_cursor();
@@ -1812,6 +2374,13 @@ impl Terminal {
                     }
                 }
                 25 => self.modes.cursor_visible = enabled,
+                9 => self.set_mouse_tracking(MouseTrackingMode::X10, enabled),
+                1000 => self.set_mouse_tracking(MouseTrackingMode::ButtonEvent, enabled),
+                1002 => self.set_mouse_tracking(MouseTrackingMode::ButtonMotion, enabled),
+                1003 => self.set_mouse_tracking(MouseTrackingMode::AnyMotion, enabled),
+                1004 => self.modes.focus_reporting = enabled,
+                1006 => self.modes.sgr_mouse = enabled,
+                2004 => self.modes.bracketed_paste = enabled,
                 47 => {
                     if enabled {
                         self.enter_alternate(false);
@@ -1847,6 +2416,14 @@ impl Terminal {
         }
     }
 
+    fn set_mouse_tracking(&mut self, requested: MouseTrackingMode, enabled: bool) {
+        if enabled {
+            self.modes.mouse_tracking = requested;
+        } else if self.modes.mouse_tracking == requested {
+            self.modes.mouse_tracking = MouseTrackingMode::None;
+        }
+    }
+
     fn enter_alternate(&mut self, clear: bool) {
         if self.active_screen == ActiveScreen::Alternate {
             return;
@@ -1869,6 +2446,7 @@ impl Terminal {
             alternate.scroll_top = 0;
             alternate.scroll_bottom = rows - 1;
             alternate.pending_wrap = false;
+            alternate.combining_anchor = None;
         }
         self.active_screen = ActiveScreen::Alternate;
         self.modes.alternate_screen = true;
@@ -1919,6 +2497,162 @@ impl Terminal {
     }
 }
 
+fn is_combining_character(character: char) -> bool {
+    character == '\u{200d}' || CodePointSetData::new::<GraphemeExtend>().contains(character)
+}
+
+fn encode_key(key: Key, modes: TerminalModes) -> Option<Vec<u8>> {
+    let bytes = match key {
+        Key::Character(character) => character.to_string().into_bytes(),
+        Key::Enter => b"\r".to_vec(),
+        Key::Tab => b"\t".to_vec(),
+        Key::Backspace => vec![0x7f],
+        Key::Escape => vec![0x1b],
+        Key::ArrowUp => cursor_key_bytes(b'A', modes.application_cursor()),
+        Key::ArrowDown => cursor_key_bytes(b'B', modes.application_cursor()),
+        Key::ArrowRight => cursor_key_bytes(b'C', modes.application_cursor()),
+        Key::ArrowLeft => cursor_key_bytes(b'D', modes.application_cursor()),
+        Key::Keypad(key) => keypad_key_bytes(key, modes.application_keypad())?,
+    };
+    Some(bytes)
+}
+
+fn cursor_key_bytes(final_byte: u8, application: bool) -> Vec<u8> {
+    if application {
+        vec![0x1b, b'O', final_byte]
+    } else {
+        vec![0x1b, b'[', final_byte]
+    }
+}
+
+fn keypad_key_bytes(key: KeypadKey, application: bool) -> Option<Vec<u8>> {
+    let normal = match key {
+        KeypadKey::Digit(digit @ 0..=9) => vec![b'0' + digit],
+        KeypadKey::Digit(_) => return None,
+        KeypadKey::Decimal => b".".to_vec(),
+        KeypadKey::Enter => b"\r".to_vec(),
+        KeypadKey::Add => b"+".to_vec(),
+        KeypadKey::Subtract => b"-".to_vec(),
+        KeypadKey::Multiply => b"*".to_vec(),
+        KeypadKey::Divide => b"/".to_vec(),
+        KeypadKey::Equal => b"=".to_vec(),
+        KeypadKey::Separator => b",".to_vec(),
+    };
+    if !application {
+        return Some(normal);
+    }
+
+    let final_byte = match key {
+        KeypadKey::Digit(0) => b'p',
+        KeypadKey::Digit(1) => b'q',
+        KeypadKey::Digit(2) => b'r',
+        KeypadKey::Digit(3) => b's',
+        KeypadKey::Digit(4) => b't',
+        KeypadKey::Digit(5) => b'u',
+        KeypadKey::Digit(6) => b'v',
+        KeypadKey::Digit(7) => b'w',
+        KeypadKey::Digit(8) => b'x',
+        KeypadKey::Digit(9) => b'y',
+        KeypadKey::Digit(_) => return None,
+        KeypadKey::Decimal => b'n',
+        KeypadKey::Enter => b'M',
+        KeypadKey::Add => b'k',
+        KeypadKey::Subtract => b'm',
+        KeypadKey::Multiply => b'j',
+        KeypadKey::Divide => b'o',
+        KeypadKey::Equal => b'X',
+        KeypadKey::Separator => b'l',
+    };
+    Some(vec![0x1b, b'O', final_byte])
+}
+
+fn encode_paste(text: String, modes: TerminalModes) -> Option<Vec<u8>> {
+    if !modes.bracketed_paste() {
+        return Some(text.into_bytes());
+    }
+
+    const START: &[u8] = b"\x1b[200~";
+    const END: &[u8] = b"\x1b[201~";
+    let capacity = paste_encoded_length(&text, modes)?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity).ok()?;
+    bytes.extend_from_slice(START);
+    bytes.extend_from_slice(text.as_bytes());
+    bytes.extend_from_slice(END);
+    Some(bytes)
+}
+
+fn paste_encoded_length(text: &str, modes: TerminalModes) -> Option<usize> {
+    if modes.bracketed_paste() {
+        text.len()
+            .checked_add(b"\x1b[200~".len())?
+            .checked_add(b"\x1b[201~".len())
+    } else {
+        Some(text.len())
+    }
+}
+
+fn mouse_event_is_reported(kind: MouseEventKind, tracking: MouseTrackingMode) -> bool {
+    match kind {
+        MouseEventKind::Press(_) | MouseEventKind::Wheel(_) => true,
+        MouseEventKind::Release(_) => tracking != MouseTrackingMode::X10,
+        MouseEventKind::Move {
+            button: Some(_), ..
+        } => matches!(
+            tracking,
+            MouseTrackingMode::ButtonMotion | MouseTrackingMode::AnyMotion
+        ),
+        MouseEventKind::Move { button: None, .. } => tracking == MouseTrackingMode::AnyMotion,
+    }
+}
+
+fn mouse_button_code(button: MouseButton) -> u8 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
+fn mouse_code(event: MouseEvent, sgr: bool) -> (u8, u8) {
+    let modifiers = event.modifiers.mouse_bits();
+    match event.kind {
+        MouseEventKind::Press(button) => (mouse_button_code(button) | modifiers, b'M'),
+        MouseEventKind::Release(button) => (
+            (if sgr { mouse_button_code(button) } else { 3 }) | modifiers,
+            if sgr { b'm' } else { b'M' },
+        ),
+        MouseEventKind::Move { button } => {
+            (button.map_or(3, mouse_button_code) | modifiers | 32, b'M')
+        }
+        MouseEventKind::Wheel(MouseWheel::Up) => (64 | modifiers, b'M'),
+        MouseEventKind::Wheel(MouseWheel::Down) => (65 | modifiers, b'M'),
+    }
+}
+
+fn encode_sgr_mouse(event: MouseEvent) -> Option<Vec<u8>> {
+    let column = event.column.checked_add(1)?;
+    let row = event.row.checked_add(1)?;
+    let (code, final_byte) = mouse_code(event, true);
+    Some(format!("\x1b[<{code};{column};{row}{}", final_byte as char).into_bytes())
+}
+
+fn encode_legacy_mouse(event: MouseEvent) -> Option<Vec<u8>> {
+    const MAX_LEGACY_COORDINATE: usize = 222;
+    if event.column > MAX_LEGACY_COORDINATE || event.row > MAX_LEGACY_COORDINATE {
+        return None;
+    }
+    let (code, _) = mouse_code(event, false);
+    Some(vec![
+        0x1b,
+        b'[',
+        b'M',
+        code + 32,
+        event.column as u8 + 33,
+        event.row as u8 + 33,
+    ])
+}
+
 fn queue_transport_bytes(queue: &mut Vec<u8>, bytes: &[u8]) -> QueuePushResult {
     let Some(remaining) = TRANSPORT_QUEUE_HIGH_WATERMARK.checked_sub(queue.len()) else {
         return QueuePushResult {
@@ -1939,9 +2673,10 @@ fn queue_transport_bytes(queue: &mut Vec<u8>, bytes: &[u8]) -> QueuePushResult {
     }
 }
 
-const fn blank_cell() -> Cell {
+fn blank_cell() -> Cell {
     Cell {
-        character: ' ',
+        text: " ".to_owned(),
+        width: CellWidth::Single,
         foreground: Color::Default,
         background: Color::Default,
         attributes: Attributes::NONE,
@@ -1951,8 +2686,10 @@ const fn blank_cell() -> Cell {
 #[cfg(test)]
 mod tests {
     use super::{
-        Attributes, Color, Dimensions, Parser, QueuePushResult, Terminal, TerminalOp,
-        MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
+        Attributes, CellWidth, Color, Dimensions, FocusEvent, InputEvent, InputEventOutcome, Key,
+        KeypadKey, Modifiers, MouseButton, MouseEvent, MouseEventKind, MouseTrackingMode,
+        MouseWheel, Parser, QueuePushResult, Terminal, TerminalOp, MAX_CELL_COUNT,
+        MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
 
     fn terminal(columns: usize, rows: usize) -> Terminal {
@@ -2207,5 +2944,275 @@ mod tests {
         assert!(terminal.take_reply_queue_overflowed());
         assert!(!terminal.take_reply_queue_overflowed());
         assert_eq!(terminal.drain_replies(), reply_fill);
+    }
+
+    #[test]
+    fn encodes_cursor_keypad_paste_and_focus_input_modes_exactly() {
+        let mut terminal = terminal(8, 2);
+
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::ArrowUp)),
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Keypad(KeypadKey::Digit(1)))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(terminal.drain_input(), b"\x1b[A1");
+
+        terminal.ingest(b"\x1b[?1h\x1b=");
+        assert!(terminal.modes().application_cursor());
+        assert!(terminal.modes().application_keypad());
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::ArrowLeft)),
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Keypad(KeypadKey::Decimal))),
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(terminal.drain_input(), b"\x1bOD\x1bOn");
+
+        terminal.ingest(b"\x1b[?1l\x1b>");
+        assert!(!terminal.modes().application_cursor());
+        assert!(!terminal.modes().application_keypad());
+
+        assert_eq!(
+            terminal.handle_input(InputEvent::Focus(FocusEvent::In)),
+            InputEventOutcome::Rejected
+        );
+        terminal.ingest(b"\x1b[?1004h\x1b[?2004h");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Focus(FocusEvent::In)),
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Focus(FocusEvent::Out)),
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Paste("a\x1b[201~b".to_owned())),
+            InputEventOutcome::Encoded { bytes: 20 }
+        );
+        assert_eq!(
+            terminal.drain_input(),
+            b"\x1b[I\x1b[O\x1b[200~a\x1b[201~b\x1b[201~"
+        );
+
+        terminal.ingest(b"\x1b[?1004l\x1b[?2004l");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Focus(FocusEvent::Out)),
+            InputEventOutcome::Rejected
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Paste("plain".to_owned())),
+            InputEventOutcome::Encoded { bytes: 5 }
+        );
+        assert_eq!(terminal.drain_input(), b"plain");
+    }
+
+    #[test]
+    fn mouse_modes_claim_selection_and_encode_sgr_coordinates_beyond_legacy_limits() {
+        let mut terminal = terminal(8, 2);
+        let press = MouseEvent {
+            kind: MouseEventKind::Press(MouseButton::Left),
+            column: 300,
+            row: 400,
+            modifiers: Modifiers::SHIFT.with(Modifiers::CONTROL),
+        };
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(press)),
+            InputEventOutcome::SelectionAllowed
+        );
+
+        terminal.ingest(b"\x1b[?9h");
+        assert_eq!(terminal.modes().mouse_tracking(), MouseTrackingMode::X10);
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Release(MouseButton::Left),
+                ..press
+            })),
+            InputEventOutcome::SelectionClaimed
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(press)),
+            InputEventOutcome::Rejected
+        );
+
+        terminal.ingest(b"\x1b[?1002h\x1b[?1006h");
+        assert_eq!(
+            terminal.modes().mouse_tracking(),
+            MouseTrackingMode::ButtonMotion
+        );
+        assert!(terminal.modes().sgr_mouse());
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(press)),
+            InputEventOutcome::Encoded { bytes: 14 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Release(MouseButton::Left),
+                ..press
+            })),
+            InputEventOutcome::Encoded { bytes: 14 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Move {
+                    button: Some(MouseButton::Right),
+                },
+                ..press
+            })),
+            InputEventOutcome::Encoded { bytes: 14 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Move { button: None },
+                ..press
+            })),
+            InputEventOutcome::SelectionClaimed
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Wheel(MouseWheel::Down),
+                ..press
+            })),
+            InputEventOutcome::Encoded { bytes: 14 }
+        );
+        assert_eq!(
+            terminal.drain_input(),
+            b"\x1b[<20;301;401M\x1b[<20;301;401m\x1b[<54;301;401M\x1b[<85;301;401M"
+        );
+
+        terminal.ingest(b"\x1b[?1003h\x1b[?1002l");
+        assert_eq!(
+            terminal.modes().mouse_tracking(),
+            MouseTrackingMode::AnyMotion
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Move { button: None },
+                ..press
+            })),
+            InputEventOutcome::Encoded { bytes: 14 }
+        );
+        terminal.ingest(b"\x1b[?1003l\x1b[?1000h\x1b[?1006l");
+        assert_eq!(
+            terminal.modes().mouse_tracking(),
+            MouseTrackingMode::ButtonEvent
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Press(MouseButton::Middle),
+                column: 2,
+                row: 3,
+                modifiers: Modifiers::SHIFT,
+            })),
+            InputEventOutcome::Encoded { bytes: 6 }
+        );
+        assert_eq!(terminal.drain_input(), b"\x1b[<55;301;401M\x1b[M%#$");
+    }
+
+    #[test]
+    fn rejects_input_atomically_when_the_bounded_queue_is_full() {
+        let mut terminal = terminal(2, 1);
+        terminal.ingest(b"\x1b[?2004h");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Paste(
+                "x".repeat(TRANSPORT_QUEUE_HIGH_WATERMARK)
+            )),
+            InputEventOutcome::QueueOverflow
+        );
+        assert!(terminal.queued_input().is_empty());
+        assert!(terminal.take_input_queue_overflowed());
+        terminal.queue_input(&vec![b'x'; TRANSPORT_QUEUE_HIGH_WATERMARK]);
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Character('a'))),
+            InputEventOutcome::QueueOverflow
+        );
+        assert_eq!(
+            terminal.queued_input().len(),
+            TRANSPORT_QUEUE_HIGH_WATERMARK
+        );
+    }
+
+    #[test]
+    fn decodes_unicode_incrementally_and_repairs_wide_cells_after_grid_mutations() {
+        let mut unicode_terminal = terminal(8, 1);
+        unicode_terminal.ingest(b"A\xe7");
+        unicode_terminal.ingest(b"\x95\x8ce\xcc");
+        unicode_terminal.ingest(b"\x81\xf0\x9f\x98\x80");
+        assert_eq!(unicode_terminal.row_text(0).as_deref(), Some("A界 e😀   "));
+        assert_eq!(
+            unicode_terminal.cell(1, 0).unwrap().width(),
+            CellWidth::Double
+        );
+        assert!(unicode_terminal.cell(2, 0).unwrap().is_continuation());
+        assert_eq!(unicode_terminal.cell(3, 0).unwrap().text(), "e\u{301}");
+        assert_eq!(
+            unicode_terminal.cell(4, 0).unwrap().width(),
+            CellWidth::Double
+        );
+        assert!(unicode_terminal.cell(5, 0).unwrap().is_continuation());
+        assert_eq!(
+            (
+                unicode_terminal.cursor().column(),
+                unicode_terminal.cursor().row()
+            ),
+            (6, 0)
+        );
+
+        let mut malformed = terminal(5, 1);
+        malformed.ingest(b"\xf0\x28A");
+        assert_eq!(malformed.row_text(0).as_deref(), Some("�(A  "));
+
+        let mut edited = terminal(6, 1);
+        edited.ingest("A界BC".as_bytes());
+        edited.ingest(b"\x1b[1;2H\x1b[@");
+        assert_eq!(edited.row_text(0).as_deref(), Some("A 界 BC"));
+        assert_eq!(edited.cell(2, 0).unwrap().width(), CellWidth::Double);
+        assert!(edited.cell(3, 0).unwrap().is_continuation());
+        edited.ingest(b"\x1b[1;4H\x1b[1P");
+        assert_eq!(edited.row_text(0).as_deref(), Some("A  BC "));
+        assert_eq!(edited.cell(2, 0).unwrap().width(), CellWidth::Single);
+        assert!(!edited.cell(3, 0).unwrap().is_continuation());
+
+        let mut resized = terminal(5, 1);
+        resized.ingest("A界".as_bytes());
+        resized.resize(Dimensions::new(2, 1).unwrap()).unwrap();
+        assert_eq!(resized.row_text(0).as_deref(), Some("A "));
+        assert_eq!(resized.cell(1, 0).unwrap().width(), CellWidth::Single);
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_second_byte_ranges_without_delaying_replacement() {
+        for (leading, invalid_second) in [(0xe0, 0x80), (0xed, 0xa0), (0xf0, 0x80), (0xf4, 0x90)] {
+            let mut terminal = terminal(3, 1);
+            terminal.ingest(&[leading]);
+            assert_eq!(terminal.row_text(0).as_deref(), Some("   "));
+
+            terminal.ingest(&[invalid_second]);
+            assert_eq!(terminal.row_text(0).as_deref(), Some("�� "));
+        }
+
+        let mut terminal = terminal(3, 1);
+        terminal.ingest(&[0xe0, 0xc2]);
+        assert_eq!(terminal.row_text(0).as_deref(), Some("�  "));
+        terminal.ingest(&[0xa2]);
+        assert_eq!(terminal.row_text(0).as_deref(), Some("�¢ "));
+    }
+
+    #[test]
+    fn resize_clears_a_clipped_combining_anchor() {
+        let mut terminal = terminal(3, 1);
+        terminal.ingest("A界\u{09bc}".as_bytes());
+        assert_eq!(terminal.cell(1, 0).unwrap().text(), "界\u{09bc}");
+
+        terminal.resize(Dimensions::new(2, 1).unwrap()).unwrap();
+        terminal.ingest("\u{09bc}".as_bytes());
+
+        assert_eq!(terminal.row_text(0).as_deref(), Some("A "));
+        assert_eq!(terminal.cell(1, 0).unwrap().text(), " ");
+        assert_eq!(terminal.cell(1, 0).unwrap().width(), CellWidth::Single);
     }
 }

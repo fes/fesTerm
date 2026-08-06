@@ -105,17 +105,17 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 | 256 color | Render indexed foreground and background colors | passing | Core fixture; renderer palette test later |
 | True color | Render RGB foreground and background colors | passing | Core fixture; renderer palette test later |
 | Resize | Propagate rows and columns and preserve valid state | passing | Core fixture; PTY integration later |
-| Bracketed paste | Wrap pasted data only while the mode is enabled | planned | Input-encoding test |
-| Focus | Emit focus events only while requested | planned | Input-encoding test |
-| Mouse buttons | Report presses and releases according to active mode | planned | Input-encoding test |
-| Mouse motion | Report motion only for the requested tracking mode | planned | Input-encoding test |
-| Mouse wheel | Report wheel events with modifiers | planned | Input-encoding test |
-| Mouse coordinates | Use SGR coordinates beyond legacy limits | planned | Input-encoding test |
-| Selection | Select locally when mouse reporting does not claim the interaction | planned | GUI integration test |
-| Keyboard modes | Encode cursor and keypad keys according to active modes | planned | Input-encoding test |
+| Bracketed paste | Wrap pasted data only while the mode is enabled | passing | Exact-byte core test |
+| Focus | Emit focus events only while requested | passing | Exact-byte core test |
+| Mouse buttons | Report presses and releases according to active mode | passing | Exact-byte core test |
+| Mouse motion | Report motion only for the requested tracking mode | passing | Exact-byte core test |
+| Mouse wheel | Report wheel events with modifiers | passing | Exact-byte core test |
+| Mouse coordinates | Use SGR coordinates beyond legacy limits | passing | Exact-byte core test |
+| Selection | Select locally when mouse reporting does not claim the interaction | passing | Core input-outcome test; GUI integration later |
+| Keyboard modes | Encode cursor and keypad keys according to active modes | passing | Exact-byte core test |
 | Titles | Apply title changes without affecting terminal state | planned | Core and GUI integration tests |
-| Unicode width | Keep common wide and combining characters aligned | planned | Grid fixtures |
-| Emoji and fallback | Preserve cell layout across fallback fonts | planned | Renderer fixture and visual test |
+| Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
+| Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji cell test; renderer fallback remains later |
 | Ligatures | Shape supported runs without moving cursor or selection boundaries | planned | Renderer mapping and visual tests |
 | High output | Remain interactive under sustained output | planned | Benchmark and integration test |
 | Scrollback | Scroll and select smoothly near configured limits | planned | Benchmark and GUI integration test |
@@ -155,7 +155,7 @@ A terminal-core fixture should be able to describe:
 
 Fixtures should be readable enough to review in code changes. Binary recordings may supplement them, but should not be the only description of expected behavior.
 
-### M2 fixture fields
+### Fixture fields through M3
 
 The repository fixture parser keeps the format deliberately small. `size`,
 `input`, `grid`, `cursor`, and `replies` are required. `input` and `replies`
@@ -165,9 +165,15 @@ flags and input-caused dirty rows.
 
 Optional `cells` assertions make colors and attributes reviewable without
 repeating every blank cell. Each quoted entry has the form
-`column,row|character|foreground|background|attributes`; colors are
+`column,row|text|foreground|background|attributes[|width]`; `text` may retain
+combining marks and `width` is optionally `single`, `double`, or
+`continuation`. Colors are
 `default`, `indexed:n`, or `rgb:r,g,b`, and attributes are `none` or a
-comma-separated list. M2 has no scrollback, so fixtures do not claim one.
+comma-separated list. `grid` retains one scalar per display cell, representing
+continuations as spaces. Typed input events remain focused Rust tests because
+constructing keys and pointer events in the small text fixture format would be
+less reviewable; those tests assert queue bytes and explicit input outcomes.
+There is still no scrollback, so fixtures do not claim one.
 
 ## Renderer Compatibility Tests
 
