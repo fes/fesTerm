@@ -5,28 +5,39 @@ native SSH client, written in Rust.
 
 ## Status
 
-Foundation work is in place: the repository is a Cargo workspace with a
-GUI-independent terminal-core crate, a separate `festerm-ui-egui` presentation
-crate, repository-owned golden fixtures, diagnostics, and cross-platform CI.
-The application is now a graphical terminal-cell demo. It deliberately shows a
-recorded no-session stream rather than a shell; PTY integration and SSH are not
-yet implemented.
-
-Milestones 1 through 4 are complete: the GUI-independent terminal core has
+Milestones 1 through 5 are complete. The GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
 fixtures, dirty-state inspection, and bounded transport queues. The egui view
 uses a borrowed cell-space contract plus a dirty-row cache; it renders colors,
 basic attributes, cursor, wide-cell geometry, local selection/copy, and
-mode-aware input routing. Its small debug status reports frame time, requested
-dimensions, dirty rows, content-free no-session input metadata, and
-input-to-paint-submission time (not presentation timing).
-Ligature shaping, PTYs, sessions, SSH, tabs, and scrollback remain upcoming
-work.
+mode-aware input routing.
+
+M5 adds runtime-independent `festerm-session` lifecycle and bounded transport
+types plus a `festerm-pty` local backend. The backend uses `portable-pty` 0.9
+for Unix PTYs and Windows ConPTY, performs safe default-shell discovery, and
+uses bounded command/event queues and worker threads. Each queued session event
+wakes egui through its supported repaint request, so idle UI frames promptly
+drain PTY output without polling. The app starts one default local shell, makes
+the app the sole terminal-core writer, and preserves backpressured core
+input/replies in an ordered, bounded pending buffer. Unix shutdown signals the
+PTY session process group; Windows assigns the child to a kill-on-close Job
+Object. It displays lifecycle, queue-pressure, byte-count, error, and resize
+diagnostics. If shell startup fails, it shows a visible no-session error rather
+than a fake shell.
+
+There are deliberately no tabs, persisted/config-file profiles, SSH sessions,
+scrollback, terminfo distribution, or ligature shaping yet. `TERM` is
+provisionally set to `xterm-256color`; M6 must refine the advertised
+compatibility and reference-application behavior.
 
 ## Documentation
 
+- [Agent guide](AGENTS.md) — compact project map, invariants, and validation
+  commands for coding agents and contributors.
+- [Development handoff](docs/development-handoff.md) — bootstrap, current
+  runtime behavior, diagnostics, manual checks, and resuming work.
 - [Project design](DESIGN.md) — product direction, principles, experience,
   priorities, and open questions.
 - [System architecture](ARCHITECTURE.md) — proposed crates, dependency
@@ -45,6 +56,8 @@ work.
   the selected middle-ground product posture.
 - [Architecture decision records](docs/adr/) — accepted decisions and their
   rationale.
+- [Golden fixture format](tests/fixtures/README.md) — terminal-core fixture
+  grammar and regression guidance.
 - [Original project outline](OUTLINE.md) — early framing retained for
   historical context.
 

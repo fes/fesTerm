@@ -104,7 +104,7 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 | Attributes | Apply and reset style and color attributes | passing | Core fixture; M4 renderer attribute mapping |
 | 256 color | Render indexed foreground and background colors | passing | Core fixture; M4 renderer palette mapping |
 | True color | Render RGB foreground and background colors | passing | Core fixture; M4 renderer RGB mapping |
-| Resize | Propagate rows and columns and preserve valid state | passing | Core fixture; PTY integration later |
+| Resize | Propagate rows and columns and preserve valid state | passing | Core fixture; M5 controlled PTY resize integration |
 | Bracketed paste | Wrap pasted data only while the mode is enabled | passing | Exact-byte core test |
 | Focus | Emit focus events only while requested | passing | Exact-byte core test |
 | Mouse buttons | Report presses and releases according to active mode | passing | Exact-byte core test |
@@ -120,7 +120,7 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 | High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
 | Scrollback | Scroll and select smoothly near configured limits | planned | Benchmark and GUI integration test |
 | Dirty rendering | Redraw changed content without mandatory full-grid copying | passing | M4 `TerminalSnapshot` and dirty-row cache tests |
-| Local PTY | Run, resize, and exit a full-screen local application | planned | Cross-platform PTY integration test |
+| Local PTY | Run, resize, exit, and shut down a local application | passing | M5 Unix PTY and Windows ConPTY integration tests; CI runs the Windows test |
 | SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | planned | Controlled OpenSSH integration test |
 | OpenSSH config | Map supported host directives into an internal profile | planned | Configuration fixtures |
 
@@ -192,7 +192,13 @@ one-cell egui layouts, so this is deliberately not ligature shaping.
 
 ## PTY and SSH Compatibility Tests
 
-Local PTY integration tests should verify process launch, terminal-size propagation, byte flow, exit, cancellation, and cleanup on each platform.
+M5's repository-owned Unix integration test starts `/bin/sh` with a controlled
+argument vector, receives output, sends input, observes `stty size` after a
+resize, observes exit, completes bounded shutdown, and verifies that a shell
+descendant is gone. The Windows-gated ConPTY integration test uses `%COMSPEC%`
+to cover spawn, output, input, resize, exit, and shutdown in Windows CI.
+Local reference applications remain an interactive M5 exercise; their
+compatibility defects belong in M6 fixtures.
 
 SSH tests should use:
 
@@ -205,7 +211,8 @@ The test environment must own its configuration and credentials and must not con
 ## Compatibility Decisions Still Needed
 
 - Exact xterm feature or version references used for ambiguous behavior.
-- Terminal identity and `TERM` value exposed by local and SSH sessions.
+- Final terminal identity and `TERM` value exposed by local and SSH sessions
+  (`xterm-256color` is the provisional M5 local value).
 - Terminfo distribution or installation strategy.
 - Unicode width table source and update policy.
 - Grapheme and complex-script policy.

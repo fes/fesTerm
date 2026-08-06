@@ -1,0 +1,70 @@
+# fesTerm Agent Guide
+
+## Start Here
+
+Read `README.md`, then use the document that matches the task:
+
+| Task | Primary reference |
+| --- | --- |
+| Product scope and priorities | `DESIGN.md`, `ROADMAP.md` |
+| Dependency and ownership boundaries | `ARCHITECTURE.md` |
+| Required behavior | `REQUIREMENTS.md`, `COMPATIBILITY.md` |
+| Standards and security decisions | `docs/standards-and-implementation-notes.md`, `docs/adr/` |
+| Golden fixtures | `tests/fixtures/README.md` |
+| Bootstrap and manual checks | `docs/development-handoff.md` |
+
+## Current Structure
+
+- `crates/festerm-core`: GUI-, PTY-, and SSH-independent terminal state,
+  parser, input encoding, and bounded queues.
+- `crates/festerm-test-support`: repository-owned golden-fixture parser and
+  assertions.
+- `crates/festerm-ui-egui`: terminal presentation, input routing, selection,
+  clipboard routing, and view diagnostics.
+- `crates/festerm-session`: runtime-independent session lifecycle and bounded
+  transport contract.
+- `crates/festerm-pty`: local shell backend using `portable-pty`.
+- `crates/festerm-windows-job`: cfg-gated safe wrapper around the Windows Job
+  Object required for whole-ConPTY-tree shutdown.
+- `app/festerm`: composition root; the only owner that mutates a terminal from
+  session output.
+
+## Architectural Invariants
+
+1. Terminal protocol semantics belong in `festerm-core`, never GUI widgets.
+2. Session backends exchange bytes and lifecycle events; they never mutate a
+   `Terminal`.
+3. The app has one logical writer for each terminal.
+4. Session and core queues remain bounded, ordered, and observable. PTY event
+   availability wakes the UI through the session notifier; do not add polling.
+5. Secrets never enter ordinary configuration, workspaces, fixtures, logs, or
+   synchronized metadata.
+6. A compatibility fix requires a deterministic regression fixture where
+   practical.
+
+## Validation
+
+Run from the repository root:
+
+```sh
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace
+git diff --check
+```
+
+Use the smallest relevant test while iterating, then run the workspace
+commands before release. The CI workflow runs the quality checks on Windows,
+macOS, and Linux.
+
+## Working Conventions
+
+- Keep the active milestone status accurate in `ROADMAP.md` and the concise
+  status in `README.md`.
+- Do not duplicate long design documents in new summaries; link to the source
+  of truth instead.
+- Treat terminal output and protocol input as untrusted. Preserve parser,
+  allocation, and queue bounds.
+- Do not add scripting, plugins, persistent history, cloud synchronization,
+  tabs, or SSH functionality ahead of their documented milestones.

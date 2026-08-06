@@ -451,8 +451,7 @@ pub struct InputSinkDiagnostics {
     pub last_queue_depth: usize,
 }
 
-/// Application-owned destination for bytes encoded by the core before M5
-/// installs real session I/O.
+/// Application-owned destination for bytes encoded by the core.
 pub trait EncodedInputSink {
     /// Delivers transient encoded bytes. Implementations must not retain them
     /// unless they are an active session transport.
@@ -460,6 +459,13 @@ pub trait EncodedInputSink {
 
     /// Observes content-free routing metadata after every routed core event.
     fn observe_input_route(&mut self, _route: InputRoute) {}
+
+    /// Receives a resize after the application-owned terminal core accepts it.
+    ///
+    /// The UI does not know about PTYs or sessions. An application can forward
+    /// this cell-space size to its active backend without giving the backend
+    /// access to the terminal core.
+    fn record_terminal_resize(&mut self, _dimensions: Dimensions) {}
 
     /// Returns sink-owned, content-free diagnostics when available.
     fn input_diagnostics(&self) -> Option<InputSinkDiagnostics> {
@@ -739,17 +745,33 @@ impl TerminalView {
         &self.selection
     }
 
-    /// Shows the terminal and its small no-session diagnostic status area.
+    /// Shows the terminal with the compatibility no-session status text.
     pub fn show(
         &mut self,
         context: &egui::Context,
         terminal: &mut Terminal,
         sink: &mut impl EncodedInputSink,
     ) {
+        self.show_with_status(
+            context,
+            terminal,
+            sink,
+            "No session attached: encoded input is not sent or retained.",
+        );
+    }
+
+    /// Shows the terminal and an application-provided session status line.
+    pub fn show_with_status(
+        &mut self,
+        context: &egui::Context,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+        session_status: &str,
+    ) {
         egui::CentralPanel::default().show(context, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("fesTerm");
-                ui.small("No-session terminal renderer demo");
+                ui.small(session_status);
             });
             ui.separator();
             self.show_in_ui(ui, terminal, sink);
@@ -782,7 +804,12 @@ impl TerminalView {
         );
         self.diagnostics.calculated_dimensions = calculated;
         if let Some(dimensions) = calculated {
-            let _ = self.resize.apply(terminal, dimensions);
+            if matches!(
+                self.resize.apply(terminal, dimensions),
+                ResizeOutcome::Resized(_)
+            ) {
+                sink.record_terminal_resize(dimensions);
+            }
         }
 
         let dimensions = terminal.dimensions();
@@ -867,8 +894,7 @@ impl TerminalView {
             },
         );
         ui.small(format!(
-            "No session attached: encoded input is not sent or retained; metadata only. \
-             frame {frame}; size {dimensions}; dirty rows {}; input {:?}; queue {}; \
+            "frame {frame}; size {dimensions}; dirty rows {}; input {:?}; queue {}; \
              input→paint submission {input_to_paint_submission} (not presentation); {sink}",
             self.diagnostics.dirty_rows,
             self.diagnostics.last_input_outcome,

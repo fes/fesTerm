@@ -275,6 +275,23 @@ does not claim local history scrolling.
 - Session I/O owns transport/process lifecycles only. It produces bytes and
   resize/lifecycle events; it does not mutate the terminal core.
 
+M5 implements this boundary with `portable-pty` 0.9. Its native selector uses
+Unix PTYs on Unix and ConPTY on Windows, including the crate's size propagation
+to `TIOCSWINSZ`/ConPTY resize. `festerm-pty` accepts direct executable/argument
+profiles, not shell command strings. It uses a 64-command input/resize/shutdown
+queue and a 128-event output queue; reader pressure pauses further PTY reads
+instead of retaining unbounded output. Each enqueued event calls an
+application-owned notifier; the egui app supplies `Context::request_repaint`,
+which is safe from the reader thread and avoids idle polling. Core input and
+replies that meet session-queue backpressure remain ordered in a bounded 4 MiB
+application pending buffer; an exhausted buffer or permanent rejection is
+application-visible. Lifecycle, queue pressure, byte counts, resize results,
+errors, and exit state are application-visible. Shutdown wakes the workers and
+terminates the owned process tree: the Unix PTY session process group receives
+`SIGTERM`, while Windows uses a kill-on-close Job Object. It waits only for a
+caller-supplied finite interval; a timeout is reported rather than silently
+ignored.
+
 ### Native SSH
 
 - Use an established Rust SSH library and maintain an explicit state machine:

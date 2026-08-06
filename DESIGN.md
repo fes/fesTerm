@@ -237,15 +237,16 @@ The Cargo workspace, GUI-independent `festerm-core`, test-support crate,
 harness, diagnostics scaffold, cross-platform CI, M2 ANSI/VT
 primary-and-alternate-screen core, and M3 interactive-input/initial-Unicode
 core are in place. M4 renders a controlled no-session stream; it does not
-pretend to provide a shell or session. Current work proceeds from that
-foundation:
+pretend to provide a shell or session. M5 now adds a bounded local-session
+boundary and one default local shell; its backend produces bytes/events while
+the application remains the only terminal-core writer. Current work proceeds
+from that foundation:
 
-1. Add local PTY sessions.
-2. Complete a full-screen TUI compatibility pass, including a safe
+1. Complete a full-screen TUI compatibility pass, including a safe
    ligature-capable rendering design.
-3. Add native SSH with OpenSSH interoperability and controlled integration
+2. Add native SSH with OpenSSH interoperability and controlled integration
    tests.
-4. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
+3. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
    persistence.
 
 ## Deferred or Open Questions
@@ -253,7 +254,7 @@ foundation:
 - Exact workspace and crate names after the first implementation spike.
 - Future parser extensions and supporting crates, if they become necessary.
 - Scrollback data structures.
-- PTY and SSH crate selection.
+- SSH crate selection.
 - Async runtime, cancellation, and bounded-channel choices.
 - Unicode width table source and update policy.
 - Grapheme, complex-script, and font-fallback scope.

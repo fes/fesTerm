@@ -4,9 +4,10 @@
 
 This document defines the proposed subsystem boundaries, dependency direction,
 runtime data flow, and Rust workspace structure for fesTerm. The repository
-contains `festerm-core`, `festerm-test-support`, the `festerm-ui-egui`
-presentation crate, and the application composition shell; session,
-configuration, and remote-backend crates remain target architecture.
+contains `festerm-core`, `festerm-session`, `festerm-pty`,
+`festerm-test-support`, the `festerm-ui-egui` presentation crate, and the
+application composition shell. Configuration and remote-backend crates remain
+target architecture.
 
 ## Architectural Goals
 
@@ -27,13 +28,11 @@ Dependencies should point inward toward stable domain logic:
 ```text
 festerm-app
   |-- festerm-ui-egui
+  |-- festerm-pty -----> festerm-session
   |-- festerm-config
-  |-- festerm-session
-        |-- festerm-pty
-        |-- festerm-ssh
+  |-- festerm-ssh -----> festerm-session
 
 festerm-ui-egui ------> festerm-core
-festerm-session ------> festerm-core (shared terminal/session types only)
 festerm-pty ----------> festerm-session
 festerm-ssh ----------> festerm-session
 festerm-test-support -> festerm-core and session implementations
@@ -53,8 +52,8 @@ change, but the responsibilities should remain distinct.
   Cargo.toml
   crates/
     festerm-core/
-    festerm-session/
-    festerm-pty/
+    festerm-session/       # implemented M5 common lifecycle boundary
+    festerm-pty/           # implemented M5 local PTY/ConPTY backend
     festerm-ssh/
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
@@ -112,6 +111,11 @@ The terminal core should not own session I/O. The application coordinates bytes 
 
 A session trait should describe behavior rather than expose a specific async runtime. The concrete concurrency model can be selected after experiments, but cancellation and clean shutdown must be explicit.
 
+M5's `Session` trait is synchronous and runtime-independent: it provides
+nonblocking input, resize, shutdown, and event polling plus a caller-bounded
+shutdown wait. Its events carry bytes, lifecycle, resize, backpressure, and
+content-free errors; it has no terminal-core dependency.
+
 ### `festerm-pty`
 
 Implements local process sessions:
@@ -122,6 +126,15 @@ Implements local process sessions:
 - Process exit and resize handling.
 
 Platform-specific code should remain isolated behind the session abstraction.
+
+M5 uses `portable-pty` 0.9's `native_pty_system`, which selects its Unix PTY
+implementation on Unix and ConPTY on Windows. The backend owns process and
+stream workers, not terminal state. It has bounded command and application
+event queues, pauses reads under event pressure, reports metrics/events, and
+uses an event notifier to wake the application after enqueuing output. The app
+preserves session-backpressured input/replies in one ordered bounded buffer.
+Shutdown owns whole trees: Unix uses the PTY session process group and Windows
+uses a kill-on-close Job Object.
 
 ### `festerm-ssh`
 
@@ -172,8 +185,10 @@ two-column paint span.
 
 The UI routes egui keyboard, text, paste, focus, pointer, wheel, selection,
 and clipboard events through M3 `InputEvent` values. It drains the core's
-encoded queue to an application-provided sink. Before M5 that sink is a
-visible content-free no-session diagnostic sink, not session I/O.
+encoded queue to an application-provided sink and reports an accepted core
+resize to that same application boundary. M5's app sink forwards those bytes and dimensions to the local session; its
+bounded pending buffer retains writes rejected by temporary session
+backpressure. The UI itself remains PTY-free.
 
 The boundary should be practical rather than doctrinaire. The core may expose cell widths, underline styles, cursor shape, dirty rows, and other rendering-relevant terminal semantics. It should not own fonts, pixel coordinates, glyph caches, or GUI widgets.
 
@@ -212,7 +227,7 @@ Business and protocol behavior should be moved out of this crate when it becomes
 ```text
 PTY or SSH read
   -> bounded application channel
-  -> terminal owner ingests bytes
+  -> application terminal owner ingests bytes
   -> parser and state mutation
   -> replies queued to session
   -> dirty rows/change summary published to UI
@@ -235,7 +250,7 @@ OS/egui input event
 window/pane size changes
   -> renderer computes rows and columns
   -> terminal core resizes logical state
-  -> session backend receives PTY size change
+  -> application forwards accepted dimensions to session backend
   -> affected rows are redrawn
 ```
 
@@ -251,7 +266,12 @@ TOML file change
 
 ## Concurrency Model
 
-The terminal state for a session should have one logical owner. Session I/O may be asynchronous, but multiple threads should not mutate one terminal state concurrently.
+The terminal state for a session should have one logical owner. Session I/O may
+use worker threads, but multiple threads must not mutate one terminal state
+concurrently. M5 makes the app that owner: its frame pump drains backend
+events, ingests output, forwards replies, and sends UI-produced input.
+Session event enqueueing uses an application-provided notifier; the egui
+composition root maps it to `Context::request_repaint` rather than polling.
 
 The design should prefer message passing or bounded queues over broad shared locking. Bounded flow control is necessary so sustained output cannot create unbounded memory growth. Rendering should consume snapshots or change summaries without blocking session reads longer than necessary.
 
@@ -274,9 +294,10 @@ The renderer needs access to a stable cell-space view containing at least:
 renderer may redraw more than the theoretical minimum, but this interface
 avoids forcing full-grid copies for every frame. Its diagnostics report frame
 duration, requested dimensions, rows refreshed, core input outcome/queue
-depth, content-free no-session input counters, and input-to-paint-submission
-time without recording terminal content. Paint-submission timing ends after
-the grid's shapes are submitted to egui; it is not presentation timing.
+depth, content-free active-session input counters, session lifecycle/pressure
+metrics, and input-to-paint-submission time without recording terminal
+content. Paint-submission timing ends after the grid's shapes are submitted to
+egui; it is not presentation timing.
 
 ## SSH Interoperability and Testing
 
@@ -338,7 +359,6 @@ Performance benchmarks should initially report trends rather than block every co
 - Unicode width and grapheme segmentation sources.
 - Resize reflow semantics.
 - Concrete rendering cache and shaping architecture.
-- PTY crate selection.
 - SSH crate selection and cryptographic backend policy.
 - Host-key verification and authentication UX.
 - Configuration migration policy before a stable release.

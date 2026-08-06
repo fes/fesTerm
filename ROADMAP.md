@@ -1,6 +1,6 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestones 0 through 4 are implemented.
+**Status:** Milestones 0 through 5 are implemented.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -131,10 +131,9 @@ The `egui` application renders the tested terminal core and accepts input withou
 The implementation lives in `festerm-ui-egui`. It consumes borrowed
 `TerminalSnapshot` views, refreshes a row cache from core dirty rows, and uses
 the core's typed input boundary for keyboard, paste, focus, mouse, and wheel
-events. `festerm` is now the composition shell: until M5 it records
-content-free input metadata in an observable no-session demo sink rather than
-presenting a shell.
-The demo stream explicitly says that no session is attached.
+events. Before M5, `festerm` recorded content-free input metadata in an observable
+no-session demo sink rather than presenting a shell. M5 replaces that demo
+sink with the local-session pump described below.
 
 The initial renderer uses egui's available monospace font and cached
 single-cell layouts. It preserves width-two and continuation geometry and
@@ -157,6 +156,8 @@ responsive.
 
 ## Milestone 5 — Local PTY Sessions
 
+**Status:** Implemented
+
 ### Outcome
 
 Users can run a native local shell in a fesTerm tab.
@@ -170,12 +171,53 @@ Users can run a native local shell in a fesTerm tab.
 - PTY resize, process exit, shutdown, and error handling.
 - Bounded flow control between session I/O and terminal mutation.
 
+### Implementation
+
+`festerm-session` supplies runtime-independent session IDs, cell/pixel sizes,
+lifecycle and exit/error events, bounded transport error types, metrics, and
+the synchronous `Session` contract. `festerm-pty` implements that contract
+with `portable-pty` 0.9: `native_pty_system` selects Unix PTYs on Unix and
+ConPTY on Windows.
+
+The app owns the only mutable `Terminal`. It drains bounded backend events,
+ingests only `Output` bytes into the core, forwards core input and replies to
+the session, and forwards accepted UI resize dimensions to the PTY. Input,
+resize, and shutdown commands use a bounded queue; output pauses when the
+bounded event queue is full and reports queue pressure. Every successfully
+queued backend event invokes an application-provided notifier; the egui app
+uses its thread-safe repaint request, so an idle window wakes to drain output
+without busy polling. Core-drained input and replies enter one ordered,
+4 MiB bounded pending-write buffer before session forwarding; a full session
+queue is retried in order, while a pending-buffer or permanent transport
+failure is visible in the status/error diagnostics.
+
+Shutdown first wakes the workers and terminates the owned process tree, then
+waits only for a finite caller timeout; a failure is surfaced rather than
+hidden. On Unix, `portable-pty` creates the session and `festerm-pty` sends
+`SIGTERM` to its captured PTY process group. On Windows, the spawned ConPTY
+process is assigned to a kill-on-close Job Object and shutdown terminates that
+job. `Drop` requests that same wake-up but does not block.
+
+Unix shell selection accepts `$SHELL` only when it is an absolute existing
+file, then falls back to `/bin/sh`. Windows selection accepts an absolute,
+existing `%COMSPEC%`, then an existing `%SystemRoot%` PowerShell path. Commands
+and arguments are always passed directly, never interpolated into a shell.
+M5 currently launches one in-memory default local profile; tabs, persisted
+profiles, and TOML configuration remain M8.
+
 ### Completion criteria
 
 - A local shell runs on Windows, macOS, and Linux.
 - Resize reaches the child process and full-screen applications receive the new dimensions.
 - Session shutdown does not leak processes or hang the application.
 - Basic reference applications can be exercised locally.
+
+The workspace includes deterministic notifier and command-backpressure tests,
+plus a Unix controlled PTY integration test that observes startup output,
+input, resize through `stty size`, exit, bounded shutdown, and termination of
+a shell descendant. A Windows-gated ConPTY integration test covers spawn,
+output, input, resize, exit, and shutdown; it runs in the existing Windows CI
+matrix.
 
 ## Milestone 6 — Full-Screen TUI Compatibility Pass
 

@@ -1,0 +1,21 @@
+[package]
+name = "festerm-pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Local PTY and Windows ConPTY session backend for fesTerm."
+
+[dependencies]
+festerm-session = { path = "../festerm-session" }
+portable-pty = "0.9.0"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.28", default-features = false, features = ["process", "signal"] }
+
+[target.'cfg(windows)'.dependencies]
+festerm-windows-job = { path = "../festerm-windows-job" }
+
+[lints]
+workspace = true
