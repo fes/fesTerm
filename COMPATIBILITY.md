@@ -101,9 +101,9 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 | Scrolling | Respect margins and scroll only the active region | passing | Core fixture |
 | Wrapping | Handle right-margin wrap and pending-wrap semantics | passing | Core fixture |
 | Erasure | Erase line and display ranges without corrupting unaffected cells | passing | Core fixture |
-| Attributes | Apply and reset style and color attributes | passing | Core fixture; visual smoke test later |
-| 256 color | Render indexed foreground and background colors | passing | Core fixture; renderer palette test later |
-| True color | Render RGB foreground and background colors | passing | Core fixture; renderer palette test later |
+| Attributes | Apply and reset style and color attributes | passing | Core fixture; M4 renderer attribute mapping |
+| 256 color | Render indexed foreground and background colors | passing | Core fixture; M4 renderer palette mapping |
+| True color | Render RGB foreground and background colors | passing | Core fixture; M4 renderer RGB mapping |
 | Resize | Propagate rows and columns and preserve valid state | passing | Core fixture; PTY integration later |
 | Bracketed paste | Wrap pasted data only while the mode is enabled | passing | Exact-byte core test |
 | Focus | Emit focus events only while requested | passing | Exact-byte core test |
@@ -111,15 +111,15 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 | Mouse motion | Report motion only for the requested tracking mode | passing | Exact-byte core test |
 | Mouse wheel | Report wheel events with modifiers | passing | Exact-byte core test |
 | Mouse coordinates | Use SGR coordinates beyond legacy limits | passing | Exact-byte core test |
-| Selection | Select locally when mouse reporting does not claim the interaction | passing | Core input-outcome test; GUI integration later |
+| Selection | Select locally when mouse reporting does not claim the interaction | passing | Core input-outcome and M4 routing/selection tests |
 | Keyboard modes | Encode cursor and keypad keys according to active modes | passing | Exact-byte core test |
 | Titles | Apply title changes without affecting terminal state | planned | Core and GUI integration tests |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
 | Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji cell test; renderer fallback remains later |
 | Ligatures | Shape supported runs without moving cursor or selection boundaries | planned | Renderer mapping and visual tests |
-| High output | Remain interactive under sustained output | planned | Benchmark and integration test |
+| High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
 | Scrollback | Scroll and select smoothly near configured limits | planned | Benchmark and GUI integration test |
-| Dirty rendering | Redraw changed content without mandatory full-grid copying | planned | Renderer integration and benchmark |
+| Dirty rendering | Redraw changed content without mandatory full-grid copying | passing | M4 `TerminalSnapshot` and dirty-row cache tests |
 | Local PTY | Run, resize, and exit a full-screen local application | planned | Cross-platform PTY integration test |
 | SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | planned | Controlled OpenSSH integration test |
 | OpenSSH config | Map supported host directives into an internal profile | planned | Configuration fixtures |
@@ -183,6 +183,12 @@ Renderer tests should distinguish terminal state correctness from visual mapping
 - The renderer test proves how those cells map to shaped glyph runs, font fallback, pixel positions, selection geometry, and dirty regions.
 - Ligature tests must verify that a visual glyph spanning multiple characters does not collapse or shift terminal cells.
 - Visual snapshots may supplement structural assertions but should not be the sole source of truth.
+
+M4's renderer tests use the repository Unicode fixture to construct core state,
+then assert cached leading, double-width, continuation, and combining-text
+cells. They also test point-to-cell geometry, selection normalization, and
+mode-aware routing without opening a native window. The renderer uses
+one-cell egui layouts, so this is deliberately not ligature shaping.
 
 ## PTY and SSH Compatibility Tests
 

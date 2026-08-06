@@ -168,7 +168,7 @@ Common wide characters, combining marks, emoji, and font fallback are part of pr
 
 ### Performance
 
-The first renderer may redraw more than an ideal implementation, but its interface should avoid forcing complete grid copies on every frame. Dirty-row or dirty-region reporting, glyph caches, queue depth, frame timing, and input-to-render latency should be measurable.
+The first renderer may redraw more than an ideal implementation, but its interface should avoid forcing complete grid copies on every frame. Dirty-row or dirty-region reporting, glyph caches, queue depth, frame timing, and input-to-paint-submission latency should be measurable. This timing ends when the UI submits paint work, not when the OS presents it.
 
 ## SSH Strategy
 
@@ -224,25 +224,28 @@ Early diagnostics should include:
 - Optional escaped or hexadecimal protocol traces.
 - Parser-operation and terminal-state traces.
 - Session lifecycle and reconnect events.
-- Frame timing, dirty-cell counts, queue depth, and input-to-render latency.
+- Frame timing, dirty-cell counts, queue depth, and input-to-paint-submission
+  latency (not presentation timing).
 - Reproducible diagnostics bundles that omit secrets by default.
 
 Raw protocol traces can expose passwords, tokens, commands, and private output. They must be explicit, redaction-aware, warned, and disabled by default.
 
 ## Current Priorities
 
-The Cargo workspace, initial `festerm-core`, test-support crate, application
-shell, fixture harness, diagnostics scaffold, cross-platform CI, M2 ANSI/VT
+The Cargo workspace, GUI-independent `festerm-core`, test-support crate,
+`festerm-ui-egui` cell renderer, application composition shell, fixture
+harness, diagnostics scaffold, cross-platform CI, M2 ANSI/VT
 primary-and-alternate-screen core, and M3 interactive-input/initial-Unicode
-core are in place. Current work proceeds from that foundation:
+core are in place. M4 renders a controlled no-session stream; it does not
+pretend to provide a shell or session. Current work proceeds from that
+foundation:
 
-1. Integrate the tested core with an `egui` renderer.
-2. Add local PTY sessions.
-3. Complete a full-screen TUI compatibility pass, including a safe
+1. Add local PTY sessions.
+2. Complete a full-screen TUI compatibility pass, including a safe
    ligature-capable rendering design.
-4. Add native SSH with OpenSSH interoperability and controlled integration
+3. Add native SSH with OpenSSH interoperability and controlled integration
    tests.
-5. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
+4. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
    persistence.
 
 ## Deferred or Open Questions

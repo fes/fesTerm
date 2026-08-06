@@ -4,9 +4,9 @@
 
 This document defines the proposed subsystem boundaries, dependency direction,
 runtime data flow, and Rust workspace structure for fesTerm. The repository
-already contains the initial workspace foundation (`festerm-core`,
-`festerm-test-support`, and the application shell); the remaining crates and
-subsystems are target architecture rather than implemented components.
+contains `festerm-core`, `festerm-test-support`, the `festerm-ui-egui`
+presentation crate, and the application composition shell; session,
+configuration, and remote-backend crates remain target architecture.
 
 ## Architectural Goals
 
@@ -57,7 +57,7 @@ change, but the responsibilities should remain distinct.
     festerm-pty/
     festerm-ssh/
     festerm-config/
-    festerm-ui-egui/
+    festerm-ui-egui/       # implemented M4 presentation layer
     festerm-test-support/
   app/
     festerm/
@@ -160,6 +160,21 @@ Provides the initial graphical front end:
 - Selection, clipboard, menus, settings, and connection indicators.
 - Mapping cell-space terminal state to fonts, shaping, pixels, and GPU-backed drawing.
 
+M4 exposes a borrowed `TerminalSnapshot` contract containing the visible
+screen, dimensions, cursor, and modes. `TerminalRenderCache` copies only rows
+identified by `Terminal::take_dirty_rows` (with a complete refresh on initial
+view or size change), so a GUI frame does not clone the entire core grid.
+Cell metrics and point-to-cell helpers remain UI-owned and convert only to
+valid core dimensions. The initial cache uses egui's monospace font atlas and
+cached one-cell layouts; it intentionally does not perform ligature shaping.
+Width-two leading cells and their continuations are submitted as one
+two-column paint span.
+
+The UI routes egui keyboard, text, paste, focus, pointer, wheel, selection,
+and clipboard events through M3 `InputEvent` values. It drains the core's
+encoded queue to an application-provided sink. Before M5 that sink is a
+visible content-free no-session diagnostic sink, not session I/O.
+
 The boundary should be practical rather than doctrinaire. The core may expose cell widths, underline styles, cursor shape, dirty rows, and other rendering-relevant terminal semantics. It should not own fonts, pixel coordinates, glyph caches, or GUI widgets.
 
 `egui` is the selected initial front end, not an irreversible product dependency. Its rendering stack does not preclude GPU acceleration. If profiling later shows a need for a specialized terminal renderer, it should be possible to replace the cell-rendering path while retaining the application shell and terminal core.
@@ -254,7 +269,14 @@ The renderer needs access to a stable cell-space view containing at least:
 - Selection and hyperlink metadata when supported.
 - Dirty rows or regions.
 
-The first renderer may redraw more than the theoretical minimum. Optimization should follow measurement, while the interface should avoid forcing full-grid copies for every frame.
+`TerminalSnapshot` is the M4 immutable borrowed view, while
+`TerminalRenderCache` is the presentation-side changed-row cache. The first
+renderer may redraw more than the theoretical minimum, but this interface
+avoids forcing full-grid copies for every frame. Its diagnostics report frame
+duration, requested dimensions, rows refreshed, core input outcome/queue
+depth, content-free no-session input counters, and input-to-paint-submission
+time without recording terminal content. Paint-submission timing ends after
+the grid's shapes are submitted to egui; it is not presentation timing.
 
 ## SSH Interoperability and Testing
 
@@ -278,7 +300,8 @@ Debugging facilities should be designed in early but remain disabled or low-over
 - Optional escaped or hexadecimal protocol traces with redaction controls.
 - Terminal-operation traces for parser/state debugging.
 - Session lifecycle and reconnect events.
-- Frame timing, dirty-cell counts, queue depth, and input-to-render latency metrics.
+- Frame timing, dirty-cell counts, queue depth, and input-to-paint-submission
+  latency metrics (not presentation timing).
 - Reproducible diagnostics bundles that exclude secrets by default.
 
 Raw terminal streams can contain credentials and private data, so protocol logging must be explicit and clearly warned.

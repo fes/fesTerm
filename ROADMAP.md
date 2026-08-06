@@ -1,6 +1,6 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestones 0 through 3 are implemented.
+**Status:** Milestones 0 through 4 are implemented.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -112,6 +112,8 @@ editing and resize.
 
 ## Milestone 4 — First Graphical Terminal View
 
+**Status:** Implemented
+
 ### Outcome
 
 The `egui` application renders the tested terminal core and accepts input without owning terminal semantics.
@@ -123,13 +125,35 @@ The `egui` application renders the tested terminal core and accepts input withou
 - Dirty-row or dirty-region redraw path.
 - Keyboard, paste, focus, mouse, selection, and clipboard routing.
 - Resize conversion from pixels to rows and columns.
-- Frame timing and input-to-render diagnostics.
+- Frame timing and input-to-paint-submission diagnostics (not presentation
+  timing).
+
+The implementation lives in `festerm-ui-egui`. It consumes borrowed
+`TerminalSnapshot` views, refreshes a row cache from core dirty rows, and uses
+the core's typed input boundary for keyboard, paste, focus, mouse, and wheel
+events. `festerm` is now the composition shell: until M5 it records
+content-free input metadata in an observable no-session demo sink rather than
+presenting a shell.
+The demo stream explicitly says that no session is attached.
+
+The initial renderer uses egui's available monospace font and cached
+single-cell layouts. It preserves width-two and continuation geometry and
+renders the implemented colors, cursor, and basic attributes. It deliberately
+does not claim ligature shaping; cell-run shaping and ligatures remain M6.
 
 ### Completion criteria
 
 - Recorded terminal streams render consistently with their golden state.
 - Input events are encoded by the core according to active modes.
 - Sustained output does not make typing, scrolling, or resizing unusable under representative workloads.
+
+UI unit tests link the Unicode recorded fixture to cached structural cells,
+verify core-mode input routing and selection policy, and exercise sustained
+terminal scrolling plus input and resize through the dirty-row cache. These
+tests do not open a native window. The core has no scrollback yet, so local
+history scrolling remains a later core capability; M4 routes wheel input to a
+mouse-reporting application and keeps output-driven terminal scrolling
+responsive.
 
 ## Milestone 5 — Local PTY Sessions
 

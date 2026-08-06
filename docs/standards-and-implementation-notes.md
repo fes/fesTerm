@@ -230,6 +230,40 @@ scroll, and resize operation repairs invalid leading/continuation
 relationships. A repair clears an orphan or clipped half to a blank cell
 rather than exposing an invalid grid.
 
+## Milestone 4 Implemented Behavior
+
+`festerm-ui-egui` is the GUI boundary and depends on `festerm-core`; the core
+does not depend on egui, eframe, fonts, pixels, clipboard APIs, or session I/O.
+`TerminalSnapshot` borrows the active `Screen`, cursor, modes, and cells for a
+render pass. The UI's `TerminalRenderCache` copies only the rows returned by
+`Terminal::take_dirty_rows`, except for its required initial/resize refresh.
+This preserves core width-two leading cells and continuation cells without a
+per-frame complete-grid clone.
+
+The initial renderer measures an egui monospace font to calculate rows and
+columns, clamps requests to valid core dimensions, and avoids redundant
+resizes. It resolves ANSI, indexed, and RGB colors; handles inverse,
+concealed, faint/bold fallback, italic, underline, double underline, and
+strikethrough as egui permits; and draws a visibility-controlled cursor. It
+uses cached one-cell layout jobs over egui's glyph atlas. It deliberately does
+not claim ligature or cell-run shaping: preserving that mapping is M6 work.
+
+Egui keyboard/text, paste, focus, pointer, wheel, selection, and copy events
+become M3 `InputEvent` values. The core alone selects mode-aware byte
+encodings. Mouse events enable local selection only after
+`SelectionAllowed`; when an application mouse mode claims an event, UI
+selection is cleared. Copy calls egui's native clipboard output API and never
+uses OSC 52. Before M5, the app observes content-free metadata for drained
+input rather than using a session transport.
+
+M4 reports frame time, calculated dimensions, changed rows, latest input
+outcome and input queue depth, content-free no-session input counters, and
+input-to-paint-submission time. This ends after grid paint shapes are submitted
+to egui, not when pixels are presented. It does not retain terminal content in
+diagnostics. The core still has no scrollback, so M4
+supports output-driven terminal scrolling and mode-aware wheel reporting but
+does not claim local history scrolling.
+
 ## Session and SSH Implementation Notes
 
 ### Local PTYs

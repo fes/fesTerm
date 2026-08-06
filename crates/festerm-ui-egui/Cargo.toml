@@ -1,0 +1,18 @@
+[package]
+name = "festerm-ui-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "egui terminal presentation for the GUI-independent fesTerm core."
+
+[dependencies]
+egui = "0.29"
+festerm-core = { path = "../festerm-core" }
+
+[dev-dependencies]
+festerm-test-support = { path = "../festerm-test-support" }
+
+[lints]
+workspace = true

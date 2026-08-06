@@ -1062,6 +1062,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "festerm-core",
+ "festerm-ui-egui",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1079,6 +1080,15 @@ name = "festerm-test-support"
 version = "0.1.0"
 dependencies = [
  "festerm-core",
+]
+
+[[package]]
+name = "festerm-ui-egui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "festerm-core",
+ "festerm-test-support",
 ]
 
 [[package]]

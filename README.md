@@ -6,16 +6,24 @@ native SSH client, written in Rust.
 ## Status
 
 Foundation work is in place: the repository is a Cargo workspace with a
-GUI-independent terminal-core crate, repository-owned golden fixtures,
-diagnostics scaffolding, and cross-platform CI. The current application remains
-an early `egui`/`eframe` shell; PTY integration and SSH are not yet implemented.
+GUI-independent terminal-core crate, a separate `festerm-ui-egui` presentation
+crate, repository-owned golden fixtures, diagnostics, and cross-platform CI.
+The application is now a graphical terminal-cell demo. It deliberately shows a
+recorded no-session stream rather than a shell; PTY integration and SSH are not
+yet implemented.
 
-Milestones 1 through 3 are complete: the GUI-independent terminal core has
+Milestones 1 through 4 are complete: the GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
-fixtures, dirty-state inspection, and bounded transport queues. Rendering,
-PTY, and session features remain upcoming work.
+fixtures, dirty-state inspection, and bounded transport queues. The egui view
+uses a borrowed cell-space contract plus a dirty-row cache; it renders colors,
+basic attributes, cursor, wide-cell geometry, local selection/copy, and
+mode-aware input routing. Its small debug status reports frame time, requested
+dimensions, dirty rows, content-free no-session input metadata, and
+input-to-paint-submission time (not presentation timing).
+Ligature shaping, PTYs, sessions, SSH, tabs, and scrollback remain upcoming
+work.
 
 ## Documentation
 

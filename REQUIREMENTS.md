@@ -92,6 +92,17 @@ Each terminal instance shall have one logical writer responsible for terminal-st
 
 ## Rendering and User Interface
 
+### Milestone 4 implementation status
+
+M4 satisfies the initial graphical rendering boundary with
+`festerm-ui-egui`, while `festerm-core` remains free of GUI dependencies. The
+view receives borrowed terminal state, preserves width-two/continuation cells,
+uses a dirty-row cache, routes typed core input, and reports non-content
+diagnostics. It is intentionally a no-session demo until M5; local PTY,
+scrollback history, tabs, profiles, and SSH are not implied by this status.
+The initial monospace renderer has no ligature-run shaping, which remains the
+later REQ-UI-009 capability.
+
 ### REQ-UI-001 — Tabbed interface
 
 The application shall provide a tabbed interface capable of hosting multiple local and SSH sessions.
@@ -131,6 +142,10 @@ fesTerm shall support font ligatures after the cell model and shaping integratio
 ### REQ-UI-010 — Dirty-state rendering
 
 The terminal core shall expose sufficient change information to avoid requiring a complete terminal-grid copy and redraw for every update.
+
+M4 uses `Terminal::take_dirty_rows` and a UI-owned row cache. Initial
+attachment and dimension changes refresh all visible rows; ordinary GUI frames
+copy only rows marked dirty by core mutation.
 
 ## Sessions
 
@@ -350,7 +365,7 @@ Debug builds or explicit diagnostic modes shall be able to trace escaped or hexa
 
 ### REQ-DIAG-003 — Interactive performance metrics
 
-Diagnostics shall support measurement of frame time, dirty cells or rows, queue depth, sustained-output behavior, and input-to-render latency.
+Diagnostics shall support measurement of frame time, dirty cells or rows, queue depth, sustained-output behavior, and input-to-paint-submission latency. Paint-submission timing shall not be described as presentation timing.
 
 ### REQ-DIAG-004 — Privacy-aware diagnostics
 

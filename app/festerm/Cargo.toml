@@ -10,6 +10,7 @@ description = "A scratch, multi-platform SSH/terminal client."
 [dependencies]
 eframe = "0.29"
 festerm-core = { path = "../../crates/festerm-core" }
+festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

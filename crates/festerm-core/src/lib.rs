@@ -298,6 +298,14 @@ impl Screen {
         self.cells.get(self.cell_index(column, row)?).cloned()
     }
 
+    /// Borrows a cell without cloning the grid or its cell content.
+    ///
+    /// This is intended for renderer-facing read-only views. Mutation remains
+    /// exclusively owned by the terminal state machine.
+    pub fn cell_ref(&self, column: usize, row: usize) -> Option<&Cell> {
+        self.cells.get(self.cell_index(column, row)?)
+    }
+
     pub fn row_text(&self, row: usize) -> Option<String> {
         if row >= self.dimensions.rows() {
             return None;
@@ -1515,6 +1523,11 @@ impl Terminal {
 
     pub fn cell(&self, column: usize, row: usize) -> Option<Cell> {
         self.screen().cell(column, row)
+    }
+
+    /// Borrows a visible cell without cloning it.
+    pub fn cell_ref(&self, column: usize, row: usize) -> Option<&Cell> {
+        self.screen().cell_ref(column, row)
     }
 
     pub fn row_text(&self, row: usize) -> Option<String> {
