@@ -593,6 +593,8 @@ No commands are executed until a local shell can be created.\r\n"
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, MutexGuard};
+    #[cfg(windows)]
+    use std::time::Instant;
 
     use super::*;
 
@@ -735,6 +737,86 @@ mod tests {
         );
         assert!(error.to_string().contains("exceeded their 4-byte bound"));
         assert_eq!(pending.queued_bytes(), 4);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_banner_survives_repeated_app_owned_resizes() {
+        let session = LocalPtySession::start_default(TerminalSize::new(80, 24).unwrap())
+            .expect("default Windows shell starts");
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+        let deadline = Instant::now() + Duration::from_secs(3);
+
+        while Instant::now() < deadline
+            && !terminal
+                .row_text(0)
+                .is_some_and(|row| row.starts_with("Microsoft Windows"))
+        {
+            pump_session_events(
+                &session,
+                &mut terminal,
+                MAX_SESSION_EVENTS_PER_FRAME,
+                |_| {},
+            );
+            let replies = terminal.drain_replies();
+            if !replies.is_empty() {
+                session
+                    .try_send_input(&replies)
+                    .expect("cursor-position reply reaches ConPTY");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            terminal
+                .row_text(0)
+                .is_some_and(|row| row.starts_with("Microsoft Windows")),
+            "Windows banner should be available before resize"
+        );
+
+        for dimensions in [
+            Dimensions::new(37, 13).unwrap(),
+            Dimensions::new(73, 26).unwrap(),
+            Dimensions::new(50, 18).unwrap(),
+            Dimensions::new(73, 26).unwrap(),
+        ] {
+            terminal.resize(dimensions).unwrap();
+            session
+                .try_resize(terminal_size(dimensions).unwrap())
+                .expect("resize reaches ConPTY");
+            let resize_deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < resize_deadline {
+                let result = pump_session_events(
+                    &session,
+                    &mut terminal,
+                    MAX_SESSION_EVENTS_PER_FRAME,
+                    |_| {},
+                );
+                let replies = terminal.drain_replies();
+                if !replies.is_empty() {
+                    session
+                        .try_send_input(&replies)
+                        .expect("cursor-position reply reaches ConPTY");
+                }
+                if !result.hit_limit {
+                    break;
+                }
+            }
+            assert!(
+                terminal
+                    .row_text(0)
+                    .is_some_and(|row| row.starts_with("Microsoft Windows")),
+                "resize to {}x{} cleared the visible banner",
+                dimensions.columns(),
+                dimensions.rows()
+            );
+        }
+
+        assert_eq!(
+            session.shutdown(Duration::from_secs(2)),
+            Ok(festerm_session::ShutdownResult::Stopped)
+        );
     }
 
     struct FakeSession {

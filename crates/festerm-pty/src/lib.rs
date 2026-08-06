@@ -1212,9 +1212,12 @@ mod tests {
                 .any(|window| window == b"INPUT:hello")
         });
         wait_for_windows_exit(&session, Duration::from_secs(3));
-        assert_eq!(
-            session.shutdown(Duration::from_secs(2)),
-            Ok(ShutdownResult::AlreadyStopped)
+        assert!(
+            matches!(
+                session.shutdown(Duration::from_secs(2)),
+                Ok(ShutdownResult::AlreadyStopped | ShutdownResult::Stopped)
+            ),
+            "ConPTY cleanup completes whether the exit worker or shutdown request wins"
         );
     }
 
@@ -1282,6 +1285,7 @@ mod tests {
             match session.try_recv_event() {
                 Ok(event) => {
                     if let SessionEvent::Output(bytes) = &event {
+                        respond_to_cursor_position_queries(session, bytes);
                         output.extend(bytes);
                     }
                     if matches(&event, output) {
@@ -1293,6 +1297,15 @@ mod tests {
             }
         }
         panic!("timed out waiting for controlled ConPTY event: {output:?}");
+    }
+
+    #[cfg(windows)]
+    fn respond_to_cursor_position_queries(session: &LocalPtySession, bytes: &[u8]) {
+        for _ in bytes.windows(4).filter(|sequence| *sequence == b"\x1b[6n") {
+            session
+                .try_send_input(b"\x1b[1;1R")
+                .expect("ConPTY cursor-position reply fits the command queue");
+        }
     }
 
     #[cfg(windows)]

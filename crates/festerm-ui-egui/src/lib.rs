@@ -1351,11 +1351,16 @@ fn rendered_cell_is_selected(
     })
 }
 
+fn cell_needs_background_paint(cell: &RenderedCell, selected: bool) -> bool {
+    selected || cell.background != Color::Default || cell.attributes.contains(Attributes::INVERSE)
+}
+
 fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCache) {
     let Some(dimensions) = paint.cache.dimensions() else {
         return;
     };
     let selection_range = paint.selection.range();
+    painter.rect_filled(paint.layout.rect, 0.0, DEFAULT_BACKGROUND);
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {
             continue;
@@ -1368,15 +1373,18 @@ fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCa
             let columns = rendered_cell_columns(cell, dimensions, column);
             let rect = grid_cell_rect(paint.layout, position, columns);
             let (foreground, background) = cell_colors(cell);
-            painter.rect_filled(
-                rect,
-                0.0,
-                if rendered_cell_is_selected(selection_range, position, columns) {
-                    SELECTION_BACKGROUND
-                } else {
-                    background
-                },
-            );
+            let selected = rendered_cell_is_selected(selection_range, position, columns);
+            if cell_needs_background_paint(cell, selected) {
+                painter.rect_filled(
+                    rect,
+                    0.0,
+                    if selected {
+                        SELECTION_BACKGROUND
+                    } else {
+                        background
+                    },
+                );
+            }
             if cell.text.is_empty() {
                 continue;
             }
@@ -2022,6 +2030,30 @@ mod tests {
             "conceal uses the effective background"
         );
         assert_eq!(background, Color32::from_rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn default_cells_share_the_grid_background_without_individual_paints() {
+        let default = RenderedCell {
+            text: String::new(),
+            width: CellWidth::Single,
+            foreground: Color::Default,
+            background: Color::Default,
+            attributes: Attributes::NONE,
+        };
+        let colored = RenderedCell {
+            background: Color::Indexed(4),
+            ..default.clone()
+        };
+        let inverse = RenderedCell {
+            attributes: Attributes::INVERSE,
+            ..default.clone()
+        };
+
+        assert!(!cell_needs_background_paint(&default, false));
+        assert!(cell_needs_background_paint(&default, true));
+        assert!(cell_needs_background_paint(&colored, false));
+        assert!(cell_needs_background_paint(&inverse, false));
     }
 
     #[test]
