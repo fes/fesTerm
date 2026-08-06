@@ -11,6 +11,7 @@ Read `README.md`, then use the document that matches the task:
 | Required behavior | `REQUIREMENTS.md`, `COMPATIBILITY.md` |
 | Standards and security decisions | `docs/standards-and-implementation-notes.md`, `docs/adr/` |
 | Golden fixtures | `tests/fixtures/README.md` |
+| GUI workflow, chrome, session chips, and visual hierarchy | `docs/gui-design.md` |
 | UI, rendering, and platform test strategy | `docs/ui-test-plan.md` |
 | Bootstrap and manual checks | `docs/development-handoff.md` |
 
@@ -66,6 +67,10 @@ macOS, and Linux.
 - Review open GitHub issues when starting and releasing a milestone. Fix
   current-criterion regressions now; assign compatible reports to their owning
   milestone; do not pull future product requests into the current scope.
+- Treat `docs/gui-design.md` and its canonical wireframe as the source of truth
+  for application chrome and session-tab work. Session tabs are independent,
+  neutral lozenge/chip objects; preserve stable identity and use compact status
+  indicators instead of full-chip state colors.
 - Do not duplicate long design documents in new summaries; link to the source
   of truth instead.
 - Treat terminal output and protocol input as untrusted. Preserve parser,

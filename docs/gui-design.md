@@ -4,6 +4,12 @@
 
 This document defines the interaction model, visual hierarchy, and product-level GUI principles for fesTerm. It complements `ARCHITECTURE.md` and `docs/ui-test-plan.md`: architecture defines ownership and dependencies, the UI test plan defines validation, and this document defines the intended user experience.
 
+## Canonical Wireframe
+
+![fesTerm GUI wireframes v1.2](images/festerm-gui-wireframe-v1.2.png)
+
+The v1.2 wireframe is the current visual reference for application chrome, independent session chips, launcher and settings surfaces, the session inspector, reconnecting state, and optional wrapped chip rows. It communicates structure and interaction hierarchy rather than final colors, typography, or platform-specific window controls.
+
 ## Product Posture
 
 fesTerm should feel like a restrained, native-feeling terminal workstation:
@@ -137,6 +143,17 @@ The tab strip provides session switching and identity. It should be compact and 
 
 The main content is either a terminal viewport, launcher, settings page, or diagnostics surface. Terminal tabs should maximize terminal area.
 
+### Application chrome and session context
+
+Global application actions and session-specific context are separate concerns.
+
+- The upper application chrome owns compact global actions: New Tab/Launcher, command palette or search, session-inspector toggle, and a deliberately small overflow menu.
+- The session chips sit on a distinct surface below or within the chrome with enough separation to appear as independent objects.
+- The right-side session inspector is normally hidden and shows context for the active session: connection state, host/profile metadata, environment, diagnostics, and relevant actions.
+- Global Settings do not live in the inspector. Settings open as an application surface represented by their own chip, and remain reachable from the command palette and compact overflow menu.
+
+The overflow menu should stay intentionally small. Growth into a general-purpose action list is a design smell; less common actions belong in the command palette or their relevant application surface.
+
 ### Contextual status region
 
 The bottom status region should normally be absent. It may appear for actionable or transitional states such as:
@@ -151,6 +168,23 @@ The bottom status region should normally be absent. It may appear for actionable
 It should not display continuous byte counts, queue metrics, dimensions, or frame statistics during normal use.
 
 ## Tab Model
+
+### Independent session chips
+
+Session tabs are independent lozenges or chips, not connected browser-style or rolodex tabs. This is an interaction principle, not merely a corner-radius choice: every chip represents a persistent, independently managed session object.
+
+Implementation requirements:
+
+- Preserve visible space around every chip; adjacent chips must never merge into a continuous tab strip.
+- Keep chip surfaces neutral. Connection color belongs in a small status indicator, not across the whole chip.
+- Indicate the active chip with a slightly brighter surface, stronger border, subtle elevation, and optionally a small height difference. Do not depend on a saturated accent fill.
+- Keep stable session identity as the primary label and transient terminal state as secondary metadata.
+- Make Launcher and non-session application surfaces such as Settings visually distinct while keeping them in the same switching model.
+- Drag-and-drop reorders independent session objects and should preserve their identity and state.
+- Design chip layout for both horizontal overflow and an optional multi-row wrapping mode. Wrapping must remain user-configurable because some users will prefer a single scrolling row.
+- Preserve semantic tab roles, keyboard order, accessible names, focus indication, and close behavior even when the visual treatment is chip-like.
+
+The wireframe in [Canonical Wireframe](#canonical-wireframe) is the visual contract for these requirements. Connected browser tabs, file-folder tabs, full-chip status colors, and constantly changing primary labels are non-conforming implementations.
 
 ### Tab anatomy
 
@@ -208,16 +242,16 @@ State indicators should be compact, accessible, and not rely on color alone.
 
 The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal.
 
-### Tab overflow
+### Tab overflow and wrapping
 
-The design must remain usable with many tabs. The implementation should support a combination of:
+The design must remain usable with many sessions. The implementation should support:
 
-- compact tab width;
-- sensible truncation;
-- horizontal scrolling or overflow menu;
-- keyboard tab switching;
-- searchable tab/session switcher; and
-- stable session identities.
+- compact chip width and sensible truncation;
+- a single-row mode with horizontal scrolling or overflow;
+- an optional multi-row wrapped-chip mode for wide displays;
+- keyboard switching that follows a predictable logical order independent of visual wrapping;
+- a searchable session switcher keyed primarily by stable identity; and
+- graceful narrow-window collapse without merging chips into a connected strip.
 
 ## Session Creation Workflow
 
@@ -508,8 +542,8 @@ It should use fake metadata where necessary so interaction and hierarchy can be 
 - Whether launcher tabs may be pinned or automatically close after launching a session.
 - Default shortcut for directly opening the platform default local profile.
 - Searchable session-switcher interaction and placement.
-- Tab overflow behavior and minimum tab width.
-- Whether diagnostics use a side panel, bottom drawer, overlay, or separate tab.
+- Default chip width, minimum chip width, and the preference between single-row overflow and optional wrapping.
+- Exact responsive behavior and minimum width of the normally hidden right-side session inspector.
 - Theme defaults and application-chrome font selection.
 - Exact icon source, licensing, and fallback policy.
 - Rules for user-name and host-name privacy in screenshots, notifications, and shared workspaces.
