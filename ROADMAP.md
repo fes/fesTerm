@@ -1,6 +1,6 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestone 0 is implemented; Milestone 1 is in progress.
+**Status:** Milestones 0 and 1 are implemented.
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -32,7 +32,7 @@ The repository is ready for sustained multi-crate development with automated val
 
 ## Milestone 1 — Terminal Core Skeleton
 
-**Status:** In progress (initial grid, cursor, dirty-row, and basic C0 support)
+**Status:** Implemented
 
 ### Outcome
 
@@ -52,6 +52,10 @@ A GUI-independent terminal instance can consume basic input and expose determini
 - Golden fixtures can initialize dimensions, feed bytes, and assert grid, cursor, and emitted replies.
 - No GUI, PTY, or SSH dependency is required to run the core tests.
 - Core behavior is deterministic across supported platforms.
+
+The completed implementation intentionally stops at printable ASCII and C0
+controls. CSI/ANSI parsing, colors and attributes application, Unicode cell
+semantics, alternate screens, PTY, and SSH remain later milestones.
 
 ## Milestone 2 — Essential ANSI/VT State Behavior
 

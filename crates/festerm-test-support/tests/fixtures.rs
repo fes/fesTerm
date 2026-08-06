@@ -13,6 +13,6 @@ fn repository_fixtures_are_discovered_and_pass() {
     );
     for path in fixtures {
         let fixture = load_fixture(&path).expect("fixture should parse");
-        assert_fixture(&fixture);
+        assert_fixture(&fixture).expect("fixture should match");
     }
 }

@@ -6,7 +6,8 @@ use festerm_core::{Dimensions, Terminal};
 
 fn main() {
     let input = vec![b'x'; 1_000_000];
-    let mut terminal = Terminal::new(Dimensions::new(120, 40).expect("valid dimensions"));
+    let mut terminal = Terminal::new(Dimensions::new(120, 40).expect("valid dimensions"))
+        .expect("terminal allocation should succeed");
     let started = Instant::now();
 
     terminal.ingest(black_box(&input));

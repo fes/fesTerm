@@ -1,0 +1,9 @@
+# A right-margin byte stays visible until a later printable byte needs to wrap.
+name: pending wrap retains the bottom-right byte
+size: 3x2
+input: "abcdef"
+grid:
+  - "abc"
+  - "def"
+cursor: 2,1
+replies: ""

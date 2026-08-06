@@ -1,0 +1,8 @@
+name: pending wrap scrolls only for the next printable byte
+size: 3x2
+input: "abcdefg"
+grid:
+  - "def"
+  - "g  "
+cursor: 1,1
+replies: ""

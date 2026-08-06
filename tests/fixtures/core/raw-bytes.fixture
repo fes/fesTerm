@@ -1,0 +1,9 @@
+# \xNN input escapes are raw bytes. The ASCII-only M1 parser ignores raw C1,
+# malformed UTF-8, and the UTF-8 encoding of C1 controls.
+name: raw C1 and malformed UTF-8 input is preserved exactly
+size: 5x1
+input: "\x80A\xC3\x28B\xC2\x9B"
+grid:
+  - "A(B  "
+cursor: 3,0
+replies: ""

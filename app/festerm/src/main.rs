@@ -24,7 +24,8 @@ impl Default for FesTermApp {
     fn default() -> Self {
         Self {
             input: String::new(),
-            terminal: Terminal::new(Dimensions::new(80, 24).expect("default dimensions are valid")),
+            terminal: Terminal::new(Dimensions::new(80, 24).expect("default dimensions are valid"))
+                .expect("default terminal allocation should succeed"),
         }
     }
 }
