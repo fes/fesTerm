@@ -11,6 +11,8 @@ use festerm_session::{
 use festerm_ui_egui::{EncodedInputSink, InputRoute, InputSinkDiagnostics, TerminalView};
 
 #[cfg(test)]
+use festerm_pty::LocalProfile;
+#[cfg(test)]
 use festerm_session::SessionMetrics;
 
 const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
@@ -612,7 +614,7 @@ No commands are executed until a local shell can be created.\r\n"
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, MutexGuard};
-    #[cfg(windows)]
+    #[cfg(any(unix, windows))]
     use std::time::Instant;
 
     use super::*;
@@ -762,6 +764,110 @@ mod tests {
         );
         assert!(error.to_string().contains("exceeded their 4-byte bound"));
         assert_eq!(pending.queued_bytes(), 4);
+    }
+
+    #[cfg(unix)]
+    fn controlled_local_sink(session: LocalPtySession) -> LocalSessionSink {
+        LocalSessionSink {
+            session: Some(session),
+            startup_error: None,
+            diagnostics: InputSinkDiagnostics::default(),
+            pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
+            pending_resize: None,
+            last_lifecycle: Some(SessionLifecycle::Running),
+            last_error: None,
+            last_backpressure: None,
+            last_resize: None,
+        }
+    }
+
+    #[cfg(unix)]
+    fn pump_controlled_session_until(
+        sink: &mut LocalSessionSink,
+        terminal: &mut Terminal,
+        predicate: impl Fn(&Terminal) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            sink.pump_events(terminal);
+            sink.forward_terminal_replies(terminal);
+            sink.flush_pending_writes();
+            if predicate(terminal) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("timed out waiting for controlled application session state");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn controlled_session_routes_m6_modes_replies_input_resize_and_alternate_screen() {
+        let profile = LocalProfile::new("/bin/sh").with_arguments([
+            "-c",
+            "stty raw -echo; \
+             printf 'PRIMARY\\033[?1049hALT\\033[6n'; \
+             dd bs=1 count=6 2>/dev/null | od -An -tx1 | tr -d ' \\n'; printf '\\n'; \
+             printf '\\033[?2004h\\033[?1004h\\033[?1000h\\033[?1006h'; \
+             dd bs=1 count=25 2>/dev/null | od -An -tx1 | tr -d ' \\n'; printf '\\n'; \
+             printf '\\033[?1049lDONE\\n'; exit",
+        ]);
+        let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
+        let mut sink = controlled_local_sink(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        pump_controlled_session_until(&mut sink, &mut terminal, |terminal| {
+            let modes = terminal.modes();
+            modes.alternate_screen()
+                && modes.bracketed_paste()
+                && modes.focus_reporting()
+                && modes.sgr_mouse()
+        });
+
+        terminal.resize(Dimensions::new(73, 26).unwrap()).unwrap();
+        sink.record_terminal_resize(terminal.dimensions());
+        assert_eq!(
+            terminal.handle_input(festerm_core::InputEvent::Focus(
+                festerm_core::FocusEvent::In,
+            )),
+            festerm_core::InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(
+            terminal.handle_input(festerm_core::InputEvent::Paste("z".to_owned())),
+            festerm_core::InputEventOutcome::Encoded { bytes: 13 }
+        );
+        assert_eq!(
+            terminal.handle_input(festerm_core::InputEvent::Mouse(festerm_core::MouseEvent {
+                kind: festerm_core::MouseEventKind::Press(festerm_core::MouseButton::Left),
+                column: 1,
+                row: 2,
+                modifiers: festerm_core::Modifiers::NONE,
+            },)),
+            festerm_core::InputEventOutcome::Encoded { bytes: 9 }
+        );
+        let input = terminal.drain_input();
+        assert_eq!(input, b"\x1b[I\x1b[200~z\x1b[201~\x1b[<0;2;3M");
+        sink.record_encoded_input(&input);
+
+        pump_controlled_session_until(&mut sink, &mut terminal, |terminal| {
+            !terminal.modes().alternate_screen()
+                && terminal
+                    .row_text(0)
+                    .is_some_and(|row| row.starts_with("PRIMARYDONE"))
+        });
+        assert!(sink
+            .session
+            .as_ref()
+            .is_some_and(|session| session.metrics().resize_count >= 1));
+        assert!(matches!(
+            sink.session
+                .as_ref()
+                .expect("controlled session remains available")
+                .shutdown(Duration::from_secs(2)),
+            Ok(festerm_session::ShutdownResult::AlreadyStopped)
+                | Ok(festerm_session::ShutdownResult::Stopped)
+        ));
     }
 
     #[cfg(windows)]

@@ -30,6 +30,11 @@ PTY output-between-resizes evidence, plus a Windows ConPTY counterpart that
 must run on Windows. This does not yet prove a real renderer frame or native
 window preserves those features together.
 
+P1 adds a controlled Unix app-path session that combines alternate-screen
+restoration, cursor replies, focus, bracketed paste, SGR mouse input, and
+resize forwarding. Its Windows equivalent remains covered only by the basic
+ConPTY path until native Windows validation runs.
+
 Before considering this milestone complete:
 
 1. Complete P0 through P4, or explicitly defer an item in `ROADMAP.md` with a
