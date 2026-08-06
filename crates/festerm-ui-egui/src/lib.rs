@@ -1842,6 +1842,29 @@ mod tests {
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn focus_terminal_grid(harness: &mut Harness<'_, HeadlessViewState>) {
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("rendered frame records grid geometry");
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     #[test]
     fn rendered_terminal_frames_match_reviewed_snapshots() {
         let mut snapshots = SnapshotResults::new();
@@ -1859,6 +1882,19 @@ mod tests {
             "terminal-attributes",
             &mut snapshots,
         );
+
+        for (name, style) in [
+            ("terminal-cursor-block", b"\x1b[2 q".as_slice()),
+            ("terminal-cursor-underline", b"\x1b[4 q".as_slice()),
+            ("terminal-cursor-bar", b"\x1b[6 q".as_slice()),
+        ] {
+            let mut cursor_terminal = terminal(80, 24);
+            cursor_terminal.ingest(style);
+            cursor_terminal.ingest(b"cursor");
+            let mut cursor = visual_harness(cursor_terminal);
+            focus_terminal_grid(&mut cursor);
+            snapshot_after_structural_assertions(&mut cursor, name, &mut snapshots);
+        }
 
         let mut unicode_terminal = terminal(80, 24);
         unicode_terminal.ingest("wide \u{754c} combining e\u{301}".as_bytes());
