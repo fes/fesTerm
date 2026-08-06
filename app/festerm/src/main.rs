@@ -800,16 +800,23 @@ mod tests {
             "Windows banner should be available before resize"
         );
 
-        for dimensions in [
+        for (index, dimensions) in [
             Dimensions::new(37, 13).unwrap(),
             Dimensions::new(73, 26).unwrap(),
             Dimensions::new(50, 18).unwrap(),
             Dimensions::new(73, 26).unwrap(),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             terminal.resize(dimensions).unwrap();
             session
                 .try_resize(terminal_size(dimensions).unwrap())
                 .expect("resize reaches ConPTY");
+            let marker = format!("P0FRAME:{index}");
+            session
+                .try_send_input(format!("echo {marker}\r\n").as_bytes())
+                .expect("controlled output reaches ConPTY");
             let resize_deadline = Instant::now() + Duration::from_secs(1);
             while Instant::now() < resize_deadline {
                 let result = pump_session_events(
@@ -824,8 +831,15 @@ mod tests {
                         .try_send_input(&replies)
                         .expect("cursor-position reply reaches ConPTY");
                 }
-                if !result.hit_limit {
+                if (0..terminal.dimensions().rows()).any(|row| {
+                    terminal
+                        .row_text(row)
+                        .is_some_and(|text| text.trim() == marker)
+                }) {
                     break;
+                }
+                if !result.hit_limit {
+                    std::thread::sleep(Duration::from_millis(5));
                 }
             }
             assert!(
@@ -833,6 +847,16 @@ mod tests {
                     .row_text(0)
                     .is_some_and(|row| row.starts_with("Microsoft Windows")),
                 "resize to {}x{} cleared the visible banner",
+                dimensions.columns(),
+                dimensions.rows()
+            );
+            assert!(
+                (0..terminal.dimensions().rows()).any(|row| {
+                    terminal
+                        .row_text(row)
+                        .is_some_and(|text| text.trim() == marker)
+                }),
+                "resize to {}x{} lost output emitted after the resize",
                 dimensions.columns(),
                 dimensions.rows()
             );

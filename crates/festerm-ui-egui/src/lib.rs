@@ -39,6 +39,27 @@ fn dimensions_from_viewport(available: ViewSize, cell: CellMetrics) -> Option<Di
     dimensions_from_points(available, cell)
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ViewportLayout {
+    viewport: Rect,
+    grid: Rect,
+    dimensions: Dimensions,
+}
+
+fn viewport_layout(
+    origin: Pos2,
+    available: ViewSize,
+    metrics: CellMetrics,
+    dimensions: Dimensions,
+) -> ViewportLayout {
+    let viewport = Rect::from_min_size(origin, Vec2::new(available.width, available.height));
+    ViewportLayout {
+        viewport,
+        grid: Rect::from_min_size(origin, metrics.size_for(dimensions)),
+        dimensions,
+    }
+}
+
 /// A read-only, renderer-facing view of the currently visible terminal grid.
 ///
 /// It borrows core state and therefore cannot outlive or mutate the terminal.
@@ -877,17 +898,17 @@ impl TerminalView {
             sink.record_terminal_resize(terminal.dimensions());
         }
 
-        let dimensions = terminal.dimensions();
         let (viewport_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
         ui.painter()
             .rect_filled(viewport_rect, 0.0, DEFAULT_BACKGROUND);
-        let grid_rect = Rect::from_min_size(viewport_rect.min, metrics.size_for(dimensions));
+        let viewport_layout =
+            viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
         if response.clicked() {
             response.request_focus();
         }
         let layout = GridLayout {
-            rect: grid_rect,
-            dimensions,
+            rect: viewport_layout.grid,
+            dimensions: viewport_layout.dimensions,
             metrics,
         };
         let reports = route_egui_events(
@@ -914,7 +935,7 @@ impl TerminalView {
         let (_, input_to_paint_submission) =
             measure_input_to_paint_submission(reports.input_observed, || {
                 paint_grid(
-                    ui.painter().with_clip_rect(viewport_rect),
+                    ui.painter().with_clip_rect(viewport_layout.viewport),
                     GridPaint {
                         layout,
                         snapshot,
@@ -1700,6 +1721,140 @@ mod tests {
                 .is_some_and(|row| row.first().is_some_and(|cell| cell.text() == "W")));
         }
         assert_eq!(terminal.dimensions(), Dimensions::new(73, 26).unwrap());
+    }
+
+    #[test]
+    fn viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes() {
+        enum Step {
+            Output(&'static [u8]),
+            Viewport(ViewSize),
+            Selection(CellPosition, CellPosition),
+        }
+
+        let cell = CellMetrics::new(10.0, 20.0).unwrap();
+        let mut terminal = terminal(80, 24);
+        let mut cache = TerminalRenderCache::default();
+        let mut resize = ResizeTracker::default();
+        let mut selection = Selection::default();
+        let mut sink = Sink::default();
+
+        for step in [
+            Step::Output(b"Windows banner\r\nC:\\Users\\fes>"),
+            Step::Viewport(ViewSize {
+                width: 370.0,
+                height: 260.0,
+            }),
+            Step::Selection(
+                CellPosition { column: 0, row: 0 },
+                CellPosition { column: 6, row: 0 },
+            ),
+            Step::Output(b"\x1b[2;1Hactive output"),
+            Step::Viewport(ViewSize {
+                width: 0.0,
+                height: 0.0,
+            }),
+            Step::Output(b"\x1b[3;1Hpartial"),
+            Step::Viewport(ViewSize {
+                width: 500.0,
+                height: 360.0,
+            }),
+            Step::Viewport(ViewSize {
+                width: 730.0,
+                height: 520.0,
+            }),
+        ] {
+            match step {
+                Step::Output(bytes) => terminal.ingest(bytes),
+                Step::Viewport(viewport) => {
+                    let outcome = resize.apply_viewport(&mut terminal, viewport, cell);
+                    if matches!(outcome, ResizeOutcome::Resized(_)) {
+                        selection.clear();
+                        assert!(
+                            selection.range().is_none(),
+                            "a real terminal resize must clear local selection"
+                        );
+                    }
+                    let layout =
+                        viewport_layout(Pos2::new(0.0, 0.0), viewport, cell, terminal.dimensions());
+                    assert_eq!(layout.dimensions, terminal.dimensions());
+                    assert_eq!(layout.viewport.min, layout.grid.min);
+                    if dimensions_from_viewport(viewport, cell).is_some() {
+                        assert!(
+                            layout.viewport.contains_rect(layout.grid),
+                            "accepted terminal dimensions must fit the allocated viewport"
+                        );
+                    }
+                    let cursor = terminal.cursor();
+                    assert!(cursor.column() < terminal.dimensions().columns());
+                    assert!(cursor.row() < terminal.dimensions().rows());
+                    let cursor_rect = grid_cell_rect(
+                        GridLayout {
+                            rect: layout.grid,
+                            dimensions: layout.dimensions,
+                            metrics: cell,
+                        },
+                        CellPosition {
+                            column: cursor.column(),
+                            row: cursor.row(),
+                        },
+                        1,
+                    );
+                    assert!(cursor_rect.is_finite());
+                    if dimensions_from_viewport(viewport, cell).is_some() {
+                        assert!(layout.viewport.contains_rect(cursor_rect));
+                    }
+                }
+                Step::Selection(start, end) => {
+                    route_mouse_input(
+                        &mut terminal,
+                        MouseEvent {
+                            kind: MouseEventKind::Press(MouseButton::Left),
+                            column: start.column,
+                            row: start.row,
+                            modifiers: Modifiers::NONE,
+                        },
+                        &mut selection,
+                        &mut sink,
+                    );
+                    route_mouse_input(
+                        &mut terminal,
+                        MouseEvent {
+                            kind: MouseEventKind::Release(MouseButton::Left),
+                            column: end.column,
+                            row: end.row,
+                            modifiers: Modifiers::NONE,
+                        },
+                        &mut selection,
+                        &mut sink,
+                    );
+                    assert!(selection.range().is_some());
+                }
+            }
+
+            let dirty_rows = terminal.take_dirty_rows();
+            assert!(dirty_rows
+                .iter()
+                .all(|row| *row < terminal.dimensions().rows()));
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+            assert_eq!(cache.dimensions(), Some(terminal.dimensions()));
+            for row in 0..terminal.dimensions().rows() {
+                assert_eq!(
+                    cache.row(row).map(<[RenderedCell]>::len),
+                    Some(terminal.dimensions().columns())
+                );
+            }
+        }
+
+        assert!(terminal
+            .row_text(0)
+            .is_some_and(|row| row.starts_with("Windows banner")));
+        assert!(terminal
+            .row_text(1)
+            .is_some_and(|row| row.starts_with("active output")));
+        assert!(terminal
+            .row_text(2)
+            .is_some_and(|row| row.starts_with("partial")));
+        assert!(sink.0.is_empty());
     }
 
     #[test]

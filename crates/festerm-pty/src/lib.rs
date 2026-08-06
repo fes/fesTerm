@@ -1127,6 +1127,55 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn controlled_shell_preserves_output_between_consecutive_resizes() {
+        let profile = LocalProfile::new("/bin/sh").with_arguments([
+            "-c",
+            "printf 'READY\\n'; read first; printf 'FRAME:%s\\n' \"$first\"; \
+             stty size; read second; printf 'FRAME:%s\\n' \"$second\"; stty size; exit 0",
+        ]);
+        let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
+        let mut output = Vec::new();
+        wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+            bytes
+                .windows(b"READY".len())
+                .any(|window| window == b"READY")
+        });
+
+        for (size, input, expected_size) in [
+            (
+                TerminalSize::new(37, 13).unwrap(),
+                b"first\n".as_slice(),
+                b"13 37".as_slice(),
+            ),
+            (
+                TerminalSize::new(73, 26).unwrap(),
+                b"second\n".as_slice(),
+                b"26 73".as_slice(),
+            ),
+        ] {
+            session.try_resize(size).unwrap();
+            session.try_send_input(input).unwrap();
+            wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+                bytes
+                    .windows(expected_size.len())
+                    .any(|window| window == expected_size)
+            });
+        }
+
+        assert!(output
+            .windows(b"FRAME:first".len())
+            .any(|window| window == b"FRAME:first"));
+        assert!(output
+            .windows(b"FRAME:second".len())
+            .any(|window| window == b"FRAME:second"));
+        assert!(matches!(
+            session.shutdown(Duration::from_secs(2)),
+            Ok(ShutdownResult::AlreadyStopped) | Ok(ShutdownResult::Stopped)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn shutdown_terminates_a_running_controlled_shell() {
         let profile = LocalProfile::new("/bin/sh")
             .with_arguments(["-c", "printf 'RUNNING\\n'; while :; do :; done"]);

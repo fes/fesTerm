@@ -25,8 +25,10 @@ supported platform.
 The implementation sequence and acceptance evidence live in the
 [M6 automation backlog](ui-test-plan.md#m6-automation-backlog). The current
 fixture baseline covers tab stops, cursor styles, OSC titles, and conservative
-device attributes. That does not yet prove a real renderer frame, local PTY,
-or native window preserves those features together.
+device attributes. P0 adds deterministic UI resize replay and controlled Unix
+PTY output-between-resizes evidence, plus a Windows ConPTY counterpart that
+must run on Windows. This does not yet prove a real renderer frame or native
+window preserves those features together.
 
 Before considering this milestone complete:
 
