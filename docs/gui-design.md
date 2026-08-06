@@ -1,0 +1,516 @@
+# fesTerm GUI Design
+
+**Status:** Draft design specification
+
+This document defines the interaction model, visual hierarchy, and product-level GUI principles for fesTerm. It complements `ARCHITECTURE.md` and `docs/ui-test-plan.md`: architecture defines ownership and dependencies, the UI test plan defines validation, and this document defines the intended user experience.
+
+## Product Posture
+
+fesTerm should feel like a restrained, native-feeling terminal workstation:
+
+- denser than a consumer application;
+- quieter than a developer dashboard;
+- more integrated than a minimal terminal window;
+- less workflow-opinionated than command-block or cloud-dependent products; and
+- always centered on terminal interaction.
+
+The terminal viewport is the primary surface. Application chrome exists to help users create, identify, switch, restore, and diagnose sessions without competing with terminal content.
+
+## Core UX Principles
+
+### Stable application identity, dynamic terminal content
+
+The application should optimize for persistent identity while the terminal remains dynamic.
+
+Stable concepts include:
+
+- session identity;
+- profile identity;
+- workspace identity;
+- host identity; and
+- user-assigned names.
+
+Transient concepts include:
+
+- terminal-provided titles;
+- current directory;
+- foreground process;
+- alternate-screen content;
+- cursor state; and
+- connection transport details.
+
+Transient terminal state must not silently replace stable application identity.
+
+### One primary action per screen
+
+Each major screen should have one dominant purpose:
+
+- **Launcher:** start or connect to a session.
+- **Terminal tab:** interact with the terminal.
+- **Settings:** configure the application.
+- **Diagnostics:** inspect or troubleshoot state.
+
+Secondary actions should remain available but visually subordinate.
+
+### Quiet by default
+
+Normal operation should avoid persistent telemetry, cell grids, verbose status strings, or developer instrumentation.
+
+Diagnostics should be available through an explicit overlay, panel, or command. Errors should be concise and contextual, with details available on demand.
+
+### Keyboard-first, mouse-friendly
+
+All primary workflows should be efficient from the keyboard while remaining discoverable and usable with a mouse.
+
+### Local-first
+
+The launcher, profiles, sessions, workspace restore, and settings must work without sign-in. Optional synchronization must not change the primary interaction model.
+
+## Root Application States
+
+The application should never present an undefined empty state. The root state is always one of:
+
+1. **Session launcher**
+2. **One or more open sessions**
+3. **Workspace restoration in progress**
+
+When the last session closes, fesTerm returns to the launcher instead of showing a blank window or exiting unexpectedly, unless the user has explicitly configured close-last-tab behavior otherwise.
+
+## Session Launcher
+
+### Launch behavior
+
+When fesTerm starts without a workspace to restore, it should open a lightweight session launcher rather than immediately launching the platform default shell.
+
+The launcher is not a wizard, dashboard, or onboarding flow. It should be fast, compact, and usable repeatedly.
+
+### Launcher content
+
+The launcher may contain:
+
+- **Local shell** — platform default and saved local profiles.
+- **SSH** — connect to a host or select a saved profile.
+- **Recent sessions or profiles**.
+- **Recent workspaces**.
+- **Settings** and limited help/documentation access.
+
+Unavailable categories may be omitted until implemented rather than shown as disabled clutter.
+
+### Launcher as a tab
+
+The launcher should use the same tab model as sessions.
+
+Consequences:
+
+- Closing the final session returns to the launcher.
+- The New Tab command opens a launcher tab.
+- Users can keep a launcher tab open while other sessions run.
+- The application does not need a separate home-window architecture.
+
+### New Tab behavior
+
+The primary New Tab action should open the launcher rather than immediately creating one predetermined session type.
+
+A separate shortcut or configurable action may open the default local profile directly for users who prefer that workflow.
+
+## Primary Layout
+
+The default window has three conceptual zones:
+
+```text
++------------------------------------------------------+
+| Tab strip, session identity, global window actions   |
++------------------------------------------------------+
+|                                                      |
+| Terminal viewport or launcher content                |
+|                                                      |
++------------------------------------------------------+
+| Contextual status only when needed                   |
++------------------------------------------------------+
+```
+
+### Tab strip
+
+The tab strip provides session switching and identity. It should be compact and visually integrated with the upper application chrome.
+
+### Main content
+
+The main content is either a terminal viewport, launcher, settings page, or diagnostics surface. Terminal tabs should maximize terminal area.
+
+### Contextual status region
+
+The bottom status region should normally be absent. It may appear for actionable or transitional states such as:
+
+- reconnecting;
+- authentication required;
+- host-key decision required;
+- session startup failure;
+- transport failure; or
+- an available diagnostic detail.
+
+It should not display continuous byte counts, queue metrics, dimensions, or frame statistics during normal use.
+
+## Tab Model
+
+### Tab anatomy
+
+A session tab conceptually contains:
+
+```text
+[session icon] [primary identity] [state indicator] [close]
+```
+
+Not every element must be visible at every density. The primary identity and active state take precedence.
+
+### Identity precedence
+
+The primary tab label should follow this order:
+
+1. User-assigned tab name.
+2. Profile or connection name.
+3. Remote host alias for SSH.
+4. Local shell name or session type.
+5. Generic fallback such as `Local Shell` or `SSH Session`.
+
+The terminal-provided dynamic title must not replace the primary identity.
+
+### Dynamic terminal title
+
+A terminal-provided title may appear as secondary metadata when space permits, for example:
+
+```text
+production-db — nvim server.rs
+```
+
+The stable identity remains first. In compact layouts, the secondary title should be omitted before truncating the primary identity beyond usefulness.
+
+### Session-type identity
+
+Icons may help distinguish local shell, SSH, launcher, settings, or other future session types. Icons should aid recognition rather than decorate every control.
+
+Remote operating-system icons may be shown when reliable metadata is available, but the UI must always support a generic remote-host fallback. OS detection must not be required for a coherent tab.
+
+### Connection states
+
+The visual state vocabulary should include at least:
+
+- connected or running;
+- starting;
+- reconnecting;
+- disconnected;
+- authentication required;
+- failed; and
+- exited.
+
+State indicators should be compact, accessible, and not rely on color alone.
+
+### Active and inactive tabs
+
+The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal.
+
+### Tab overflow
+
+The design must remain usable with many tabs. The implementation should support a combination of:
+
+- compact tab width;
+- sensible truncation;
+- horizontal scrolling or overflow menu;
+- keyboard tab switching;
+- searchable tab/session switcher; and
+- stable session identities.
+
+## Session Creation Workflow
+
+### Local session
+
+The launcher should allow users to:
+
+- open the platform default local profile;
+- choose a saved local profile; and
+- access additional options without requiring them for the common path.
+
+### SSH session
+
+The launcher should support:
+
+- saved SSH profiles;
+- recent connections;
+- a direct `Connect to host...` action; and
+- clear authentication or host-key follow-up when required.
+
+SSH is a first-class session type, not a local shell command presented as an application feature.
+
+### Profile editing
+
+Profile creation and editing should be separate from the immediate launch path. The common case should require one selection or a small amount of connection information, not completion of a large settings form.
+
+## Workspace Workflow
+
+### Restore
+
+When workspace restore is enabled, startup should clearly indicate restoration while sessions are being recreated. Each tab should be allowed to enter a starting, reconnecting, failed, or running state independently.
+
+### Failure handling
+
+One failed session must not block restoration of the rest of the workspace. Failed tabs retain their stable identity and expose retry or diagnostic actions.
+
+### Restored identity
+
+Workspace restoration should preserve:
+
+- tab order;
+- stable tab/session names;
+- selected tab;
+- window dimensions and supported window state; and
+- profile references or launch definitions.
+
+Transient terminal titles should not become the restored primary identity.
+
+## Diagnostics and Error UX
+
+### Three levels
+
+1. **Normal mode** — quiet terminal workstation.
+2. **Contextual notification** — brief actionable state near the affected session.
+3. **Diagnostics surface** — detailed lifecycle, queue, dimensions, byte counts, timing, and error information.
+
+### Error presentation
+
+Errors should answer:
+
+- What failed?
+- Which session is affected?
+- Is retry possible?
+- What is the primary next action?
+
+Technical details should be expandable or copyable without occupying the main terminal surface permanently.
+
+### Reconnect presentation
+
+A reconnecting SSH session should retain its tab and stable identity. The tab may show a compact reconnecting state, while the viewport presents a restrained overlay or message that does not destroy prior terminal content unnecessarily.
+
+### Sensitive data
+
+Diagnostic views and exported bundles must avoid exposing secrets, credentials, private keys, tokens, or unreviewed terminal content by default.
+
+## Visual Language
+
+### General style
+
+- Dark-neutral terminal-first default.
+- Minimal borders and separators.
+- Compact controls and tab chrome.
+- Purposeful accent color.
+- No visible cell grid in normal mode.
+- Limited animation, used only for meaningful state changes.
+- Terminal content visually dominates application chrome.
+
+### Density
+
+The default density should support many tabs and long work sessions without feeling cramped. Touch-sized controls are not required as the desktop default, but critical actions must remain usable and accessible.
+
+### Semantic color roles
+
+Use semantic roles rather than scattered literal colors:
+
+```text
+surface.window
+surface.chrome
+surface.terminal
+surface.tab.active
+surface.tab.inactive
+surface.overlay
+surface.selection
+text.primary
+text.secondary
+text.muted
+border.subtle
+accent.primary
+status.running
+status.starting
+status.reconnecting
+status.disconnected
+status.error
+status.attention
+```
+
+Themes should map these roles to concrete colors while preserving contrast and state distinctions.
+
+### Typography roles
+
+At minimum, define:
+
+- terminal text;
+- tab primary identity;
+- tab secondary title;
+- launcher heading;
+- launcher item title;
+- launcher item description;
+- contextual status text; and
+- diagnostic text.
+
+Terminal typography may use separate font and shaping rules from application chrome.
+
+## Terminal Typography
+
+### Goals
+
+- High readability for long sessions.
+- Reliable cross-platform glyph coverage.
+- Correct width and continuation mapping.
+- Font fallback without breaking cell geometry.
+- Ligature support after the shaping-to-cell mapping contract is validated.
+
+### Ligatures
+
+Ligatures are a planned capability, but they must never alter terminal cell ownership, cursor placement, selection boundaries, or mouse coordinates.
+
+Ligature enabling should remain blocked until the M6 ligature and fallback validation requirements are satisfied.
+
+### User control
+
+Users should eventually be able to configure terminal font family, size, fallback behavior, line height, and ligature preference through versioned configuration and GUI settings.
+
+## Interaction Conventions
+
+### Keyboard
+
+Expected commands include:
+
+- New Tab opens the session launcher.
+- A separate action may open the default local profile directly.
+- Close Tab closes the current launcher or session tab.
+- Next/Previous Tab switch predictably.
+- A searchable session switcher finds tabs by stable identity and optional secondary title.
+- Command palette or equivalent access may expose less common actions later.
+
+Exact platform shortcuts remain to be specified and should respect platform conventions where practical.
+
+### Mouse
+
+- Clicking a tab activates it.
+- Tab close controls should avoid accidental activation or closure.
+- Reordering may be supported through drag-and-drop.
+- Terminal mouse reporting and local selection remain governed by terminal mode and modifier policy.
+
+### Focus
+
+Opening or activating a terminal tab should focus the terminal unless a modal action, authentication prompt, or launcher control explicitly owns focus.
+
+## Accessibility
+
+The GUI should provide:
+
+- semantic roles and accessible names for tabs and controls;
+- non-color state indicators;
+- sufficient contrast;
+- keyboard traversal for launcher, tabs, settings, and diagnostics;
+- clear focus indication outside the terminal viewport;
+- meaningful truncation or tooltips for shortened identity text; and
+- scalable application chrome independent of terminal font size where practical.
+
+Headless GUI tests should assert semantic names and roles for major controls before pixel snapshots are treated as authoritative.
+
+## Responsive and Narrow-Window Behavior
+
+When horizontal space is constrained, remove or collapse information in this order:
+
+1. Secondary terminal-provided title.
+2. Optional OS-specific icon or decorative metadata.
+3. Verbose state text, retaining an accessible state indicator.
+4. Less-used global actions into an overflow menu.
+
+The stable primary session identity should remain visible as long as possible.
+
+The terminal viewport must never become fragmented or uncovered because chrome, diagnostics, or footer geometry was calculated after terminal dimensions.
+
+## Launcher Example
+
+A conceptual launcher may resemble:
+
+```text
+fesTerm
+
+New Session
+  Local Shell
+    PowerShell
+    Bash
+
+  SSH
+    Connect to host...
+
+Recent
+  production-db
+  staging
+  dev-vm
+
+Workspaces
+  Yesterday
+  Kubernetes
+```
+
+This is information architecture, not a pixel specification. The final implementation should remain compact and terminal-oriented.
+
+## Validation Strategy
+
+GUI behavior should be validated in layers:
+
+1. Pure layout, geometry, state, and input tests.
+2. Headless egui frame tests.
+3. Structural viewport and clipping assertions.
+4. Stable visual snapshots.
+5. Native-window platform smoke tests.
+6. Workflow review using screenshots or recordings.
+
+Important GUI states should include:
+
+- launcher with no saved profiles;
+- launcher with recent profiles and workspaces;
+- multiple local and SSH tabs;
+- active, inactive, reconnecting, failed, and exited sessions;
+- long and duplicate session names;
+- narrow and high-DPI windows;
+- diagnostics collapsed and expanded; and
+- workspace restoration with mixed success.
+
+## Iteration Process
+
+GUI work should proceed in short design rounds:
+
+1. **Workflow:** define user goal, primary action, keyboard path, failure state, and required information.
+2. **Information architecture:** define tabs, menus, panels, and state ownership.
+3. **Visual language:** define density, spacing, typography, color roles, and icon policy.
+4. **Prototype:** build a narrow vertical slice with fake session metadata where appropriate.
+5. **Evaluation:** review screenshots, recordings, structural tests, and interaction behavior.
+6. **Specification:** update this document and create focused implementation issues.
+
+Implementation should not attempt the entire future UI at once. The first prototype should prove the launcher, tab identity model, session states, hidden diagnostics, and terminal dominance before broader settings or workspace UI is built.
+
+## First GUI Prototype
+
+The first design prototype should include:
+
+- a launcher tab;
+- two or three mock session tabs;
+- local and SSH identities;
+- active and inactive states;
+- disconnected and reconnecting states;
+- stable primary identity plus optional dynamic secondary title;
+- a compact New Session action;
+- a hidden diagnostics surface; and
+- terminal viewport dominance.
+
+It should use fake metadata where necessary so interaction and hierarchy can be settled before M7 and M8 implementation details constrain the design.
+
+## Open Questions
+
+- Exact tab-strip placement relative to native window controls on each platform.
+- Whether launcher tabs may be pinned or automatically close after launching a session.
+- Default shortcut for directly opening the platform default local profile.
+- Searchable session-switcher interaction and placement.
+- Tab overflow behavior and minimum tab width.
+- Whether diagnostics use a side panel, bottom drawer, overlay, or separate tab.
+- Theme defaults and application-chrome font selection.
+- Exact icon source, licensing, and fallback policy.
+- Rules for user-name and host-name privacy in screenshots, notifications, and shared workspaces.
+- Whether close-last-tab returns to the launcher unconditionally or is configurable.
