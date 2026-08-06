@@ -1,0 +1,7 @@
+name: explicit and cleared tab stops preserve TUI alignment
+size: 12x1
+input: "A\x1bH\x1b[1G\tB\x1b[3g\x1b[1G\tC"
+grid:
+  - "AB         C"
+cursor: 11,0
+replies: ""

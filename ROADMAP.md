@@ -238,6 +238,8 @@ matrix.
 
 ## Milestone 6 — Full-Screen TUI Compatibility Pass
 
+**Status:** In progress
+
 ### Outcome
 
 The terminal is functionally useful with the motivating advanced applications.
@@ -249,6 +251,8 @@ The terminal is functionally useful with the motivating advanced applications.
 - Refined title, cursor-style, tab-stop, hyperlink, and terminal-identification behavior as required.
 - Defined `TERM` and terminfo strategy.
 - Initial ligature-capable shaping architecture, with ligatures enabled only after cell mapping is correct.
+- Reference-application scenarios maintained in
+  [`docs/m6-compatibility-checklist.md`](docs/m6-compatibility-checklist.md).
 
 ### Completion criteria
 

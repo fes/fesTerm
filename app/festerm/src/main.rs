@@ -16,6 +16,7 @@ use festerm_session::SessionMetrics;
 const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
 const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PENDING_COMMAND_BYTES: usize = DEFAULT_COMMAND_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
+const APPLICATION_TITLE: &str = "fesTerm";
 
 fn main() -> eframe::Result<()> {
     diagnostics::init();
@@ -23,7 +24,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions::default();
     eframe::run_native(
-        "fesTerm",
+        APPLICATION_TITLE,
         options,
         Box::new(|creation_context| Ok(Box::new(FesTermApp::new(&creation_context.egui_ctx)))),
     )
@@ -33,6 +34,7 @@ struct FesTermApp {
     terminal: Terminal,
     terminal_view: TerminalView,
     local_session: LocalSessionSink,
+    window_title: String,
 }
 
 impl FesTermApp {
@@ -50,6 +52,22 @@ impl FesTermApp {
             terminal,
             terminal_view: TerminalView::default(),
             local_session,
+            window_title: APPLICATION_TITLE.to_owned(),
+        }
+    }
+
+    fn update_window_title(&mut self, context: &eframe::egui::Context) {
+        let title = Self::window_title(self.terminal.title());
+        if self.window_title != title {
+            context.send_viewport_cmd(eframe::egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+    }
+
+    fn window_title(terminal_title: &str) -> String {
+        match terminal_title {
+            "" => APPLICATION_TITLE.to_owned(),
+            terminal_title => format!("{terminal_title} - {APPLICATION_TITLE}"),
         }
     }
 }
@@ -72,6 +90,7 @@ impl eframe::App for FesTermApp {
             .forward_terminal_replies(&mut self.terminal);
         self.local_session.flush_pending_writes();
         self.local_session.flush_pending_resize();
+        self.update_window_title(context);
         let session_status = self.local_session.status_line();
         let session_diagnostics = self.local_session.diagnostics_line();
         self.terminal_view.show_with_status(
@@ -637,6 +656,12 @@ mod tests {
         assert!(terminal
             .row_text(2)
             .is_some_and(|row| row.starts_with("fesTerm remains in no-session mode")));
+    }
+
+    #[test]
+    fn terminal_title_is_scoped_to_the_application_window() {
+        assert_eq!(FesTermApp::window_title(""), APPLICATION_TITLE);
+        assert_eq!(FesTermApp::window_title("editor"), "editor - fesTerm");
     }
 
     #[test]

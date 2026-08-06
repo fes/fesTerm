@@ -5,7 +5,8 @@ native SSH client, written in Rust.
 
 ## Status
 
-Milestones 1 through 5 are complete. The GUI-independent terminal core has
+Milestones 1 through 5 are complete; Milestone 6 compatibility work is in
+progress. The GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
@@ -28,9 +29,10 @@ diagnostics. If shell startup fails, it shows a visible no-session error rather
 than a fake shell.
 
 There are deliberately no tabs, persisted/config-file profiles, SSH sessions,
-scrollback, terminfo distribution, or ligature shaping yet. `TERM` is
-provisionally set to `xterm-256color`; M6 must refine the advertised
-compatibility and reference-application behavior.
+scrollback, terminfo distribution, or ligature shaping yet. `TERM` remains
+`xterm-256color` as an interoperability baseline while M6 regression coverage
+defines the supported subset; see the M6 checklist for its conservative
+device-identity and future custom-terminfo strategy.
 
 ## Documentation
 
@@ -38,6 +40,8 @@ compatibility and reference-application behavior.
   commands for coding agents and contributors.
 - [Development handoff](docs/development-handoff.md) — bootstrap, current
   runtime behavior, diagnostics, manual checks, and resuming work.
+- [M6 compatibility checklist](docs/m6-compatibility-checklist.md) — reference
+  application scenarios, `TERM` strategy, and regression triage.
 - [Project design](DESIGN.md) — product direction, principles, experience,
   priorities, and open questions.
 - [System architecture](ARCHITECTURE.md) — proposed crates, dependency

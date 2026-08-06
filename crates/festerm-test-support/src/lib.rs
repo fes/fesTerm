@@ -7,7 +7,8 @@ use std::{
 };
 
 use festerm_core::{
-    Attributes, CellWidth, Color, Dimensions, MouseTrackingMode, Terminal, TerminalModes,
+    Attributes, CellWidth, Color, CursorStyle, Dimensions, MouseTrackingMode, Terminal,
+    TerminalModes,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,6 +20,8 @@ pub struct Fixture {
     pub expected_grid: Vec<String>,
     pub expected_cells: Vec<CellExpectation>,
     pub expected_cursor: (usize, usize),
+    pub expected_cursor_style: Option<CursorStyle>,
+    pub expected_title: Option<String>,
     pub expected_modes: Option<ModeExpectation>,
     pub expected_dirty_rows: Option<Vec<usize>>,
     pub expected_replies: Vec<u8>,
@@ -93,6 +96,8 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
         })
         .collect::<Vec<_>>();
     let actual_cursor = (terminal.cursor().column(), terminal.cursor().row());
+    let actual_cursor_style = terminal.cursor_style();
+    let actual_title = terminal.title().to_owned();
     let actual_modes = terminal.modes();
     let actual_dirty_rows = fixture
         .expected_dirty_rows
@@ -135,6 +140,13 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
 
     if actual_grid != fixture.expected_grid
         || actual_cursor != fixture.expected_cursor
+        || fixture
+            .expected_cursor_style
+            .is_some_and(|expected| expected != actual_cursor_style)
+        || fixture
+            .expected_title
+            .as_deref()
+            .is_some_and(|expected| expected != actual_title)
         || !cell_mismatches.is_empty()
         || !modes_match
         || actual_dirty_rows.as_ref() != fixture.expected_dirty_rows.as_ref()
@@ -147,6 +159,10 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
              actual grid:\n{}\n\
              expected cursor: {:?}\n\
              actual cursor: {:?}\n\
+             expected cursor style: {:?}\n\
+             actual cursor style: {:?}\n\
+             expected title: {:?}\n\
+             actual title: {:?}\n\
              expected cell attributes: {}\n\
              actual cell mismatches: {}\n\
              expected modes: {}\n\
@@ -160,6 +176,10 @@ pub fn assert_fixture(fixture: &Fixture) -> Result<(), FixtureAssertionError> {
                 render_grid(&actual_grid),
                 fixture.expected_cursor,
                 actual_cursor,
+                fixture.expected_cursor_style,
+                actual_cursor_style,
+                fixture.expected_title,
+                actual_title,
                 render_cells(&fixture.expected_cells),
                 render_items(&cell_mismatches),
                 fixture
@@ -211,6 +231,8 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
     let mut expected_grid = Vec::new();
     let mut expected_cells = Vec::new();
     let mut expected_cursor = None;
+    let mut expected_cursor_style = None;
+    let mut expected_title = None;
     let mut expected_modes = None;
     let mut expected_dirty_rows = None;
     let mut expected_replies = None;
@@ -254,6 +276,10 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
             "input" => input = Some(parse_quoted_bytes(path, line_number, value.trim())?),
             "resize" => resize = Some(parse_dimensions(path, line_number, value.trim())?),
             "cursor" => expected_cursor = Some(parse_cursor(path, line_number, value.trim())?),
+            "cursor_style" => {
+                expected_cursor_style = Some(parse_cursor_style(path, line_number, value.trim())?)
+            }
+            "title" => expected_title = Some(parse_quoted(path, line_number, value.trim())?),
             "modes" => expected_modes = Some(parse_modes(path, line_number, value.trim())?),
             "dirty" => {
                 expected_dirty_rows = Some(parse_dirty_rows(path, line_number, value.trim())?)
@@ -284,6 +310,8 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
         expected_grid,
         expected_cells,
         expected_cursor,
+        expected_cursor_style,
+        expected_title,
         expected_modes,
         expected_dirty_rows,
         expected_replies,
@@ -301,6 +329,26 @@ fn parse_fixture(path: &Path, source: &str) -> Result<Fixture, FixtureError> {
             0,
             "grid rows must exactly match the declared dimensions",
         ));
+    }
+
+    fn parse_cursor_style(
+        path: &Path,
+        line: usize,
+        value: &str,
+    ) -> Result<CursorStyle, FixtureError> {
+        match value.trim() {
+            "blinking-block" => Ok(CursorStyle::BlinkingBlock),
+            "steady-block" => Ok(CursorStyle::SteadyBlock),
+            "blinking-underline" => Ok(CursorStyle::BlinkingUnderline),
+            "steady-underline" => Ok(CursorStyle::SteadyUnderline),
+            "blinking-bar" => Ok(CursorStyle::BlinkingBar),
+            "steady-bar" => Ok(CursorStyle::SteadyBar),
+            _ => Err(FixtureError::parse(
+                path,
+                line,
+                "cursor style must be blinking-block, steady-block, blinking-underline, steady-underline, blinking-bar, or steady-bar",
+            )),
+        }
     }
     if fixture.expected_cursor.0 >= expected_dimensions.columns()
         || fixture.expected_cursor.1 >= expected_dimensions.rows()

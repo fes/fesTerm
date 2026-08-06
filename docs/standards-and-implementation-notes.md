@@ -324,11 +324,12 @@ channel flow control, PTY request, resize, and terminal mode encoding.
 3. Extend the fixture format before Milestone 2 closes to assert cell
    attributes, modes, scrollback, dirty rows, and emitted replies/input bytes,
    not only grid text and cursor position.
-4. Start local PTY work with `TERM=xterm-256color` only while its advertised
-   subset is accurately supported. At Milestone 6, ship a precise `festerm`
-   terminfo entry, based on a maintained reference such as
-   [Alacritty's entry](https://raw.githubusercontent.com/alacritty/alacritty/master/extra/alacritty.info),
-   and validate it with [tack](https://invisible-island.net/ncurses/tack.html).
+4. Keep `TERM=xterm-256color` as the M6 interoperability baseline while
+   deterministic regressions define fesTerm's supported subset. A precise
+   `festerm` terminfo entry is deferred until M9 packaging can install it
+   reliably on Windows, macOS, and Linux; validate that entry with
+   [tack](https://invisible-island.net/ncurses/tack.html) before making it the
+   default.
 5. Test SGR mouse at coordinates beyond legacy limits, bracketed paste in both
    states, focus changes, right-margin behavior, wide-cell mutations, alternate
    screen restoration, and high-output flow control.
@@ -343,7 +344,9 @@ These require a focused design decision before implementation:
 - Back-color erase behavior, which determines whether the future terminfo entry
   may advertise `bce`.
 - Reflow semantics and how saved cursor state maps across reflow.
-- Final `TERM` identity and the `festerm` terminfo distribution mechanism.
+- Final `TERM` identity and the `festerm` terminfo distribution mechanism
+  remain M9 packaging work; M6 uses the documented `xterm-256color`
+  interoperability baseline.
 - Kitty keyboard protocol and synchronized update support.
 - Clipboard, hyperlink, title, working-directory, and graphics protocol consent
   models.
@@ -358,3 +361,27 @@ These require a focused design decision before implementation:
 - [xterm.js flow control guide](https://xtermjs.org/docs/guides/flowcontrol/)
 - [WezTerm #4293](https://github.com/wez/wezterm/issues/4293), a representative
   high-output rendering latency report
+
+## Milestone 6 Implemented Behavior
+
+M6 adds DEC tab-stop state: default stops are every eight columns, `ESC H`
+sets a stop, and `CSI Ps g` clears the current (`Ps=0`) or all (`Ps=3`) stops.
+Stops preserve their overlap on resize and newly exposed columns receive the
+standard every-eight-columns default.
+
+`DECSCUSR` (`CSI Ps SP q`) records block, underline, and bar cursor shapes;
+the egui renderer maps the shape without changing cell geometry. It does not
+schedule a blink timer, so blinking and steady variants intentionally share
+their static shape until a presentation-timing policy exists.
+
+The bounded OSC parser retains only OSC 0/2 titles and OSC 8 hyperlink
+metadata. Titles are UTF-8 validated, stripped of controls, and capped at 256
+characters before the application requests a native window-title update. OSC
+8 accepts only `http`, `https`, and `mailto` targets up to 2,048 bytes, stores
+them on cells, and never opens a target automatically. OSC 52 remains
+unsupported. All other string controls remain discard-only and every OSC
+payload remains bounded by `MAX_STRING_BYTES`.
+
+Primary (`CSI c`) and secondary (`CSI > c`) device attributes respond with a
+conservative VT102 identity and neutral secondary identity. This avoids
+advertising xterm extensions that fesTerm has not implemented.

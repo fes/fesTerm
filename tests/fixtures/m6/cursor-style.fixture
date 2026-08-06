@@ -1,0 +1,8 @@
+name: DEC cursor style changes without moving terminal content
+size: 3x1
+input: "\x1b[6 qX"
+grid:
+  - "X  "
+cursor: 1,0
+cursor_style: steady-bar
+replies: ""

@@ -71,6 +71,7 @@ resize, exit, and shutdown.
 6. Keep status documentation current only after the corresponding behavior and
    validation exist.
 
-The next planned milestone is the full-screen TUI compatibility pass. It should
-start with documented reference-application scenarios and concrete regression
-fixtures, not speculative UI features.
+Milestone 6 is in progress. Use the
+[compatibility checklist](m6-compatibility-checklist.md) for reference-
+application scenarios and convert every corrected failure into a concrete
+regression before moving to the next milestone.

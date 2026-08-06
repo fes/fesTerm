@@ -113,7 +113,11 @@ Status values are `planned`, `partial`, `passing`, or `deferred`.
 | Mouse coordinates | Use SGR coordinates beyond legacy limits | passing | Exact-byte core test |
 | Selection | Select locally when mouse reporting does not claim the interaction | passing | Core input-outcome and M4 routing/selection tests |
 | Keyboard modes | Encode cursor and keypad keys according to active modes | passing | Exact-byte core test |
-| Titles | Apply title changes without affecting terminal state | planned | Core and GUI integration tests |
+| Tab stops | Set, clear, resize, and traverse explicit tab stops | passing | Core fixture |
+| Cursor styles | Apply DECSCUSR shapes without changing cell geometry | passing | Core fixture; renderer shape mapping |
+| Titles | Apply sanitized OSC 0/2 titles without affecting grid state | passing | Core fixture; application title mapping |
+| Hyperlinks | Preserve safe OSC 8 metadata without automatic activation | partial | Core and renderer metadata tests |
+| Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
 | Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji cell test; renderer fallback remains later |
 | Ligatures | Shape supported runs without moving cursor or selection boundaries | planned | Renderer mapping and visual tests |
@@ -211,9 +215,8 @@ The test environment must own its configuration and credentials and must not con
 ## Compatibility Decisions Still Needed
 
 - Exact xterm feature or version references used for ambiguous behavior.
-- Final terminal identity and `TERM` value exposed by local and SSH sessions
-  (`xterm-256color` is the provisional M5 local value).
-- Terminfo distribution or installation strategy.
+- `TERM=xterm-256color` is the M6 local interoperability baseline; a custom
+  `festerm` entry awaits M9 packaging so it can be installed reliably.
 - Unicode width table source and update policy.
 - Grapheme and complex-script policy.
 - Reflow semantics when the terminal width changes.

@@ -31,6 +31,8 @@ check its width role.
 resize: 100x30
 dirty: "0,1,2"
 modes: "auto_wrap=true,origin_mode=false,alternate_screen=false,cursor_visible=true"
+cursor_style: steady-bar
+title: "session title"
 cells:
   - "column,row|text|foreground|background|attributes|width"
 ```
@@ -42,6 +44,11 @@ the optional resize after constructor dirtiness has been cleared.
 `bracketed_paste`, `focus_reporting`, `mouse_tracking`, and `sgr_mouse`.
 Unlisted modes use their documented defaults. `mouse_tracking` is one of
 `none`, `x10`, `button-event`, `button-motion`, or `any-motion`.
+
+`cursor_style` is optional and is one of `blinking-block`, `steady-block`,
+`blinking-underline`, `steady-underline`, `blinking-bar`, or `steady-bar`.
+
+`title` optionally asserts the sanitized OSC 0/2 title.
 
 Cell colors are `default`, `indexed:0` through `indexed:255`, or
 `rgb:red,green,blue`. Attributes are `none` or comma-separated names such as

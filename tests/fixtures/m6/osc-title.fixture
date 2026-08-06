@@ -1,0 +1,8 @@
+name: OSC 2 title leaves terminal grid unchanged
+size: 3x1
+input: "\x1b]2;fesTerm - project\x07X"
+grid:
+  - "X  "
+cursor: 1,0
+title: "fesTerm - project"
+replies: ""

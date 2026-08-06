@@ -1,0 +1,44 @@
+# M6 Compatibility Checklist
+
+This checklist is the manual reference-application complement to deterministic
+core and renderer regressions. Record an observed failure as a minimal
+fixture or isolated test before considering it fixed. Do not record terminal
+content, credentials, host names, or other sensitive output in an issue,
+fixture, or log.
+
+## Baseline
+
+Run the local shell with `cargo run -p festerm`. Confirm that resizing preserves
+the visible grid, typed input reaches the child, selection yields to a mouse-
+reporting application, and exiting the child shuts down cleanly.
+
+The local PTY currently sets `TERM=xterm-256color` as an interoperability
+baseline. fesTerm does not ship a custom terminfo entry yet, so it must not
+claim complete xterm compatibility. Its direct device-attribute replies are
+deliberately conservative (`VT102` primary identity and neutral secondary
+identity); M6 regressions define the supported subset. A custom `festerm`
+terminfo entry is deferred until packaging can install it reliably on every
+supported platform.
+
+## Reference Scenarios
+
+| Application | Scenario | Required observations |
+| --- | --- | --- |
+| GitHub Copilot CLI | Start an interactive session, type and paste text, resize, and exit | Alternate screen, focus, bracketed paste, cursor keys, resize, and restoration work together |
+| `less` | Open a local text file, navigate, resize, then quit | Alternate screen, scrolling, cursor movement, and primary-screen restoration work |
+| `vim` or `nvim` | Edit a scratch file, move with arrows, paste, resize, and quit | Cursor style, title updates, mouse/selection policy, colors, and alternate-screen restoration work |
+| `htop` or platform equivalent | Start, resize repeatedly, inspect updates, and quit | High-frequency redraw remains responsive; mouse reporting does not create local selection |
+| `tmux` | Start a nested session, split or switch panes, resize, and detach/exit | Terminal identification, title handling, mouse/focus, resize, and nested alternate screens remain usable |
+| Shell line editor | Use history, completion, Unicode input, and a tab-separated command | Tab stops, Unicode cells, key encoding, paste, and prompt redraw remain aligned |
+
+An unavailable reference application is not a passing scenario. Record it as
+not run and execute the applicable deterministic suite instead.
+
+## Regression Triage
+
+For each failure, capture the terminal dimensions, application/version,
+platform, minimal sequence of actions, expected behavior, and content-free
+diagnostics. Classify it under the milestone issue-review policy in
+[`../ROADMAP.md`](../ROADMAP.md). Fix terminal semantics in `festerm-core`,
+presentation mapping in `festerm-ui-egui`, and session transport behavior in
+the relevant backend; preserve the application as the sole terminal writer.

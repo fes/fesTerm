@@ -6,6 +6,7 @@
 
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -14,7 +15,7 @@ use egui::{
     Color32, FontFamily, FontId, Label, Pos2, Rect, Response, Sense, Stroke, TextStyle, Ui, Vec2,
 };
 use festerm_core::{
-    Attributes, Cell, CellWidth, Color, Cursor, Dimensions, FocusEvent, InputEvent,
+    Attributes, Cell, CellWidth, Color, Cursor, CursorStyle, Dimensions, FocusEvent, InputEvent,
     InputEventOutcome, Key, Modifiers, MouseButton, MouseEvent, MouseEventKind, MouseWheel, Screen,
     Terminal, TerminalModes, MAX_CELL_COUNT,
 };
@@ -40,6 +41,7 @@ fn grid_view_size(available: Vec2, reserved_footer_height: f32) -> ViewSize {
 pub struct TerminalSnapshot<'a> {
     screen: &'a Screen,
     cursor: Cursor,
+    cursor_style: CursorStyle,
     modes: TerminalModes,
 }
 
@@ -48,6 +50,7 @@ impl<'a> TerminalSnapshot<'a> {
         Self {
             screen: terminal.screen(),
             cursor: terminal.cursor(),
+            cursor_style: terminal.cursor_style(),
             modes: terminal.modes(),
         }
     }
@@ -58,6 +61,10 @@ impl<'a> TerminalSnapshot<'a> {
 
     pub const fn cursor(self) -> Cursor {
         self.cursor
+    }
+
+    pub const fn cursor_style(self) -> CursorStyle {
+        self.cursor_style
     }
 
     pub const fn modes(self) -> TerminalModes {
@@ -303,6 +310,7 @@ pub struct RenderedCell {
     foreground: Color,
     background: Color,
     attributes: Attributes,
+    hyperlink: Option<Arc<str>>,
 }
 
 impl RenderedCell {
@@ -313,6 +321,7 @@ impl RenderedCell {
             foreground: cell.foreground(),
             background: cell.background(),
             attributes: cell.attributes(),
+            hyperlink: cell.hyperlink_target(),
         }
     }
 
@@ -334,6 +343,13 @@ impl RenderedCell {
 
     pub const fn attributes(&self) -> Attributes {
         self.attributes
+    }
+
+    /// Returns a passive OSC 8 target for future explicit link activation.
+    ///
+    /// Rendering and selection never open a target automatically.
+    pub fn hyperlink(&self) -> Option<&str> {
+        self.hyperlink.as_deref()
     }
 }
 
@@ -1431,7 +1447,7 @@ fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCa
     if paint.snapshot.modes().cursor_visible() {
         let cursor = paint.snapshot.cursor();
         if cursor.column() < dimensions.columns() && cursor.row() < dimensions.rows() {
-            let rect = Rect::from_min_size(
+            let cell_rect = Rect::from_min_size(
                 Pos2::new(
                     paint.layout.rect.left() + cursor.column() as f32 * paint.layout.metrics.width,
                     paint.layout.rect.top() + cursor.row() as f32 * paint.layout.metrics.height,
@@ -1443,7 +1459,33 @@ fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCa
             } else {
                 DEFAULT_FOREGROUND.gamma_multiply(0.5)
             };
-            painter.rect_stroke(rect.shrink(0.5), 0.0, Stroke::new(1.0_f32, color));
+            paint_cursor(painter, cell_rect, paint.snapshot.cursor_style(), color);
+        }
+    }
+}
+
+fn paint_cursor(painter: egui::Painter, cell: Rect, style: CursorStyle, color: Color32) {
+    match style {
+        CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock => {
+            painter.rect_stroke(cell.shrink(0.5), 0.0, Stroke::new(1.0_f32, color));
+        }
+        CursorStyle::BlinkingUnderline | CursorStyle::SteadyUnderline => {
+            painter.line_segment(
+                [
+                    Pos2::new(cell.left(), cell.bottom() - 1.0),
+                    Pos2::new(cell.right(), cell.bottom() - 1.0),
+                ],
+                Stroke::new(1.0_f32, color),
+            );
+        }
+        CursorStyle::BlinkingBar | CursorStyle::SteadyBar => {
+            painter.line_segment(
+                [
+                    Pos2::new(cell.left() + 0.5, cell.top()),
+                    Pos2::new(cell.left() + 0.5, cell.bottom()),
+                ],
+                Stroke::new(1.0_f32, color),
+            );
         }
     }
 }
@@ -1994,6 +2036,22 @@ mod tests {
     }
 
     #[test]
+    fn cache_preserves_passive_hyperlink_metadata() {
+        let mut terminal = terminal(4, 1);
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\go\x1b]8;;\x1b\\");
+        let dirty_rows = terminal.take_dirty_rows();
+        let mut cache = TerminalRenderCache::default();
+
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        assert_eq!(
+            cache.row(0).unwrap()[0].hyperlink(),
+            Some("https://example.com")
+        );
+        assert_eq!(cache.row(0).unwrap()[2].hyperlink(), None);
+    }
+
+    #[test]
     fn renderer_resolves_terminal_colors_and_basic_attributes() {
         assert_eq!(
             resolve_color(Color::Indexed(196), DEFAULT_BACKGROUND),
@@ -2040,6 +2098,7 @@ mod tests {
             foreground: Color::Default,
             background: Color::Default,
             attributes: Attributes::NONE,
+            hyperlink: None,
         };
         let colored = RenderedCell {
             background: Color::Indexed(4),

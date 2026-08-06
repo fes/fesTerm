@@ -1,0 +1,7 @@
+name: primary device attributes conservatively identify VT102
+size: 3x1
+input: "\x1b[c\x1b[>c"
+grid:
+  - "   "
+cursor: 0,0
+replies: "\x1b[?6c\x1b[>0;0;0c"

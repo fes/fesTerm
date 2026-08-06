@@ -5,7 +5,7 @@
 //! Raw C1 bytes are deliberately not controls: treating them as such would
 //! make UTF-8 continuation bytes ambiguous.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use icu_properties::{props::GraphemeExtend, CodePointSetData};
 use unicode_width::UnicodeWidthChar;
@@ -29,6 +29,61 @@ pub struct Dimensions {
     columns: usize,
     rows: usize,
     cell_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OscAction {
+    SetTitle(String),
+    SetHyperlink(Option<Arc<str>>),
+}
+
+fn parse_osc(payload: Vec<u8>) -> Option<OscAction> {
+    let mut parts = payload.splitn(2, |byte| *byte == b';');
+    let command = parts.next()?;
+    let data = parts.next()?;
+    match command {
+        b"0" | b"2" => std::str::from_utf8(data)
+            .ok()
+            .map(sanitize_title)
+            .map(OscAction::SetTitle),
+        b"8" => parse_osc8(data).map(OscAction::SetHyperlink),
+        _ => None,
+    }
+}
+
+fn sanitize_title(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(256)
+        .collect()
+}
+
+fn parse_osc8(data: &[u8]) -> Option<Option<Arc<str>>> {
+    let mut parts = data.splitn(2, |byte| *byte == b';');
+    let _parameters = parts.next()?;
+    let uri = parts.next()?;
+    if uri.is_empty() {
+        return Some(None);
+    }
+    let uri = std::str::from_utf8(uri).ok()?;
+    if uri.len() > 2_048 || uri.chars().any(char::is_control) {
+        return None;
+    }
+    let scheme = uri.split_once(':')?.0;
+    matches!(scheme, "http" | "https" | "mailto").then(|| Some(Arc::from(uri)))
+}
+
+/// Visual cursor shape requested by DECSCUSR.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CursorStyle {
+    #[default]
+    BlinkingBlock,
+    SteadyBlock,
+    BlinkingUnderline,
+    SteadyUnderline,
+    BlinkingBar,
+    SteadyBar,
 }
 
 impl Dimensions {
@@ -227,6 +282,7 @@ pub struct Cell {
     foreground: Color,
     background: Color,
     attributes: Attributes,
+    hyperlink: Option<Arc<str>>,
 }
 
 impl Cell {
@@ -258,6 +314,19 @@ impl Cell {
 
     pub const fn attributes(&self) -> Attributes {
         self.attributes
+    }
+
+    /// Returns the trusted-for-display OSC 8 target attached to this cell.
+    ///
+    /// The core never opens links; the presentation layer must require an
+    /// explicit user action before using this value.
+    pub fn hyperlink(&self) -> Option<&str> {
+        self.hyperlink.as_deref()
+    }
+
+    /// Clones the shared OSC 8 target without duplicating its URI bytes.
+    pub fn hyperlink_target(&self) -> Option<Arc<str>> {
+        self.hyperlink.clone()
     }
 }
 
@@ -366,6 +435,7 @@ impl Screen {
         let foreground = cell.foreground;
         let background = cell.background;
         let attributes = cell.attributes;
+        let hyperlink = cell.hyperlink.clone();
         self.cells[index] = cell;
         if cluster_columns == 2 {
             let continuation = self
@@ -377,6 +447,7 @@ impl Screen {
                 foreground,
                 background,
                 attributes,
+                hyperlink,
             };
         }
         self.mark_dirty(row);
@@ -870,7 +941,9 @@ pub enum TerminalOp {
     ReverseIndex,
     SaveDec,
     RestoreDec,
+    SetTabStop,
     SetApplicationKeypad(bool),
+    SetCursorStyle(CsiParameters),
     CursorUp(CsiParameters),
     CursorDown(CsiParameters),
     CursorForward(CsiParameters),
@@ -899,6 +972,10 @@ pub enum TerminalOp {
         parameters: CsiParameters,
     },
     DeviceStatus(CsiParameters),
+    DeviceAttributes {
+        secondary: bool,
+    },
+    ClearTabStops(CsiParameters),
     Ignored,
 }
 
@@ -928,8 +1005,11 @@ pub struct Parser {
     parameters: CsiParameters,
     parameter_digits: u8,
     private: bool,
+    secondary: bool,
     intermediates: [u8; MAX_CSI_INTERMEDIATES],
     intermediate_length: usize,
+    string_payload: Vec<u8>,
+    osc_action: Option<OscAction>,
 }
 
 impl Default for Parser {
@@ -949,8 +1029,11 @@ impl Parser {
             },
             parameter_digits: 0,
             private: false,
+            secondary: false,
             intermediates: [0; MAX_CSI_INTERMEDIATES],
             intermediate_length: 0,
+            string_payload: Vec::new(),
+            osc_action: None,
         }
     }
 
@@ -1016,14 +1099,8 @@ impl Parser {
                 self.clear_csi();
                 ParserState::CsiEntry
             }
-            b']' => ParserState::String {
-                kind: StringKind::Osc,
-                bytes: 0,
-            },
-            b'P' | b'X' | b'^' | b'_' => ParserState::String {
-                kind: StringKind::Other,
-                bytes: 0,
-            },
+            b']' => self.start_string(StringKind::Osc),
+            b'P' | b'X' | b'^' | b'_' => self.start_string(StringKind::Other),
             0x20..=0x2f => ParserState::EscapeIntermediate,
             _ => ParserState::Ground,
         };
@@ -1033,6 +1110,7 @@ impl Parser {
             b'M' => TerminalOp::ReverseIndex,
             b'7' => TerminalOp::SaveDec,
             b'8' => TerminalOp::RestoreDec,
+            b'H' => TerminalOp::SetTabStop,
             b'=' => TerminalOp::SetApplicationKeypad(true),
             b'>' => TerminalOp::SetApplicationKeypad(false),
             _ => TerminalOp::Ignored,
@@ -1041,8 +1119,12 @@ impl Parser {
 
     fn advance_csi_entry(&mut self, byte: u8) -> TerminalOp {
         match byte {
-            b'?' if !self.private && self.parameters.is_empty() => {
+            b'?' if !self.private && !self.secondary && self.parameters.is_empty() => {
                 self.private = true;
+                TerminalOp::Ignored
+            }
+            b'>' if !self.private && !self.secondary && self.parameters.is_empty() => {
+                self.secondary = true;
                 TerminalOp::Ignored
             }
             b'0'..=b'9' => self.append_csi_digit(byte),
@@ -1078,22 +1160,24 @@ impl Parser {
             ParserState::String { kind, bytes } => {
                 if kind == StringKind::Osc && byte == 0x07 {
                     self.state = ParserState::Ground;
+                    return self.finish_string(kind);
                 } else if byte == 0x1b {
                     self.state = ParserState::StringEscape { kind, bytes };
                 } else {
-                    self.advance_string_payload(kind, bytes, 1);
+                    self.advance_string_payload(kind, bytes, &[byte]);
                 }
             }
             ParserState::StringEscape { kind, bytes } => {
                 if byte == b'\\' {
                     self.state = ParserState::Ground;
+                    return self.finish_string(kind);
                 } else if byte == 0x1b {
-                    self.advance_string_payload(kind, bytes, 1);
+                    self.advance_string_payload(kind, bytes, &[0x1b]);
                     if let ParserState::String { bytes, .. } = self.state {
                         self.state = ParserState::StringEscape { kind, bytes };
                     }
                 } else {
-                    self.advance_string_payload(kind, bytes, 2);
+                    self.advance_string_payload(kind, bytes, &[0x1b, byte]);
                 }
             }
             _ => unreachable!("only string states call advance_string"),
@@ -1101,16 +1185,37 @@ impl Parser {
         TerminalOp::Ignored
     }
 
-    fn advance_string_payload(&mut self, kind: StringKind, bytes: usize, additional: usize) {
-        let Some(bytes) = bytes.checked_add(additional) else {
+    fn start_string(&mut self, kind: StringKind) -> ParserState {
+        self.string_payload.clear();
+        ParserState::String { kind, bytes: 0 }
+    }
+
+    fn advance_string_payload(&mut self, kind: StringKind, bytes: usize, payload: &[u8]) {
+        let Some(bytes) = bytes.checked_add(payload.len()) else {
             self.state = ParserState::Ground;
             return;
         };
+        if kind == StringKind::Osc {
+            self.string_payload.extend_from_slice(payload);
+        }
         self.state = if bytes >= MAX_STRING_BYTES {
             ParserState::Ground
         } else {
             ParserState::String { kind, bytes }
         };
+    }
+
+    fn finish_string(&mut self, kind: StringKind) -> TerminalOp {
+        if kind != StringKind::Osc {
+            self.string_payload.clear();
+            return TerminalOp::Ignored;
+        }
+        self.osc_action = parse_osc(std::mem::take(&mut self.string_payload));
+        TerminalOp::Ignored
+    }
+
+    fn take_osc_action(&mut self) -> Option<OscAction> {
+        self.osc_action.take()
     }
 
     fn append_csi_digit(&mut self, byte: u8) -> TerminalOp {
@@ -1144,11 +1249,21 @@ impl Parser {
     fn complete_csi(&mut self, final_byte: u8) -> TerminalOp {
         let parameters = self.parameters;
         let private = self.private;
-        let has_intermediates = self.intermediate_length != 0;
+        let secondary = self.secondary;
+        let intermediates = self.intermediates;
+        let intermediate_length = self.intermediate_length;
         self.state = ParserState::Ground;
         self.clear_csi();
 
-        if has_intermediates || (parameters.has_colon() && final_byte != b'm') {
+        if intermediate_length != 0 {
+            return match (private, intermediate_length, intermediates[0], final_byte) {
+                (false, 1, b' ', b'q') if !parameters.has_colon() => {
+                    TerminalOp::SetCursorStyle(parameters)
+                }
+                _ => TerminalOp::Ignored,
+            };
+        }
+        if parameters.has_colon() && final_byte != b'm' {
             return TerminalOp::Ignored;
         }
         if private {
@@ -1165,6 +1280,11 @@ impl Parser {
                 },
                 _ => TerminalOp::Ignored,
             };
+        }
+        if secondary {
+            return matches!(final_byte, b'c')
+                .then_some(TerminalOp::DeviceAttributes { secondary: true })
+                .unwrap_or(TerminalOp::Ignored);
         }
         match final_byte {
             b'A' => TerminalOp::CursorUp(parameters),
@@ -1187,6 +1307,8 @@ impl Parser {
             b'd' => TerminalOp::VerticalPositionAbsolute(parameters),
             b'm' => TerminalOp::SetGraphicsRendition(parameters),
             b'n' => TerminalOp::DeviceStatus(parameters),
+            b'c' => TerminalOp::DeviceAttributes { secondary: false },
+            b'g' => TerminalOp::ClearTabStops(parameters),
             b'r' => TerminalOp::SetScrollRegion(parameters),
             b's' if parameters.is_empty() => TerminalOp::SaveAnsi,
             b'u' if parameters.is_empty() => TerminalOp::RestoreAnsi,
@@ -1214,6 +1336,7 @@ impl Parser {
         self.parameters = CsiParameters::default();
         self.parameter_digits = 0;
         self.private = false;
+        self.secondary = false;
         self.intermediate_length = 0;
     }
 }
@@ -1451,9 +1574,13 @@ pub struct Terminal {
     alternate: Option<BufferState>,
     active_screen: ActiveScreen,
     modes: TerminalModes,
+    cursor_style: CursorStyle,
+    tab_stops: Vec<bool>,
     current_attributes: Attributes,
     current_foreground: Color,
     current_background: Color,
+    title: String,
+    current_hyperlink: Option<Arc<str>>,
     reply_queue: Vec<u8>,
     input_queue: Vec<u8>,
     reply_queue_overflowed: bool,
@@ -1469,9 +1596,13 @@ impl Terminal {
             alternate: None,
             active_screen: ActiveScreen::Primary,
             modes: TerminalModes::default(),
+            cursor_style: CursorStyle::default(),
+            tab_stops: default_tab_stops(dimensions),
             current_attributes: Attributes::NONE,
             current_foreground: Color::Default,
             current_background: Color::Default,
+            title: String::new(),
+            current_hyperlink: None,
             reply_queue: Vec::new(),
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
@@ -1497,6 +1628,10 @@ impl Terminal {
         self.modes
     }
 
+    pub const fn cursor_style(&self) -> CursorStyle {
+        self.cursor_style
+    }
+
     pub const fn attributes(&self) -> Attributes {
         self.current_attributes
     }
@@ -1507,6 +1642,11 @@ impl Terminal {
 
     pub const fn background(&self) -> Color {
         self.current_background
+    }
+
+    /// Returns the current OSC 0/2 window title after control sanitization.
+    pub fn title(&self) -> &str {
+        &self.title
     }
 
     pub fn screen(&self) -> &Screen {
@@ -1569,6 +1709,8 @@ impl Terminal {
 
         let operation = self.parser.advance(byte);
         self.apply(operation);
+        let action = self.parser.take_osc_action();
+        self.apply_osc_action(action);
     }
 
     /// Resizes grids without reflow, retaining the upper-left intersection.
@@ -1581,6 +1723,7 @@ impl Terminal {
 
         self.primary = primary;
         self.alternate = alternate;
+        self.tab_stops = resized_tab_stops(&self.tab_stops, dimensions);
         Ok(())
     }
 
@@ -1743,7 +1886,9 @@ impl Terminal {
             }
             TerminalOp::SaveDec => self.save_dec(),
             TerminalOp::RestoreDec => self.restore_dec(),
+            TerminalOp::SetTabStop => self.set_tab_stop(),
             TerminalOp::SetApplicationKeypad(enabled) => self.modes.application_keypad = enabled,
+            TerminalOp::SetCursorStyle(parameters) => self.set_cursor_style(parameters),
             TerminalOp::CursorUp(parameters) => self.move_vertical(parameters, false),
             TerminalOp::CursorDown(parameters) => self.move_vertical(parameters, true),
             TerminalOp::CursorForward(parameters) => self.move_horizontal(parameters, true),
@@ -1782,6 +1927,8 @@ impl Terminal {
                 parameters,
             } => self.set_modes(private, enabled, parameters),
             TerminalOp::DeviceStatus(parameters) => self.device_status(parameters),
+            TerminalOp::DeviceAttributes { secondary } => self.device_attributes(secondary),
+            TerminalOp::ClearTabStops(parameters) => self.clear_tab_stops(parameters),
             TerminalOp::Ignored => {}
         }
     }
@@ -1793,6 +1940,14 @@ impl Terminal {
                 .alternate
                 .as_ref()
                 .expect("alternate state exists while active"),
+        }
+    }
+
+    fn apply_osc_action(&mut self, action: Option<OscAction>) {
+        match action {
+            Some(OscAction::SetTitle(title)) => self.title = title,
+            Some(OscAction::SetHyperlink(hyperlink)) => self.current_hyperlink = hyperlink,
+            None => {}
         }
     }
 
@@ -1813,6 +1968,7 @@ impl Terminal {
             foreground: self.current_foreground,
             background: self.current_background,
             attributes: self.current_attributes,
+            hyperlink: None,
         }
     }
 
@@ -1852,6 +2008,7 @@ impl Terminal {
         let foreground = self.current_foreground;
         let background = self.current_background;
         let attributes = self.current_attributes;
+        let hyperlink = self.current_hyperlink.clone();
         let buffer = self.active_buffer_mut();
         buffer.screen.replace_cluster(
             cursor.column,
@@ -1866,6 +2023,7 @@ impl Terminal {
                 foreground,
                 background,
                 attributes,
+                hyperlink,
             },
         );
         buffer.combining_anchor = Some(cursor);
@@ -1923,9 +2081,47 @@ impl Terminal {
 
     fn tab(&mut self) {
         let columns = self.dimensions().columns();
-        let buffer = self.active_buffer_mut();
-        let next_tab_stop = ((buffer.cursor.column / 8) + 1) * 8;
-        buffer.cursor.column = next_tab_stop.min(columns - 1);
+        let cursor_column = self.cursor().column;
+        let next_tab_stop = self
+            .tab_stops
+            .iter()
+            .enumerate()
+            .skip(cursor_column.saturating_add(1))
+            .find_map(|(column, set)| set.then_some(column))
+            .unwrap_or(columns - 1);
+        self.active_buffer_mut().cursor.column = next_tab_stop;
+    }
+
+    fn set_tab_stop(&mut self) {
+        let column = self.cursor().column;
+        if let Some(tab_stop) = self.tab_stops.get_mut(column) {
+            *tab_stop = true;
+        }
+    }
+
+    fn clear_tab_stops(&mut self, parameters: CsiParameters) {
+        match Self::raw_parameter(parameters, 0, 0) {
+            0 => {
+                let column = self.cursor().column;
+                if let Some(tab_stop) = self.tab_stops.get_mut(column) {
+                    *tab_stop = false;
+                }
+            }
+            3 => self.tab_stops.fill(false),
+            _ => {}
+        }
+    }
+
+    fn set_cursor_style(&mut self, parameters: CsiParameters) {
+        self.cursor_style = match Self::raw_parameter(parameters, 0, 0) {
+            0 | 1 => CursorStyle::BlinkingBlock,
+            2 => CursorStyle::SteadyBlock,
+            3 => CursorStyle::BlinkingUnderline,
+            4 => CursorStyle::SteadyUnderline,
+            5 => CursorStyle::BlinkingBar,
+            6 => CursorStyle::SteadyBar,
+            _ => return,
+        };
     }
 
     fn clear_pending_wrap(&mut self) {
@@ -2508,6 +2704,34 @@ impl Terminal {
             _ => {}
         }
     }
+
+    fn device_attributes(&mut self, secondary: bool) {
+        if secondary {
+            self.queue_reply(b"\x1b[>0;0;0c");
+        } else {
+            // VT102 is the most conservative identity compatible with the
+            // implemented ANSI/DEC subset; do not advertise unsupported
+            // xterm extensions through DA feature codes.
+            self.queue_reply(b"\x1b[?6c");
+        }
+    }
+}
+
+fn default_tab_stops(dimensions: Dimensions) -> Vec<bool> {
+    (0..dimensions.columns())
+        .map(|column| column != 0 && column % 8 == 0)
+        .collect()
+}
+
+fn resized_tab_stops(existing: &[bool], dimensions: Dimensions) -> Vec<bool> {
+    (0..dimensions.columns())
+        .map(|column| {
+            existing
+                .get(column)
+                .copied()
+                .unwrap_or(column != 0 && column % 8 == 0)
+        })
+        .collect()
 }
 
 fn is_combining_character(character: char) -> bool {
@@ -2693,6 +2917,7 @@ fn blank_cell() -> Cell {
         foreground: Color::Default,
         background: Color::Default,
         attributes: Attributes::NONE,
+        hyperlink: None,
     }
 }
 
@@ -2704,6 +2929,7 @@ mod tests {
         MouseWheel, Parser, QueuePushResult, Terminal, TerminalOp, MAX_CELL_COUNT,
         MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
+    use std::sync::Arc;
 
     fn terminal(columns: usize, rows: usize) -> Terminal {
         Terminal::new(Dimensions::new(columns, rows).unwrap()).unwrap()
@@ -2893,10 +3119,44 @@ mod tests {
     }
 
     #[test]
-    fn reports_basic_device_status_without_advertising_identity() {
+    fn reports_device_status_and_conservative_primary_identity() {
         let mut terminal = terminal(5, 3);
-        terminal.ingest(b"\x1b[2;3H\x1b[5n\x1b[6n\x1b[c");
-        assert_eq!(terminal.drain_replies(), b"\x1b[0n\x1b[2;3R");
+        terminal.ingest(b"\x1b[2;3H\x1b[5n\x1b[6n\x1b[c\x1b[>c");
+        assert_eq!(
+            terminal.drain_replies(),
+            b"\x1b[0n\x1b[2;3R\x1b[?6c\x1b[>0;0;0c"
+        );
+    }
+
+    #[test]
+    fn osc_titles_and_allowlisted_hyperlinks_are_passive_and_bounded() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(
+            b"\x1b]2;fesTerm\x07\
+              \x1b]8;id=one;https://example.com/path\x1b\\link\
+              \x1b]8;;\x1b\\\
+              \x1b]8;;javascript:alert(1)\x1b\\X",
+        );
+
+        assert_eq!(terminal.title(), "fesTerm");
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), "l");
+        assert_eq!(
+            terminal.cell(0, 0).unwrap().hyperlink(),
+            Some("https://example.com/path")
+        );
+        assert_eq!(terminal.cell(4, 0).unwrap().text(), "X");
+        assert_eq!(terminal.cell(4, 0).unwrap().hyperlink(), None);
+        assert!(terminal.drain_replies().is_empty());
+    }
+
+    #[test]
+    fn hyperlink_targets_are_shared_across_cells() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b]8;;https://example.com/long-target\x1b\\links");
+
+        let first = terminal.cell(0, 0).unwrap().hyperlink_target().unwrap();
+        let second = terminal.cell(4, 0).unwrap().hyperlink_target().unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
     }
 
     #[test]
