@@ -3,3 +3,5 @@ third_party/conpty/*.nupkg
 **/tests/snapshots/*.diff.png
 **/tests/snapshots/*.new.png
 **/tests/snapshots/*.old.png
+
+.git_commit_msg.txt
