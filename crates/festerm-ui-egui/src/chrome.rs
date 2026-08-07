@@ -13,8 +13,9 @@
 //! `docs/application-command-model.md`.
 
 use egui::{
-    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order, Popup,
-    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
+    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Margin, Order,
+    Popup, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo,
+    WidgetType,
 };
 
 /// Chip footprint bounds (`docs/gui-design.md` "Active and inactive tabs"):
@@ -25,7 +26,7 @@ const CHIP_MIN_WIDTH: f32 = 132.0;
 const CHIP_MAX_WIDTH: f32 = 220.0;
 /// Fixed two-line chip height (primary line + secondary line), independent
 /// of whether a chip currently has secondary text.
-const CHIP_HEIGHT: f32 = 46.0;
+const CHIP_HEIGHT: f32 = 38.0;
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
@@ -191,16 +192,31 @@ pub fn show(
     actions
 }
 
-/// Restyled, chip-like "New Launcher" control (`docs/gui-design.md`): same
-/// rounding/border language as a session chip so it reads as part of the
-/// same family of controls rather than a plain default-styled button.
+/// Chip-like "New Launcher" control (`docs/gui-design.md`): painted with
+/// the exact same corner radius, border weight/color, height, and
+/// left-aligned content style as an inactive session chip, so it reads as
+/// part of the same family of controls rather than a plain default-styled
+/// button.
 fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
+    let fill = ui.visuals().widgets.inactive.weak_bg_fill;
+    let stroke = Stroke::new(1.0, Color32::from_gray(0x48));
+    let frame = egui::Frame::new()
+        .fill(fill)
+        .stroke(stroke)
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(10, 0));
+    let inner = frame.show(ui, |ui| {
+        ui.set_min_height(CHIP_HEIGHT - 2.0 * frame.stroke.width);
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.label(RichText::new("+ Launcher"));
+        });
+    });
     let response = ui
-        .scope(|ui| {
-            ui.spacing_mut().button_padding = vec2(10.0, 6.0);
-            ui.add(egui::Button::new("+ Launcher").corner_radius(6))
-        })
-        .inner
+        .interact(
+            inner.response.rect,
+            Id::new("chrome_launcher_button"),
+            Sense::click(),
+        )
         .on_hover_text("Open a new launcher tab");
     if response.clicked() {
         actions.push(ChromeAction::NewTab);
@@ -417,19 +433,10 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
     });
 
     // The close control is a deliberately scarce affordance
-    // (`docs/gui-design.md`): it only appears on the active chip or one the
-    // pointer is currently over. Gate this on raw pointer-position
-    // containment rather than `bg_response.hovered()`: once a press starts
-    // on the close button (which sits on top of `bg_rect` for click
-    // purposes, per egui's overlapping-widget hit-test), `bg_response`
-    // itself briefly reports `hovered() == false` for that frame because
-    // hover attribution shifts to the topmost click target, which would
-    // otherwise make the close button disappear mid-press and silently
-    // swallow the click.
-    let pointer_over_chip = ctx
-        .pointer_interact_pos()
-        .is_some_and(|pos| bg_rect.contains(pos));
-    let show_close = active || pointer_over_chip;
+    // (`docs/gui-design.md`): only the active chip ever shows it, matching
+    // the mockup where inactive chips carry a plain dark-grey outline and
+    // no close affordance at all, even on hover.
+    let show_close = active;
     let mut content_ui = ui.new_child(UiBuilder::new().max_rect(bg_rect));
     let content_response = paint_chip(&mut content_ui, chip, active, show_close, chip_id, actions);
     let clamped_size = vec2(
@@ -483,15 +490,14 @@ fn paint_chip(
     actions: &mut Vec<ChromeAction>,
 ) -> egui::Response {
     let corner_radius = 6;
-    let fill = if active {
-        ui.visuals().selection.bg_fill
-    } else {
-        ui.visuals().widgets.inactive.weak_bg_fill
-    };
+    // Both states share the same neutral fill (`docs/gui-design.md`): the
+    // active chip is signified by its outline and close control, not by a
+    // distinct accent fill.
+    let fill = ui.visuals().widgets.inactive.weak_bg_fill;
     let stroke = if active {
-        Stroke::new(1.5, ui.visuals().selection.stroke.color)
+        Stroke::new(1.5, Color32::from_gray(0xc8))
     } else {
-        ui.visuals().widgets.noninteractive.bg_stroke
+        Stroke::new(1.0, Color32::from_gray(0x48))
     };
 
     let outer_rect = ui.max_rect();
@@ -502,8 +508,12 @@ fn paint_chip(
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-        ui.vertical(|ui| {
-            ui.add_space(4.0);
+        // `Ui::vertical` centers its children horizontally by default; the
+        // mockup left-aligns the chip's content (with a small reserved
+        // strip for the status dot), so lay the two lines out top-down
+        // with `Align::Min` instead.
+        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+            ui.add_space(3.0);
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 if !matches!(chip.status, ChipStatus::Neutral) {
@@ -517,8 +527,11 @@ fn paint_chip(
                     // Reserve the close button's space on the right edge
                     // first, then lay out the label to its left, so the
                     // label truncates instead of the close button being
-                    // pushed out of the chip.
+                    // pushed out of the chip. A trailing space keeps the
+                    // close control evenly inset from the chip's right
+                    // edge rather than flush against it.
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.add_space(6.0);
                         paint_close_button(ui, chip.id, actions);
                         paint_chip_primary(ui, chip, active, rename_id, editing, actions);
                     });
@@ -538,7 +551,7 @@ fn paint_chip(
                     ui.add(egui::Label::new(RichText::new(secondary).weak().small()).truncate());
                 });
             }
-            ui.add_space(4.0);
+            ui.add_space(3.0);
         });
     });
 
@@ -723,24 +736,21 @@ mod tests {
     fn clicking_a_chip_close_button_emits_a_close_action() {
         let mut harness = harness(ChromeHarnessState {
             chips: vec![chip(1, "one"), chip(2, "two")],
-            // Neither chip active, so the close button is hidden on both
-            // until hovered (`docs/gui-design.md`), avoiding ambiguity with
-            // the active chip's own always-visible close button.
-            active: ChipId(999),
+            // Only the active chip ever shows a close button
+            // (`docs/gui-design.md`): inactive chips have no close
+            // affordance, even on hover.
+            active: ChipId(2),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
         });
         harness.run();
 
-        // The chip's own background footprint is always present (even
-        // before its close button is shown), so its rect can be queried
-        // directly. The close button, once shown on hover, is laid out
-        // flush with the chip's top-right corner
-        // (`paint_chip`/`paint_chip_primary`'s right-to-left first line);
-        // move the pointer straight there in a single batch of events so
-        // the hover-reveal and the click land in one continuous gesture.
+        // The chip's own background footprint is always present, so its
+        // rect can be queried directly. The close button is laid out flush
+        // with the chip's top-right corner (`paint_chip`/
+        // `paint_chip_primary`'s right-to-left first line).
         let bg_rect = harness.get_by_label("two chip").rect();
-        let target = bg_rect.right_top() + egui::vec2(-8.0, 13.0);
+        let target = bg_rect.right_top() + egui::vec2(-11.0, 11.0);
         harness.event(egui::Event::PointerMoved(target));
         harness.event(egui::Event::PointerButton {
             pos: target,
