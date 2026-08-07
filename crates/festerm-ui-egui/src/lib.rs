@@ -256,6 +256,15 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().sink.0, vec![b"Q".to_vec()]);
 
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run();
+        assert_eq!(
+            harness.state().sink.0,
+            vec![b"Q".to_vec(), b"\t".to_vec(), b"\x1b[A".to_vec()]
+        );
+
         {
             harness.get_by_label("Diagnostics").click();
         }

@@ -234,6 +234,7 @@ pub(crate) fn route_egui_events(
     let events = ui.input(|input| input.events.clone());
     let mut reports = InputRoutingReports::default();
     let mut focus_out_routed = false;
+    let mut terminal_key_routed = false;
 
     for event in events {
         match event {
@@ -266,6 +267,7 @@ pub(crate) fn route_egui_events(
                 key, pressed: true, ..
             } if keyboard_focused => {
                 if let Some(key) = translate_key(key) {
+                    terminal_key_routed = true;
                     record_terminal_input(
                         &mut reports,
                         selection,
@@ -349,7 +351,13 @@ pub(crate) fn route_egui_events(
         }
     }
 
-    if response.lost_focus() && !focus_out_routed {
+    if terminal_key_routed {
+        // egui uses Tab and arrows for widget navigation. A terminal-owned
+        // key must retain the grid's keyboard ownership after routing.
+        response.request_focus();
+    }
+
+    if response.lost_focus() && !focus_out_routed && !terminal_key_routed {
         if let Some(focus) = keyboard.focus_out_if_owned() {
             reports.record(
                 Instant::now(),

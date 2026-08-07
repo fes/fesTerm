@@ -165,6 +165,17 @@ impl TerminalView {
         if response.clicked() {
             response.request_focus();
         }
+        ui.memory_mut(|memory| {
+            memory.set_focus_lock_filter(
+                response.id,
+                egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: true,
+                },
+            );
+        });
         let layout = GridLayout {
             rect: vp_layout.grid,
             dimensions: vp_layout.dimensions,
