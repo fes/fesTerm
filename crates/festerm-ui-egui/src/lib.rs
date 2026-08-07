@@ -42,7 +42,9 @@ pub(crate) use festerm_core::{
     Modifiers, MouseButton, MouseEvent, MouseEventKind, MAX_CELL_COUNT,
 };
 #[cfg(test)]
-pub(crate) use geometry::{dimensions_from_viewport, grid_view_size, viewport_layout};
+pub(crate) use geometry::{
+    dimensions_from_viewport, grid_view_size, viewport_layout, CellGeometry,
+};
 #[cfg(test)]
 pub(crate) use input::{
     record_terminal_input, route_pointer_event, InputRoutingReports, KeyboardOwnership,
@@ -184,6 +186,40 @@ mod tests {
                 width: 800.0,
                 height: 0.0,
             }
+        );
+    }
+
+    #[test]
+    fn p6_cell_geometry_keeps_wide_paint_cursor_and_hit_coordinates_distinct() {
+        let geometry = CellGeometry::new(
+            Pos2::new(5.0, 7.0),
+            Dimensions::new(4, 1).unwrap(),
+            CellMetrics::new(10.0, 20.0).unwrap(),
+        );
+        let wide_paint = geometry
+            .cell_rect(CellPosition { column: 1, row: 0 }, 2)
+            .expect("width-two leading cell fits");
+        let continuation_cursor = geometry
+            .cell_rect(CellPosition { column: 2, row: 0 }, 1)
+            .expect("continuation column remains a physical cursor cell");
+
+        assert_eq!(
+            wide_paint,
+            Rect::from_min_size(Pos2::new(15.0, 7.0), Vec2::new(20.0, 20.0))
+        );
+        assert_eq!(
+            continuation_cursor,
+            Rect::from_min_size(Pos2::new(25.0, 7.0), Vec2::new(10.0, 20.0))
+        );
+        assert_eq!(
+            geometry.hit_test(Pos2::new(26.0, 8.0)),
+            Some(CellPosition { column: 2, row: 0 }),
+            "hit testing reports the physical continuation column; selection normalizes it"
+        );
+        assert_eq!(
+            geometry.cell_rect(CellPosition { column: 3, row: 0 }, 2),
+            None,
+            "a shaped glyph run cannot claim columns outside its terminal allocation"
         );
     }
 

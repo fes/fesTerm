@@ -60,6 +60,54 @@ impl CellMetrics {
     }
 }
 
+/// The immutable point-space mapping for one rendered terminal grid.
+///
+/// Terminal cells, not shaped glyph advances, own cursor, selection, and hit
+/// testing coordinates. A future ligature or fallback renderer may paint a
+/// glyph run across this geometry, but cannot redefine it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CellGeometry {
+    origin: Pos2,
+    dimensions: Dimensions,
+    metrics: CellMetrics,
+}
+
+impl CellGeometry {
+    pub(crate) const fn new(origin: Pos2, dimensions: Dimensions, metrics: CellMetrics) -> Self {
+        Self {
+            origin,
+            dimensions,
+            metrics,
+        }
+    }
+
+    /// Returns the exact rectangle owned by a leading cell span.
+    ///
+    /// A width-two leading cell owns two adjacent physical columns. Its
+    /// continuation owns no independent rectangle; cursor and hit testing
+    /// continue to use one physical column at a time.
+    pub(crate) fn cell_rect(self, position: CellPosition, columns: usize) -> Option<Rect> {
+        if columns == 0
+            || position.row >= self.dimensions.rows()
+            || position.column >= self.dimensions.columns()
+            || columns > self.dimensions.columns().saturating_sub(position.column)
+        {
+            return None;
+        }
+        Some(Rect::from_min_size(
+            Pos2::new(
+                self.origin.x + position.column as f32 * self.metrics.width,
+                self.origin.y + position.row as f32 * self.metrics.height,
+            ),
+            Vec2::new(self.metrics.width * columns as f32, self.metrics.height),
+        ))
+    }
+
+    pub(crate) fn hit_test(self, point: Pos2) -> Option<CellPosition> {
+        cell_from_point(self.origin, self.dimensions, self.metrics, point)
+    }
+}
+
 /// A toolkit-independent width and height expressed in GUI points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewSize {

@@ -12,7 +12,7 @@ use festerm_core::{Attributes, Color, CursorStyle, Dimensions};
 
 use crate::{
     cache::{RenderedCell, TerminalRenderCache},
-    geometry::{CellPosition, CellRange},
+    geometry::{CellGeometry, CellPosition, CellRange},
     selection::Selection,
     TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, GLYPH_CACHE_CAPACITY,
     SELECTION_BACKGROUND,
@@ -101,6 +101,12 @@ pub(crate) struct GridLayout {
     pub(crate) metrics: crate::geometry::CellMetrics,
 }
 
+impl GridLayout {
+    pub(crate) fn cell_geometry(self) -> CellGeometry {
+        CellGeometry::new(self.rect.min, self.dimensions, self.metrics)
+    }
+}
+
 pub(crate) struct GridPaint<'a> {
     pub(crate) layout: GridLayout,
     pub(crate) snapshot: TerminalSnapshot<'a>,
@@ -111,13 +117,10 @@ pub(crate) struct GridPaint<'a> {
 }
 
 pub(crate) fn grid_cell_rect(layout: GridLayout, position: CellPosition, columns: usize) -> Rect {
-    Rect::from_min_size(
-        Pos2::new(
-            layout.rect.left() + position.column as f32 * layout.metrics.width,
-            layout.rect.top() + position.row as f32 * layout.metrics.height,
-        ),
-        Vec2::new(layout.metrics.width * columns as f32, layout.metrics.height),
-    )
+    layout
+        .cell_geometry()
+        .cell_rect(position, columns)
+        .expect("renderer requests an in-bounds leading-cell span")
 }
 
 pub(crate) fn rendered_cell_columns(
