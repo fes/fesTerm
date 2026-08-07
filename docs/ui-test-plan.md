@@ -168,12 +168,12 @@ ConPTY cursor-position replies and resize rendering failures.
 ## Tier 4: Headless Egui Frames
 
 **Decision: adopted.** [egui_kittest](https://github.com/emilk/egui/tree/main/crates/egui_kittest)
-0.36 is a test-only dependency paired with `egui` and `eframe` 0.36. The
-stable Rust toolchain satisfies its Rust 1.95 minimum. The initial harness
-test drives the production `TerminalView` through real frames, pointer focus,
-text input, a semantic Diagnostics control, and resize; it inspects
-content-free frame geometry, calculated terminal dimensions, and cache
-dimensions without opening a native window.
+is a test-only dependency paired with the current released `egui` and
+`eframe` 0.x line. The stable Rust toolchain satisfies its Rust 1.95 minimum.
+The initial harness test drives the production `TerminalView` through real
+frames, pointer focus, text input, a semantic Diagnostics control, and resize;
+it inspects content-free frame geometry, calculated terminal dimensions, and
+cache dimensions without opening a native window.
 
 The harness is suitable for structural and semantic testing. It does not
 replace native-window coverage, and its optional snapshot renderer remains P3
@@ -319,8 +319,8 @@ overlapping checklist entry.
 | P2 | Headless UI event/layout coverage is absent | Implemented: `egui_kittest` 0.36 drives production `TerminalView` frames with pointer focus, text input, semantic Diagnostics control activation, and resize. The test asserts encoded sink bytes plus content-free grid, terminal, and cache geometry. It is test-only; snapshot rendering remains P3. | Windows, Linux, macOS | Implemented |
 | P3 | Visual promises are not exercised by the current structural tests | In progress: fixed-scale WGPU snapshots cover the default background, attributes/colors, Unicode selection, alternate screen, and every P0 resize viewport. Structural cache and geometry assertions run first; Windows baselines are committed and Linux CI confirmation is pending. Complete the explicit P3 evidence above before treating the visual layer as stable. | Windows, Linux; macOS advisory | In progress |
 | P4 | Native desktop focus, DPI, compositor, and PTY timing remain unverified | PTY/session timing layer implemented (merged #15): `festerm-pty-test-child`-driven ConPTY flow, the issue #3 resize sequence, and bounded shutdown are real (not headless) and pass on Windows. Windows first executes an inbox fallback baseline, then stages the verified pinned ConPTY runtime and runs the opt-in production eframe/winit self-smoke. The smoke observes viewport metadata/focus, accepted resize generations, output-byte deltas, recognized CSI `6n` tokens, and nonblank-cell counts; it never retains or emits terminal text. The clean staging path and native-window smoke passed locally on 2026-08-07; first staged CI evidence and independently driven platform-native focus/accessibility automation remain. Linux runs it under Xvfb and macOS is advisory. Scheduled nightly and for release candidates (`.github/workflows/native-smoke.yml`), not PR-blocking. | Windows, Linux, macOS | In progress; verified pinned Windows smoke awaits first CI evidence |
-| P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. Run `vttest` and external `tack` before expanding capability or terminfo claims. | Platform-specific; release candidate | Manual gate |
-| P6 | Ligature and fallback correctness has no defined oracle | First specify the cell-to-glyph, cursor, selection, and hit-testing contract. Then add renderer mapping tests and snapshots before enabling ligatures. Do not use manual appearance as the only acceptance evidence. | Windows, Linux, macOS | Blocked by design and implementation |
+| P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. [#26](https://github.com/fes/fesTerm/issues/26) tracks native-desktop and `vttest` evidence; [#27](https://github.com/fes/fesTerm/issues/27) tracks `tack` after terminfo packaging. | Platform-specific; release candidate | Manual gate |
+| P6 | Initial ligature/fallback-safe renderer architecture | ADR 0012 defines cell geometry as the authority for glyph spans, cursor, selection, and hit testing. An opt-in renderer seam shapes only compatible single-width cell runs, with deterministic boundaries for wide cells, fallback emoji, selections, styles, and hyperlinks; its reviewed snapshot is run by the global optional-validation suite. [#22](https://github.com/fes/fesTerm/issues/22) tracks any future production font policy and user-visible ligature enablement. Do not use manual appearance as the only acceptance evidence. | Windows, Linux, macOS | Implemented; production ligatures remain disabled |
 
 ### Immediate: close the current resize/render gap
 
@@ -344,7 +344,8 @@ overlapping checklist entry.
 - Maintain a versioned reference-application checklist.
 - Run `vttest` and terminfo validation before claiming terminal capability.
 - Add visual cases for font fallback and ligatures only after their
-  cell-to-glyph mapping is specified.
+  cell-to-glyph mapping is specified; exercise the opt-in run-shaping seam
+  separately until a supported production font policy is accepted.
 - Extend session integration to controlled OpenSSH, reconnect, tabs, profiles,
   and restoration as those milestones implement them.
 

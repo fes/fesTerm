@@ -45,7 +45,9 @@ pub(crate) use festerm_core::{
     Modifiers, MouseButton, MouseEvent, MouseEventKind, MAX_CELL_COUNT,
 };
 #[cfg(test)]
-pub(crate) use geometry::{dimensions_from_viewport, grid_view_size, viewport_layout};
+pub(crate) use geometry::{
+    dimensions_from_viewport, grid_view_size, viewport_layout, CellGeometry,
+};
 #[cfg(test)]
 pub(crate) use input::{
     record_terminal_input, route_pointer_event, InputRoutingReports, KeyboardOwnership,
@@ -53,8 +55,9 @@ pub(crate) use input::{
 };
 #[cfg(test)]
 pub(crate) use renderer::{
-    cell_colors, cell_needs_background_paint, grid_cell_rect, measure_input_to_paint_submission,
-    rendered_cell_columns, rendered_cell_is_selected, GridLayout,
+    cell_colors, cell_needs_background_paint, glyph_runs, grid_cell_rect,
+    measure_input_to_paint_submission, rendered_cell_columns, rendered_cell_is_selected,
+    GridLayout,
 };
 #[cfg(test)]
 pub(crate) use std::time::{Duration, Instant};
@@ -106,7 +109,7 @@ impl<'a> TerminalSnapshot<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
     use festerm_test_support::load_fixture;
@@ -187,6 +190,114 @@ mod tests {
                 width: 800.0,
                 height: 0.0,
             }
+        );
+    }
+
+    #[test]
+    fn p6_cell_geometry_keeps_wide_paint_cursor_and_hit_coordinates_distinct() {
+        let geometry = CellGeometry::new(
+            Pos2::new(5.0, 7.0),
+            Dimensions::new(4, 1).unwrap(),
+            CellMetrics::new(10.0, 20.0).unwrap(),
+        );
+        let wide_paint = geometry
+            .cell_rect(CellPosition { column: 1, row: 0 }, 2)
+            .expect("width-two leading cell fits");
+        let continuation_cursor = geometry
+            .cell_rect(CellPosition { column: 2, row: 0 }, 1)
+            .expect("continuation column remains a physical cursor cell");
+
+        assert_eq!(
+            wide_paint,
+            Rect::from_min_size(Pos2::new(15.0, 7.0), Vec2::new(20.0, 20.0))
+        );
+        assert_eq!(
+            continuation_cursor,
+            Rect::from_min_size(Pos2::new(25.0, 7.0), Vec2::new(10.0, 20.0))
+        );
+        assert_eq!(
+            geometry.hit_test(Pos2::new(26.0, 8.0)),
+            Some(CellPosition { column: 2, row: 0 }),
+            "hit testing reports the physical continuation column; selection normalizes it"
+        );
+        assert_eq!(
+            geometry.cell_rect(CellPosition { column: 3, row: 0 }, 2),
+            None,
+            "a shaped glyph run cannot claim columns outside its terminal allocation"
+        );
+    }
+
+    #[test]
+    fn p6_glyph_runs_preserve_terminal_cell_boundaries() {
+        let single = |text: &str| RenderedCell {
+            text: text.to_owned(),
+            width: CellWidth::Single,
+            foreground: Color::Default,
+            background: Color::Default,
+            attributes: Attributes::NONE,
+            hyperlink: None,
+        };
+        let wide = RenderedCell {
+            text: "界".to_owned(),
+            width: CellWidth::Double,
+            ..single("")
+        };
+        let continuation = RenderedCell {
+            width: CellWidth::Continuation,
+            ..single("")
+        };
+        let linked = RenderedCell {
+            hyperlink: Some(Arc::<str>::from("https://example.com")),
+            ..single("x")
+        };
+        let fallback = single("\u{1f980}");
+        let styled = RenderedCell {
+            attributes: Attributes::BOLD,
+            ..single("z")
+        };
+        let cells = vec![
+            single("="),
+            single("="),
+            wide,
+            continuation,
+            single("e\u{301}"),
+            fallback,
+            linked,
+            single("y"),
+            styled,
+            single("w"),
+        ];
+        let dimensions = Dimensions::new(cells.len(), 1).unwrap();
+        let runs = glyph_runs(&cells, 0, dimensions, None);
+
+        assert_eq!(runs.len(), 7);
+        assert_eq!(runs[0].position(), CellPosition { column: 0, row: 0 });
+        assert_eq!(runs[0].columns(), 2);
+        assert_eq!(runs[0].text(), "==");
+        assert_eq!(runs[1].position(), CellPosition { column: 2, row: 0 });
+        assert_eq!(runs[1].columns(), 2);
+        assert_eq!(runs[1].text(), "界");
+        assert_eq!(runs[2].position(), CellPosition { column: 4, row: 0 });
+        assert_eq!(runs[2].columns(), 2);
+        assert_eq!(runs[2].text(), "e\u{301}\u{1f980}");
+        assert_eq!(runs[3].position(), CellPosition { column: 6, row: 0 });
+        assert_eq!(runs[4].position(), CellPosition { column: 7, row: 0 });
+        assert_eq!(runs[5].position(), CellPosition { column: 8, row: 0 });
+        assert_eq!(runs[6].position(), CellPosition { column: 9, row: 0 });
+
+        let selected = glyph_runs(
+            &cells[..2],
+            0,
+            Dimensions::new(2, 1).unwrap(),
+            Some(CellRange::new(
+                CellPosition { column: 1, row: 0 },
+                CellPosition { column: 1, row: 0 },
+            )),
+        );
+        assert_eq!(
+            selected.len(),
+            2,
+            "selection remains a hard shaping boundary for future selected-text styling"
         );
     }
 
@@ -436,6 +547,17 @@ mod tests {
         snapshot_after_structural_assertions(
             &mut unicode,
             "terminal-unicode-selection",
+            &mut snapshots,
+        );
+
+        let mut shaping_terminal = terminal(80, 24);
+        shaping_terminal.ingest("== != -> wide \u{754c} combining e\u{301}".as_bytes());
+        let mut shaping = visual_harness(shaping_terminal);
+        shaping.state_mut().view.enable_cell_run_shaping_for_test();
+        focus_terminal_grid(&mut shaping);
+        snapshot_after_structural_assertions(
+            &mut shaping,
+            "terminal-cell-run-shaping",
             &mut snapshots,
         );
 

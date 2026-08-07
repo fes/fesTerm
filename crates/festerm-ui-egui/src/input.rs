@@ -7,7 +7,7 @@ use festerm_core::{
 };
 
 use crate::{
-    geometry::{cell_from_point, clamped_cell_from_point, CellPosition},
+    geometry::{clamped_cell_from_point, CellPosition},
     renderer::GridLayout,
     selection::{normalize_selection_position, selection_text, Selection},
     TerminalSnapshot,
@@ -438,8 +438,7 @@ pub(crate) fn route_pointer_event(
             pressed: true,
             modifiers,
         } => {
-            let cell =
-                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position);
+            let cell = layout.cell_geometry().hit_test(position);
             pointer.press(button, position, cell.is_some(), modifiers);
             cell.map(|position| {
                 route_mouse_input(
@@ -461,18 +460,16 @@ pub(crate) fn route_pointer_event(
             pressed: false,
             modifiers,
         } => {
-            let cell =
-                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
-                    .or_else(|| {
-                        (pointer.button_captured(button) || selection.is_active()).then(|| {
-                            clamped_cell_from_point(
-                                layout.rect.min,
-                                layout.dimensions,
-                                layout.metrics,
-                                position,
-                            )
-                        })?
-                    });
+            let cell = layout.cell_geometry().hit_test(position).or_else(|| {
+                (pointer.button_captured(button) || selection.is_active()).then(|| {
+                    clamped_cell_from_point(
+                        layout.rect.min,
+                        layout.dimensions,
+                        layout.metrics,
+                        position,
+                    )
+                })?
+            });
             let route = cell.map(|position| {
                 route_mouse_input(
                     terminal,
@@ -491,7 +488,9 @@ pub(crate) fn route_pointer_event(
         }
         PointerInputEvent::Moved { position } => {
             pointer.moved(position);
-            cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
+            layout
+                .cell_geometry()
+                .hit_test(position)
                 .or_else(|| {
                     (pointer.captured() || selection.is_active()).then(|| {
                         clamped_cell_from_point(
@@ -520,25 +519,23 @@ pub(crate) fn route_pointer_event(
         }
         PointerInputEvent::Wheel { delta_y, modifiers } if delta_y != 0.0 => {
             pointer.last_position.and_then(|position| {
-                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position).map(
-                    |position| {
-                        route_mouse_input(
-                            terminal,
-                            MouseEvent {
-                                kind: MouseEventKind::Wheel(if delta_y > 0.0 {
-                                    MouseWheel::Up
-                                } else {
-                                    MouseWheel::Down
-                                }),
-                                column: position.column,
-                                row: position.row,
-                                modifiers,
-                            },
-                            selection,
-                            sink,
-                        )
-                    },
-                )
+                layout.cell_geometry().hit_test(position).map(|position| {
+                    route_mouse_input(
+                        terminal,
+                        MouseEvent {
+                            kind: MouseEventKind::Wheel(if delta_y > 0.0 {
+                                MouseWheel::Up
+                            } else {
+                                MouseWheel::Down
+                            }),
+                            column: position.column,
+                            row: position.row,
+                            modifiers,
+                        },
+                        selection,
+                        sink,
+                    )
+                })
             })
         }
         PointerInputEvent::Wheel { .. } => None,

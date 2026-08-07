@@ -47,8 +47,8 @@ Before considering this milestone complete:
 3. Convert every reproducible failure into the smallest deterministic
    fixture, replay, controlled-PTY test, or snapshot before closing it.
 4. Complete P5 evidence before making broader terminal or terminfo claims.
-5. Do not enable ligatures until P6's mapping contract and automated evidence
-   exist.
+5. Do not enable user-visible ligatures until the production policy tracked in
+   [#22](https://github.com/fes/fesTerm/issues/22) is accepted.
 
 ## Reference Scenarios
 
@@ -92,6 +92,19 @@ inspect application screen semantics, drive OS input, prove native focus or
 selection, or validate Copilot CLI, `vttest`, or `tack`. Keep those runs as
 manual P5 evidence until an independently driven desktop automation layer is
 designed.
+
+### Optional P6 renderer validation
+
+The global optional suite also runs the P6 cell-geometry, shaping-boundary, and
+reviewed snapshot coverage. It reports only content-free status metadata:
+
+```sh
+scripts/run-p6-render-validation.sh
+```
+
+```powershell
+pwsh -NoProfile -File scripts\run-p6-render-validation.ps1
+```
 
 ### Windows OS-input smoke
 
