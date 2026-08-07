@@ -222,11 +222,46 @@ pub enum FlowDirection {
     Control,
 }
 
+/// A content-free host-key verification request emitted by a remote session.
+///
+/// The public key itself remains in the SSH transport. The application may
+/// display this identity and fingerprint, then resolve the request through the
+/// transport-specific session API.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostKeyPrompt {
+    host: String,
+    port: u16,
+    sha256_fingerprint: String,
+}
+
+impl HostKeyPrompt {
+    pub fn new(host: impl Into<String>, port: u16, sha256_fingerprint: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            sha256_fingerprint: sha256_fingerprint.into(),
+        }
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn sha256_fingerprint(&self) -> &str {
+        &self.sha256_fingerprint
+    }
+}
+
 /// Events emitted by a session backend for application coordination.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionEvent {
     Lifecycle(SessionLifecycle),
     Output(Vec<u8>),
+    HostKeyVerification(HostKeyPrompt),
     ResizeApplied(TerminalSize),
     Backpressure {
         direction: FlowDirection,

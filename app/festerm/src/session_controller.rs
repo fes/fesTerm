@@ -2,8 +2,9 @@ use std::{collections::VecDeque, time::Duration};
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
-    FlowDirection, Session, SessionError, SessionEvent, SessionLifecycle, SessionSendError,
-    SessionTryReceiveError, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    FlowDirection, HostKeyPrompt, Session, SessionError, SessionEvent, SessionLifecycle,
+    SessionSendError, SessionTryReceiveError, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY,
+    MAX_IO_CHUNK_BYTES,
 };
 use festerm_ui_egui::{EncodedInputSink, InputRoute, InputSinkDiagnostics};
 
@@ -305,6 +306,7 @@ pub struct SessionController<S: Session> {
     last_lifecycle: Option<SessionLifecycle>,
     last_error: Option<String>,
     last_backpressure: Option<FlowDirection>,
+    host_key_prompt: Option<HostKeyPrompt>,
     last_resize: Option<TerminalSize>,
     resize_probe: ResizeProbe,
 }
@@ -325,6 +327,7 @@ impl<S: Session> SessionController<S> {
             last_lifecycle: Some(lifecycle),
             last_error: None,
             last_backpressure: None,
+            host_key_prompt: None,
             last_resize: None,
             resize_probe: ResizeProbe::default(),
         }
@@ -341,6 +344,7 @@ impl<S: Session> SessionController<S> {
             last_lifecycle: None,
             last_error: None,
             last_backpressure: None,
+            host_key_prompt: None,
             last_resize: None,
             resize_probe: ResizeProbe::default(),
         }
@@ -368,6 +372,11 @@ impl<S: Session> SessionController<S> {
     /// states"); it never exposes bytes or terminal text.
     pub fn lifecycle(&self) -> Option<SessionLifecycle> {
         self.last_lifecycle.clone()
+    }
+
+    /// Returns the current remote host-key decision request, if any.
+    pub fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {
+        self.host_key_prompt.as_ref()
     }
 
     /// Returns whether another frame is required to continue a bounded drain.
@@ -418,6 +427,9 @@ impl<S: Session> SessionController<S> {
                     "local session queue pressure"
                 );
                 self.last_backpressure = Some(direction);
+            }
+            SessionEvent::HostKeyVerification(prompt) => {
+                self.host_key_prompt = Some(prompt);
             }
             SessionEvent::Error(error) => self.record_session_error(error),
             SessionEvent::Output(_) => {}
@@ -929,6 +941,32 @@ mod tests {
         assert!(terminal
             .row_text(0)
             .is_some_and(|row| row.starts_with("fake backend output")));
+    }
+
+    #[test]
+    fn host_key_prompt_crosses_the_session_boundary_without_terminal_output() {
+        let session = FakeSession::new([SessionEvent::HostKeyVerification(HostKeyPrompt::new(
+            "ssh.example.test",
+            2222,
+            "SHA256:content-free-fingerprint",
+        ))]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        assert!(!controller.pump_events(&mut terminal));
+        let prompt = controller
+            .host_key_prompt()
+            .expect("host-key prompt retained");
+        assert_eq!(prompt.host(), "ssh.example.test");
+        assert_eq!(prompt.port(), 2222);
+        assert_eq!(
+            prompt.sha256_fingerprint(),
+            "SHA256:content-free-fingerprint"
+        );
+        assert!(terminal
+            .row_text(0)
+            .is_some_and(|row| row.trim().is_empty()));
     }
 
     #[test]

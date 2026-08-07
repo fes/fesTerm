@@ -5,6 +5,7 @@ members = [
     "crates/festerm-pty",
     "crates/festerm-pty-test-child",
     "crates/festerm-session",
+    "crates/festerm-ssh",
     "crates/festerm-test-support",
     "crates/festerm-ui-egui",
     "crates/festerm-windows-job",

@@ -1,0 +1,15 @@
+[package]
+name = "festerm-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native SSH session transport and trust policy for fesTerm."
+
+[dependencies]
+festerm-session = { path = "../festerm-session" }
+russh = { version = "0.62.5", default-features = false, features = ["ring"] }
+
+[lints]
+workspace = true
