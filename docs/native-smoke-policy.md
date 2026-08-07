@@ -104,6 +104,7 @@ screenshots alone cannot diagnose.
 | Windows | Inbox fallback smoke | **Required before pinned staging; validates launch/resize/byte-delivery only** |
 | Windows | Pinned `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Required native acceptance path; uses resize generations, byte counts, CSI `6n` recognition, and nonblank-cell counts without retaining terminal text** |
 | Linux | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` under Xvfb | **Executed and stabilized in `5e97f5d`**; explicitly unfocused because Xvfb has no window manager, so it is not native-focus evidence |
+| Linux (WSL 2/WSLg) | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` | **Not accepted (2026-08-07, `d4079ac`)**. Wayland lost its presentation surface; forcing X11 observed `focus=true` but timed out awaiting initial PTY output amid repeated WSLg DPI-scale changes. The two Unix PTY smoke tests passed in the same checkout. Retain issue #21 for a native Linux desktop/compositor run. |
 | macOS | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` | Written; **advisory — pending macOS CI run** |
 | Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed in the Linux P4 handoff (`5e97f5d`)** |
 | Linux | `unix_pty_bounded_shutdown_terminates_process_tree` | **Executed in the Linux P4 handoff (`5e97f5d`)** |
