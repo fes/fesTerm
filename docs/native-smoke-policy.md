@@ -109,3 +109,23 @@ screenshots alone cannot diagnose.
 
 Update this table after each first-run result, citing the CI run URL and
 commit SHA.
+
+## macOS resume handoff
+
+macOS remains advisory until a logged-in runner can create a native window.
+Resume from the current `main` after Linux evidence is recorded:
+
+```sh
+cargo build --workspace
+cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+FESTERM_NATIVE_WINDOW_SMOKE=1 \
+FESTERM_NATIVE_SMOKE_RESULT_PATH=native-smoke-window-result.txt \
+./target/debug/festerm
+```
+
+The last command must produce `status=pass` after its controlled resize
+sequence. Record the runner type, commit SHA, and result in this table and
+`docs/milestone-acceptance-record.md`. If no logged-in desktop context is
+available, record the PTY results but retain the native-window item as
+advisory and pending; do not substitute a headless frame for it.
