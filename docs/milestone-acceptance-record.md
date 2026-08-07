@@ -45,7 +45,7 @@ actual platform CI results with their run URLs after GitHub Actions recovers.
 | P2 — headless UI event/layout coverage | Implemented | Test-only `egui_kittest` 0.36 drives production `TerminalView` input, diagnostics, and resize. |
 | P3 — visual snapshots | In progress | Eleven Windows WGPU baselines cover default background, attributes/colors, Unicode selection, alternate screen, cursor styles, and the P0 sequence. Linux WGPU adapter confirmation is pending. |
 | P4 — native platform smoke | In progress | Merged #15 supplies Windows-executed real PTY/ConPTY timing and shutdown coverage. On 2026-08-07, the clean `scripts/stage-conpty.ps1 -RunSmoke` path and the production eframe/winit self-smoke passed locally with the hash-verified pinned runtime: four resize generations, retained visible cells, output continuity, and one CSI `6n` query. Linux PTY and Xvfb native-window evidence is recorded in `5e97f5d`; Xvfb was explicitly unfocused. WSLg retest at `d4079ac` was not accepted: Wayland lost its presentation surface and forced X11 observed focus but timed out awaiting initial PTY output during repeated DPI-scale changes; both Unix PTY smokes passed. macOS advisory execution and independently driven platform-native focus/accessibility evidence remain. |
-| P5 — reference apps, `vttest`, `tack` | In progress | First Windows shell line-editor run found egui focus traversal consuming Tab and vertical arrows. `853534c` locks focused-terminal navigation keys and the same native session then confirmed both keys reach the shell. The scenario is not accepted: the observer also reported no visible resize adaptation, no scrolling, and no right-click paste; no reference application, `vttest`, or `tack` run has passed. |
+| P5 — reference apps, `vttest`, `tack` | In progress | First Windows shell line-editor run found egui focus traversal consuming Tab and vertical arrows. `853534c` locks focused-terminal navigation keys and the same native session then confirmed both keys reach the shell. The observer confirmed that the resized grid did not reflow or redraw existing shell text; this is the documented no-scrollback/no-reflow model, not a failed PTY resize. The scenario is not accepted: scrolling and right-click paste remain unavailable, and no reference application, `vttest`, or `tack` run has passed. |
 | P6 — ligature/fallback contract | Blocked | Define and test cell-to-glyph, cursor, selection, and hit-testing mapping before enabling ligatures. |
 
 ### Work package status
@@ -80,10 +80,11 @@ GitHub Copilot CLI, `less`, `vim`/`nvim`, `htop`, `tmux`, `vttest`, and `tack`
 are **not run**. The initial Windows shell line-editor attempt on 2026-08-07
 failed because Tab and vertical arrows transferred focus from the terminal;
 the deterministic regression and native retest in `853534c` corrected that
-specific failure. The full shell scenario remains incomplete because resize
-adaptation, scrolling, and right-click paste were reported unavailable. Record
-observer, date, platform, result, and a minimal deterministic regression for
-every reproducible failure in
+specific failure. The resized shell grid does not reflow existing text because
+fesTerm has no scrollback/reflow engine; this is not a PTY resize failure.
+The full shell scenario remains incomplete because scrolling and right-click
+paste were reported unavailable. Record observer, date, platform, result, and
+a minimal deterministic regression for every reproducible failure in
 [`m6-compatibility-checklist.md`](m6-compatibility-checklist.md).
 
 ## Gate exit checklist
