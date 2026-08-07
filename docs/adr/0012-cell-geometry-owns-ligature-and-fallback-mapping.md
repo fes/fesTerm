@@ -44,6 +44,9 @@ snapshots cover the contract.
   no hyperlink; all other cells are hard boundaries.
 - The production default remains one-cell layout until a deliberate font and
   fallback policy is backed by mapping tests and cross-platform snapshots.
+- The pinned `egui` 0.36 layout API has no per-layout OpenType-feature control.
+  A deterministic production ligature preference therefore requires upstream
+  support or a custom shaping layer; it must not be inferred from font defaults.
 - Future shaping code must consume an allocated cell span and may be clipped
   to that span; it cannot use glyph advance as terminal geometry.
 - Tests must cover leading/continuation cells, combining text, fallback, the

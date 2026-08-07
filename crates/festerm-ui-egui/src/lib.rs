@@ -247,19 +247,27 @@ mod tests {
             hyperlink: Some(Arc::<str>::from("https://example.com")),
             ..single("x")
         };
+        let fallback = single("\u{1f980}");
+        let styled = RenderedCell {
+            attributes: Attributes::BOLD,
+            ..single("z")
+        };
         let cells = vec![
             single("="),
             single("="),
             wide,
             continuation,
             single("e\u{301}"),
+            fallback,
             linked,
             single("y"),
+            styled,
+            single("w"),
         ];
         let dimensions = Dimensions::new(cells.len(), 1).unwrap();
         let runs = glyph_runs(&cells, 0, dimensions, None);
 
-        assert_eq!(runs.len(), 5);
+        assert_eq!(runs.len(), 7);
         assert_eq!(runs[0].position(), CellPosition { column: 0, row: 0 });
         assert_eq!(runs[0].columns(), 2);
         assert_eq!(runs[0].text(), "==");
@@ -267,10 +275,12 @@ mod tests {
         assert_eq!(runs[1].columns(), 2);
         assert_eq!(runs[1].text(), "界");
         assert_eq!(runs[2].position(), CellPosition { column: 4, row: 0 });
-        assert_eq!(runs[2].columns(), 1);
-        assert_eq!(runs[2].text(), "e\u{301}");
-        assert_eq!(runs[3].position(), CellPosition { column: 5, row: 0 });
-        assert_eq!(runs[4].position(), CellPosition { column: 6, row: 0 });
+        assert_eq!(runs[2].columns(), 2);
+        assert_eq!(runs[2].text(), "e\u{301}\u{1f980}");
+        assert_eq!(runs[3].position(), CellPosition { column: 6, row: 0 });
+        assert_eq!(runs[4].position(), CellPosition { column: 7, row: 0 });
+        assert_eq!(runs[5].position(), CellPosition { column: 8, row: 0 });
+        assert_eq!(runs[6].position(), CellPosition { column: 9, row: 0 });
 
         let selected = glyph_runs(
             &cells[..2],
