@@ -241,7 +241,7 @@ State indicators should be compact, accessible, and not rely on color alone.
 
 ### Active and inactive tabs
 
-The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal.
+The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal. The application defaults to a dark theme (`egui::Visuals::dark()`, set in `app/festerm/src/app.rs`); a light theme is not yet exposed but the chip chrome derives its colors from `ui.visuals()` so it remains theme-complementary rather than hard-coded. Selection is indicated by lightening the chip's entire background fill (`ui.visuals().selection.bg_fill` painted across the full chip rect), not by highlighting only the label text — this keeps the state visible without relying on color-in-text alone.
 
 ### Tab overflow and wrapping
 
@@ -433,9 +433,10 @@ Exact platform shortcuts remain to be specified and should respect platform conv
 - Clicking a tab activates it.
 - Tab close controls should avoid accidental activation or closure.
 - Reordering may be supported through drag-and-drop.
+- Session tabs may be renamed by double-clicking the chip's label, editing inline, and committing with Enter or by clicking away; Escape cancels. Launcher and Settings chips are not renamable.
 - Terminal mouse reporting and local selection remain governed by terminal mode and modifier policy.
 
-Chip reordering is implemented via a dedicated small drag-handle glyph on each chip (`crates/festerm-ui-egui/src/chrome.rs`), rather than making the whole chip draggable, so ordinary clicks on the chip label and close button are unaffected.
+Chip reordering is implemented by making the whole chip press-and-hold draggable (`crates/festerm-ui-egui/src/chrome.rs`) rather than via a dedicated drag-handle glyph: no explicit move icon is shown, and pressing anywhere on the chip body (outside the label, close button, and status dot, which keep their own click targets) starts a drag. While dragging, the chip itself floats at the cursor and sibling chips live-shuffle to preview the resulting order as the pointer moves, rather than only showing a static insertion marker.
 
 ### Focus
 

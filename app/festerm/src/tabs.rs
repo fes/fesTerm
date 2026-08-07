@@ -170,7 +170,7 @@ pub struct Tab {
 /// (chip row, launcher buttons, and future shortcuts/command palette), per
 /// `docs/application-command-model.md`. UI code must not implement its own
 /// copy of these operations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppCommand {
     /// "New Tab opens the session launcher" (`docs/gui-design.md`
     /// "Interaction Conventions").
@@ -194,6 +194,9 @@ pub enum AppCommand {
         moved: TabId,
         before: Option<TabId>,
     },
+    /// Renames a session tab's stable primary identity (label). No-op for
+    /// Launcher/Settings tabs, whose names are fixed.
+    RenameTab(TabId, String),
     ToggleSessionInspector,
     /// Flips between wrapped and single-row-scroll chip layout
     /// (`docs/gui-design.md` "Wrapping must remain user-configurable").
@@ -300,6 +303,7 @@ impl AppState {
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) => self.close(id),
             AppCommand::ReorderTab { moved, before } => self.reorder(moved, before),
+            AppCommand::RenameTab(id, name) => self.rename(id, name),
             AppCommand::ToggleSessionInspector => self.inspector_open = !self.inspector_open,
             AppCommand::ToggleChipLayout => {
                 self.chip_layout = match self.chip_layout {
@@ -394,6 +398,23 @@ impl AppState {
             None => self.tabs.len(),
         };
         self.tabs.insert(insert_at, tab);
+    }
+
+    /// Renames the session tab's stable primary identity (label). A no-op
+    /// for Launcher/Settings tabs (their names are fixed chrome, not session
+    /// state) and for an empty trimmed name, matching the chrome-side
+    /// rename-commit rule that empty names are discarded.
+    fn rename(&mut self, id: TabId, name: String) {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) else {
+            return;
+        };
+        if let TabContent::Session(session) = &mut tab.content {
+            session.label = trimmed.to_owned();
+        }
     }
 
     fn close(&mut self, id: TabId) {

@@ -32,6 +32,12 @@ pub struct FesTermApp {
 
 impl FesTermApp {
     pub fn new(context: &egui::Context) -> Self {
+        // A single, explicit dark theme for the whole application
+        // (`docs/gui-design.md` "Dark-neutral terminal-first default").
+        // Without this, chrome panels default to egui's light visuals while
+        // the terminal viewport paints its own dark background directly,
+        // producing an inconsistent light/dark chrome-vs-viewport split.
+        context.set_visuals(egui::Visuals::dark());
         let native_smoke = NativeWindowSmoke::from_environment();
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
@@ -124,6 +130,12 @@ impl FesTermApp {
                     let before = before.and_then(|chip_id| self.tab_id_for_chip(chip_id));
                     self.state
                         .dispatch(AppCommand::ReorderTab { moved, before }, context);
+                }
+                ChromeAction::Rename { id: chip_id, name } => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state
+                            .dispatch(AppCommand::RenameTab(id, name), context);
+                    }
                 }
             }
         }
@@ -290,12 +302,14 @@ impl FesTermApp {
                         (session.label.clone(), secondary, session.chip_status())
                     }
                 };
+                let renamable = matches!(tab.content, TabContent::Session(_));
                 ChipViewModel {
                     id: ChipId(tab.id.chip_id()),
                     primary,
                     secondary,
                     status,
                     closable: true,
+                    renamable,
                 }
             })
             .collect();
@@ -502,7 +516,7 @@ mod tests {
         let before = harness.state().state.tabs().len();
 
         harness
-            .get_all_by_label("\u{2715}")
+            .get_all_by_label("Close")
             .next()
             .expect("at least one closable chip")
             .click();
