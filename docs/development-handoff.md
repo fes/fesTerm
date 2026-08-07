@@ -86,6 +86,10 @@ cargo update
 
 The core's Unicode dependencies remain exact pins so cell-width behavior is
 reproducible; update their fixtures and standards note in the same change.
+The `egui`, `eframe`, and `egui_kittest` requirements deliberately track the
+latest released 0.x line. `Cargo.lock` remains committed for reproducible
+builds; refresh it through the validated dependency-update process rather than
+tracking the upstream Git branch.
 
 ## Validation
 
@@ -122,7 +126,8 @@ evidence; do not bypass it.
 
 Prefer repository-owned automation to repeated manual validation instructions.
 The global opt-in suite runs every currently automated optional probe: the P5
-reference-application PTY probes and the P4 native-window smoke. It writes
+reference-application PTY probes, P6 renderer/snapshot validation, and the P4
+native-window smoke. It writes
 content-free suite status only and exits nonzero when an invoked probe fails.
 Run it from a logged-in desktop session; it opens and closes a native window.
 

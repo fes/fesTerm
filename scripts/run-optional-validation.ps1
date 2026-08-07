@@ -16,6 +16,11 @@ $p5ResultPath = if ($env:FESTERM_P5_REFERENCE_RESULT_PATH) {
 } else {
     'p5-reference-result.txt'
 }
+$p6ResultPath = if ($env:FESTERM_P6_RENDER_RESULT_PATH) {
+    $env:FESTERM_P6_RENDER_RESULT_PATH
+} else {
+    'p6-render-result.txt'
+}
 $nativeResultPath = 'native-smoke-window-result.txt'
 $status = 'pass'
 Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
@@ -32,6 +37,14 @@ if ($LASTEXITCODE -eq 0) {
     Add-Content -Path $ResultPath -Value "`nsuite=p5 status=pass"
 } else {
     Add-Content -Path $ResultPath -Value "`nsuite=p5 status=fail"
+    $status = 'fail'
+}
+
+& "$PSScriptRoot\run-p6-render-validation.ps1" -ResultPath $p6ResultPath
+if ($LASTEXITCODE -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=p6-renderer status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=p6-renderer status=fail"
     $status = 'fail'
 }
 

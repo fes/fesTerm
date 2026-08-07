@@ -11,6 +11,7 @@ fi
 
 result_path=${FESTERM_OPTIONAL_VALIDATION_RESULT_PATH:-optional-validation-result.txt}
 p5_result_path=${FESTERM_P5_REFERENCE_RESULT_PATH:-p5-reference-result.txt}
+p6_result_path=${FESTERM_P6_RENDER_RESULT_PATH:-p6-render-result.txt}
 native_result_path=native-smoke-window-result.txt
 status=pass
 
@@ -21,6 +22,13 @@ if scripts/run-p5-reference.sh; then
     printf 'suite=p5 status=pass\n' >>"$result_path"
 else
     printf 'suite=p5 status=fail\n' >>"$result_path"
+    status=fail
+fi
+
+if scripts/run-p6-render-validation.sh; then
+    printf 'suite=p6-renderer status=pass\n' >>"$result_path"
+else
+    printf 'suite=p6-renderer status=fail\n' >>"$result_path"
     status=fail
 fi
 
