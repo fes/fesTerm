@@ -168,12 +168,12 @@ ConPTY cursor-position replies and resize rendering failures.
 ## Tier 4: Headless Egui Frames
 
 **Decision: adopted.** [egui_kittest](https://github.com/emilk/egui/tree/main/crates/egui_kittest)
-0.36 is a test-only dependency paired with `egui` and `eframe` 0.36. The
-stable Rust toolchain satisfies its Rust 1.95 minimum. The initial harness
-test drives the production `TerminalView` through real frames, pointer focus,
-text input, a semantic Diagnostics control, and resize; it inspects
-content-free frame geometry, calculated terminal dimensions, and cache
-dimensions without opening a native window.
+is a test-only dependency paired with the current released `egui` and
+`eframe` 0.x line. The stable Rust toolchain satisfies its Rust 1.95 minimum.
+The initial harness test drives the production `TerminalView` through real
+frames, pointer focus, text input, a semantic Diagnostics control, and resize;
+it inspects content-free frame geometry, calculated terminal dimensions, and
+cache dimensions without opening a native window.
 
 The harness is suitable for structural and semantic testing. It does not
 replace native-window coverage, and its optional snapshot renderer remains P3

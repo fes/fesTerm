@@ -86,6 +86,10 @@ cargo update
 
 The core's Unicode dependencies remain exact pins so cell-width behavior is
 reproducible; update their fixtures and standards note in the same change.
+The `egui`, `eframe`, and `egui_kittest` requirements deliberately track the
+latest released 0.x line. `Cargo.lock` remains committed for reproducible
+builds; refresh it through the validated dependency-update process rather than
+tracking the upstream Git branch.
 
 ## Validation
 
