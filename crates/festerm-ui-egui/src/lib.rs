@@ -260,9 +260,25 @@ mod tests {
         harness.run();
         harness.key_press(egui::Key::ArrowUp);
         harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        harness.key_press(egui::Key::ArrowLeft);
+        harness.run();
+        harness.key_press(egui::Key::ArrowRight);
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
         assert_eq!(
             harness.state().sink.0,
-            vec![b"Q".to_vec(), b"\t".to_vec(), b"\x1b[A".to_vec()]
+            vec![
+                b"Q".to_vec(),
+                b"\t".to_vec(),
+                b"\x1b[A".to_vec(),
+                b"\x1b[B".to_vec(),
+                b"\x1b[D".to_vec(),
+                b"\x1b[C".to_vec(),
+                b"\x1b".to_vec(),
+            ]
         );
 
         {
