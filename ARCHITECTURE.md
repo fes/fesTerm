@@ -225,6 +225,17 @@ The application composition root:
 
 Business and protocol behavior should be moved out of this crate when it becomes independently testable.
 
+Application-level user intent must converge on a single command-handling path.
+Launcher actions, keyboard shortcuts, application chrome, overflow menus,
+command-palette entries, session-inspector controls, and future first-party
+automation surfaces should dispatch the same semantic application commands
+rather than implementing duplicate widget-specific policy. The application
+layer resolves those commands into session, window, workspace, or settings
+state changes and exposes the resulting state back to the UI. Low-level
+terminal input remains outside this command model and continues through the
+`festerm-core` typed input path. The detailed rules live in
+`docs/application-command-model.md`.
+
 ## Runtime Data Flow
 
 ### Session output
@@ -355,6 +366,8 @@ Performance benchmarks should initially report trends rather than block every co
 5. A failed configuration reload does not destroy the last valid configuration.
 6. One terminal state has one logical writer.
 7. Optional future systems do not enter the critical path before they are required.
+8. Product-level actions converge on the application command model rather than
+   duplicating policy across GUI invocation surfaces.
 
 ## Open Questions
 
