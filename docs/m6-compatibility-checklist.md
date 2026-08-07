@@ -93,6 +93,22 @@ selection, or validate Copilot CLI, `vttest`, or `tack`. Keep those runs as
 manual P5 evidence until an independently driven desktop automation layer is
 designed.
 
+### Windows OS-input smoke
+
+Windows additionally has an opt-in OS-driven smoke:
+
+```powershell
+pwsh -NoProfile -File scripts\run-windows-os-input-smoke.ps1
+```
+
+It launches a real fesTerm window, brings it forward, clicks the grid, resizes
+the native window, and injects Tab, Up Arrow, text, and Enter through Windows.
+A controlled PTY child releases a content-free result only after the injected
+line arrives. This proves the Windows event path from OS input through egui,
+the terminal encoder, and the PTY. It does not inspect `vttest`/`tack` menus
+or establish application screen semantics; those remain manual until their
+automation has a stable, reviewable oracle.
+
 ## Regression Triage
 
 For each failure, capture the terminal dimensions, application/version,

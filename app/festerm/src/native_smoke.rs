@@ -17,6 +17,7 @@ use festerm_ui_egui::EncodedInputSink;
 use crate::session_controller::SessionController;
 
 const SMOKE_ENV: &str = "FESTERM_NATIVE_WINDOW_SMOKE";
+const OS_INPUT_SMOKE_ENV: &str = "FESTERM_NATIVE_OS_INPUT_SMOKE";
 const RESULT_PATH_ENV: &str = "FESTERM_NATIVE_SMOKE_RESULT_PATH";
 const ALLOW_UNFOCUSED_ENV: &str = "FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED";
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -37,6 +38,12 @@ enum Phase {
     Finished,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SmokeKind {
+    NativeWindow,
+    OsInput,
+}
+
 pub struct NativeWindowSmoke {
     result_path: PathBuf,
     test_child_path: PathBuf,
@@ -49,11 +56,22 @@ pub struct NativeWindowSmoke {
     post_resize_output_bytes: Option<u64>,
     first_resize_generation: Option<u64>,
     allow_unfocused: bool,
+    kind: SmokeKind,
 }
 
 impl NativeWindowSmoke {
     pub fn from_environment() -> Option<Self> {
-        std::env::var_os(SMOKE_ENV)?;
+        let kind = match (
+            std::env::var_os(SMOKE_ENV).is_some(),
+            std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
+        ) {
+            (false, false) => return None,
+            (true, false) => SmokeKind::NativeWindow,
+            (false, true) => SmokeKind::OsInput,
+            (true, true) => {
+                panic!("{SMOKE_ENV} and {OS_INPUT_SMOKE_ENV} cannot be enabled together")
+            }
+        };
 
         let result_path = std::env::var_os(RESULT_PATH_ENV)
             .map(PathBuf::from)
@@ -78,11 +96,31 @@ impl NativeWindowSmoke {
             first_resize_generation: None,
             allow_unfocused: cfg!(target_os = "linux")
                 && std::env::var_os(ALLOW_UNFOCUSED_ENV).is_some(),
+            kind,
         })
     }
 
     pub fn test_child_path(&self) -> PathBuf {
         self.test_child_path.clone()
+    }
+
+    pub const fn test_child_arguments(&self) -> &'static [&'static str] {
+        match self.kind {
+            SmokeKind::NativeWindow => &[
+                "emit:LINE-A",
+                "emit:MARKER",
+                "read-line",
+                "echo:PRE",
+                "read-line",
+                "echo:POST",
+                "report-size",
+                "spin",
+            ],
+            // The OS driver sends Tab, Up, a fixed token, and Enter. The
+            // child cannot emit its post-read line until those real window
+            // events make it through the UI and PTY input path.
+            SmokeKind::OsInput => &["emit:READY", "read-line", "echo:OS-INPUT", "spin"],
+        }
     }
 
     pub fn drive(
@@ -117,19 +155,48 @@ impl NativeWindowSmoke {
             return;
         }
 
-        match self.phase {
-            Phase::AwaitInitialOutput if controller.resize_probe().observed_output_bytes() > 0 => {
+        match (self.kind, self.phase) {
+            (SmokeKind::OsInput, Phase::AwaitInitialOutput)
+                if controller.resize_probe().observed_output_bytes() > 0 =>
+            {
+                self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
+                self.phase = Phase::AwaitInput;
+            }
+            (SmokeKind::OsInput, Phase::AwaitInput)
+                if controller.resize_probe().observed_output_bytes()
+                    > self.initial_output_bytes.unwrap_or_default() =>
+            {
+                let generations = controller.resize_probe().generations();
+                let resize_applied = generations
+                    .iter()
+                    .any(|generation| generation.applied && generation.visible_nonblank_cells > 0);
+                if self.focus_observed && resize_applied {
+                    self.finish(
+                        context,
+                        "pass",
+                        &format!(
+                            "OS input reached PTY; resize generations {}; output {}B->{}B",
+                            generations.len(),
+                            self.initial_output_bytes.unwrap_or_default(),
+                            controller.resize_probe().observed_output_bytes(),
+                        ),
+                    );
+                }
+            }
+            (SmokeKind::NativeWindow, Phase::AwaitInitialOutput)
+                if controller.resize_probe().observed_output_bytes() > 0 =>
+            {
                 self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
                 controller.record_encoded_input(b"pre\r\n");
                 self.phase = Phase::AwaitPreOutput;
             }
-            Phase::AwaitPreOutput
+            (SmokeKind::NativeWindow, Phase::AwaitPreOutput)
                 if controller.resize_probe().observed_output_bytes()
                     > self.initial_output_bytes.unwrap_or_default() =>
             {
                 self.request_resize(context, controller, 0);
             }
-            Phase::AwaitResize(index) => {
+            (SmokeKind::NativeWindow, Phase::AwaitResize(index)) => {
                 let requested = RESIZE_SEQUENCE[index];
                 let applied = viewport.inner_rect.is_some_and(|rect| {
                     (rect.width() - requested.0).abs() < 8.0
@@ -168,11 +235,13 @@ impl NativeWindowSmoke {
                     }
                 }
             }
-            Phase::AwaitInput if self.phase_started.elapsed() >= Duration::from_millis(250) => {
+            (SmokeKind::NativeWindow, Phase::AwaitInput)
+                if self.phase_started.elapsed() >= Duration::from_millis(250) =>
+            {
                 controller.record_encoded_input(b"post\r\n");
                 self.phase = Phase::AwaitPostOutput;
             }
-            Phase::AwaitPostOutput
+            (SmokeKind::NativeWindow, Phase::AwaitPostOutput)
                 if controller.resize_probe().observed_output_bytes()
                     > self.post_resize_output_bytes.unwrap_or_default() =>
             {
@@ -238,11 +307,12 @@ impl NativeWindowSmoke {
                     );
                 }
             }
-            Phase::Finished
-            | Phase::AwaitInitialOutput
-            | Phase::AwaitPreOutput
-            | Phase::AwaitInput
-            | Phase::AwaitPostOutput => {}
+            (_, Phase::Finished)
+            | (_, Phase::AwaitInitialOutput)
+            | (_, Phase::AwaitPreOutput)
+            | (_, Phase::AwaitInput)
+            | (_, Phase::AwaitPostOutput)
+            | (SmokeKind::OsInput, Phase::AwaitResize(_)) => {}
         }
     }
 
@@ -301,6 +371,7 @@ mod tests {
     #[test]
     fn smoke_mode_requires_an_explicit_environment_variable() {
         assert_eq!(SMOKE_ENV, "FESTERM_NATIVE_WINDOW_SMOKE");
+        assert_eq!(OS_INPUT_SMOKE_ENV, "FESTERM_NATIVE_OS_INPUT_SMOKE");
         assert_eq!(RESULT_PATH_ENV, "FESTERM_NATIVE_SMOKE_RESULT_PATH");
     }
 }

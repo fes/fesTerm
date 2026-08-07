@@ -63,16 +63,8 @@ impl FesTermApp {
     ) -> Result<LocalPtySession, festerm_pty::LocalPtyError> {
         match native_smoke {
             Some(smoke) => LocalPtySession::start_with_notifier(
-                LocalProfile::new(smoke.test_child_path()).with_arguments([
-                    "emit:LINE-A",
-                    "emit:MARKER",
-                    "read-line",
-                    "echo:PRE",
-                    "read-line",
-                    "echo:POST",
-                    "report-size",
-                    "spin",
-                ]),
+                LocalProfile::new(smoke.test_child_path())
+                    .with_arguments(smoke.test_child_arguments()),
                 size,
                 notifier,
             ),

@@ -53,5 +53,15 @@ if ($nativePassed) {
     $status = 'fail'
 }
 
+if ($env:OS -eq 'Windows_NT') {
+    & "$PSScriptRoot\run-windows-os-input-smoke.ps1"
+    if ($LASTEXITCODE -eq 0) {
+        Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=pass"
+    } else {
+        Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=fail"
+        $status = 'fail'
+    }
+}
+
 Add-Content -Path $ResultPath -Value "`nstatus=$status"
 if ($status -eq 'fail') { exit 1 }

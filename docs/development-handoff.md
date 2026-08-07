@@ -144,6 +144,9 @@ tool is recorded by the P5 result file and is not acceptance evidence.
 The suite does not replace manual P5 observations that require screen
 semantics or user intent: GitHub Copilot CLI, `vttest`, `tack`, native
 selection/focus, paste behavior, and application-specific visual inspection.
+On Windows, it additionally invokes `run-windows-os-input-smoke.ps1`, which
+uses real OS focus, click, resize, and key events to prove the event-to-PTY
+path without recording terminal content.
 
 ## Diagnostics and Safety
 
