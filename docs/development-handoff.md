@@ -28,6 +28,43 @@ The first run opens the platform default local shell. It is intentionally a
 single session, not yet a tabbed workstation. If shell creation fails, the UI
 shows the session error rather than substituting a demo shell.
 
+## WSL 2 Development and Testing
+
+Use a Linux-native checkout under the WSL home directory (for example,
+`~/src/fesTerm`), not `/mnt/c/...`; this avoids cross-filesystem build and
+file-watching problems. WSLg provides the GUI display when `DISPLAY` or
+`WAYLAND_DISPLAY` is set.
+
+On Ubuntu, install the native build/GUI prerequisites and the P5 reference
+tools:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
+  libvulkan-dev mesa-vulkan-drivers xvfb \
+  vttest tack less vim-nox neovim tmux htop gh
+```
+
+Install Rust for the WSL user, then clone and build:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+. "$HOME/.cargo/env"
+rustup toolchain install stable
+mkdir -p ~/src
+git clone https://github.com/fes/fesTerm.git ~/src/fesTerm
+cd ~/src/fesTerm
+cargo build --workspace
+```
+
+Run the GUI through WSLg with `cargo run -p festerm`. For Linux PTY P4 smoke
+coverage, use the ignored tests in
+[`native-smoke-policy.md`](native-smoke-policy.md); use `Xvfb` only for the
+explicitly unfocused CI smoke. Run `vttest`, `tack`, and the reference
+applications from the P5 checklist in this Linux checkout, recording
+content-free evidence for each scenario.
+
 ## Toolchain and Dependency Currency
 
 Use the current stable Rust toolchain. Before starting a milestone work package
