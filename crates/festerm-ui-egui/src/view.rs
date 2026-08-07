@@ -41,6 +41,7 @@ pub struct FrameDiagnostics {
 #[derive(Default)]
 pub struct TerminalView {
     pub(crate) fonts: FontSettings,
+    cell_run_shaping: bool,
     pub(crate) cache: TerminalRenderCache,
     pub(crate) glyphs: GlyphCache,
     pub(crate) selection: Selection,
@@ -52,6 +53,11 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
+    #[cfg(test)]
+    pub(crate) fn enable_cell_run_shaping_for_test(&mut self) {
+        self.cell_run_shaping = true;
+    }
+
     pub fn diagnostics(&self) -> &FrameDiagnostics {
         &self.diagnostics
     }
@@ -212,6 +218,7 @@ impl TerminalView {
                         cache: &self.cache,
                         selection: &self.selection,
                         fonts: &self.fonts,
+                        cell_run_shaping: self.cell_run_shaping,
                         focused: response.has_focus(),
                     },
                     &mut self.glyphs,

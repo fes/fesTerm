@@ -56,15 +56,16 @@ impl GlyphCache {
     pub(crate) fn layout(
         &mut self,
         painter: &egui::Painter,
-        cell: &RenderedCell,
+        text: &str,
+        attributes: Attributes,
         foreground: Color32,
         font: &FontSettings,
         layout_width: f32,
     ) -> Arc<egui::Galley> {
         let key = GlyphKey {
-            text: cell.text.clone(),
+            text: text.to_owned(),
             foreground,
-            attributes: cell.attributes.bits(),
+            attributes: attributes.bits(),
             font_size_bits: font.size_points.to_bits(),
             layout_width_bits: layout_width.to_bits(),
         };
@@ -79,12 +80,12 @@ impl GlyphCache {
         job.wrap.max_width = layout_width;
         job.break_on_newline = false;
         job.append(
-            &cell.text,
+            text,
             0.0,
             TextFormat {
                 font_id: font.font_id(),
                 color: foreground,
-                italics: cell.attributes.contains(Attributes::ITALIC),
+                italics: attributes.contains(Attributes::ITALIC),
                 ..Default::default()
             },
         );
@@ -113,6 +114,7 @@ pub(crate) struct GridPaint<'a> {
     pub(crate) cache: &'a TerminalRenderCache,
     pub(crate) selection: &'a Selection,
     pub(crate) fonts: &'a FontSettings,
+    pub(crate) cell_run_shaping: bool,
     pub(crate) focused: bool,
 }
 
@@ -153,6 +155,92 @@ pub(crate) fn cell_needs_background_paint(cell: &RenderedCell, selected: bool) -
     selected || cell.background != Color::Default || cell.attributes.contains(Attributes::INVERSE)
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GlyphRun {
+    position: CellPosition,
+    columns: usize,
+    text: String,
+    foreground: Color32,
+    attributes: Attributes,
+    selected: bool,
+    has_hyperlink: bool,
+    single_width_only: bool,
+}
+
+impl GlyphRun {
+    #[cfg(test)]
+    pub(crate) const fn position(&self) -> CellPosition {
+        self.position
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn columns(&self) -> usize {
+        self.columns
+    }
+
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn can_extend(&self, cell: &RenderedCell, foreground: Color32, selected: bool) -> bool {
+        !self.selected
+            && !selected
+            && !self.has_hyperlink
+            && self.single_width_only
+            && cell.width == festerm_core::CellWidth::Single
+            && self.foreground == foreground
+            && self.attributes == cell.attributes
+            && cell.hyperlink.is_none()
+    }
+}
+
+/// Produces shaping runs without changing terminal-cell ownership.
+///
+/// Every run starts at a leading terminal cell and owns an explicit count of
+/// physical columns. Wide cells, selections, style changes, and hyperlinks
+/// create hard boundaries. The renderer may shape a run as one visual glyph
+/// sequence, but cursor, selection, and hit testing keep using `CellGeometry`.
+pub(crate) fn glyph_runs(
+    cells: &[RenderedCell],
+    row: usize,
+    dimensions: Dimensions,
+    selection: Option<CellRange>,
+) -> Vec<GlyphRun> {
+    let mut runs = Vec::new();
+    for (column, cell) in cells.iter().enumerate() {
+        if cell.width == festerm_core::CellWidth::Continuation {
+            continue;
+        }
+        let position = CellPosition { column, row };
+        let columns = rendered_cell_columns(cell, dimensions, column);
+        let (foreground, _) = cell_colors(cell);
+        let selected = rendered_cell_is_selected(selection, position, columns);
+        let can_extend = runs.last().is_some_and(|run: &GlyphRun| {
+            run.position.row == row
+                && run.position.column + run.columns == column
+                && run.can_extend(cell, foreground, selected)
+        });
+        if can_extend {
+            let run = runs.last_mut().expect("run existence was checked");
+            run.columns += columns;
+            run.text.push_str(&cell.text);
+        } else {
+            runs.push(GlyphRun {
+                position,
+                columns,
+                text: cell.text.clone(),
+                foreground,
+                attributes: cell.attributes,
+                selected,
+                has_hyperlink: cell.hyperlink.is_some(),
+                single_width_only: cell.width == festerm_core::CellWidth::Single,
+            });
+        }
+    }
+    runs
+}
+
 pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCache) {
     let Some(dimensions) = paint.cache.dimensions() else {
         return;
@@ -183,15 +271,21 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                     },
                 );
             }
-            if cell.text.is_empty() {
-                continue;
+            if !paint.cell_run_shaping && !cell.text.is_empty() {
+                let galley = glyphs.layout(
+                    &painter,
+                    &cell.text,
+                    cell.attributes,
+                    foreground,
+                    paint.fonts,
+                    rect.width(),
+                );
+                let text_position = Pos2::new(
+                    rect.left(),
+                    rect.top() + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                );
+                painter.galley(text_position, galley, foreground);
             }
-            let galley = glyphs.layout(&painter, cell, foreground, paint.fonts, rect.width());
-            let text_position = Pos2::new(
-                rect.left(),
-                rect.top() + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
-            );
-            painter.galley(text_position, galley, foreground);
             let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
             if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
                 let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
@@ -222,6 +316,28 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                     ],
                     Stroke::new(1.0_f32, foreground),
                 );
+            }
+        }
+        if paint.cell_run_shaping {
+            for run in glyph_runs(cells, row, dimensions, selection_range) {
+                if run.text.is_empty() {
+                    continue;
+                }
+                let rect = grid_cell_rect(paint.layout, run.position, run.columns);
+                let run_painter = painter.with_clip_rect(rect);
+                let galley = glyphs.layout(
+                    &run_painter,
+                    &run.text,
+                    run.attributes,
+                    run.foreground,
+                    paint.fonts,
+                    rect.width(),
+                );
+                let text_position = Pos2::new(
+                    rect.left(),
+                    rect.top() + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                );
+                run_painter.galley(text_position, galley, run.foreground);
             }
         }
     }
