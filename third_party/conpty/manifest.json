@@ -1,0 +1,9 @@
+{
+  "package": "Microsoft.Windows.Console.ConPTY",
+  "version": "1.24.260710001",
+  "source_url": "https://www.nuget.org/api/v2/package/Microsoft.Windows.Console.ConPTY/1.24.260710001",
+  "sha512": "38A3117406CF8857EA44089DFC52698EE2FE8A330603F27358A618E09749B19F91B99AF0B91305C0E108FA69C41237B189DEE17C6BA933303C00D70E42CA180F",
+  "license": "MIT",
+  "minimum_windows_version": "10.0.17763",
+  "update_policy": "Monthly check; every update requires a reviewed manifest/hash change and passing inbox and pinned ConPTY resize smoke tests."
+}

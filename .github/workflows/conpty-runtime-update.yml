@@ -1,0 +1,33 @@
+name: ConPTY Runtime Update Check
+
+on:
+  schedule:
+    - cron: "23 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Microsoft ConPTY package version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $manifest = Get-Content third_party/conpty/manifest.json -Raw | ConvertFrom-Json
+          $index = Invoke-RestMethod "https://api.nuget.org/v3-flatcontainer/$($manifest.package.ToLower())/index.json"
+          $latest = $index.versions | Where-Object { $_ -notmatch '-' } | Select-Object -Last 1
+          if ($latest -eq $manifest.version) {
+            Write-Output "Pinned ConPTY runtime is current: $latest"
+            exit 0
+          }
+          $title = "Update pinned ConPTY runtime to $latest"
+          $existing = gh issue list --state open --search $title --json title --jq ".[].title"
+          if ($existing -notcontains $title) {
+            gh issue create --title $title --body "NuGet reports Microsoft.Windows.Console.ConPTY $latest; the current pinned version is $($manifest.version). Update third_party/conpty/manifest.json, verify the package hash and MIT notice, then run both inbox and pinned ConPTY resize smoke flows."
+          }
