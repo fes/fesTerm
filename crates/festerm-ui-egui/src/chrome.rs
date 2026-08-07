@@ -13,9 +13,19 @@
 //! `docs/application-command-model.md`.
 
 use egui::{
-    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order,
+    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order, Popup,
     RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
 };
+
+/// Chip footprint bounds (`docs/gui-design.md` "Active and inactive tabs"):
+/// chips clip long secondary text with an ellipsis rather than growing
+/// without bound, and never shrink below a minimum that still fits the
+/// status dot, a short label, and (when shown) the close control.
+const CHIP_MIN_WIDTH: f32 = 132.0;
+const CHIP_MAX_WIDTH: f32 = 220.0;
+/// Fixed two-line chip height (primary line + secondary line), independent
+/// of whether a chip currently has secondary text.
+const CHIP_HEIGHT: f32 = 46.0;
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
@@ -98,6 +108,12 @@ pub enum ChromeAction {
     NewTab,
     OpenSettings,
     ToggleInspector,
+    /// Emitted by the search-icon control; mirrors the `Ctrl+Shift+P`
+    /// shortcut precedent (`app.rs::handle_shortcuts`) by asking the caller
+    /// to toggle its transient, chrome-external command-palette overlay.
+    TogglePalette,
+    /// Emitted from the overflow menu's "Toggle chip layout" entry.
+    ToggleChipLayout,
     /// Emitted by drag-and-drop: `moved` should be relocated to sit
     /// immediately before `before` (or at the end of the row if `None`).
     /// Reordering only changes chip position; it must preserve the moved
@@ -142,17 +158,12 @@ pub fn show(
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        if ui
-            .button("+ Launcher")
-            .on_hover_text("Open a new launcher tab")
-            .clicked()
-        {
-            actions.push(ChromeAction::NewTab);
-        }
+        paint_launcher_button(ui, &mut actions);
         let chip_row = |ui: &mut Ui| {
             for chip in chips {
                 show_chip(ui, chip, chip.id == active, &mut actions);
             }
+            paint_new_chip_button(ui, &mut actions);
             // A small strip past the last chip lets a drag be released (or
             // live-shuffled to) the end of the row.
             end_of_row_drop_target(ui, &mut actions);
@@ -168,22 +179,158 @@ pub fn show(
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui
-                .selectable_label(inspector_open, "Inspector")
-                .on_hover_text("Toggle session inspector")
-                .clicked()
-            {
+            paint_overflow_menu(ui, &mut actions);
+            if paint_panel_icon(ui, inspector_open) {
                 actions.push(ChromeAction::ToggleInspector);
             }
-            // Stand-in for the deliberately small future overflow menu
-            // (`docs/gui-design.md` "Application chrome and session
-            // context"): Settings is the only entry today.
-            if ui.button("Settings").clicked() {
-                actions.push(ChromeAction::OpenSettings);
+            if paint_search_icon(ui) {
+                actions.push(ChromeAction::TogglePalette);
             }
         });
     });
     actions
+}
+
+/// Restyled, chip-like "New Launcher" control (`docs/gui-design.md`): same
+/// rounding/border language as a session chip so it reads as part of the
+/// same family of controls rather than a plain default-styled button.
+fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().button_padding = vec2(10.0, 6.0);
+            ui.add(egui::Button::new("+ Launcher").corner_radius(6))
+        })
+        .inner
+        .on_hover_text("Open a new launcher tab");
+    if response.clicked() {
+        actions.push(ChromeAction::NewTab);
+    }
+}
+
+/// Compact icon-only "add chip" control placed right after the last chip,
+/// so a new session can be started without reaching back to the far-left
+/// Launcher button. Emits the same `ChromeAction::NewTab` as the Launcher
+/// button (`AGENTS.md`: no duplicate widget-specific copies of the same
+/// operation).
+fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "New tab"));
+    let color = if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let center = rect.center();
+    let half = size * 0.28;
+    ui.painter().line_segment(
+        [center - vec2(half, 0.0), center + vec2(half, 0.0)],
+        Stroke::new(1.5, color),
+    );
+    ui.painter().line_segment(
+        [center - vec2(0.0, half), center + vec2(0.0, half)],
+        Stroke::new(1.5, color),
+    );
+    let response = response.on_hover_text("New tab");
+    if response.clicked() {
+        actions.push(ChromeAction::NewTab);
+    }
+}
+
+/// Painter-drawn magnifying-glass icon toggling the command palette
+/// (mirrors the `Ctrl+Shift+P` shortcut precedent in
+/// `app.rs::handle_shortcuts`, which also just toggles the palette directly
+/// rather than going through `AppCommand`). Returns whether it was clicked
+/// this frame.
+fn paint_search_icon(ui: &mut Ui) -> bool {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Search (Ctrl+Shift+P)"));
+    let color = if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let center = rect.center() - vec2(1.0, 1.0);
+    let radius = size * 0.22;
+    ui.painter()
+        .circle_stroke(center, radius, Stroke::new(1.5, color));
+    let handle_start = center + vec2(radius * 0.7, radius * 0.7);
+    let handle_end = handle_start + vec2(size * 0.22, size * 0.22);
+    ui.painter()
+        .line_segment([handle_start, handle_end], Stroke::new(1.5, color));
+    response.on_hover_text("Search (Ctrl+Shift+P)").clicked()
+}
+
+/// Painter-drawn side-panel icon toggling the session inspector. Returns
+/// whether it was clicked this frame; `open` paints it in an active state so
+/// the control's own affordance (not a text label) communicates whether the
+/// inspector is currently shown.
+fn paint_panel_icon(ui: &mut Ui, open: bool) -> bool {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response
+        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Toggle session inspector"));
+    let color = if open || response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let outer = rect.shrink(3.0);
+    ui.painter().rect_stroke(
+        outer,
+        2.0,
+        Stroke::new(1.5, color),
+        egui::StrokeKind::Inside,
+    );
+    let divider_x = outer.right() - outer.width() * 0.35;
+    ui.painter().line_segment(
+        [
+            egui::pos2(divider_x, outer.top()),
+            egui::pos2(divider_x, outer.bottom()),
+        ],
+        Stroke::new(1.5, color),
+    );
+    if open {
+        let panel_rect =
+            egui::Rect::from_min_max(egui::pos2(divider_x, outer.top()), outer.right_bottom());
+        ui.painter()
+            .rect_filled(panel_rect, 0.0, color.gamma_multiply(0.35));
+    }
+    response.on_hover_text("Toggle session inspector").clicked()
+}
+
+/// Painter-drawn "more" (vertical ellipsis) icon opening a small popup menu
+/// holding the deliberately few actions that don't warrant their own
+/// always-visible control (`docs/gui-design.md` "Application chrome and
+/// session context": "remain reachable from the command palette and compact
+/// overflow menu").
+fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "More actions"));
+    let color = if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let center = rect.center();
+    for offset in [-6.0, 0.0, 6.0] {
+        ui.painter()
+            .circle_filled(center + vec2(0.0, offset), 1.6, color);
+    }
+    let response = response.on_hover_text("More actions");
+
+    Popup::menu(&response).show(|ui| {
+        if ui.button("Open Settings").clicked() {
+            actions.push(ChromeAction::OpenSettings);
+            ui.close();
+        }
+        if ui.button("Toggle chip layout").clicked() {
+            actions.push(ChromeAction::ToggleChipLayout);
+            ui.close();
+        }
+    });
 }
 
 /// An invisible strip past the last chip that accepts a live-dragged chip,
@@ -224,7 +371,7 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
     let ctx = ui.ctx().clone();
     let cached_size = ctx
         .data_mut(|d| d.get_temp::<Vec2>(chip_id))
-        .unwrap_or_else(|| vec2(120.0, 30.0));
+        .unwrap_or_else(|| vec2(CHIP_MIN_WIDTH, CHIP_HEIGHT));
 
     if ctx.is_being_dragged(chip_id) {
         // Currently being dragged: keep the payload alive, reserve the
@@ -245,7 +392,7 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
         let layer_id = LayerId::new(Order::Tooltip, chip_id);
         let mut floating_ui =
             ui.new_child(UiBuilder::new().max_rect(ghost_rect).layer_id(layer_id));
-        let content_response = paint_chip(&mut floating_ui, chip, active, chip_id, actions);
+        let content_response = paint_chip(&mut floating_ui, chip, active, active, chip_id, actions);
 
         if let Some(pointer_pos) = ctx.pointer_interact_pos() {
             let delta = pointer_pos - content_response.rect.center();
@@ -269,9 +416,31 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
         WidgetInfo::labeled(WidgetType::Other, true, format!("{} chip", chip.primary))
     });
 
+    // The close control is a deliberately scarce affordance
+    // (`docs/gui-design.md`): it only appears on the active chip or one the
+    // pointer is currently over. Gate this on raw pointer-position
+    // containment rather than `bg_response.hovered()`: once a press starts
+    // on the close button (which sits on top of `bg_rect` for click
+    // purposes, per egui's overlapping-widget hit-test), `bg_response`
+    // itself briefly reports `hovered() == false` for that frame because
+    // hover attribution shifts to the topmost click target, which would
+    // otherwise make the close button disappear mid-press and silently
+    // swallow the click.
+    let pointer_over_chip = ctx
+        .pointer_interact_pos()
+        .is_some_and(|pos| bg_rect.contains(pos));
+    let show_close = active || pointer_over_chip;
     let mut content_ui = ui.new_child(UiBuilder::new().max_rect(bg_rect));
-    let content_response = paint_chip(&mut content_ui, chip, active, chip_id, actions);
-    ctx.data_mut(|d| d.insert_temp(chip_id, content_response.rect.size().max(vec2(48.0, 24.0))));
+    let content_response = paint_chip(&mut content_ui, chip, active, show_close, chip_id, actions);
+    let clamped_size = vec2(
+        content_response
+            .rect
+            .size()
+            .x
+            .clamp(CHIP_MIN_WIDTH, CHIP_MAX_WIDTH),
+        CHIP_HEIGHT,
+    );
+    ctx.data_mut(|d| d.insert_temp(chip_id, clamped_size));
 
     if bg_response.clicked() {
         actions.push(ChromeAction::Activate(chip.id));
@@ -299,10 +468,17 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
 /// Paints one chip's content (status dot, label/rename field, secondary
 /// text, close button) into `ui`, which the caller has already bounded to
 /// the chip's footprint. Returns the response covering that content.
+///
+/// Renders as two lines: the primary line (status dot, stable identity, and
+/// the close control, when `show_close`) and, indented beneath it, a
+/// smaller/muted secondary line carrying transient terminal-provided
+/// metadata (`docs/gui-design.md` "Identity precedence"). Both lines
+/// truncate rather than growing the chip past `CHIP_MAX_WIDTH`.
 fn paint_chip(
     ui: &mut Ui,
     chip: &ChipViewModel,
     active: bool,
+    show_close: bool,
     chip_id: Id,
     actions: &mut Vec<ChromeAction>,
 ) -> egui::Response {
@@ -326,65 +502,100 @@ fn paint_chip(
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            if !matches!(chip.status, ChipStatus::Neutral) {
-                paint_status_dot(ui, chip.status);
-            }
-
-            let rename_id = rename_buffer_id(chip.id);
-            let editing: Option<String> = ui.data(|d| d.get_temp(rename_id));
-
-            if let Some(mut buffer) = editing {
-                let response = ui.add(TextEdit::singleline(&mut buffer).desired_width(120.0));
-                let cancel = ui.input(|i| i.key_pressed(Key::Escape));
-                let commit = !cancel && response.lost_focus();
-                // Re-request focus only if we're staying in edit mode; doing
-                // this unconditionally would immediately re-grab focus after
-                // Enter/Escape surrendered it, masking the commit/cancel.
-                if !response.has_focus() && !cancel && !commit {
-                    response.request_focus();
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                if !matches!(chip.status, ChipStatus::Neutral) {
+                    paint_status_dot(ui, chip.status);
                 }
-                if cancel {
-                    ui.data_mut(|d| d.remove::<String>(rename_id));
-                } else if commit {
-                    let trimmed = buffer.trim();
-                    if !trimmed.is_empty() {
-                        actions.push(ChromeAction::Rename {
-                            id: chip.id,
-                            name: trimmed.to_owned(),
-                        });
-                    }
-                    ui.data_mut(|d| d.remove::<String>(rename_id));
+
+                let rename_id = rename_buffer_id(chip.id);
+                let editing: Option<String> = ui.data(|d| d.get_temp(rename_id));
+
+                if chip.closable && show_close {
+                    // Reserve the close button's space on the right edge
+                    // first, then lay out the label to its left, so the
+                    // label truncates instead of the close button being
+                    // pushed out of the chip.
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        paint_close_button(ui, chip.id, actions);
+                        paint_chip_primary(ui, chip, active, rename_id, editing, actions);
+                    });
                 } else {
-                    ui.data_mut(|d| d.insert_temp(rename_id, buffer));
+                    paint_chip_primary(ui, chip, active, rename_id, editing, actions);
                 }
-            } else {
-                let label = if active {
-                    RichText::new(&chip.primary).strong()
-                } else {
-                    RichText::new(&chip.primary)
-                };
-                let label_response = ui.add(egui::Label::new(label).sense(Sense::click()));
-                if label_response.clicked() {
-                    actions.push(ChromeAction::Activate(chip.id));
-                }
-                if chip.renamable && label_response.double_clicked() {
-                    ui.data_mut(|d| d.insert_temp(rename_id, chip.primary.clone()));
-                }
-            }
-
+            });
             if let Some(secondary) = &chip.secondary {
-                ui.label(RichText::new(secondary).weak().small());
-            }
-            if chip.closable {
-                paint_close_button(ui, chip.id, actions);
+                ui.horizontal(|ui| {
+                    // Indent under the primary line's label (status dot
+                    // width + spacing), not the chip's own left padding.
+                    ui.add_space(if matches!(chip.status, ChipStatus::Neutral) {
+                        8.0
+                    } else {
+                        22.0
+                    });
+                    ui.add(egui::Label::new(RichText::new(secondary).weak().small()).truncate());
+                });
             }
             ui.add_space(4.0);
         });
     });
 
     ui.interact(outer_rect, chip_id.with("content"), Sense::hover())
+}
+
+/// Paints the primary-line label or its in-progress rename `TextEdit`,
+/// filling the remaining horizontal space in `ui` (truncating rather than
+/// growing the chip). Split out of [`paint_chip`] so the close button (when
+/// shown) can be laid out first, right-to-left, without the label pushing
+/// it out of the chip.
+fn paint_chip_primary(
+    ui: &mut Ui,
+    chip: &ChipViewModel,
+    active: bool,
+    rename_id: Id,
+    editing: Option<String>,
+    actions: &mut Vec<ChromeAction>,
+) {
+    if let Some(mut buffer) = editing {
+        let response = ui.add(TextEdit::singleline(&mut buffer).desired_width(f32::INFINITY));
+        let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+        let commit = !cancel && response.lost_focus();
+        // Re-request focus only if we're staying in edit mode; doing this
+        // unconditionally would immediately re-grab focus after
+        // Enter/Escape surrendered it, masking the commit/cancel.
+        if !response.has_focus() && !cancel && !commit {
+            response.request_focus();
+        }
+        if cancel {
+            ui.data_mut(|d| d.remove::<String>(rename_id));
+        } else if commit {
+            let trimmed = buffer.trim();
+            if !trimmed.is_empty() {
+                actions.push(ChromeAction::Rename {
+                    id: chip.id,
+                    name: trimmed.to_owned(),
+                });
+            }
+            ui.data_mut(|d| d.remove::<String>(rename_id));
+        } else {
+            ui.data_mut(|d| d.insert_temp(rename_id, buffer));
+        }
+    } else {
+        let label = if active {
+            RichText::new(&chip.primary).strong()
+        } else {
+            RichText::new(&chip.primary)
+        };
+        let label_response = ui.add(egui::Label::new(label).sense(Sense::click()).truncate());
+        if label_response.clicked() {
+            actions.push(ChromeAction::Activate(chip.id));
+        }
+        if chip.renamable && label_response.double_clicked() {
+            ui.data_mut(|d| d.insert_temp(rename_id, chip.primary.clone()));
+        }
+    }
 }
 
 /// Compact, non-color-exclusive connection-state dot, painted directly
@@ -512,18 +723,116 @@ mod tests {
     fn clicking_a_chip_close_button_emits_a_close_action() {
         let mut harness = harness(ChromeHarnessState {
             chips: vec![chip(1, "one"), chip(2, "two")],
-            active: ChipId(1),
+            // Neither chip active, so the close button is hidden on both
+            // until hovered (`docs/gui-design.md`), avoiding ambiguity with
+            // the active chip's own always-visible close button.
+            active: ChipId(999),
             layout: ChipLayout::Wrap,
             observed: Vec::new(),
         });
+        harness.run();
 
-        harness.get_all_by_label("Close").nth(1).unwrap().click();
+        // The chip's own background footprint is always present (even
+        // before its close button is shown), so its rect can be queried
+        // directly. The close button, once shown on hover, is laid out
+        // flush with the chip's top-right corner
+        // (`paint_chip`/`paint_chip_primary`'s right-to-left first line);
+        // move the pointer straight there in a single batch of events so
+        // the hover-reveal and the click land in one continuous gesture.
+        let bg_rect = harness.get_by_label("two chip").rect();
+        let target = bg_rect.right_top() + egui::vec2(-8.0, 13.0);
+        harness.event(egui::Event::PointerMoved(target));
+        harness.event(egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
         harness.run();
 
         assert!(harness
             .state()
             .observed
             .contains(&ChromeAction::Close(ChipId(2))));
+    }
+
+    #[test]
+    fn inline_new_chip_button_emits_a_new_tab_action() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+
+        harness.get_by_label("New tab").click();
+        harness.run();
+
+        assert!(harness.state().observed.contains(&ChromeAction::NewTab));
+    }
+
+    #[test]
+    fn search_icon_emits_a_toggle_palette_action() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+
+        harness.get_by_label_contains("Search").click();
+        harness.run();
+
+        assert!(harness
+            .state()
+            .observed
+            .contains(&ChromeAction::TogglePalette));
+    }
+
+    #[test]
+    fn overflow_menu_settings_entry_emits_an_open_settings_action() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Open Settings").click();
+        harness.run();
+
+        assert!(harness
+            .state()
+            .observed
+            .contains(&ChromeAction::OpenSettings));
+    }
+
+    #[test]
+    fn overflow_menu_chip_layout_entry_emits_a_toggle_chip_layout_action() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Toggle chip layout").click();
+        harness.run();
+
+        assert!(harness
+            .state()
+            .observed
+            .contains(&ChromeAction::ToggleChipLayout));
     }
 
     #[test]
@@ -550,7 +859,7 @@ mod tests {
             observed: Vec::new(),
         });
 
-        harness.get_by_label_contains("Inspector").click();
+        harness.get_by_label_contains("inspector").click();
         harness.run();
 
         assert!(harness

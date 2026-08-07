@@ -71,6 +71,22 @@ impl FesTermApp {
         }
     }
 
+    /// Reduces a terminal-provided OSC title to just its final path
+    /// component for the chip row's secondary text, so a chip shows
+    /// `cmd.exe` rather than `C:\WINDOWS\system32\cmd.exe`
+    /// (`docs/gui-design.md` "Identity precedence": the stable label leads,
+    /// and secondary terminal metadata should stay compact rather than
+    /// forcing the chip to grow to fit a full path). Falls back to the
+    /// original string when it has no path-like structure to extract a
+    /// final component from.
+    fn display_secondary(terminal_title: &str) -> String {
+        std::path::Path::new(terminal_title)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| terminal_title.to_owned())
+    }
+
     /// Drains every open session's bounded backend queues, independent of
     /// which tab is active: each session chip represents "a persistent
     /// object with its own identity and state" (`docs/gui-design.md`) that
@@ -113,6 +129,10 @@ impl FesTermApp {
                 ChromeAction::ToggleInspector => self
                     .state
                     .dispatch(AppCommand::ToggleSessionInspector, context),
+                ChromeAction::TogglePalette => self.palette.toggle(),
+                ChromeAction::ToggleChipLayout => {
+                    self.state.dispatch(AppCommand::ToggleChipLayout, context)
+                }
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
                         self.state.dispatch(AppCommand::ActivateTab(id), context);
@@ -297,8 +317,8 @@ impl FesTermApp {
                     TabContent::Settings => ("Settings".to_owned(), None, ChipStatus::Neutral),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
-                        let secondary =
-                            (!dynamic_title.is_empty()).then(|| dynamic_title.to_owned());
+                        let secondary = (!dynamic_title.is_empty())
+                            .then(|| Self::display_secondary(dynamic_title));
                         (session.label.clone(), secondary, session.chip_status())
                     }
                 };

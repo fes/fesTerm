@@ -148,6 +148,7 @@ The main content is either a terminal viewport, launcher, settings page, or diag
 Global application actions and session-specific context are separate concerns.
 
 - The upper application chrome owns compact global actions: New Tab/Launcher, command palette or search, session-inspector toggle, and a deliberately small overflow menu.
+- Global controls are icon-only, painter-drawn glyphs (not text glyphs or words) with accessible labels and hover text carrying their meaning, matching the chip row's own painter-drawn status dot and close control rather than mixing button styles.
 - The session chips live inside the upper application chrome, in the same top-of-window band as New Tab and compact global controls. They are independent because each lozenge has visible space around it—not because the row is separated from the chrome.
 - The right-side session inspector is normally hidden and shows context for the active session: connection state, host/profile metadata, environment, diagnostics, and relevant actions.
 - Global Settings do not live in the inspector. Settings open as an application surface represented by their own chip, and remain reachable from the command palette and compact overflow menu.
@@ -243,6 +244,8 @@ State indicators should be compact, accessible, and not rely on color alone.
 
 The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal. The application defaults to a dark theme (`egui::Visuals::dark()`, set in `app/festerm/src/app.rs`); a light theme is not yet exposed but the chip chrome derives its colors from `ui.visuals()` so it remains theme-complementary rather than hard-coded. Selection is indicated by lightening the chip's entire background fill (`ui.visuals().selection.bg_fill` painted across the full chip rect), not by highlighting only the label text — this keeps the state visible without relying on color-in-text alone.
 
+Every chip, active or not, is drawn with a visible border; the active chip's border is stronger than the rest so it reads clearly without color being the only cue. Each chip is two lines: the first line holds the status dot, the stable identity, and (only on the active chip or the one the pointer is currently over) a close control; the second, smaller and muted line holds optional secondary terminal-provided metadata, indented under the first line's label rather than the chip's own left edge. Keeping the close control off every inactive, non-hovered chip keeps the row visually quiet.
+
 ### Tab overflow and wrapping
 
 The design must remain usable with many sessions. The implementation should support:
@@ -253,6 +256,9 @@ The design must remain usable with many sessions. The implementation should supp
 - keyboard switching that follows a predictable logical order independent of visual wrapping;
 - a searchable session switcher keyed primarily by stable identity; and
 - graceful narrow-window collapse without merging chips into a connected strip.
+
+Chips clip overflowing text with an ellipsis rather than growing without bound: both the primary and secondary lines truncate to a fixed chip-width range instead of forcing the whole row layout to widen to fit a long terminal-provided title (for example, a full shell executable path). Where a terminal-provided title looks path-like, the chip's secondary text shows only its final path component (e.g. `cmd.exe`) rather than the full path, so the identity-first chip stays compact; this is purely a display reduction and never mutates the underlying terminal-provided title data.
+
 
 ## Session Creation Workflow
 
