@@ -335,7 +335,7 @@ channel flow control, PTY request, resize, and terminal mode encoding.
    not only grid text and cursor position.
 4. Keep `TERM=xterm-256color` as the M6 interoperability baseline while
    deterministic regressions define fesTerm's supported subset. A precise
-   `festerm` terminfo entry is deferred until M9 packaging can install it
+   `festerm` terminfo entry is deferred until M10 packaging can install it
    reliably on Windows, macOS, and Linux; validate that entry with
    [tack](https://invisible-island.net/ncurses/tack.html) before making it the
    default.
@@ -354,7 +354,7 @@ These require a focused design decision before implementation:
   may advertise `bce`.
 - Reflow semantics and how saved cursor state maps across reflow.
 - Final `TERM` identity and the `festerm` terminfo distribution mechanism
-  remain M9 packaging work; M6 uses the documented `xterm-256color`
+  remain M10 packaging work; M6 uses the documented `xterm-256color`
   interoperability baseline.
 - Kitty keyboard protocol and synchronized update support.
 - Clipboard, hyperlink, title, working-directory, and graphics protocol consent

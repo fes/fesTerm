@@ -304,7 +304,55 @@ fesTerm operates as a practical multi-session terminal application.
 - Invalid configuration reloads leave the last valid configuration active and produce actionable diagnostics.
 - Profile and workspace documents contain no secret values.
 
-## Milestone 9 — Refinement and Distribution
+## Milestone 9 — Scrollback, Viewport Navigation, and Reflow
+
+### Outcome
+
+Users can review bounded in-memory primary-screen history, select it, and
+resize ordinary terminal output without losing its logical-line structure.
+
+### Deliverables
+
+- A bounded, configurable in-memory primary-screen scrollback store with a
+  documented default, clear operation, and explicit memory accounting.
+- Logical-line metadata that distinguishes hard line breaks from soft wraps
+  while retaining cell attributes, hyperlinks, and width-two continuations.
+- A viewport model that follows output when live, remains anchored when the
+  user reviews history, and returns to live output predictably.
+- Primary-screen resize reflow that maps the cursor, selection, and viewport
+  anchor through the new physical rows.
+- Explicit alternate-screen policy: no retained scrollback and rectangular
+  resize semantics, so full-screen applications remain responsible for their
+  own redraw after receiving the PTY resize.
+- Core inspection helpers, fixture syntax, UI integration, and content-free
+  diagnostics for history size, viewport state, reflow work, and limit
+  eviction. No terminal text is logged.
+
+### Design gate
+
+Before implementation, record an ADR that fixes the logical-line model,
+memory-limit units and defaults, cursor/selection/viewport mapping rules,
+alternate-screen invariants, clear behavior, and response when an operation
+cannot preserve an anchor. Persistent or disk-backed history is explicitly
+out of scope.
+
+### Completion criteria
+
+- Deterministic fixtures cover hard and soft wraps, wide and combining cells,
+  attributes, hyperlinks, scrolling-region output, limit eviction, clear,
+  primary/alternate-screen transitions, and repeated grow/shrink reflow.
+- Property or model tests establish that reflow preserves logical text and
+  valid cell invariants without exceeding configured memory bounds.
+- UI integration tests prove wheel/keyboard history navigation, selection,
+  copy, live-output following, and resume-to-live behavior without routing
+  application mouse mode events to local history.
+- Controlled PTY tests prove resize reaches the child while the primary
+  viewport reflows locally; reference applications include `less`, `nvim`,
+  `tmux`, and a sustained-output workload.
+- Benchmarks establish agreed responsiveness and memory budgets near the
+  configured limit on Windows, macOS, and Linux.
+
+## Milestone 10 — Refinement and Distribution
 
 ### Outcome
 

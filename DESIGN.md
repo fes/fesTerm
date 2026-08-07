@@ -194,7 +194,16 @@ SSH testing will use three layers:
 
 ## Scrollback and Data Retention
 
-Scrollback should use configurable limits with sensible defaults. The first implementation may use an in-memory bounded structure if the architecture permits later alternatives.
+Milestone 9 owns bounded in-memory primary-screen scrollback, history
+viewport navigation, and primary-screen reflow. It requires an ADR before
+implementation to define logical-line retention, memory limits, viewport and
+selection anchors, cursor mapping, alternate-screen behavior, and clear
+semantics. Reflow must retain width-two cells, combining text, attributes, and
+hyperlinks without corrupting cell coordinates.
+
+The alternate screen will retain no scrollback and uses rectangular resize
+semantics; full-screen applications redraw after their PTY resize event. This
+keeps application-controlled screens distinct from primary-shell history.
 
 Disk-backed or persistent scrollback is not an initial requirement. Any future persistent history must be explicitly enabled or clearly configured, bounded, discoverable, and easy to clear because terminal output may contain sensitive information.
 
@@ -248,17 +257,17 @@ from that foundation:
    tests.
 3. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
    persistence.
+4. Deliver bounded scrollback, viewport navigation, and primary-screen reflow
+   under the Milestone 9 design gate.
 
 ## Deferred or Open Questions
 
 - Exact workspace and crate names after the first implementation spike.
 - Future parser extensions and supporting crates, if they become necessary.
-- Scrollback data structures.
 - SSH crate selection.
 - Async runtime, cancellation, and bounded-channel choices.
 - Unicode width table source and update policy.
 - Grapheme, complex-script, and font-fallback scope.
-- Detailed resize reflow semantics.
 - Host-key verification and authentication UX.
 - Reconnect backoff, limits, and user controls.
 - `TERM` value and terminfo distribution strategy.

@@ -52,7 +52,11 @@ The terminal shall support standard colors, bright colors, 256-color operation, 
 
 ### REQ-TERM-005 — Resize behavior
 
-The terminal shall react correctly and responsively to changes in rows and columns. Detailed reflow behavior remains to be specified.
+The terminal shall react correctly and responsively to changes in rows and
+columns. Before Milestone 9, resize preserves the upper-left rectangular
+intersection without reflow. Milestone 9 shall define and implement
+primary-screen reflow through an ADR; alternate-screen resize remains
+rectangular so full-screen applications can redraw from the PTY size event.
 
 ### REQ-TERM-006 — Bracketed paste
 
@@ -77,6 +81,16 @@ At minimum, the compatibility plan shall address button events, releases, motion
 The terminal shall provide bounded, configurable scrollback with sensible defaults.
 
 Persistent or disk-backed scrollback is not required initially. Any future persistent history shall be explicitly configurable and easy to clear.
+
+### REQ-TERM-014 — Scrollback viewport and reflow
+
+The primary screen shall retain logical-line metadata sufficient to reflow
+bounded in-memory history when its width changes. The viewport, cursor,
+selection, width-two cells, combining text, attributes, and hyperlinks shall
+remain valid through reflow or follow an explicit documented fallback.
+
+Alternate-screen content shall not enter primary scrollback. Persistent or
+disk-backed terminal history remains outside this requirement.
 
 ### REQ-TERM-011 — Unicode cell behavior
 

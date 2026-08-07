@@ -106,7 +106,8 @@ reference-application acceptance; P5 remains a manual release gate.
 | Attributes | Apply and reset style and color attributes | passing | Core fixture; M4 renderer attribute mapping |
 | 256 color | Render indexed foreground and background colors | passing | Core fixture; M4 renderer palette mapping |
 | True color | Render RGB foreground and background colors | passing | Core fixture; M4 renderer RGB mapping |
-| Resize | Propagate rows and columns and preserve valid state | passing | Core fixture; M5 controlled PTY resize integration |
+| Resize | Propagate rows and columns and preserve valid state without reflow | passing | Core fixture; M5 controlled PTY resize integration |
+| Reflow | Preserve primary-screen logical lines, viewport anchor, cursor, and selection across width changes | planned | M9 ADR, core fixtures/property tests, UI integration, and reference applications |
 | Bracketed paste | Wrap pasted data only while the mode is enabled | passing | Exact-byte core test |
 | Focus | Emit focus events only while requested | passing | Exact-byte core test |
 | Mouse buttons | Report presses and releases according to active mode | passing | Exact-byte core test |
@@ -124,7 +125,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji cell test; renderer fallback remains later |
 | Ligatures | Shape supported runs without moving cursor or selection boundaries | planned | Renderer mapping and visual tests |
 | High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
-| Scrollback | Scroll and select smoothly near configured limits | planned | Benchmark and GUI integration test |
+| Scrollback | Scroll and select smoothly near configured limits | planned | M9 bounded-memory benchmark and GUI integration test |
 | Dirty rendering | Redraw changed content without mandatory full-grid copying | passing | M4 `TerminalSnapshot` and dirty-row cache tests |
 | Local PTY | Run, resize, exit, and shut down a local application | passing | M5 Unix PTY and Windows ConPTY integration tests; CI runs the Windows test |
 | SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | planned | Controlled OpenSSH integration test |
@@ -218,7 +219,7 @@ The test environment must own its configuration and credentials and must not con
 
 - Exact xterm feature or version references used for ambiguous behavior.
 - `TERM=xterm-256color` is the M6 local interoperability baseline; a custom
-  `festerm` entry awaits M9 packaging so it can be installed reliably.
+  `festerm` entry awaits M10 packaging so it can be installed reliably.
 - Unicode width table source and update policy.
 - Grapheme and complex-script policy.
 - Reflow semantics when the terminal width changes.
