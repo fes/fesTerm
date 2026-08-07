@@ -32,6 +32,8 @@ Read `README.md`, then use the document that matches the task:
   by controlled PTY and smoke tests.
 - `crates/festerm-windows-job`: cfg-gated safe wrapper around the Windows Job
   Object required for whole-ConPTY-tree shutdown.
+- `crates/festerm-windows-runtime`: cfg-gated trusted selection and loading of
+  an optional install-owned ConPTY sidecar.
 - `app/festerm`: composition root; the only owner that mutates a terminal from
   session output.
 

@@ -8,6 +8,7 @@ members = [
     "crates/festerm-test-support",
     "crates/festerm-ui-egui",
     "crates/festerm-windows-job",
+    "crates/festerm-windows-runtime",
 ]
 resolver = "2"
 

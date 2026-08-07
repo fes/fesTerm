@@ -16,7 +16,7 @@ updates this plan's status or acceptance evidence.
 | B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented |
 | C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; real rendered-window validation remains pending under Work Package E |
 | D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | In progress; Windows baseline committed, Linux CI confirmation pending |
-| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | In progress: merged #15 provides the PTY/`SessionController` timing layer; an opt-in production eframe/winit self-smoke drives the issue #3 resize sequence with controlled PTY I/O and observed native viewport metadata/focus. Its retained pre-resize text assertion currently fails locally on Windows, making it an active P4 blocker. |
+| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | In progress: merged #15 provides the PTY/`SessionController` timing layer. The Windows flow runs an inbox fallback baseline, then a verified pinned ConPTY sidecar through an opt-in production eframe/winit self-smoke. It uses content-free resize generations, byte counts, CSI-token recognition, and visible-cell counts; first staged CI evidence remains required. |
 | F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Implemented (merged #14) |
 | G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Implemented (merged #16); final acceptance review/issue closure pending |
 | H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | Implemented (merged #12); update evidence as D and E complete |

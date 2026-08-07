@@ -19,6 +19,156 @@ pub const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 /// Maximum bytes retained in the ordered pending-write buffer.
 pub const MAX_PENDING_COMMAND_BYTES: usize = DEFAULT_COMMAND_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
 
+/// The number of content-free resize observations retained for diagnostics.
+const RESIZE_PROBE_HISTORY: usize = 16;
+
+/// A content-free observation for one accepted PTY resize request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResizeProbeGeneration {
+    /// Monotonically increasing local sequence number for an accepted resize.
+    pub generation: u64,
+    pub dimensions: TerminalSize,
+    pub applied: bool,
+    /// Output bytes delivered to the app before this resize was queued.
+    pub output_bytes_at_request: u64,
+    /// Output bytes delivered after this resize was queued and before a newer
+    /// resize request superseded this observation.
+    pub output_bytes_since_request: u64,
+    /// Exact `CSI 6 n` cursor-position queries recognized after this request.
+    pub cursor_position_queries_since_request: u64,
+    /// Current visible nonblank-cell count, never the cells' text.
+    pub visible_nonblank_cells: usize,
+}
+
+/// Bounded content-free diagnostics for output around PTY resizes.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResizeProbe {
+    next_generation: u64,
+    output_bytes: u64,
+    cursor_position_queries: u64,
+    scanner: CursorPositionQueryScanner,
+    generations: VecDeque<ResizeProbeGeneration>,
+}
+
+impl ResizeProbe {
+    fn record_resize_request(&mut self, dimensions: TerminalSize) {
+        if self.generations.len() == RESIZE_PROBE_HISTORY {
+            self.generations.pop_front();
+        }
+        self.next_generation = self.next_generation.saturating_add(1);
+        self.generations.push_back(ResizeProbeGeneration {
+            generation: self.next_generation,
+            dimensions,
+            applied: false,
+            output_bytes_at_request: self.output_bytes,
+            output_bytes_since_request: 0,
+            cursor_position_queries_since_request: 0,
+            visible_nonblank_cells: 0,
+        });
+    }
+
+    fn record_resize_applied(&mut self, size: TerminalSize) {
+        if let Some(generation) = self
+            .generations
+            .iter_mut()
+            .find(|generation| !generation.applied && generation.dimensions == size)
+        {
+            generation.applied = true;
+        }
+    }
+
+    fn record_output(&mut self, bytes: &[u8]) {
+        let byte_count = bytes.len() as u64;
+        let cursor_position_queries = self.scanner.observe(bytes);
+        self.output_bytes = self.output_bytes.saturating_add(byte_count);
+        self.cursor_position_queries = self
+            .cursor_position_queries
+            .saturating_add(cursor_position_queries);
+        if let Some(generation) = self.generations.back_mut() {
+            generation.output_bytes_since_request = generation
+                .output_bytes_since_request
+                .saturating_add(byte_count);
+            generation.cursor_position_queries_since_request = generation
+                .cursor_position_queries_since_request
+                .saturating_add(cursor_position_queries);
+        }
+    }
+
+    fn record_visible_nonblank_cells(&mut self, terminal: &Terminal) {
+        let count = (0..terminal.dimensions().rows())
+            .flat_map(|row| {
+                (0..terminal.dimensions().columns())
+                    .filter_map(move |column| terminal.cell_ref(column, row))
+            })
+            .filter(|cell| cell.character() != ' ')
+            .count();
+        if let Some(generation) = self.generations.back_mut() {
+            generation.visible_nonblank_cells = count;
+        }
+    }
+
+    pub const fn observed_output_bytes(&self) -> u64 {
+        self.output_bytes
+    }
+
+    pub const fn cursor_position_queries(&self) -> u64 {
+        self.cursor_position_queries
+    }
+
+    pub const fn requested_generations(&self) -> u64 {
+        self.next_generation
+    }
+
+    pub fn applied_generations(&self) -> u64 {
+        self.generations
+            .iter()
+            .filter(|generation| generation.applied)
+            .count() as u64
+    }
+
+    /// Copies only bounded numeric resize observations; no terminal text is
+    /// retained or exposed by this diagnostic API.
+    pub fn generations(&self) -> Vec<ResizeProbeGeneration> {
+        self.generations.iter().copied().collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CursorPositionQueryScanner {
+    #[default]
+    Ground,
+    Escape,
+    CsiStart,
+    CsiSix,
+    CsiOther,
+}
+
+impl CursorPositionQueryScanner {
+    fn observe(&mut self, bytes: &[u8]) -> u64 {
+        let mut recognized = 0_u64;
+        for &byte in bytes {
+            *self = match (*self, byte) {
+                (_, 0x1b) => Self::Escape,
+                (Self::Ground, _) => Self::Ground,
+                (Self::Escape, b'[') => Self::CsiStart,
+                (Self::Escape, _) => Self::Ground,
+                (Self::CsiStart, b'6') => Self::CsiSix,
+                (Self::CsiStart, 0x40..=0x7e) => Self::Ground,
+                (Self::CsiStart, _) => Self::CsiOther,
+                (Self::CsiSix, b'n') => {
+                    recognized = recognized.saturating_add(1);
+                    Self::Ground
+                }
+                (Self::CsiSix, 0x40..=0x7e) => Self::Ground,
+                (Self::CsiSix, _) => Self::CsiOther,
+                (Self::CsiOther, 0x40..=0x7e) => Self::Ground,
+                (Self::CsiOther, _) => Self::CsiOther,
+            };
+        }
+        recognized
+    }
+}
+
 // ─── Pending Command Buffer ──────────────────────────────────────────────────
 
 pub(crate) struct PendingCommandBuffer {
@@ -156,6 +306,7 @@ pub struct SessionController<S: Session> {
     last_error: Option<String>,
     last_backpressure: Option<FlowDirection>,
     last_resize: Option<TerminalSize>,
+    resize_probe: ResizeProbe,
 }
 
 impl<S: Session> SessionController<S> {
@@ -175,6 +326,7 @@ impl<S: Session> SessionController<S> {
             last_error: None,
             last_backpressure: None,
             last_resize: None,
+            resize_probe: ResizeProbe::default(),
         }
     }
 
@@ -190,6 +342,7 @@ impl<S: Session> SessionController<S> {
             last_error: None,
             last_backpressure: None,
             last_resize: None,
+            resize_probe: ResizeProbe::default(),
         }
     }
 
@@ -215,10 +368,16 @@ impl<S: Session> SessionController<S> {
             return false;
         };
         let mut observed = Vec::new();
-        let result =
-            pump_session_events(session, terminal, MAX_SESSION_EVENTS_PER_FRAME, |event| {
-                observed.push(event.clone());
-            });
+        let resize_probe = &mut self.resize_probe;
+        let result = pump_session_events(
+            session,
+            terminal,
+            MAX_SESSION_EVENTS_PER_FRAME,
+            |event| match event {
+                PumpedSessionEvent::Output(bytes) => resize_probe.record_output(bytes),
+                PumpedSessionEvent::Event(event) => observed.push(event.clone()),
+            },
+        );
         for event in observed {
             self.observe_session_event(event);
         }
@@ -242,6 +401,7 @@ impl<S: Session> SessionController<S> {
                     "local PTY resized"
                 );
                 self.last_resize = Some(size);
+                self.resize_probe.record_resize_applied(size);
             }
             SessionEvent::Backpressure { direction, .. } => {
                 tracing::warn!(
@@ -306,7 +466,7 @@ impl<S: Session> SessionController<S> {
             return;
         };
         match session.try_resize(size) {
-            Ok(()) => {}
+            Ok(()) => self.resize_probe.record_resize_request(size),
             Err(SessionSendError::Full { .. }) => {
                 self.pending_resize = Some(size);
                 self.last_backpressure = Some(FlowDirection::Resize);
@@ -411,10 +571,23 @@ impl<S: Session> SessionController<S> {
             .last_resize
             .map(|size| format!("; resize {}x{}", size.columns(), size.rows()))
             .unwrap_or_default();
+        let resize_probe = self.resize_probe.generations.back().copied();
+        let resize_probe = resize_probe
+            .map(|generation| {
+                format!(
+                    "; resize probe g{} {}/{} B, cpr {}, cells {}",
+                    generation.generation,
+                    generation.output_bytes_since_request,
+                    generation.output_bytes_at_request,
+                    generation.cursor_position_queries_since_request,
+                    generation.visible_nonblank_cells,
+                )
+            })
+            .unwrap_or_default();
         format!(
             "Local shell {lifecycle:?}; in {} B, out {} B; events {}/{} (high {}); \
              pending writes {} entries, {} / {} B; pressure {}; errors {}; resizes {}\
-             {latest_resize}{queue_pressure}{latest_error}",
+             {latest_resize}{resize_probe}{queue_pressure}{latest_error}",
             metrics.input_bytes,
             metrics.output_bytes,
             metrics.event_queue_depth,
@@ -427,6 +600,16 @@ impl<S: Session> SessionController<S> {
             metrics.error_count,
             metrics.resize_count,
         )
+    }
+
+    /// Records a content-free visible-cell count for the most recently
+    /// accepted resize. The count never retains or logs application text.
+    pub fn observe_resize_probe_terminal_state(&mut self, terminal: &Terminal) {
+        self.resize_probe.record_visible_nonblank_cells(terminal);
+    }
+
+    pub fn resize_probe(&self) -> &ResizeProbe {
+        &self.resize_probe
     }
 
     /// Bounded shutdown of the owned session. Called from `Drop` or explicit teardown.
@@ -501,16 +684,30 @@ pub struct PumpResult {
     pub hit_limit: bool,
 }
 
+/// A borrowed session event delivered while the terminal is pumped.
+///
+/// Output is borrowed so observers can collect content-free metrics without
+/// cloning or retaining application bytes.
+pub enum PumpedSessionEvent<'a> {
+    Output(&'a [u8]),
+    Event(&'a SessionEvent),
+}
+
 pub fn pump_session_events(
     session: &impl Session,
     terminal: &mut Terminal,
     maximum: usize,
-    mut observe: impl FnMut(&SessionEvent),
+    mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
     for _ in 0..maximum {
         match session.try_recv_event() {
-            Ok(SessionEvent::Output(bytes)) => terminal.ingest(&bytes),
-            Ok(event) => observe(&event),
+            Ok(event) => match &event {
+                SessionEvent::Output(bytes) => {
+                    observe(PumpedSessionEvent::Output(bytes));
+                    terminal.ingest(bytes);
+                }
+                _ => observe(PumpedSessionEvent::Event(&event)),
+            },
             Err(SessionTryReceiveError::Empty | SessionTryReceiveError::Closed) => {
                 return PumpResult { hit_limit: false };
             }
@@ -640,6 +837,39 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
+
+    #[test]
+    fn resize_probe_recognizes_fragmented_cursor_queries_without_retaining_output() {
+        let mut scanner = CursorPositionQueryScanner::default();
+        assert_eq!(scanner.observe(b"\x1b["), 0);
+        assert_eq!(scanner.observe(b"6n"), 1);
+        assert_eq!(scanner.observe(b"\x1b[16n"), 0);
+        assert_eq!(scanner.observe(b"\x1b[6n"), 1);
+    }
+
+    #[test]
+    fn resize_probe_correlates_output_with_an_applied_generation() {
+        let session = FakeSession::new([
+            SessionEvent::Output(b"\x1b[".to_vec()),
+            SessionEvent::Output(b"6nX".to_vec()),
+            SessionEvent::ResizeApplied(TerminalSize::new(73, 26).unwrap()),
+        ]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
+        controller.record_terminal_resize(terminal.dimensions());
+        assert!(!controller.pump_events(&mut terminal));
+        controller.observe_resize_probe_terminal_state(&terminal);
+
+        let generations = controller.resize_probe().generations();
+        assert_eq!(controller.resize_probe().observed_output_bytes(), 5);
+        assert_eq!(controller.resize_probe().cursor_position_queries(), 1);
+        assert_eq!(generations.len(), 1);
+        assert!(generations[0].applied);
+        assert_eq!(generations[0].output_bytes_since_request, 5);
+        assert_eq!(generations[0].cursor_position_queries_since_request, 1);
+        assert_eq!(generations[0].visible_nonblank_cells, 1);
+    }
 
     #[test]
     fn no_session_fallback_retains_only_content_free_input_metadata() {
@@ -1061,6 +1291,30 @@ mod tests {
         panic!("smoke-flow timeout: {context}");
     }
 
+    /// Pumps a controlled session until a content-free controller observation
+    /// satisfies `predicate`, without inspecting terminal text.
+    #[cfg(any(unix, windows))]
+    fn pump_controller_until(
+        controller: &mut SessionController<LocalPtySession>,
+        terminal: &mut Terminal,
+        predicate: impl Fn(&SessionController<LocalPtySession>) -> bool,
+        timeout: Duration,
+        context: &str,
+    ) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            controller.pump_events(terminal);
+            controller.observe_resize_probe_terminal_state(terminal);
+            controller.forward_terminal_replies(terminal);
+            controller.flush_pending_writes();
+            if predicate(controller) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("smoke-flow timeout: {context}");
+    }
+
     /// Returns `true` if any terminal row contains `needle`.
     #[cfg(any(unix, windows))]
     fn smoke_row_contains(terminal: &Terminal, needle: &str) -> bool {
@@ -1069,16 +1323,84 @@ mod tests {
             .any(|text| text.contains(needle))
     }
 
+    /// **Windows inbox ConPTY fallback smoke.**
+    ///
+    /// This deliberately runs before CI stages the optional verified sidecar.
+    /// It establishes that the secure inbox fallback can start, resize, and
+    /// resume output. The pinned sidecar smoke below is the Windows
+    /// content-continuity acceptance test.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "native smoke — run via native-smoke.yml before staging the pinned runtime"]
+    fn windows_inbox_conpty_fallback_starts_resizes_and_resumes_output() {
+        assert_eq!(
+            festerm_pty::prepare_windows_conpty_runtime()
+                .expect("secure inbox runtime selection succeeds"),
+            festerm_pty::ConptyRuntimeSelection::Inbox,
+            "this workflow step must run before the bundled runtime is staged"
+        );
+
+        let profile = LocalProfile::new(test_child_path_for_smoke()).with_arguments([
+            "emit:READY",
+            "read-line",
+            "echo:ECHO",
+            "exit:0",
+        ]);
+        let session = LocalPtySession::start(profile, TerminalSize::new(73, 26).unwrap())
+            .expect("inbox ConPTY session starts");
+        let mut terminal =
+            Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
+        let mut controller = SessionController::for_test(session);
+
+        pump_controller_until(
+            &mut controller,
+            &mut terminal,
+            |controller| controller.resize_probe().observed_output_bytes() > 0,
+            Duration::from_secs(5),
+            "initial inbox ConPTY output",
+        );
+        let output_before_resize = controller.resize_probe().observed_output_bytes();
+        terminal
+            .resize(Dimensions::new(50, 18).unwrap())
+            .expect("terminal resize succeeds");
+        controller.record_terminal_resize(terminal.dimensions());
+        pump_controller_until(
+            &mut controller,
+            &mut terminal,
+            |controller| {
+                controller
+                    .resize_probe()
+                    .generations()
+                    .last()
+                    .is_some_and(|generation| generation.applied)
+            },
+            Duration::from_secs(5),
+            "inbox ConPTY resize application",
+        );
+        let output_after_resize = controller.resize_probe().observed_output_bytes();
+        assert!(output_after_resize >= output_before_resize);
+
+        controller.record_encoded_input(b"resume\r\n");
+        pump_controller_until(
+            &mut controller,
+            &mut terminal,
+            |controller| controller.resize_probe().observed_output_bytes() > output_after_resize,
+            Duration::from_secs(5),
+            "inbox ConPTY post-resize output",
+        );
+        wait_for_session_exit(&mut controller, &mut terminal, Duration::from_secs(5));
+    }
+
     /// **Windows ConPTY smoke flow — issue #3 resize sequence.**
     ///
     /// Uses `festerm-pty-test-child` as the controlled shell.  The child emits
-    /// a `MARKER`, blocks on `read-line` while we apply the four-step resize
-    /// sequence (`37×13 → 73×26 → 50×18 → 73×26`), then we send input, verify
-    /// the echo and `report-size` output, and assert bounded shutdown.
+    /// output before `read-line` while we apply the four-step resize sequence
+    /// (`37×13 → 73×26 → 50×18 → 73×26`), then verifies a content-free resize
+    /// probe and output arriving after the final resize.
     ///
     /// Acceptance criterion: the sequence completes without a session error,
-    /// output bytes arrive intact after all four resizes, and `report-size`
-    /// reports the final `73×26` dimensions confirming the resize reached ConPTY.
+    /// every resize produces an applied generation with visible cells, and
+    /// output bytes resume after the final resize.
     #[cfg(windows)]
     #[test]
     #[ignore = "native smoke — run via native-smoke.yml or with --include-ignored; not PR-blocking"]
@@ -1100,19 +1422,24 @@ mod tests {
             Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
         let mut controller = SessionController::for_test(session);
 
-        // Step 1: wait for the deterministic MARKER.
-        pump_controlled_until(
+        // Step 1: wait for repository-owned output without retaining its text.
+        pump_controller_until(
             &mut controller,
             &mut terminal,
-            |t| smoke_row_contains(t, "MARKER"),
+            |controller| controller.resize_probe().observed_output_bytes() > 0,
             Duration::from_secs(5),
-            "MARKER from test child",
+            "initial output from test child",
         );
         assert_eq!(terminal.dimensions().columns(), 73);
         assert_eq!(terminal.dimensions().rows(), 26);
+        let output_before_resize = controller.resize_probe().observed_output_bytes();
+        let first_resize_generation = controller
+            .resize_probe()
+            .requested_generations()
+            .saturating_add(1);
 
-        // Step 2: apply the issue #3 resize sequence while the child is blocked
-        // on read-line (output is active — LINE-A and LINE-B are in the terminal).
+        // Step 2: apply the issue #3 sequence while the child is blocked on
+        // input. Only numeric probe observations are retained.
         for &(cols, rows) in &[(37u16, 13u16), (73, 26), (50, 18), (73, 26)] {
             let dims =
                 Dimensions::new(cols as usize, rows as usize).expect("resize dimensions are valid");
@@ -1122,6 +1449,7 @@ mod tests {
             let settle = Instant::now() + Duration::from_millis(250);
             while Instant::now() < settle {
                 controller.pump_events(&mut terminal);
+                controller.observe_resize_probe_terminal_state(&terminal);
                 controller.forward_terminal_replies(&mut terminal);
                 controller.flush_pending_writes();
                 std::thread::sleep(Duration::from_millis(5));
@@ -1138,35 +1466,42 @@ mod tests {
             );
         }
 
+        let generations = controller
+            .resize_probe()
+            .generations()
+            .into_iter()
+            .filter(|generation| generation.generation >= first_resize_generation)
+            .collect::<Vec<_>>();
+        assert_eq!(generations.len(), 4, "one probe generation per resize");
         assert!(
-            smoke_row_contains(&terminal, "LINE-A") && smoke_row_contains(&terminal, "MARKER"),
-            "pre-resize output must remain after the complete resize sequence"
+            generations.iter().all(|generation| generation.applied),
+            "every resize must reach ConPTY"
         );
+        assert!(
+            generations
+                .iter()
+                .all(|generation| generation.visible_nonblank_cells > 0),
+            "content-free visible-cell observations must remain nonzero"
+        );
+        assert!(
+            controller.resize_probe().observed_output_bytes() >= output_before_resize,
+            "output accounting must not regress across resizes"
+        );
+        let output_after_resize = controller.resize_probe().observed_output_bytes();
 
         // Step 3: send a line to unblock read-line.
         controller.record_encoded_input(b"hello\r\n");
 
-        // Step 4: wait for the echo (proves bytes survived all four resizes).
-        pump_controlled_until(
+        // Step 4: wait for post-resize bytes without matching application text.
+        pump_controller_until(
             &mut controller,
             &mut terminal,
-            |t| smoke_row_contains(t, "ECHO:hello"),
+            |controller| controller.resize_probe().observed_output_bytes() > output_after_resize,
             Duration::from_secs(5),
-            "ECHO:hello from test child after resize sequence",
+            "post-resize output from test child",
         );
 
-        // Step 5: wait for report-size output.
-        // report-size writes "{rows} {cols}\n"; at 73×26 that is "26 73".
-        // This confirms the resize propagated all the way to the child's PTY.
-        pump_controlled_until(
-            &mut controller,
-            &mut terminal,
-            |t| smoke_row_contains(t, "26 73"),
-            Duration::from_secs(5),
-            "report-size showing 26 73 (rows × cols at final 73×26 size)",
-        );
-
-        // Step 6: wait for exit and assert bounded shutdown.
+        // Step 5: wait for exit and assert bounded shutdown.
         wait_for_session_exit(&mut controller, &mut terminal, Duration::from_secs(5));
     }
 

@@ -129,6 +129,8 @@ impl eframe::App for FesTermApp {
             &session_status,
             &session_diagnostics,
         );
+        self.controller
+            .observe_resize_probe_terminal_state(&self.terminal);
         self.controller.forward_terminal_replies(&mut self.terminal);
         self.controller.flush_pending_writes();
         self.controller.flush_pending_resize();

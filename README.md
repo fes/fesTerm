@@ -25,7 +25,9 @@ the app the sole terminal-core writer, and preserves backpressured core
 input/replies in an ordered, bounded pending buffer. Unix shutdown signals the
 PTY session process group; Windows assigns the child to a kill-on-close Job
 Object. It displays lifecycle, queue-pressure, byte-count, error, and resize
-diagnostics. If shell startup fails, it shows a visible no-session error rather
+diagnostics. On Windows an installer may deploy the documented, hash-verified
+ConPTY sidecar; otherwise the backend safely uses inbox ConPTY rather than a
+directory-discovered DLL. If shell startup fails, it shows a visible no-session error rather
 than a fake shell.
 
 There are deliberately no tabs, persisted/config-file profiles, SSH sessions,

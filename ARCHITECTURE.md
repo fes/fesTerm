@@ -59,6 +59,7 @@ change, but the responsibilities should remain distinct.
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
     festerm-windows-job/   # Windows process-tree shutdown support
+    festerm-windows-runtime/ # trusted optional ConPTY sidecar loading
     festerm-test-support/
   app/
     festerm/
@@ -140,6 +141,17 @@ uses an event notifier to wake the application after enqueuing output. The app
 preserves session-backpressured input/replies in one ordered bounded buffer.
 Shutdown owns whole trees: Unix uses the PTY session process group and Windows
 uses a kill-on-close Job Object.
+
+On Windows, `festerm-windows-runtime` runs before the first native PTY
+allocation. It accepts only the installer-owned sidecar layout documented in
+[`third_party/conpty/README.md`](third_party/conpty/README.md), hashes both
+`conpty.dll` and its `OpenConsole.exe` host against the pinned manifest, limits
+the process DLL search to System32, and loads a valid sidecar by absolute path.
+That preloaded module is what `portable-pty` 0.9 observes when it probes its
+relative `conpty.dll` name. Missing or invalid sidecars use inbox Kernel32
+ConPTY; an unverified module loaded before selection is an error. This preserves
+the `Session` byte/event contract while making the Windows runtime decision
+explicit and safe.
 
 ### `festerm-ssh`
 

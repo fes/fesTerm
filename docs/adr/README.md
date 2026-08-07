@@ -14,6 +14,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md)
 - [ADR 0009: Mutable Core State with Early Observability](0009-mutable-core-and-early-observability.md)
 - [ADR 0010: Preserve Future Extension Seams without Early Scope Expansion](0010-preserve-future-extension-seams.md)
+- [ADR 0011: Trusted Windows ConPTY Runtime Selection](0011-trusted-windows-conpty-runtime-selection.md)
 
 ## Status Values
 

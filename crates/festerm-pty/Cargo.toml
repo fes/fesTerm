@@ -16,6 +16,7 @@ nix = { version = "0.31", default-features = false, features = ["process", "sign
 
 [target.'cfg(windows)'.dependencies]
 festerm-windows-job = { path = "../festerm-windows-job" }
+festerm-windows-runtime = { path = "../festerm-windows-runtime" }
 
 [lints]
 workspace = true

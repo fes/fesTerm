@@ -292,6 +292,15 @@ terminates the owned process tree: the Unix PTY session process group receives
 caller-supplied finite interval; a timeout is reported rather than silently
 ignored.
 
+Windows startup additionally selects ConPTY before `portable-pty` allocates its
+first pseudoconsole. The only optional sidecar location is the install-relative
+layout in [`third_party/conpty/README.md`](../third_party/conpty/README.md);
+its DLL and host executable must both match the pinned SHA-512 file hashes.
+The process DLL search is reduced to System32, then the verified DLL is loaded
+with its absolute path. Missing or invalid sidecars use inbox ConPTY. This
+prevents a DLL in the executable, current, or `PATH` directory from changing
+the fallback runtime.
+
 ### Native SSH
 
 - Use an established Rust SSH library and maintain an explicit state machine:

@@ -28,12 +28,11 @@ const RESIZE_SEQUENCE: [(f32, f32); 4] = [
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Phase {
-    AwaitMarker,
-    AwaitPreEcho,
+    AwaitInitialOutput,
+    AwaitPreOutput,
     AwaitResize(usize),
     AwaitInput,
-    AwaitEcho,
-    AwaitReportedSize,
+    AwaitPostOutput,
     Finished,
 }
 
@@ -45,13 +44,14 @@ pub struct NativeWindowSmoke {
     phase_started: Instant,
     resize_dimensions: Vec<(usize, usize)>,
     focus_observed: bool,
+    initial_output_bytes: Option<u64>,
+    post_resize_output_bytes: Option<u64>,
+    first_resize_generation: Option<u64>,
 }
 
 impl NativeWindowSmoke {
     pub fn from_environment() -> Option<Self> {
-        if std::env::var_os(SMOKE_ENV).is_none() {
-            return None;
-        }
+        std::env::var_os(SMOKE_ENV)?;
 
         let result_path = std::env::var_os(RESULT_PATH_ENV)
             .map(PathBuf::from)
@@ -67,10 +67,13 @@ impl NativeWindowSmoke {
             result_path,
             test_child_path,
             started: Instant::now(),
-            phase: Phase::AwaitMarker,
+            phase: Phase::AwaitInitialOutput,
             phase_started: Instant::now(),
             resize_dimensions: Vec::new(),
             focus_observed: false,
+            initial_output_bytes: None,
+            post_resize_output_bytes: None,
+            first_resize_generation: None,
         })
     }
 
@@ -107,12 +110,16 @@ impl NativeWindowSmoke {
         }
 
         match self.phase {
-            Phase::AwaitMarker if terminal_contains(terminal, "MARKER") => {
+            Phase::AwaitInitialOutput if controller.resize_probe().observed_output_bytes() > 0 => {
+                self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
                 controller.record_encoded_input(b"pre\r\n");
-                self.phase = Phase::AwaitPreEcho;
+                self.phase = Phase::AwaitPreOutput;
             }
-            Phase::AwaitPreEcho if terminal_contains(terminal, "PRE:pre") => {
-                self.request_resize(context, 0);
+            Phase::AwaitPreOutput
+                if controller.resize_probe().observed_output_bytes()
+                    > self.initial_output_bytes.unwrap_or_default() =>
+            {
+                self.request_resize(context, controller, 0);
             }
             Phase::AwaitResize(index) => {
                 let requested = RESIZE_SEQUENCE[index];
@@ -124,74 +131,123 @@ impl NativeWindowSmoke {
                 // `ui` call applies its measured grid size to the terminal.
                 // Wait one settled frame so the recorded dimensions belong to
                 // this requested native size, rather than the previous one.
-                if applied && self.phase_started.elapsed() >= Duration::from_millis(100) {
+                let first_generation = self.first_resize_generation.unwrap_or_default();
+                let generations = controller
+                    .resize_probe()
+                    .generations()
+                    .into_iter()
+                    .filter(|generation| generation.generation >= first_generation)
+                    .collect::<Vec<_>>();
+                let resize_applied = generations
+                    .get(index)
+                    .is_some_and(|generation| generation.applied);
+                if applied
+                    && resize_applied
+                    && self.phase_started.elapsed() >= Duration::from_millis(100)
+                {
                     let dimensions = terminal.dimensions();
                     let pair = (dimensions.columns(), dimensions.rows());
                     if self.resize_dimensions.last() != Some(&pair) {
                         self.resize_dimensions.push(pair);
                         if index + 1 == RESIZE_SEQUENCE.len() {
+                            self.post_resize_output_bytes =
+                                Some(controller.resize_probe().observed_output_bytes());
                             self.phase = Phase::AwaitInput;
                             self.phase_started = Instant::now();
                         } else {
-                            self.request_resize(context, index + 1);
+                            self.request_resize(context, controller, index + 1);
                         }
                     }
                 }
             }
             Phase::AwaitInput if self.phase_started.elapsed() >= Duration::from_millis(250) => {
                 controller.record_encoded_input(b"post\r\n");
-                self.phase = Phase::AwaitEcho;
+                self.phase = Phase::AwaitPostOutput;
             }
-            // ConPTY can issue a cursor-position query after resize. The core
-            // correctly forwards that reply before the scripted line, so the
-            // child may echo the reply bytes before `post`.
-            Phase::AwaitEcho if terminal_contains(terminal, "POST:") => {
-                self.phase = Phase::AwaitReportedSize;
-            }
-            Phase::AwaitReportedSize => {
-                let dimensions = terminal.dimensions();
-                let expected = format!("{} {}", dimensions.rows(), dimensions.columns());
-                if terminal_contains(terminal, &expected) {
-                    let retained_line = terminal_contains(terminal, "PRE:pre");
-                    let retained_marker = terminal_contains(terminal, "MARKER");
-                    if self.focus_observed
-                        && self.resize_dimensions.len() == RESIZE_SEQUENCE.len()
-                        && retained_line
-                        && retained_marker
-                    {
-                        self.finish(
-                            context,
-                            "pass",
-                            "native viewport, focus, resizes, retained pre-resize text, and PTY input/output verified",
-                        );
-                    } else {
-                        self.finish(
-                            context,
-                            "fail",
-                            &format!(
-                                "native focus, resize, or pre-resize text observations were incomplete: \
-                                 focus={}, resize_count={}, line_a={}, marker={}, dimensions={:?}, rows={:?}",
-                                self.focus_observed,
-                                self.resize_dimensions.len(),
-                                retained_line,
-                                retained_marker,
-                                self.resize_dimensions,
-                                smoke_rows(terminal),
-                            ),
-                        );
-                    }
+            Phase::AwaitPostOutput
+                if controller.resize_probe().observed_output_bytes()
+                    > self.post_resize_output_bytes.unwrap_or_default() =>
+            {
+                let first_generation = self.first_resize_generation.unwrap_or_default();
+                let generations = controller
+                    .resize_probe()
+                    .generations()
+                    .into_iter()
+                    .filter(|generation| generation.generation >= first_generation)
+                    .collect::<Vec<_>>();
+                let all_resizes_applied = generations.len() == RESIZE_SEQUENCE.len()
+                    && generations.iter().all(|generation| generation.applied);
+                let visible_cells_remained = generations
+                    .iter()
+                    .all(|generation| generation.visible_nonblank_cells > 0);
+                let post_resize_output = controller.resize_probe().observed_output_bytes();
+                if self.focus_observed
+                    && self.resize_dimensions.len() == RESIZE_SEQUENCE.len()
+                    && all_resizes_applied
+                    && visible_cells_remained
+                    && post_resize_output > self.post_resize_output_bytes.unwrap_or_default()
+                {
+                    self.finish(
+                        context,
+                        "pass",
+                        &format!(
+                            "native viewport/focus; resize generations {}; output {}B->{}B; \
+                             recognized CSI 6n {}; visible cells {:?}",
+                            generations.len(),
+                            self.post_resize_output_bytes.unwrap_or_default(),
+                            post_resize_output,
+                            controller.resize_probe().cursor_position_queries(),
+                            generations
+                                .iter()
+                                .map(|generation| generation.visible_nonblank_cells)
+                                .collect::<Vec<_>>(),
+                        ),
+                    );
+                } else {
+                    self.finish(
+                        context,
+                        "fail",
+                        &format!(
+                            "content-free resize probe incomplete: focus={}, resize_count={}, \
+                             generated={}, applied={}, visible={}, output={}B->{}B, csi_6n={}",
+                            self.focus_observed,
+                            self.resize_dimensions.len(),
+                            generations.len(),
+                            generations
+                                .iter()
+                                .filter(|generation| generation.applied)
+                                .count(),
+                            visible_cells_remained,
+                            self.post_resize_output_bytes.unwrap_or_default(),
+                            post_resize_output,
+                            controller.resize_probe().cursor_position_queries(),
+                        ),
+                    );
                 }
             }
             Phase::Finished
-            | Phase::AwaitMarker
-            | Phase::AwaitPreEcho
+            | Phase::AwaitInitialOutput
+            | Phase::AwaitPreOutput
             | Phase::AwaitInput
-            | Phase::AwaitEcho => {}
+            | Phase::AwaitPostOutput => {}
         }
     }
 
-    fn request_resize(&mut self, context: &eframe::egui::Context, index: usize) {
+    fn request_resize(
+        &mut self,
+        context: &eframe::egui::Context,
+        controller: &SessionController<LocalPtySession>,
+        index: usize,
+    ) {
         let (width, height) = RESIZE_SEQUENCE[index];
+        if index == 0 {
+            self.first_resize_generation = Some(
+                controller
+                    .resize_probe()
+                    .requested_generations()
+                    .saturating_add(1),
+            );
+        }
         context.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(
             eframe::egui::vec2(width, height),
         ));
@@ -223,19 +279,6 @@ fn test_child_path() -> PathBuf {
         "festerm-pty-test-child"
     });
     path
-}
-
-fn terminal_contains(terminal: &Terminal, needle: &str) -> bool {
-    (0..terminal.dimensions().rows())
-        .filter_map(|row| terminal.row_text(row))
-        .any(|row| row.contains(needle))
-}
-
-fn smoke_rows(terminal: &Terminal) -> Vec<String> {
-    (0..terminal.dimensions().rows())
-        .filter_map(|row| terminal.row_text(row))
-        .filter(|row| !row.trim().is_empty())
-        .collect()
 }
 
 #[cfg(test)]

@@ -42,10 +42,15 @@ The transition from nightly-only to PR-blocking requires:
 2. Runtime measured and within an acceptable budget for PR latency.
 3. An explicit decision recorded in this document and in `docs/ui-test-plan.md`.
 
-The workflow runs both the ignored PTY/session tests and the opt-in
-`FESTERM_NATIVE_WINDOW_SMOKE=1` application flow. The latter writes a
-content-free `status=pass` or `status=fail` result file; the workflow treats a
-missing or non-passing result as a failure.
+The Windows workflow first runs an ignored inbox-fallback smoke before staging
+any sidecar. That smoke verifies only safe launch, resize application, and
+post-resize byte delivery; inbox behavior is a supported fallback baseline, not
+the retained-content acceptance oracle for this regression. It then stages the
+known-good pinned ConPTY package into the documented install-relative layout,
+verifies the archive and individual file hashes, and runs the ignored
+PTY/session tests plus the opt-in `FESTERM_NATIVE_WINDOW_SMOKE=1` application
+flow. The latter writes a content-free `status=pass` or `status=fail` result
+file; the workflow treats a missing or non-passing result as a failure.
 
 ## Flaky failure policy
 
@@ -93,7 +98,8 @@ screenshots alone cannot diagnose.
 | --- | --- | --- |
 | Windows | `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed locally; PTY/session evidence** |
 | Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally; PTY/session evidence** |
-| Windows | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Executed locally; viewport/focus/resize and post-resize PTY I/O passed, but retained pre-resize text assertion currently fails (P4 blocker)** |
+| Windows | Inbox fallback smoke | **Required before pinned staging; validates launch/resize/byte-delivery only** |
+| Windows | Pinned `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Required native acceptance path; uses resize generations, byte counts, CSI `6n` recognition, and nonblank-cell counts without retaining terminal text** |
 | Linux | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` under Xvfb | Written; **pending first Linux CI run** |
 | macOS | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` | Written; **advisory — pending macOS CI run** |
 | Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **pending first Linux CI run** |

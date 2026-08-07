@@ -39,6 +39,11 @@ use nix::{
 
 #[cfg(windows)]
 use festerm_windows_job::WindowsJob;
+#[cfg(windows)]
+pub use festerm_windows_runtime::{
+    prepare_conpty_runtime as prepare_windows_conpty_runtime, ConptyRuntimeError,
+    ConptyRuntimeSelection,
+};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_RETRY: Duration = Duration::from_millis(5);
@@ -512,6 +517,15 @@ impl LocalPtySession {
         profile
             .validate()
             .map_err(|error| LocalPtyError::new(error.to_string()))?;
+
+        #[cfg(windows)]
+        {
+            prepare_windows_conpty_runtime().map_err(|error| {
+                LocalPtyError::new(format!(
+                    "could not safely select the Windows ConPTY runtime: {error}"
+                ))
+            })?;
+        }
 
         let pty_system = native_pty_system();
         let pair = pty_system
