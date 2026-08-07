@@ -43,10 +43,26 @@ jobs:
         env:
           RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
         run: |
-          cargo test -p festerm -- --include-ignored `
-            windows_conpty_smoke_flow_with_test_child_and_issue3_resizes `
-            windows_conpty_bounded_shutdown_terminates_process_tree `
-            --nocapture
+          cargo test -p festerm windows_conpty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+          cargo test -p festerm windows_conpty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+
+      - name: Run Windows native-window smoke
+        shell: pwsh
+        env:
+          FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          Remove-Item native-smoke-window-result.txt -ErrorAction Ignore
+          & .\target\debug\festerm.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path native-smoke-window-result.txt)) {
+            throw "native-window smoke did not write a result"
+          }
+          if ((Get-Content native-smoke-window-result.txt -TotalCount 1) -ne 'status=pass') {
+            Get-Content native-smoke-window-result.txt
+            throw "native-window smoke failed"
+          }
 
       - name: Upload failure artifacts
         if: failure()
@@ -83,10 +99,19 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1024x768x24 &
           sleep 1
-          cargo test -p festerm -- --include-ignored \
-            unix_pty_smoke_flow_with_test_child_and_issue3_resizes \
-            unix_pty_bounded_shutdown_terminates_process_tree \
-            --nocapture
+          cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+          cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+
+      - name: Run Linux native-window smoke
+        env:
+          FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          rm -f native-smoke-window-result.txt
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" ./target/debug/festerm
+          test -f native-smoke-window-result.txt
+          grep -qx 'status=pass' native-smoke-window-result.txt
 
       - name: Upload failure artifacts
         if: failure()
@@ -115,10 +140,19 @@ jobs:
         env:
           RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
         run: |
-          cargo test -p festerm -- --include-ignored \
-            unix_pty_smoke_flow_with_test_child_and_issue3_resizes \
-            unix_pty_bounded_shutdown_terminates_process_tree \
-            --nocapture
+          cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+          cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+
+      - name: Run macOS native-window smoke (advisory)
+        env:
+          FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          rm -f native-smoke-window-result.txt
+          ./target/debug/festerm
+          test -f native-smoke-window-result.txt
+          grep -qx 'status=pass' native-smoke-window-result.txt
 
       - name: Upload failure artifacts
         if: failure()

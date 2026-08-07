@@ -23,10 +23,12 @@ or the visual snapshot layer (P3). They are additional evidence that the
 production code path — real ConPTY/PTY, real `SessionController`, real
 `Terminal` — behaves correctly end-to-end.
 
-They do **not** create an egui/winit window and therefore do not prove native
-compositor presentation, DPI scaling, or OS focus behavior. That real-window
-half remains open under Work Package E and must not be described as Tier 6
-native-window validation until it exists.
+The PTY/session tests do **not** create an egui/winit window. The separate
+opt-in native-window self-smoke creates a production eframe/winit viewport,
+observes native viewport metadata and focus, requests the issue #3 resize
+sequence, and validates real PTY input/output before closing. It runs under
+Xvfb on Linux and is advisory on macOS. Platform-native OS input automation
+remains a later layer for independently driven focus and accessibility proof.
 
 ## CI placement
 
@@ -39,6 +41,11 @@ The transition from nightly-only to PR-blocking requires:
 1. Confirmed stable results across ≥ 7 consecutive nightly runs per platform.
 2. Runtime measured and within an acceptable budget for PR latency.
 3. An explicit decision recorded in this document and in `docs/ui-test-plan.md`.
+
+The workflow runs both the ignored PTY/session tests and the opt-in
+`FESTERM_NATIVE_WINDOW_SMOKE=1` application flow. The latter writes a
+content-free `status=pass` or `status=fail` result file; the workflow treats a
+missing or non-passing result as a failure.
 
 ## Flaky failure policy
 
@@ -84,8 +91,11 @@ screenshots alone cannot diagnose.
 
 | Platform | Test | Execution status |
 | --- | --- | --- |
-| Windows | `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed locally; PTY/session evidence only, not real-window proof** |
-| Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally; PTY/session evidence only, not real-window proof** |
+| Windows | `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed locally; PTY/session evidence** |
+| Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally; PTY/session evidence** |
+| Windows | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Executed locally; production eframe/winit viewport, focus, resize sequence, and controlled PTY I/O passed** |
+| Linux | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` under Xvfb | Written; **pending first Linux CI run** |
+| macOS | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` | Written; **advisory — pending macOS CI run** |
 | Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **pending first Linux CI run** |
 | Linux | `unix_pty_bounded_shutdown_terminates_process_tree` | Written; **pending first Linux CI run** |
 | macOS | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **advisory — pending macOS CI run** |

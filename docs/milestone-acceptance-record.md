@@ -44,7 +44,7 @@ actual platform CI results with their run URLs after GitHub Actions recovers.
 | P1 — protocol/session integration | Implemented | Fixtures cover tab stops, cursor styles, OSC titles, and device attributes; controlled Unix app-path coverage combines terminal modes and resize. |
 | P2 — headless UI event/layout coverage | Implemented | Test-only `egui_kittest` 0.36 drives production `TerminalView` input, diagnostics, and resize. |
 | P3 — visual snapshots | In progress | Eleven Windows WGPU baselines cover default background, attributes/colors, Unicode selection, alternate screen, cursor styles, and the P0 sequence. Linux WGPU adapter confirmation is pending. |
-| P4 — native platform smoke | In progress | Merged #15 supplies Windows-executed real PTY/ConPTY timing and shutdown coverage. A real egui/winit compositor, DPI, and focus test remains. Linux/macOS PTY runs await CI. |
+| P4 — native platform smoke | In progress | Merged #15 supplies Windows-executed real PTY/ConPTY timing and shutdown coverage. The opt-in production eframe/winit self-smoke now observes native viewport metadata/focus, drives the resize sequence, and verifies controlled PTY I/O. Cross-platform CI confirmation and independently driven platform-native focus/accessibility automation remain. |
 | P5 — reference apps, `vttest`, `tack` | Not run | Manual M6 release gate. |
 | P6 — ligature/fallback contract | Blocked | Define and test cell-to-glyph, cursor, selection, and hit-testing mapping before enabling ligatures. |
 
@@ -56,7 +56,7 @@ actual platform CI results with their run URLs after GitHub Actions recovers.
 | B — Headless egui harness | [#5](https://github.com/fes/fesTerm/issues/5) | Implemented |
 | C — Issue #3 headless replay | [#6](https://github.com/fes/fesTerm/issues/6) | Implemented; native rendered-window proof pending |
 | D — Visual snapshot layer | [#7](https://github.com/fes/fesTerm/issues/7) | In progress; Windows baselines committed, Linux confirmation pending |
-| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | In progress; merged #15 covers PTY/session timing only |
+| E — Native platform smoke flows | [#8](https://github.com/fes/fesTerm/issues/8) | In progress; merged #15 PTY/session timing plus production native-window self-smoke |
 | F — Repository-owned PTY test child | [#9](https://github.com/fes/fesTerm/issues/9) | Implemented (merged #14) |
 | G — Internal module decomposition | [#10](https://github.com/fes/fesTerm/issues/10) | Implemented (merged #16); final acceptance review/closure pending |
 | H — Milestone acceptance evidence | [#11](https://github.com/fes/fesTerm/issues/11) | Implemented (merged #12) |
@@ -89,7 +89,7 @@ minimal deterministic regression for every reproducible failure in
 - [x] Controlled principal PTY scenarios use a repository-owned test child (F).
 - [x] M4 and M5 have evidence-based implemented-with-validation-pending status.
 - [ ] Stable Windows and Linux snapshot results and controlled diff artifacts (D/P3).
-- [ ] Real windowed Windows resize proof, plus reproducible platform smoke evidence (E/P4).
+- [ ] Cross-platform CI evidence for the native-window self-smoke and independently driven platform focus/accessibility proof (E/P4).
 - [ ] Manual reference-application, `vttest`, and `tack` evidence (P5).
 - [ ] Ligature/fallback mapping contract and evidence (P6).
 

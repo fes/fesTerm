@@ -268,6 +268,14 @@ headless tests cannot. They are intentionally few, bounded, and artifact-rich:
 Do not rely on real user profiles, host SSH config, credential agents,
 clipboard contents, or a developer's terminal settings.
 
+P4's portable first step is an opt-in production self-smoke: it creates a real
+eframe/winit viewport, observes native viewport metadata and focus, drives the
+issue #3 resize sequence, and verifies controlled PTY input/output before
+closing. Linux runs it under Xvfb; macOS remains advisory. This proves the
+window/event/render loop participates in the scenario, but platform-native
+automation is still required for independently driven OS focus and
+accessibility evidence.
+
 ## Platform Matrix
 
 | Platform | Required automated coverage | Native/window strategy | Scheduled or self-hosted coverage |
@@ -310,7 +318,7 @@ overlapping checklist entry.
 | P1 | M6 protocol behavior must survive renderer and session integration | Implemented: the tab-stop, cursor-style, OSC-title, and device-attribute fixtures remain the deterministic baseline. A controlled Unix app-path PTY scenario now verifies alternate-screen restoration, cursor replies, focus, bracketed paste, SGR mouse, and resize forwarding together. Add selected libvterm/WezTerm cases only when their behavior is in scope. | Windows, Linux, macOS | Implemented; Unix headless evidence |
 | P2 | Headless UI event/layout coverage is absent | Implemented: `egui_kittest` 0.36 drives production `TerminalView` frames with pointer focus, text input, semantic Diagnostics control activation, and resize. The test asserts encoded sink bytes plus content-free grid, terminal, and cache geometry. It is test-only; snapshot rendering remains P3. | Windows, Linux, macOS | Implemented |
 | P3 | Visual promises are not exercised by the current structural tests | In progress: fixed-scale WGPU snapshots cover the default background, attributes/colors, Unicode selection, alternate screen, and every P0 resize viewport. Structural cache and geometry assertions run first; Windows baselines are committed and Linux CI confirmation is pending. Complete the explicit P3 evidence above before treating the visual layer as stable. | Windows, Linux; macOS advisory | In progress |
-| P4 | Native desktop focus, DPI, compositor, and PTY timing remain unverified | PTY/session timing layer implemented (merged #15): `festerm-pty-test-child`-driven ConPTY flow, the issue #3 resize sequence, and bounded shutdown are real (not headless) and pass on Windows; Linux/macOS variants are written but unexecuted pending CI recovery. Remaining: a real windowed (egui/winit) smoke test proving compositor, DPI, and native focus behavior, which the current PTY/session-layer tests do not exercise. Scheduled nightly and for release candidates (`.github/workflows/native-smoke.yml`), not PR-blocking. | Windows, Linux, macOS | In progress; PTY/timing layer done, windowed compositor/DPI/focus proof remaining |
+| P4 | Native desktop focus, DPI, compositor, and PTY timing remain unverified | PTY/session timing layer implemented (merged #15): `festerm-pty-test-child`-driven ConPTY flow, the issue #3 resize sequence, and bounded shutdown are real (not headless) and pass on Windows. The opt-in production eframe/winit self-smoke now observes native viewport metadata/focus, applies the resize sequence, and verifies controlled PTY input/output before closing; Linux runs it under Xvfb and macOS is advisory. Cross-platform CI results and independently driven platform-native focus/accessibility automation remain. Scheduled nightly and for release candidates (`.github/workflows/native-smoke.yml`), not PR-blocking. | Windows, Linux, macOS | In progress; portable native-window self-smoke implemented, cross-platform evidence pending |
 | P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. Run `vttest` and external `tack` before expanding capability or terminfo claims. | Platform-specific; release candidate | Manual gate |
 | P6 | Ligature and fallback correctness has no defined oracle | First specify the cell-to-glyph, cursor, selection, and hit-testing contract. Then add renderer mapping tests and snapshots before enabling ligatures. Do not use manual appearance as the only acceptance evidence. | Windows, Linux, macOS | Blocked by design and implementation |
 

@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use festerm_core::{Dimensions, Terminal};
-use festerm_pty::LocalPtySession;
+use festerm_pty::{LocalProfile, LocalPtySession};
 use festerm_session::Session;
 use festerm_ui_egui::TerminalView;
 
+use crate::native_smoke::NativeWindowSmoke;
 use crate::session_controller::{seed_session_failure, terminal_size, SessionController};
 
 const APPLICATION_TITLE: &str = "fesTerm";
@@ -14,6 +15,7 @@ pub struct FesTermApp {
     terminal_view: TerminalView,
     controller: SessionController<LocalPtySession>,
     window_title: String,
+    native_smoke: Option<NativeWindowSmoke>,
 }
 
 impl FesTermApp {
@@ -24,7 +26,8 @@ impl FesTermApp {
         let notifier: Arc<dyn festerm_session::SessionEventNotifier> =
             Arc::new(EguiRepaintNotifier(context.clone()));
         let size = terminal_size(terminal.dimensions()).expect("default dimensions fit PTY limits");
-        let controller = match LocalPtySession::start_default_with_notifier(size, notifier) {
+        let native_smoke = NativeWindowSmoke::from_environment();
+        let controller = match Self::start_session(native_smoke.as_ref(), size, notifier) {
             Ok(session) => {
                 tracing::info!(
                     target: "festerm::session",
@@ -49,6 +52,29 @@ impl FesTermApp {
             terminal_view: TerminalView::default(),
             controller,
             window_title: APPLICATION_TITLE.to_owned(),
+            native_smoke,
+        }
+    }
+
+    fn start_session(
+        native_smoke: Option<&NativeWindowSmoke>,
+        size: festerm_session::TerminalSize,
+        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+    ) -> Result<LocalPtySession, festerm_pty::LocalPtyError> {
+        match native_smoke {
+            Some(smoke) => LocalPtySession::start_with_notifier(
+                LocalProfile::new(smoke.test_child_path()).with_arguments([
+                    "emit:LINE-A",
+                    "emit:MARKER",
+                    "read-line",
+                    "echo:ECHO",
+                    "report-size",
+                    "spin",
+                ]),
+                size,
+                notifier,
+            ),
+            None => LocalPtySession::start_default_with_notifier(size, notifier),
         }
     }
 
@@ -86,6 +112,9 @@ impl eframe::App for FesTermApp {
         self.controller.flush_pending_writes();
         self.controller.flush_pending_resize();
         self.update_window_title(context);
+        if let Some(smoke) = &mut self.native_smoke {
+            smoke.drive(context, &mut self.terminal, &mut self.controller);
+        }
     }
 
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
@@ -103,6 +132,10 @@ impl eframe::App for FesTermApp {
         self.controller.flush_pending_resize();
         if self.controller.pump_events(&mut self.terminal) {
             ui.ctx().request_repaint();
+        }
+        if self.native_smoke.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(10));
         }
     }
 }

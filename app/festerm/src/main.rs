@@ -1,5 +1,6 @@
 mod app;
 mod diagnostics;
+mod native_smoke;
 pub mod session_controller;
 
 use app::FesTermApp;
