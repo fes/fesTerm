@@ -103,10 +103,10 @@ screenshots alone cannot diagnose.
 | Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally; PTY/session evidence** |
 | Windows | Inbox fallback smoke | **Required before pinned staging; validates launch/resize/byte-delivery only** |
 | Windows | Pinned `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Required native acceptance path; uses resize generations, byte counts, CSI `6n` recognition, and nonblank-cell counts without retaining terminal text** |
-| Linux | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` under Xvfb | Written; permits an explicitly recorded unfocused result because Xvfb has no window manager; **pending first Linux CI run** |
+| Linux | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` under Xvfb | **Executed and stabilized in `5e97f5d`**; explicitly unfocused because Xvfb has no window manager, so it is not native-focus evidence |
 | macOS | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` | Written; **advisory — pending macOS CI run** |
-| Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **pending first Linux CI run** |
-| Linux | `unix_pty_bounded_shutdown_terminates_process_tree` | Written; **pending first Linux CI run** |
+| Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed in the Linux P4 handoff (`5e97f5d`)** |
+| Linux | `unix_pty_bounded_shutdown_terminates_process_tree` | **Executed in the Linux P4 handoff (`5e97f5d`)** |
 | macOS | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **advisory — pending macOS CI run** |
 | macOS | `unix_pty_bounded_shutdown_terminates_process_tree` | Written; **advisory — pending macOS CI run** |
 
