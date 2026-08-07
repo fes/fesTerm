@@ -7,6 +7,7 @@
 //! the single command-handling path.
 
 use eframe::egui::Ui;
+use festerm_ui_egui::chrome::ChipLayout;
 
 use crate::tabs::AppCommand;
 
@@ -38,7 +39,14 @@ pub fn show_launcher(ui: &mut Ui) -> Option<AppCommand> {
 /// application surface with a dedicated chip today, per `docs/gui-design.md`
 /// ("Settings as an application surface"): Settings never lives inside the
 /// session inspector.
-pub fn show_settings(ui: &mut Ui) {
+///
+/// `chip_layout` reflects the current chip wrapping mode
+/// (`docs/gui-design.md` "Wrapping must remain user-configurable"); this is
+/// the one persistent preference implemented so far. Returns a command when
+/// the user toggles it, dispatched through the same single command path as
+/// every other invocation surface.
+pub fn show_settings(ui: &mut Ui, chip_layout: ChipLayout) -> Option<AppCommand> {
+    let mut command = None;
     ui.vertical(|ui| {
         ui.add_space(24.0);
         ui.heading("Settings");
@@ -47,5 +55,18 @@ pub fn show_settings(ui: &mut Ui) {
              Settings exists as its own application surface now so future \
              preferences have a stable, discoverable home.",
         );
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(12.0);
+        let wrap = matches!(chip_layout, ChipLayout::Wrap);
+        let label = if wrap {
+            "Chip layout: wrap onto multiple rows"
+        } else {
+            "Chip layout: single row (scroll to see more)"
+        };
+        if ui.button(label).clicked() {
+            command = Some(AppCommand::ToggleChipLayout);
+        }
     });
+    command
 }

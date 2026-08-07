@@ -21,7 +21,10 @@ use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{LocalProfile, LocalPtyError, LocalPtySession};
 use festerm_session::{Session, SessionEventNotifier, SessionLifecycle};
-use festerm_ui_egui::{chrome::ChipStatus, TerminalView};
+use festerm_ui_egui::{
+    chrome::{ChipLayout, ChipStatus},
+    TerminalView,
+};
 
 use crate::session_controller::{seed_session_failure, terminal_size, SessionController};
 
@@ -178,8 +181,23 @@ pub enum AppCommand {
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
     ActivateTab(TabId),
+    /// Activates the next/previous tab in stable list order
+    /// (`docs/gui-design.md` "Next/Previous Tab switch predictably" —
+    /// predictable and independent of visual wrapping).
+    ActivateNextTab,
+    ActivatePreviousTab,
     CloseTab(TabId),
+    /// Reorders `moved` to sit immediately before `before` (or at the end of
+    /// the row if `None`), preserving the moved tab's identity/state and the
+    /// current active tab.
+    ReorderTab {
+        moved: TabId,
+        before: Option<TabId>,
+    },
     ToggleSessionInspector,
+    /// Flips between wrapped and single-row-scroll chip layout
+    /// (`docs/gui-design.md` "Wrapping must remain user-configurable").
+    ToggleChipLayout,
 }
 
 /// Owns the always-nonempty tab collection and the active-tab cursor.
@@ -187,6 +205,7 @@ pub struct AppState {
     tabs: Vec<Tab>,
     active: TabId,
     inspector_open: bool,
+    chip_layout: ChipLayout,
 }
 
 impl AppState {
@@ -209,6 +228,7 @@ impl AppState {
             }],
             active: id,
             inspector_open: false,
+            chip_layout: ChipLayout::Wrap,
         };
         (state, id)
     }
@@ -223,6 +243,10 @@ impl AppState {
 
     pub const fn inspector_open(&self) -> bool {
         self.inspector_open
+    }
+
+    pub const fn chip_layout(&self) -> ChipLayout {
+        self.chip_layout
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -272,8 +296,17 @@ impl AppState {
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::StartLocalSession => self.start_local_session(context),
             AppCommand::ActivateTab(id) => self.activate(id),
+            AppCommand::ActivateNextTab => self.activate_relative(1),
+            AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) => self.close(id),
+            AppCommand::ReorderTab { moved, before } => self.reorder(moved, before),
             AppCommand::ToggleSessionInspector => self.inspector_open = !self.inspector_open,
+            AppCommand::ToggleChipLayout => {
+                self.chip_layout = match self.chip_layout {
+                    ChipLayout::Wrap => ChipLayout::SingleRowScroll,
+                    ChipLayout::SingleRowScroll => ChipLayout::Wrap,
+                };
+            }
         }
     }
 
@@ -323,6 +356,46 @@ impl AppState {
         }
     }
 
+    /// Moves the active cursor by `delta` positions in stable list order,
+    /// wrapping around. `delta` is `1` for next, `-1` for previous. Order
+    /// follows the tab list (also the drag-reorder order), independent of
+    /// how chips currently wrap onto visual rows.
+    fn activate_relative(&mut self, delta: i64) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == self.active) else {
+            return;
+        };
+        let len = self.tabs.len() as i64;
+        if len == 0 {
+            return;
+        }
+        let next = (index as i64 + delta).rem_euclid(len) as usize;
+        self.active = self.tabs[next].id;
+    }
+
+    /// Relocates `moved` to sit immediately before `before` (or at the end of
+    /// the list if `None`), preserving the moved tab's own identity/content
+    /// and leaving the active cursor pointed at whichever tab it already
+    /// referenced (`docs/gui-design.md` "Drag-and-drop reorders independent
+    /// session objects and should preserve their identity and state.").
+    fn reorder(&mut self, moved: TabId, before: Option<TabId>) {
+        if Some(moved) == before {
+            return;
+        }
+        let Some(from) = self.tabs.iter().position(|tab| tab.id == moved) else {
+            return;
+        };
+        let tab = self.tabs.remove(from);
+        let insert_at = match before {
+            Some(before_id) => self
+                .tabs
+                .iter()
+                .position(|tab| tab.id == before_id)
+                .unwrap_or(self.tabs.len()),
+            None => self.tabs.len(),
+        };
+        self.tabs.insert(insert_at, tab);
+    }
+
     fn close(&mut self, id: TabId) {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
             return;
@@ -359,6 +432,7 @@ impl AppState {
             }],
             active: id,
             inspector_open: false,
+            chip_layout: ChipLayout::Wrap,
         }
     }
 }
@@ -429,6 +503,19 @@ mod tests {
     }
 
     #[test]
+    fn toggle_chip_layout_flips_between_wrap_and_single_row_scroll() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert_eq!(state.chip_layout(), ChipLayout::Wrap);
+
+        state.dispatch(AppCommand::ToggleChipLayout, &context);
+        assert_eq!(state.chip_layout(), ChipLayout::SingleRowScroll);
+
+        state.dispatch(AppCommand::ToggleChipLayout, &context);
+        assert_eq!(state.chip_layout(), ChipLayout::Wrap);
+    }
+
+    #[test]
     fn toggle_inspector_flips_state() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
@@ -454,6 +541,103 @@ mod tests {
         state.dispatch(AppCommand::CloseTab(second), &context);
         assert_eq!(state.tabs().len(), 1);
         assert_eq!(state.active(), first);
+    }
+
+    #[test]
+    fn activate_next_and_previous_wrap_around_in_stable_list_order() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let first = state.active();
+        state.dispatch(AppCommand::NewLauncherTab, &context);
+        let second = state.active();
+        state.dispatch(AppCommand::NewLauncherTab, &context);
+        let third = state.active();
+
+        state.dispatch(AppCommand::ActivateTab(first), &context);
+        state.dispatch(AppCommand::ActivateNextTab, &context);
+        assert_eq!(state.active(), second);
+        state.dispatch(AppCommand::ActivateNextTab, &context);
+        assert_eq!(state.active(), third);
+        state.dispatch(AppCommand::ActivateNextTab, &context);
+        assert_eq!(state.active(), first, "next wraps back to the start");
+
+        state.dispatch(AppCommand::ActivatePreviousTab, &context);
+        assert_eq!(state.active(), third, "previous wraps back to the end");
+    }
+
+    #[test]
+    fn reorder_moves_a_tab_before_a_target_without_changing_active_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let first = state.active();
+        state.dispatch(AppCommand::NewLauncherTab, &context);
+        let second = state.active();
+        state.dispatch(AppCommand::NewLauncherTab, &context);
+        let third = state.active();
+        state.dispatch(AppCommand::ActivateTab(first), &context);
+
+        // Order is [first, second, third]; move third before first.
+        state.dispatch(
+            AppCommand::ReorderTab {
+                moved: third,
+                before: Some(first),
+            },
+            &context,
+        );
+
+        let order: Vec<TabId> = state.tabs().iter().map(|tab| tab.id).collect();
+        assert_eq!(order, vec![third, first, second]);
+        assert_eq!(
+            state.active(),
+            first,
+            "reordering must not change which tab is active"
+        );
+    }
+
+    #[test]
+    fn reorder_to_the_end_when_before_is_none() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let first = state.active();
+        state.dispatch(AppCommand::NewLauncherTab, &context);
+        let second = state.active();
+
+        state.dispatch(
+            AppCommand::ReorderTab {
+                moved: first,
+                before: None,
+            },
+            &context,
+        );
+
+        let order: Vec<TabId> = state.tabs().iter().map(|tab| tab.id).collect();
+        assert_eq!(order, vec![second, first]);
+    }
+
+    #[test]
+    fn reorder_ignores_an_unknown_moved_id_or_moving_before_itself() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let only = state.active();
+        let unknown = TabId::next();
+
+        state.dispatch(
+            AppCommand::ReorderTab {
+                moved: unknown,
+                before: Some(only),
+            },
+            &context,
+        );
+        assert_eq!(state.tabs().len(), 1);
+
+        state.dispatch(
+            AppCommand::ReorderTab {
+                moved: only,
+                before: Some(only),
+            },
+            &context,
+        );
+        assert_eq!(state.tabs()[0].id, only);
     }
 
     #[test]

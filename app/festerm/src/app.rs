@@ -3,6 +3,7 @@ use std::time::Duration;
 use eframe::egui;
 use festerm_pty::LocalProfile;
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
+use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 
 use crate::native_smoke::NativeWindowSmoke;
 use crate::screens;
@@ -25,6 +26,7 @@ pub struct FesTermApp {
     primary_tab: TabId,
     window_title: String,
     native_smoke: Option<NativeWindowSmoke>,
+    palette: PaletteState,
 }
 
 impl FesTermApp {
@@ -39,6 +41,7 @@ impl FesTermApp {
             primary_tab,
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke,
+            palette: PaletteState::default(),
         }
     }
 
@@ -113,7 +116,157 @@ impl FesTermApp {
                         self.state.dispatch(AppCommand::CloseTab(id), context);
                     }
                 }
+                ChromeAction::Reorder { moved, before } => {
+                    let Some(moved) = self.tab_id_for_chip(moved) else {
+                        continue;
+                    };
+                    let before = before.and_then(|chip_id| self.tab_id_for_chip(chip_id));
+                    self.state
+                        .dispatch(AppCommand::ReorderTab { moved, before }, context);
+                }
             }
+        }
+    }
+
+    /// Builds the current frame's command-palette items: every dispatchable
+    /// application action, plus one "Activate" entry per open tab so the
+    /// palette also serves as the searchable session switcher required by
+    /// `docs/gui-design.md` ("a searchable session switcher keyed primarily
+    /// by stable identity").
+    fn palette_items(&self) -> Vec<PaletteItem> {
+        const NEW_LAUNCHER_TAB: u64 = 1;
+        const OPEN_SETTINGS: u64 = 2;
+        const START_LOCAL_SESSION: u64 = 3;
+        const TOGGLE_INSPECTOR: u64 = 4;
+        const CLOSE_ACTIVE_TAB: u64 = 5;
+        const TOGGLE_CHIP_LAYOUT: u64 = 6;
+        // Tab-scoped palette ids are offset well past the fixed action ids so
+        // they never collide with a real `TabId::chip_id()` value.
+        const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
+
+        let mut items = vec![
+            PaletteItem {
+                id: NEW_LAUNCHER_TAB,
+                label: "New Launcher Tab".to_owned(),
+                hint: None,
+            },
+            PaletteItem {
+                id: START_LOCAL_SESSION,
+                label: "Start Local Shell".to_owned(),
+                hint: None,
+            },
+            PaletteItem {
+                id: OPEN_SETTINGS,
+                label: "Open Settings".to_owned(),
+                hint: None,
+            },
+            PaletteItem {
+                id: TOGGLE_INSPECTOR,
+                label: "Toggle Session Inspector".to_owned(),
+                hint: None,
+            },
+            PaletteItem {
+                id: CLOSE_ACTIVE_TAB,
+                label: "Close Active Tab".to_owned(),
+                hint: None,
+            },
+            PaletteItem {
+                id: TOGGLE_CHIP_LAYOUT,
+                label: "Toggle Chip Wrapping".to_owned(),
+                hint: None,
+            },
+        ];
+        for tab in self.state.tabs() {
+            let (label, hint) = match &tab.content {
+                TabContent::Launcher => ("Launcher".to_owned(), None),
+                TabContent::Settings => ("Settings".to_owned(), None),
+                TabContent::Session(session) => {
+                    let dynamic_title = session.terminal.title();
+                    let hint = (!dynamic_title.is_empty()).then(|| dynamic_title.to_owned());
+                    (session.label.clone(), hint)
+                }
+            };
+            items.push(PaletteItem {
+                id: TAB_ACTIVATE_OFFSET + tab.id.chip_id(),
+                label: format!("Activate: {label}"),
+                hint,
+            });
+        }
+        items
+    }
+
+    /// Applies a selected command-palette item id, translating it back into
+    /// the same `AppCommand` path used by chrome gestures and shortcuts.
+    fn dispatch_palette_selection(&mut self, id: u64, context: &egui::Context) {
+        const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
+        match id {
+            1 => self.state.dispatch(AppCommand::NewLauncherTab, context),
+            2 => self.state.dispatch(AppCommand::OpenSettings, context),
+            3 => self.state.dispatch(AppCommand::StartLocalSession, context),
+            4 => self
+                .state
+                .dispatch(AppCommand::ToggleSessionInspector, context),
+            5 => {
+                let active = self.state.active();
+                self.state.dispatch(AppCommand::CloseTab(active), context);
+            }
+            6 => self.state.dispatch(AppCommand::ToggleChipLayout, context),
+            id if id >= TAB_ACTIVATE_OFFSET => {
+                let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
+                if let Some(target) = self.tab_id_for_chip(chip_id) {
+                    self.state
+                        .dispatch(AppCommand::ActivateTab(target), context);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Recognized global shortcuts (`docs/gui-design.md` "Interaction
+    /// Conventions": "Exact platform shortcuts remain to be specified");
+    /// these are a first, revisitable binding, tracked for confirmation in a
+    /// follow-up usability pass. All bindings dispatch through the same
+    /// `AppCommand` path as chip clicks and the palette.
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let open_palette = ctx.input_mut(|input| {
+            input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::P,
+            )
+        });
+        if open_palette {
+            self.palette.toggle();
+        }
+        // While the palette is open, it owns Enter/Escape/arrow keys; avoid
+        // also acting on tab-management shortcuts this frame.
+        if self.palette.is_open() {
+            return;
+        }
+        let new_tab =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::T));
+        let close_tab =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
+        let next_tab =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Tab));
+        let previous_tab = ctx.input_mut(|input| {
+            input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Tab,
+            )
+        });
+
+        if new_tab {
+            self.state.dispatch(AppCommand::NewLauncherTab, ctx);
+        }
+        if close_tab {
+            let active = self.state.active();
+            self.state.dispatch(AppCommand::CloseTab(active), ctx);
+        }
+        if next_tab {
+            self.state.dispatch(AppCommand::ActivateNextTab, ctx);
+        }
+        if previous_tab {
+            self.state.dispatch(AppCommand::ActivatePreviousTab, ctx);
         }
     }
 
@@ -158,11 +311,15 @@ impl FesTermApp {
         };
         let status = session.controller.status_line();
         let diagnostics = session.controller.diagnostics_line();
+        let chip_status = session.chip_status();
         egui::Panel::right("session_inspector")
             .resizable(false)
             .show(ui, |ui| {
                 ui.heading("Session Inspector");
                 ui.separator();
+                ui.label(egui::RichText::new(&session.label).strong());
+                ui.label(chip_status.accessible_label());
+                ui.add_space(4.0);
                 ui.label(status);
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new(diagnostics).small().weak());
@@ -182,24 +339,46 @@ impl eframe::App for FesTermApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.handle_shortcuts(ui.ctx());
+
         let (chips, active_chip) = self.chip_view_models();
         let inspector_open = self.state.inspector_open();
-        let actions = chrome::show(ui, &chips, active_chip, inspector_open);
+        let actions = chrome::show(
+            ui,
+            &chips,
+            active_chip,
+            inspector_open,
+            self.state.chip_layout(),
+        );
         ui.separator();
         self.dispatch_chrome_actions(actions, &ui.ctx().clone());
+
+        if let Some(decision) = {
+            let items = self.palette_items();
+            palette::show(ui.ctx(), &mut self.palette, &items)
+        } {
+            self.palette.close();
+            if let Some(id) = decision {
+                let context = ui.ctx().clone();
+                self.dispatch_palette_selection(id, &context);
+            }
+        }
 
         if inspector_open {
             self.show_session_inspector(ui);
         }
 
-        let mut launcher_command = None;
+        let mut screen_command = None;
+        let chip_layout = self.state.chip_layout();
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
                 TabContent::Launcher => {
-                    launcher_command = screens::show_launcher(ui);
+                    screen_command = screens::show_launcher(ui);
                 }
-                TabContent::Settings => screens::show_settings(ui),
+                TabContent::Settings => {
+                    screen_command = screens::show_settings(ui, chip_layout);
+                }
                 TabContent::Session(session) => {
                     let session_status = session.controller.status_line();
                     let session_diagnostics = session.controller.diagnostics_line();
@@ -224,7 +403,7 @@ impl eframe::App for FesTermApp {
                 }
             }
         }
-        if let Some(command) = launcher_command {
+        if let Some(command) = screen_command {
             let context = ui.ctx().clone();
             self.state.dispatch(command, &context);
         }
