@@ -1519,6 +1519,7 @@ name = "festerm"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "egui_kittest",
  "festerm-core",
  "festerm-pty",
  "festerm-session",

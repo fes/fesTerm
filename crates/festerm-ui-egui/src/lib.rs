@@ -11,6 +11,8 @@ mod cache;
 pub mod chrome;
 mod geometry;
 mod input;
+pub mod overlay;
+pub mod palette;
 mod renderer;
 mod selection;
 mod view;
