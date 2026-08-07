@@ -1291,10 +1291,10 @@ mod tests {
         panic!("smoke-flow timeout: {context}");
     }
 
-    /// Pumps a controlled Windows session until a content-free controller
-    /// observation satisfies `predicate`, without inspecting terminal text.
-    #[cfg(windows)]
-    fn pump_controller_until(
+    /// Pumps a controlled session until a content-free controller observation
+    /// satisfies `predicate`, without inspecting terminal text.
+    #[cfg(any(unix, windows))]
+    fn pump_content_free_until(
         controller: &mut SessionController<LocalPtySession>,
         terminal: &mut Terminal,
         predicate: impl Fn(&SessionController<LocalPtySession>) -> bool,
@@ -1352,7 +1352,7 @@ mod tests {
             Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
         let mut controller = SessionController::for_test(session);
 
-        pump_controller_until(
+        pump_content_free_until(
             &mut controller,
             &mut terminal,
             |controller| controller.resize_probe().observed_output_bytes() > 0,
@@ -1364,7 +1364,7 @@ mod tests {
             .resize(Dimensions::new(50, 18).unwrap())
             .expect("terminal resize succeeds");
         controller.record_terminal_resize(terminal.dimensions());
-        pump_controller_until(
+        pump_content_free_until(
             &mut controller,
             &mut terminal,
             |controller| {
@@ -1381,7 +1381,7 @@ mod tests {
         assert!(output_after_resize >= output_before_resize);
 
         controller.record_encoded_input(b"resume\r\n");
-        pump_controller_until(
+        pump_content_free_until(
             &mut controller,
             &mut terminal,
             |controller| controller.resize_probe().observed_output_bytes() > output_after_resize,
@@ -1423,7 +1423,7 @@ mod tests {
         let mut controller = SessionController::for_test(session);
 
         // Step 1: wait for repository-owned output without retaining its text.
-        pump_controller_until(
+        pump_content_free_until(
             &mut controller,
             &mut terminal,
             |controller| controller.resize_probe().observed_output_bytes() > 0,
@@ -1493,7 +1493,7 @@ mod tests {
         controller.record_encoded_input(b"hello\r\n");
 
         // Step 4: wait for post-resize bytes without matching application text.
-        pump_controller_until(
+        pump_content_free_until(
             &mut controller,
             &mut terminal,
             |controller| controller.resize_probe().observed_output_bytes() > output_after_resize,
@@ -1645,5 +1645,110 @@ mod tests {
             "bounded Unix PTY shutdown exceeded 3-second budget: {:?}",
             start.elapsed()
         );
+    }
+
+    /// **P5 reference-application PTY probe.**
+    ///
+    /// This opt-in probe runs exactly one allowlisted locally installed
+    /// application, applies two PTY resizes, and sends its fixed quit sequence.
+    /// It deliberately retains only output counts and resize observations; the
+    /// native-window smoke and headless UI tests own focus and key-routing
+    /// coverage. Invoke it through `scripts/run-p5-reference.*`.
+    #[cfg(any(unix, windows))]
+    #[test]
+    #[ignore = "P5 optional reference-application probe — run through scripts/run-p5-reference.*"]
+    fn p5_reference_application_pty_probe() {
+        let reference = std::env::var("FESTERM_P5_REFERENCE_APP")
+            .expect("FESTERM_P5_REFERENCE_APP selects one allowlisted reference application");
+        let mut cleanup_path = None;
+        let (profile, quit_sequence) = match reference.as_str() {
+            "less" => {
+                let path = std::env::temp_dir()
+                    .join(format!("festerm-p5-less-{}.txt", std::process::id()));
+                std::fs::write(&path, "repository-owned P5 fixture\n".repeat(64))
+                    .expect("P5 less fixture is writable");
+                cleanup_path = Some(path.clone());
+                (
+                    LocalProfile::new("less").with_arguments([path]),
+                    b"q".as_slice(),
+                )
+            }
+            "nvim" => (
+                LocalProfile::new("nvim").with_arguments(["--clean", "-u", "NONE", "-n"]),
+                b"\x1b:qa!\r".as_slice(),
+            ),
+            "htop" => (LocalProfile::new("htop"), b"q".as_slice()),
+            "tmux" => {
+                let socket = format!("festerm-p5-{}", std::process::id());
+                (
+                    LocalProfile::new("tmux").with_arguments([
+                        "-L",
+                        socket.as_str(),
+                        "-f",
+                        "/dev/null",
+                        "new-session",
+                        "-s",
+                        "p5",
+                    ]),
+                    b"\x02d".as_slice(),
+                )
+            }
+            _ => panic!("unsupported P5 reference application selector: {reference}"),
+        };
+
+        let initial_size = TerminalSize::new(80, 24).expect("initial PTY size is valid");
+        let session = LocalPtySession::start(profile, initial_size)
+            .unwrap_or_else(|error| panic!("P5 {reference} session did not start: {error}"));
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+        let mut controller = SessionController::for_test(session);
+
+        pump_content_free_until(
+            &mut controller,
+            &mut terminal,
+            |controller| controller.resize_probe().observed_output_bytes() > 0,
+            Duration::from_secs(5),
+            "initial reference-application output",
+        );
+        let output_before_resize = controller.resize_probe().observed_output_bytes();
+        for dimensions in [
+            Dimensions::new(100, 30).unwrap(),
+            Dimensions::new(50, 18).unwrap(),
+        ] {
+            terminal
+                .resize(dimensions)
+                .expect("terminal resize succeeds");
+            controller.record_terminal_resize(dimensions);
+            pump_content_free_until(
+                &mut controller,
+                &mut terminal,
+                |controller| {
+                    controller
+                        .resize_probe()
+                        .generations()
+                        .last()
+                        .is_some_and(|generation| generation.applied)
+                },
+                Duration::from_secs(5),
+                "reference-application PTY resize application",
+            );
+        }
+        assert!(
+            controller.resize_probe().observed_output_bytes() >= output_before_resize,
+            "reference application output count must not regress across resize"
+        );
+
+        controller.record_encoded_input(quit_sequence);
+        wait_for_session_exit(&mut controller, &mut terminal, Duration::from_secs(5));
+        if let Some(path) = cleanup_path {
+            std::fs::remove_file(path).expect("P5 less fixture is removable");
+        }
+        #[cfg(unix)]
+        if reference == "tmux" {
+            let socket = format!("festerm-p5-{}", std::process::id());
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", socket.as_str(), "kill-server"])
+                .status();
+        }
     }
 }

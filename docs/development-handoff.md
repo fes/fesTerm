@@ -63,7 +63,11 @@ coverage, use the ignored tests in
 [`native-smoke-policy.md`](native-smoke-policy.md); use `Xvfb` only for the
 explicitly unfocused CI smoke. Run `vttest`, `tack`, and the reference
 applications from the P5 checklist in this Linux checkout, recording
-content-free evidence for each scenario.
+content-free evidence for each scenario. To run the optional scriptable P5
+PTY probes for installed `less`, `nvim`, `htop`, and `tmux`, use
+`scripts/run-p5-reference.sh`; see
+[`m6-compatibility-checklist.md`](m6-compatibility-checklist.md) for its
+content-free result format and manual-validation limits.
 
 ## Toolchain and Dependency Currency
 
@@ -113,6 +117,33 @@ repository, verifies the archive and x64 file hashes from
 layouts, and runs the pinned resize/content-continuity smoke. If Application
 Control blocks the staged runtime, retain the policy failure as validation
 evidence; do not bypass it.
+
+## Optional Validation Suite
+
+Prefer repository-owned automation to repeated manual validation instructions.
+The global opt-in suite runs every currently automated optional probe: the P5
+reference-application PTY probes and the P4 native-window smoke. It writes
+content-free suite status only and exits nonzero when an invoked probe fails.
+Run it from a logged-in desktop session; it opens and closes a native window.
+
+```sh
+FESTERM_RUN_OPTIONAL_VALIDATION=1 scripts/run-optional-validation.sh
+```
+
+```powershell
+$env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
+pwsh -NoProfile -File scripts\run-optional-validation.ps1
+```
+
+On Windows, the PowerShell entry point delegates the reviewed ConPTY staging
+and retention smoke to `stage-conpty.ps1 -RunSmoke`; do not duplicate its
+download or staging behavior. The suite remains opt-in because host GUI,
+graphics, and installed reference applications vary. A `not-run` reference
+tool is recorded by the P5 result file and is not acceptance evidence.
+
+The suite does not replace manual P5 observations that require screen
+semantics or user intent: GitHub Copilot CLI, `vttest`, `tack`, native
+selection/focus, paste behavior, and application-specific visual inspection.
 
 ## Diagnostics and Safety
 

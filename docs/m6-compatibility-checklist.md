@@ -64,6 +64,35 @@ Before considering this milestone complete:
 An unavailable reference application is not a passing scenario. Record it as
 not run and execute the applicable deterministic suite instead.
 
+## Optional automated PTY probes
+
+The repository provides an opt-in, content-free PTY probe for the scriptable
+subset: `less`, `nvim`, `htop`, and `tmux`. For each available allowlisted
+tool, it launches the real program through `LocalPtySession`, observes startup
+bytes only as a count, applies `80x24 -> 100x30 -> 50x18`, sends a fixed quit
+sequence, and requires a bounded exit. It does not retain terminal output.
+
+Run it from the repository root:
+
+```sh
+scripts/run-p5-reference.sh
+```
+
+```powershell
+pwsh -NoProfile -File scripts\run-p5-reference.ps1
+```
+
+Set `FESTERM_P5_REFERENCE_APPS` to a comma-separated subset and
+`FESTERM_P5_REFERENCE_RESULT_PATH` to select the content-free result file.
+Each application is reported as `pass`, `fail`, or `not-run` with
+`reason=unavailable`; `not-run` never means pass.
+
+These probes complement, but do not replace, the scenarios above: they do not
+inspect application screen semantics, drive OS input, prove native focus or
+selection, or validate Copilot CLI, `vttest`, or `tack`. Keep those runs as
+manual P5 evidence until an independently driven desktop automation layer is
+designed.
+
 ## Regression Triage
 
 For each failure, capture the terminal dimensions, application/version,

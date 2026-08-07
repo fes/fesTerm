@@ -74,6 +74,13 @@ Use the smallest relevant test while iterating, then run the workspace
 commands before release. The CI workflow runs the quality checks on Windows,
 macOS, and Linux.
 
+Prefer repository-owned automation over repeated manual validation
+instructions. Optional checks must remain explicitly opt-in and aggregate
+under `scripts/run-optional-validation.sh` or
+`scripts/run-optional-validation.ps1`, so a user can run the complete
+optional suite in one command. Manual evidence remains required only where
+automation cannot prove the behavior.
+
 ## Scope Classification
 
 Classify proposed work before expanding an implementation:

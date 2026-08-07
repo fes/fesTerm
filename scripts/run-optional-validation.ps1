@@ -1,0 +1,57 @@
+[CmdletBinding()]
+param(
+    [string] $ResultPath = $(if ($env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH) {
+        $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
+    } else {
+        'optional-validation-result.txt'
+    })
+)
+
+if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
+    throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
+}
+
+$p5ResultPath = if ($env:FESTERM_P5_REFERENCE_RESULT_PATH) {
+    $env:FESTERM_P5_REFERENCE_RESULT_PATH
+} else {
+    'p5-reference-result.txt'
+}
+$nativeResultPath = 'native-smoke-window-result.txt'
+$status = 'pass'
+Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
+
+if ($env:OS -eq 'Windows_NT') {
+    & "$PSScriptRoot\stage-conpty.ps1" -RunSmoke
+} else {
+    cargo build --workspace
+}
+if ($LASTEXITCODE -ne 0) { throw 'Workspace build or Windows ConPTY staging failed.' }
+
+& "$PSScriptRoot\run-p5-reference.ps1" -ResultPath $p5ResultPath
+if ($LASTEXITCODE -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=p5 status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=p5 status=fail"
+    $status = 'fail'
+}
+
+Remove-Item $nativeResultPath -ErrorAction Ignore
+$env:FESTERM_NATIVE_WINDOW_SMOKE = '1'
+$env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativeResultPath
+& '.\target\debug\festerm.exe'
+$nativePassed = $LASTEXITCODE -eq 0 -and
+    (Test-Path $nativeResultPath) -and
+    ((Get-Content $nativeResultPath -TotalCount 1) -eq 'status=pass')
+Remove-Item Env:FESTERM_NATIVE_WINDOW_SMOKE -ErrorAction Ignore
+Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
+Remove-Item $nativeResultPath -ErrorAction Ignore
+
+if ($nativePassed) {
+    Add-Content -Path $ResultPath -Value "`nsuite=p4-native-window status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=p4-native-window status=fail"
+    $status = 'fail'
+}
+
+Add-Content -Path $ResultPath -Value "`nstatus=$status"
+if ($status -eq 'fail') { exit 1 }
