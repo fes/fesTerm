@@ -422,8 +422,9 @@ impl AppState {
 impl AppState {
     /// Test-only constructor that starts with a Launcher tab instead of
     /// spawning a real local shell, so dispatch/tab-lifecycle tests do not
-    /// need a live PTY.
-    fn for_test() -> Self {
+    /// need a live PTY. `pub(crate)` so `app.rs`'s headless UI tests can also
+    /// build a `FesTermApp` without a live PTY session.
+    pub(crate) fn for_test() -> Self {
         let id = TabId::next();
         Self {
             tabs: vec![Tab {

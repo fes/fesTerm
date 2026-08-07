@@ -324,6 +324,8 @@ Technical details should be expandable or copyable without occupying the main te
 
 A reconnecting SSH session should retain its tab and stable identity. The tab may show a compact reconnecting state, while the viewport presents a restrained overlay or message that does not destroy prior terminal content unnecessarily.
 
+Implemented today as a floating overlay (`crates/festerm-ui-egui/src/overlay.rs`) drawn above — not instead of — the terminal viewport for any non-nominal `ChipStatus` (`Reconnecting`, `AuthRequired`, `Failed`, `Disconnected`, `Exited`), offering "View Diagnostics" and "Close Tab" actions. Only the local-shell states (`Starting`, `Failed`, `Exited`, etc.) are currently reachable in practice, since SSH sessions are not yet implemented; `Reconnecting`/`AuthRequired` are exercised only by headless tests until SSH lands.
+
 ### Sensitive data
 
 Diagnostic views and exported bundles must avoid exposing secrets, credentials, private keys, tokens, or unreviewed terminal content by default.
@@ -419,7 +421,12 @@ Expected commands include:
 - A searchable session switcher finds tabs by stable identity and optional secondary title.
 - Command palette or equivalent access may expose less common actions later.
 
-Exact platform shortcuts remain to be specified and should respect platform conventions where practical.
+Exact platform shortcuts remain to be specified and should respect platform conventions where practical. A first-pass, revisitable binding is implemented today (`app/festerm/src/app.rs::handle_shortcuts`) so the GUI-chrome parallel track has something usable to test against, tracked for confirmation in [issue #23](https://github.com/fes/fesTerm/issues/23):
+
+- `Ctrl+T` — New Launcher Tab.
+- `Ctrl+W` — Close the active tab.
+- `Ctrl+Tab` / `Ctrl+Shift+Tab` — Activate the next / previous tab, in stable list order (independent of visual wrapping).
+- `Ctrl+Shift+P` — Toggle the command palette, which also folds in the searchable session switcher as "Activate: `<label>`" entries alongside fixed actions (see [issue #25](https://github.com/fes/fesTerm/issues/25) for whether a separate, dedicated switcher is still warranted).
 
 ### Mouse
 
@@ -427,6 +434,8 @@ Exact platform shortcuts remain to be specified and should respect platform conv
 - Tab close controls should avoid accidental activation or closure.
 - Reordering may be supported through drag-and-drop.
 - Terminal mouse reporting and local selection remain governed by terminal mode and modifier policy.
+
+Chip reordering is implemented via a dedicated small drag-handle glyph on each chip (`crates/festerm-ui-egui/src/chrome.rs`), rather than making the whole chip draggable, so ordinary clicks on the chip label and close button are unaffected.
 
 ### Focus
 
@@ -541,11 +550,13 @@ It should use fake metadata where necessary so interaction and hierarchy can be 
 
 - Exact tab-strip placement relative to native window controls on each platform.
 - Whether launcher tabs may be pinned or automatically close after launching a session.
-- Default shortcut for directly opening the platform default local profile.
-- Searchable session-switcher interaction and placement.
-- Default chip width, minimum chip width, and the preference between single-row overflow and optional wrapping.
+- Default shortcut for directly opening the platform default local profile, and final confirmation of the first-pass keyboard bindings above ([issue #23](https://github.com/fes/fesTerm/issues/23)).
+- Searchable session-switcher interaction and placement: today it is folded into the command palette as tab-activation entries; whether a separate, dedicated switcher is still warranted remains open ([issue #25](https://github.com/fes/fesTerm/issues/25)).
+- Default chip width, minimum chip width, and the preference between single-row overflow and optional wrapping: both `ChipLayout::Wrap` and `ChipLayout::SingleRowScroll` are implemented and user-toggleable from Settings, but no default has been chosen based on usability input ([issue #24](https://github.com/fes/fesTerm/issues/24)).
 - Exact responsive behavior and minimum width of the normally hidden right-side session inspector.
 - Theme defaults and application-chrome font selection.
 - Exact icon source, licensing, and fallback policy.
 - Rules for user-name and host-name privacy in screenshots, notifications, and shared workspaces.
+- Whether a failed/disconnected session should offer a "Retry"/"Reconnect" action; the current connection overlay (`crates/festerm-ui-egui/src/overlay.rs`) only offers "View Diagnostics" and "Close Tab" because no session-restart backend capability exists yet.
+
 - Whether close-last-tab returns to the launcher unconditionally or is configurable.

@@ -16,5 +16,8 @@ festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }
+
 [lints]
 workspace = true

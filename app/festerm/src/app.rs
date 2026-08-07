@@ -3,6 +3,7 @@ use std::time::Duration;
 use eframe::egui;
 use festerm_pty::LocalProfile;
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
+use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 
 use crate::native_smoke::NativeWindowSmoke;
@@ -339,6 +340,16 @@ impl eframe::App for FesTermApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.ui_content(ui);
+    }
+}
+
+impl FesTermApp {
+    /// The full chrome/palette/session UI for one frame. Split out from
+    /// [`eframe::App::ui`] so headless `egui_kittest` tests can drive it
+    /// directly without constructing an `eframe::Frame` (whose fields are
+    /// private to `eframe` and not test-constructible).
+    fn ui_content(&mut self, ui: &mut egui::Ui) {
         self.handle_shortcuts(ui.ctx());
 
         let (chips, active_chip) = self.chip_view_models();
@@ -369,7 +380,9 @@ impl eframe::App for FesTermApp {
         }
 
         let mut screen_command = None;
+        let mut overlay_action = None;
         let chip_layout = self.state.chip_layout();
+        let active_tab_id = self.state.active();
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -400,12 +413,26 @@ impl eframe::App for FesTermApp {
                     if session.controller.pump_events(&mut session.terminal) {
                         ui.ctx().request_repaint();
                     }
+                    overlay_action = overlay::show(ui.ctx(), session.chip_status());
                 }
             }
         }
         if let Some(command) = screen_command {
             let context = ui.ctx().clone();
             self.state.dispatch(command, &context);
+        }
+        if let Some(action) = overlay_action {
+            let context = ui.ctx().clone();
+            match action {
+                OverlayAction::OpenDiagnostics => {
+                    self.state
+                        .dispatch(AppCommand::ToggleSessionInspector, &context);
+                }
+                OverlayAction::CloseTab => {
+                    self.state
+                        .dispatch(AppCommand::CloseTab(active_tab_id), &context);
+                }
+            }
         }
 
         if self.native_smoke.is_some() {
@@ -415,12 +442,108 @@ impl eframe::App for FesTermApp {
 }
 
 #[cfg(test)]
+impl FesTermApp {
+    /// Builds a `FesTermApp` around a launcher tab instead of a live local
+    /// shell (`AppState::for_test`), so headless end-to-end UI tests do not
+    /// need a real PTY and do not depend on `eframe::Frame`, which has no
+    /// public/test constructor.
+    fn for_test() -> Self {
+        let state = AppState::for_test();
+        let primary_tab = state.active();
+        Self {
+            state,
+            primary_tab,
+            window_title: APPLICATION_TITLE.to_owned(),
+            native_smoke: None,
+            palette: PaletteState::default(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    fn harness() -> Harness<'static, FesTermApp> {
+        Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(
+                |ui, app: &mut FesTermApp| app.ui_content(ui),
+                FesTermApp::for_test(),
+            )
+    }
 
     #[test]
     fn terminal_title_is_scoped_to_the_application_window() {
         assert_eq!(FesTermApp::window_title(""), APPLICATION_TITLE);
         assert_eq!(FesTermApp::window_title("editor"), "editor - fesTerm");
+    }
+
+    #[test]
+    fn ctrl_t_shortcut_opens_a_new_launcher_tab_end_to_end() {
+        let mut harness = harness();
+        harness.run();
+        let before = harness.state().state.tabs().len();
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+
+        assert_eq!(harness.state().state.tabs().len(), before + 1);
+    }
+
+    #[test]
+    fn clicking_a_chip_close_button_closes_that_tab_end_to_end() {
+        let mut harness = harness();
+        harness.run();
+        // Open a second tab so there is one to close without emptying root.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.run();
+        let before = harness.state().state.tabs().len();
+
+        harness
+            .get_all_by_label("\u{2715}")
+            .next()
+            .expect("at least one closable chip")
+            .click();
+        harness.run();
+
+        assert_eq!(harness.state().state.tabs().len(), before - 1);
+    }
+
+    #[test]
+    fn command_palette_selection_activates_the_chosen_tab_end_to_end() {
+        let mut harness = harness();
+        harness.run();
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::P,
+        );
+        harness.run();
+        assert!(harness.state().palette.is_open());
+
+        harness.get_by_label("Open Settings").click();
+        harness.run();
+        assert!(!harness.state().palette.is_open());
+        let settings_tab = harness.state().state.active();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::P,
+        );
+        harness.run();
+        harness.get_by_label("Activate: Launcher").click();
+        harness.run();
+
+        assert_ne!(harness.state().state.active(), settings_tab);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Launcher
+        ));
     }
 }
