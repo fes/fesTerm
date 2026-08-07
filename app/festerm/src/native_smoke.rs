@@ -109,7 +109,11 @@ impl NativeWindowSmoke {
         let viewport = context.input(|input| input.viewport().clone());
         self.focus_observed |= viewport.focused == Some(true);
         if viewport.inner_rect.is_none() || viewport.native_pixels_per_point.is_none() {
-            self.finish(context, "fail", "native viewport metadata was unavailable");
+            // WSLg and some compositors populate viewport metadata after their
+            // first frame. Keep the native window alive until the bounded
+            // smoke timeout rather than mistaking that startup frame for a
+            // missing native viewport.
+            context.request_repaint_after(Duration::from_millis(10));
             return;
         }
 
