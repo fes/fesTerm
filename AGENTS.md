@@ -65,6 +65,11 @@ cargo check --workspace
 git diff --check
 ```
 
+For the pinned Windows ConPTY retention smoke, use
+`pwsh -NoProfile -File scripts\stage-conpty.ps1 -RunSmoke`. The script owns
+package download, hash verification, workspace build, and runtime staging; do
+not duplicate that logic in a workflow or copy package files by hand.
+
 Use the smallest relevant test while iterating, then run the workspace
 commands before release. The CI workflow runs the quality checks on Windows,
 macOS, and Linux.

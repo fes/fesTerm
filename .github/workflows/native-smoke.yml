@@ -32,10 +32,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      # Build the whole workspace so the test-child binary exists alongside
-      # the test executable.
-      - name: Build workspace
-        run: cargo build --workspace
+      # The inbox test runs before the staging script builds and stages the
+      # pinned sidecar, but still needs the repository-owned test child.
+      - name: Build inbox smoke child
+        run: cargo build -p festerm-pty-test-child
 
       - name: Run Windows inbox ConPTY fallback smoke
         env:
@@ -43,37 +43,19 @@ jobs:
         run: |
           cargo test -p festerm windows_inbox_conpty_fallback_starts_resizes_and_resumes_output -- --include-ignored --nocapture
 
-      - name: Stage verified pinned ConPTY runtime
+      - name: Stage verified pinned ConPTY runtime and run retention smoke
         shell: pwsh
-        run: |
-          $manifest = Get-Content third_party/conpty/manifest.json -Raw | ConvertFrom-Json
-          $archive = Join-Path $env:RUNNER_TEMP 'conpty.nupkg'
-          Invoke-WebRequest -UseBasicParsing -Uri $manifest.source_url -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA512).Hash -ne $manifest.sha512) { throw 'ConPTY package hash mismatch' }
-          $package = Join-Path $env:RUNNER_TEMP 'conpty-package'
-          Expand-Archive -Path $archive -DestinationPath $package -Force
-          $dllSource = "$package\runtimes\win-x64\native\conpty.dll"
-          $hostSource = "$package\build\native\runtimes\x64\OpenConsole.exe"
-          foreach ($binaryDirectory in @('target\debug', 'target\debug\deps')) {
-            $runtime = Join-Path $binaryDirectory 'runtime\conpty\win-x64'
-            New-Item -ItemType Directory -Force (Join-Path $runtime 'x64') | Out-Null
-            Copy-Item $dllSource (Join-Path $runtime 'conpty.dll')
-            Copy-Item $hostSource (Join-Path $runtime 'x64\OpenConsole.exe')
-            if ((Get-FileHash (Join-Path $runtime 'conpty.dll') -Algorithm SHA512).Hash -ne $manifest.files.'win-x64/conpty.dll'.sha512) {
-              throw 'staged ConPTY DLL hash mismatch'
-            }
-            if ((Get-FileHash (Join-Path $runtime 'x64\OpenConsole.exe') -Algorithm SHA512).Hash -ne $manifest.files.'x64/OpenConsole.exe'.sha512) {
-              throw 'staged OpenConsole host hash mismatch'
-            }
-          }
-
-      # Run the ignored smoke tests explicitly with --include-ignored.
-      # No retries — one run, one result (see docs/native-smoke-policy.md).
-      - name: Run Windows ConPTY smoke tests
         env:
           RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
         run: |
-          cargo test -p festerm windows_conpty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+          & .\scripts\stage-conpty.ps1 -RunSmoke
+
+      # Run the remaining ignored smoke explicitly with --include-ignored.
+      # No retries — one run, one result (see docs/native-smoke-policy.md).
+      - name: Run Windows ConPTY bounded-shutdown smoke
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
           cargo test -p festerm windows_conpty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
 
       - name: Run Windows native-window smoke

@@ -63,6 +63,20 @@ resize, exit, descendant shutdown, and bounded shutdown without a native
 window. Windows CI runs a cfg-gated ConPTY test for spawn, output/input,
 resize, exit, and shutdown.
 
+To stage the reviewed optional Windows sidecar for the pinned retention smoke,
+run:
+
+```powershell
+pwsh -NoProfile -File scripts\stage-conpty.ps1 -RunSmoke
+```
+
+This command uses a per-user local application-data cache outside the
+repository, verifies the archive and x64 file hashes from
+`third_party/conpty/manifest.json`, builds the workspace, stages both test
+layouts, and runs the pinned resize/content-continuity smoke. If Application
+Control blocks the staged runtime, retain the policy failure as validation
+evidence; do not bypass it.
+
 ## Diagnostics and Safety
 
 - `RUST_LOG` configures structured log filtering. The default is

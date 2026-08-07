@@ -34,3 +34,21 @@ An already loaded unverified `conpty.dll` is a startup error, not a fallback.
 The archive hash is verified before CI stages files. Any package update must
 update the archive and file hashes in `manifest.json`, review the license, and
 run the inbox fallback plus pinned native resize smoke flows.
+
+## Smoke staging
+
+On Windows, use the checked-in staging command rather than copying package
+files manually:
+
+```powershell
+pwsh -NoProfile -File scripts\stage-conpty.ps1
+pwsh -NoProfile -File scripts\stage-conpty.ps1 -RunSmoke
+```
+
+The script reads this manifest, caches the exact package under the current
+user's local application-data directory (never in the repository), verifies
+the archive and extracted x64 files, builds the workspace, and stages the
+documented layout below both `target\debug` and `target\debug\deps`.
+`-RunSmoke` additionally runs the pinned content-continuity ConPTY retention
+smoke. If Windows Application Control blocks the staged native runtime, record
+the policy failure; do not bypass the policy or substitute an unverified DLL.
