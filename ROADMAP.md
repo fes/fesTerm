@@ -263,6 +263,8 @@ The terminal is functionally useful with the motivating advanced applications.
 
 ## Milestone 7 — Native SSH Sessions
 
+**Status:** In progress ([#28](https://github.com/fes/fesTerm/issues/28)).
+
 ### Outcome
 
 Users can create an SSH tab without invoking an external SSH executable.

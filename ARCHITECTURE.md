@@ -166,7 +166,10 @@ Responsibilities include:
 - Reconnect policy and connection state.
 - Mapping supported OpenSSH configuration into fesTerm's internal profile model.
 
-The SSH crate is not yet selected. Candidate implementations should be evaluated for cross-platform packaging, algorithm support, maintenance, async integration, host-key handling, authentication support, and interactive PTY behavior.
+`festerm-ssh` uses the Tokio-native `russh` client under the trust,
+authentication, reconnect, and OpenSSH-import policy in
+[ADR 0013](docs/adr/0013-russh-native-ssh-transport.md). It must not enable
+insecure legacy algorithms or invoke a system `ssh` binary.
 
 ### `festerm-config`
 

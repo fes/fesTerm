@@ -15,6 +15,8 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0009: Mutable Core State with Early Observability](0009-mutable-core-and-early-observability.md)
 - [ADR 0010: Preserve Future Extension Seams without Early Scope Expansion](0010-preserve-future-extension-seams.md)
 - [ADR 0011: Trusted Windows ConPTY Runtime Selection](0011-trusted-windows-conpty-runtime-selection.md)
+- [ADR 0012: Cell Geometry Owns Ligature and Fallback Mapping](0012-cell-geometry-owns-ligature-and-fallback-mapping.md)
+- [ADR 0013: `russh` for Native SSH Transport](0013-russh-native-ssh-transport.md)
 
 ## Status Values
 
