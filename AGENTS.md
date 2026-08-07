@@ -8,6 +8,8 @@ Read `README.md`, then use the document that matches the task:
 | --- | --- |
 | Product scope and priorities | `DESIGN.md`, `ROADMAP.md` |
 | Dependency and ownership boundaries | `ARCHITECTURE.md` |
+| Application command semantics and UI action routing | `docs/application-command-model.md` |
+| Scope control and architecture-stability policy | `docs/development-governance.md` |
 | Required behavior | `REQUIREMENTS.md`, `COMPATIBILITY.md` |
 | Standards and security decisions | `docs/standards-and-implementation-notes.md`, `docs/adr/` |
 | Golden fixtures | `tests/fixtures/README.md` |
@@ -45,6 +47,9 @@ Read `README.md`, then use the document that matches the task:
    synchronized metadata.
 6. A compatibility fix requires a deterministic regression fixture where
    practical.
+7. Product-level actions from launcher, shortcuts, chrome, menus, command
+   palette, and session inspector converge on the application command model;
+   do not implement independent widget-specific copies of the same operation.
 
 ## Validation
 
@@ -62,6 +67,34 @@ Use the smallest relevant test while iterating, then run the workspace
 commands before release. The CI workflow runs the quality checks on Windows,
 macOS, and Linux.
 
+## Scope Classification
+
+Classify proposed work before expanding an implementation:
+
+- **Current milestone requirement:** required for an active completion
+  criterion, regression fix, or validation blocker. Implement now.
+- **Architectural enabler:** the smallest seam required to prevent a near-term
+  accepted capability from hitting a known dead end. Implement narrowly; do
+  not pull the future capability forward with it.
+- **Deferred product capability:** useful future behavior that is not needed
+  for current acceptance. Document or issue it and return to assigned scope.
+
+A good adjacent idea is not automatically current scope. See
+`docs/development-governance.md` for the full decision rules.
+
+## Architecture Stability
+
+After M6 validation and acceptance of the first GUI vertical slice, the project
+enters the documented 0.1 architecture-stability period. Material changes to
+crate responsibilities, dependency direction, terminal/session ownership,
+renderer/core boundaries, configuration/secrets boundaries, bounded critical
+queues, or the application-command ownership model require explicit
+architectural review and an ADR before merge.
+
+Routine internal refactoring and additive changes that preserve those
+contracts do not require an ADR. See `docs/development-governance.md` for the
+complete policy.
+
 ## Working Conventions
 
 - Keep the active milestone status accurate in `ROADMAP.md` and the concise
@@ -75,6 +108,9 @@ macOS, and Linux.
   alongside New Tab and compact global controls. Do not place them on a
   detached shelf below a separate title bar. Preserve stable identity and use
   compact status indicators instead of full-chip state colors.
+- Route application-level GUI actions through
+  `docs/application-command-model.md`; invocation surfaces translate intent,
+  while application policy remains centralized and testable.
 - Do not duplicate long design documents in new summaries; link to the source
   of truth instead.
 - Treat terminal output and protocol input as untrusted. Preserve parser,
