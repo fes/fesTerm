@@ -180,7 +180,7 @@ pub fn show(
     layout: ChipLayout,
 ) -> Vec<ChromeAction> {
     let mut actions = Vec::new();
-    ui.horizontal(|ui| {
+    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         paint_launcher_button(ui, &mut actions);
         let chip_row = |ui: &mut Ui| {
@@ -673,7 +673,13 @@ fn paint_chip_primary(
 /// (the previous `\u{25cf}` rendered as tofu/an empty box on this machine).
 fn paint_status_dot(ui: &mut Ui, status: ChipStatus) {
     let diameter = 8.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(diameter, diameter), Sense::hover());
+    // Allocate at the primary label's own line height (rather than just
+    // the dot's diameter) so this row's cross-axis `Align::Center`
+    // computes the same center line for both the dot and the label text,
+    // instead of centering the dot within a shorter box that happens to
+    // sit slightly off from the text's own optical center.
+    let text_height = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, response) = ui.allocate_exact_size(vec2(diameter, text_height), Sense::hover());
     ui.painter()
         .circle_filled(rect.center(), diameter / 2.0, status.color());
     response.on_hover_text(status.accessible_label());

@@ -102,6 +102,8 @@ The launcher may contain:
 
 Unavailable categories may be omitted until implemented rather than shown as disabled clutter.
 
+The launcher's options form a single keyboard-navigable list (`app/festerm/src/screens.rs`'s `show_launcher`): Up/Down moves a highlighted selection and Enter launches whichever option is currently highlighted, without requiring the mouse. Selection state is tracked per launcher tab (keyed by `TabId`) so multiple open launcher tabs don't share a highlight.
+
 ### Launcher as a tab
 
 The launcher should use the same tab model as sessions.
@@ -257,6 +259,10 @@ All chips (and the "+ Launcher" control) share the terminal viewport's own near-
 Every chip, active or not, is drawn with a visible border: the active chip's border is `CHIP_ACTIVE_OUTLINE` (1.5px) and inactive chips use `CHIP_INACTIVE_OUTLINE` (1.0px), so the distinction reads clearly without color being the only cue. Each chip is two lines, left-aligned with a small reserved strip on the left for the status dot: the first line holds the status dot and the stable identity, left-aligned; the second, smaller and muted line holds optional secondary terminal-provided metadata, indented under the first line's label rather than the chip's own left edge. The close control, shown only on the active chip (never on inactive chips, even on hover), is positioned from the chip's own outer corner — evenly inset from the top and right edges — rather than flowing through the label's layout, so its position stays fixed and the label never shifts to accommodate it. The "+ Launcher" control is painted with the same corner radius, border weight, fill, and height as an inactive chip so it reads as part of the same family of controls.
 
 Chips without a secondary line (an open Launcher-type tab, which has no secondary terminal metadata) claim the chip's full footprint (`ui.set_min_size(outer_rect.size())`) before laying out their top-down content, rather than letting the shrink-wrapped one-line content block get vertically centered by the surrounding chip-row layout; without this, a one-line chip would render with visibly larger top/bottom padding than its two-line neighbors even though both share the same `CHIP_HEIGHT`.
+
+The top-level chrome row (the "+ Launcher" control, the chip row itself, and the trailing icon controls) lays out its direct children top-aligned (`Layout::left_to_right(Align::Min)`), not vertically centered: with `Align::Center`, any one sibling's reported height (e.g. a wrapping/scrolling chip-row container's own margins) inflating past `CHIP_HEIGHT` would silently re-center the "+ Launcher" control relative to the chip row, reproducing the same kind of misalignment bug as the one-line-chip case above. Pinning everything to the row's top edge keeps the "+ Launcher" control and every chip's outer border starting at the same `y` regardless of these incidental height differences.
+
+The status dot is allocated at the primary label's own text-line height (via `Ui::text_style_height`), not just its own diameter, so the row's `Align::Center` computes one shared center line for both the dot and the label text; allocating the dot at only its diameter let the surrounding row's cross-axis centering land the dot slightly off the label's own optical center.
 
 ### Tab overflow and wrapping
 

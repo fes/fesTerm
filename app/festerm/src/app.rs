@@ -421,7 +421,7 @@ impl FesTermApp {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
                 TabContent::Launcher => {
-                    screen_command = screens::show_launcher(ui);
+                    screen_command = screens::show_launcher(ui, active_tab_id);
                 }
                 TabContent::Settings => {
                     screen_command = screens::show_settings(ui, chip_layout);
@@ -524,6 +524,29 @@ mod tests {
         harness.run();
 
         assert_eq!(harness.state().state.tabs().len(), before + 1);
+    }
+
+    #[test]
+    fn pressing_enter_on_the_launcher_starts_the_highlighted_option_end_to_end() {
+        let mut harness = harness();
+        harness.run();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Launcher
+        ));
+
+        harness.key_press(egui::Key::Enter);
+        // A freshly started local shell session keeps requesting repaints
+        // as it pumps live process output, so `run()` (which loops to
+        // quiescence) can never stabilize here; a single `step()` is enough
+        // to apply the dispatched command and observe the tab-content
+        // change.
+        harness.step();
+
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
     }
 
     #[test]
