@@ -1291,9 +1291,9 @@ mod tests {
         panic!("smoke-flow timeout: {context}");
     }
 
-    /// Pumps a controlled session until a content-free controller observation
-    /// satisfies `predicate`, without inspecting terminal text.
-    #[cfg(any(unix, windows))]
+    /// Pumps a controlled Windows session until a content-free controller
+    /// observation satisfies `predicate`, without inspecting terminal text.
+    #[cfg(windows)]
     fn pump_controller_until(
         controller: &mut SessionController<LocalPtySession>,
         terminal: &mut Terminal,

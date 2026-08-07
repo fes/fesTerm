@@ -117,6 +117,10 @@ jobs:
       - name: Run Linux native-window smoke
         env:
           FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          # Xvfb has no window manager to assign focus. The self-smoke still
+          # proves a real viewport, resize, and PTY flow; real-desktop focus
+          # evidence remains a separate P4 requirement.
+          FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED: "1"
           FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
           RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
         run: |

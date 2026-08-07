@@ -18,6 +18,7 @@ use crate::session_controller::SessionController;
 
 const SMOKE_ENV: &str = "FESTERM_NATIVE_WINDOW_SMOKE";
 const RESULT_PATH_ENV: &str = "FESTERM_NATIVE_SMOKE_RESULT_PATH";
+const ALLOW_UNFOCUSED_ENV: &str = "FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED";
 const TIMEOUT: Duration = Duration::from_secs(20);
 const RESIZE_SEQUENCE: [(f32, f32); 4] = [
     (420.0, 260.0),
@@ -47,6 +48,7 @@ pub struct NativeWindowSmoke {
     initial_output_bytes: Option<u64>,
     post_resize_output_bytes: Option<u64>,
     first_resize_generation: Option<u64>,
+    allow_unfocused: bool,
 }
 
 impl NativeWindowSmoke {
@@ -74,6 +76,8 @@ impl NativeWindowSmoke {
             initial_output_bytes: None,
             post_resize_output_bytes: None,
             first_resize_generation: None,
+            allow_unfocused: cfg!(target_os = "linux")
+                && std::env::var_os(ALLOW_UNFOCUSED_ENV).is_some(),
         })
     }
 
@@ -181,7 +185,7 @@ impl NativeWindowSmoke {
                     .iter()
                     .all(|generation| generation.visible_nonblank_cells > 0);
                 let post_resize_output = controller.resize_probe().observed_output_bytes();
-                if self.focus_observed
+                if (self.focus_observed || self.allow_unfocused)
                     && self.resize_dimensions.len() == RESIZE_SEQUENCE.len()
                     && all_resizes_applied
                     && visible_cells_remained
@@ -191,8 +195,13 @@ impl NativeWindowSmoke {
                         context,
                         "pass",
                         &format!(
-                            "native viewport/focus; resize generations {}; output {}B->{}B; \
+                            "native viewport{}; resize generations {}; output {}B->{}B; \
                              recognized CSI 6n {}; visible cells {:?}",
+                            if self.focus_observed {
+                                "/focus"
+                            } else {
+                                " (focus unavailable in explicit headless mode)"
+                            },
                             generations.len(),
                             self.post_resize_output_bytes.unwrap_or_default(),
                             post_resize_output,
