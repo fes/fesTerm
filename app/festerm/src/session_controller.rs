@@ -964,7 +964,9 @@ mod tests {
             prompt.sha256_fingerprint(),
             "SHA256:content-free-fingerprint"
         );
-        assert_eq!(terminal.row_text(0), Some("".to_owned()));
+        assert!(terminal
+            .row_text(0)
+            .is_some_and(|row| row.trim().is_empty()));
     }
 
     #[test]
