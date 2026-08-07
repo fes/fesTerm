@@ -27,6 +27,30 @@ const CHIP_MAX_WIDTH: f32 = 220.0;
 /// of whether a chip currently has secondary text.
 const CHIP_HEIGHT: f32 = 38.0;
 
+// This chrome band defines its own small, fixed color palette rather than
+// pulling from `ui.visuals()` (`docs/gui-design.md`): egui's derived
+// widget-interaction colors (e.g. `strong_text_color()`, which maps to a
+// pressed-button style, or `weak_text_color()`, which can end up
+// unreadably dark against a near-black fill) are tuned for generic
+// buttons/labels, not this row's specific dark-chip design, and produced
+// exactly this readability bug in practice.
+/// Light grey used for the active chip's outline and its close control, so
+/// the two read as the same visual "active" affordance rather than the
+/// close control looking dimmer/disabled by comparison.
+const CHIP_ACTIVE_OUTLINE: Color32 = Color32::from_gray(0xc8);
+/// Darker grey outline for inactive chips and the Launcher control.
+const CHIP_INACTIVE_OUTLINE: Color32 = Color32::from_gray(0x48);
+/// Always-legible text colors for chip content.
+const CHIP_PRIMARY_TEXT: Color32 = Color32::from_gray(0xe6);
+const CHIP_SECONDARY_TEXT: Color32 = Color32::from_gray(0x9a);
+/// Default and hovered colors for the row's painter-drawn icon controls
+/// (new-tab, search, panel toggle, overflow menu).
+const CHROME_ICON_COLOR: Color32 = Color32::from_gray(0x9a);
+const CHROME_ICON_COLOR_HOVERED: Color32 = Color32::from_gray(0xf0);
+/// Close-button hover color, distinct from the chip outline/icon palette to
+/// keep its "destructive" affordance recognizable.
+const CHROME_CLOSE_HOVER: Color32 = Color32::from_rgb(0xe0, 0x5c, 0x5c);
+
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -206,7 +230,7 @@ fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let galley = ui.painter().layout_no_wrap(
         "+ Launcher".to_owned(),
         egui::TextStyle::Body.resolve(ui.style()),
-        ui.visuals().text_color(),
+        CHIP_PRIMARY_TEXT,
     );
     let width = galley.size().x + 2.0 * padding_x;
     let (rect, mut response) = ui.allocate_exact_size(vec2(width, CHIP_HEIGHT), Sense::click());
@@ -214,7 +238,7 @@ fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     response = response.on_hover_text("Open a new launcher tab");
 
     let fill = crate::DEFAULT_BACKGROUND;
-    let stroke = Stroke::new(1.0, Color32::from_gray(0x48));
+    let stroke = Stroke::new(1.0, CHIP_INACTIVE_OUTLINE);
     ui.painter().rect_filled(rect, 6, fill);
     ui.painter()
         .rect_stroke(rect, 6, stroke, egui::StrokeKind::Inside);
@@ -222,8 +246,7 @@ fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
         rect.left() + padding_x,
         rect.center().y - galley.size().y / 2.0,
     );
-    ui.painter()
-        .galley(text_pos, galley, ui.visuals().text_color());
+    ui.painter().galley(text_pos, galley, CHIP_PRIMARY_TEXT);
 
     if response.clicked() {
         actions.push(ChromeAction::NewTab);
@@ -240,9 +263,9 @@ fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "New tab"));
     let color = if response.hovered() {
-        ui.visuals().strong_text_color()
+        CHROME_ICON_COLOR_HOVERED
     } else {
-        ui.visuals().weak_text_color()
+        CHROME_ICON_COLOR
     };
     let center = rect.center();
     let half = size * 0.28;
@@ -270,9 +293,9 @@ fn paint_search_icon(ui: &mut Ui) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Search (Ctrl+Shift+P)"));
     let color = if response.hovered() {
-        ui.visuals().strong_text_color()
+        CHROME_ICON_COLOR_HOVERED
     } else {
-        ui.visuals().weak_text_color()
+        CHROME_ICON_COLOR
     };
     let center = rect.center() - vec2(1.0, 1.0);
     let radius = size * 0.22;
@@ -295,9 +318,9 @@ fn paint_panel_icon(ui: &mut Ui, open: bool) -> bool {
     response
         .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Toggle session inspector"));
     let color = if open || response.hovered() {
-        ui.visuals().strong_text_color()
+        CHROME_ICON_COLOR_HOVERED
     } else {
-        ui.visuals().weak_text_color()
+        CHROME_ICON_COLOR
     };
     let outer = rect.shrink(3.0);
     ui.painter().rect_stroke(
@@ -333,9 +356,9 @@ fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "More actions"));
     let color = if response.hovered() {
-        ui.visuals().strong_text_color()
+        CHROME_ICON_COLOR_HOVERED
     } else {
-        ui.visuals().weak_text_color()
+        CHROME_ICON_COLOR
     };
     let center = rect.center();
     for offset in [-6.0, 0.0, 6.0] {
@@ -408,7 +431,7 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
         ui.painter().rect_stroke(
             ghost_rect,
             4.0,
-            Stroke::new(1.0, ui.visuals().weak_text_color()),
+            Stroke::new(1.0, CHIP_INACTIVE_OUTLINE),
             egui::StrokeKind::Inside,
         );
 
@@ -503,7 +526,7 @@ fn paint_chip(
     // distinct accent fill.
     let fill = crate::DEFAULT_BACKGROUND;
     let stroke = if active {
-        Stroke::new(1.5, Color32::from_gray(0xc8))
+        Stroke::new(1.5, CHIP_ACTIVE_OUTLINE)
     } else {
         Stroke::new(1.0, Color32::from_gray(0x48))
     };
@@ -535,14 +558,25 @@ fn paint_chip(
 
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.spacing_mut().item_spacing.y = 1.0;
+        // Rows would otherwise reserve `interact_size.y` (a button-sized
+        // minimum, ~24px) even for a single line of small text, inflating
+        // the gap between the primary and secondary lines well past what
+        // the text itself needs.
+        ui.spacing_mut().interact_size.y = 0.0;
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
         // `Ui::vertical` centers its children horizontally by default; the
         // mockup left-aligns the chip's content (with a small reserved
         // strip for the status dot), so lay the two lines out top-down
         // with `Align::Min` instead.
         ui.with_layout(Layout::top_down(Align::Min), |ui| {
-            ui.add_space(3.0);
+            // Claim the chip's full footprint up front: otherwise a chip
+            // with no secondary text (e.g. a Launcher tab) lays out a
+            // shorter content block that then gets vertically *centered*
+            // within the row by the parent chip-row layout, instead of
+            // sitting flush at the top like every other chip.
+            ui.set_min_size(outer_rect.size());
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 if !matches!(chip.status, ChipStatus::Neutral) {
@@ -559,7 +593,7 @@ fn paint_chip(
                 ui.scope(|ui| {
                     let max_width = (ui.available_width() - reserved).max(0.0);
                     ui.set_max_width(max_width);
-                    paint_chip_primary(ui, chip, active, rename_id, editing, actions);
+                    paint_chip_primary(ui, chip, rename_id, editing, actions);
                 });
             });
             if let Some(secondary) = &chip.secondary {
@@ -571,10 +605,15 @@ fn paint_chip(
                     } else {
                         22.0
                     });
-                    ui.add(egui::Label::new(RichText::new(secondary).weak().small()).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(secondary).color(CHIP_SECONDARY_TEXT).small(),
+                        )
+                        .truncate(),
+                    );
                 });
             }
-            ui.add_space(3.0);
+            ui.add_space(6.0);
         });
     });
 
@@ -589,7 +628,6 @@ fn paint_chip(
 fn paint_chip_primary(
     ui: &mut Ui,
     chip: &ChipViewModel,
-    active: bool,
     rename_id: Id,
     editing: Option<String>,
     actions: &mut Vec<ChromeAction>,
@@ -619,11 +657,7 @@ fn paint_chip_primary(
             ui.data_mut(|d| d.insert_temp(rename_id, buffer));
         }
     } else {
-        let label = if active {
-            RichText::new(&chip.primary).strong()
-        } else {
-            RichText::new(&chip.primary)
-        };
+        let label = RichText::new(&chip.primary).color(CHIP_PRIMARY_TEXT);
         let label_response = ui.add(egui::Label::new(label).sense(Sense::click()).truncate());
         if label_response.clicked() {
             actions.push(ChromeAction::Activate(chip.id));
@@ -655,9 +689,13 @@ fn paint_close_button(ui: &mut Ui, id: ChipId, actions: &mut Vec<ChromeAction>) 
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Close"));
 
     let color = if response.hovered() {
-        ui.visuals().error_fg_color
+        CHROME_CLOSE_HOVER
     } else {
-        ui.visuals().weak_text_color()
+        // Matches the active chip's own outline color (the close control
+        // only ever appears on the active chip), so the two read as the
+        // same "active" affordance rather than the close control looking
+        // dimmer/disabled by comparison.
+        CHIP_ACTIVE_OUTLINE
     };
     let inset = rect.shrink(4.0);
     ui.painter().line_segment(

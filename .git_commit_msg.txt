@@ -1,0 +1,32 @@
+Define an explicit chip-chrome color palette instead of egui visuals
+
+Round 3 of chip polish feedback:
+
+- Stop deriving chip/chrome colors from ui.visuals()/Style. egui's
+  built-in semantic colors are tuned for generic interactive widgets
+  (e.g. strong_text_color() resolves to a pressed-button color, which
+  can render nearly black), which made chip title text unreadable
+  against the chip's own near-black fill.
+- Add a small explicit palette of Color32 constants in chrome.rs:
+  CHIP_ACTIVE_OUTLINE, CHIP_INACTIVE_OUTLINE, CHIP_PRIMARY_TEXT,
+  CHIP_SECONDARY_TEXT, CHROME_ICON_COLOR, CHROME_ICON_COLOR_HOVERED,
+  CHROME_CLOSE_HOVER, and use them everywhere in chrome.rs (chip
+  fill/stroke, primary/secondary labels, close button, launcher
+  button, drag-ghost outline, global icon controls).
+- Close button color now matches the active chip's own outline
+  exactly (CHIP_ACTIVE_OUTLINE) instead of a mismatched darker shade.
+- Fix a vertical-centering bug where a chip with no secondary line
+  (an open Launcher-type tab) rendered with visibly larger top/bottom
+  padding than two-line chips: the shrink-wrapped one-line content
+  block was being centered by the parent chip-row layout. Fixed by
+  claiming the chip's full footprint (ui.set_min_size) before laying
+  out content top-down.
+- Tighten spacing between the primary and secondary lines and give
+  the secondary line more breathing room from the chip's bottom edge.
+- Remove now-inert RichText::strong() call on the primary label: with
+  an explicit .color() set, .strong() no longer affects color, and it
+  has no other effect in this egui version.
+- Update docs/gui-design.md to describe the new local color palette
+  and the Launcher-tab alignment fix.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
