@@ -93,7 +93,7 @@ screenshots alone cannot diagnose.
 | --- | --- | --- |
 | Windows | `windows_conpty_smoke_flow_with_test_child_and_issue3_resizes` | **Executed locally; PTY/session evidence** |
 | Windows | `windows_conpty_bounded_shutdown_terminates_process_tree` | **Executed locally; PTY/session evidence** |
-| Windows | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Executed locally; production eframe/winit viewport, focus, resize sequence, and controlled PTY I/O passed** |
+| Windows | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm.exe` | **Executed locally; viewport/focus/resize and post-resize PTY I/O passed, but retained pre-resize text assertion currently fails (P4 blocker)** |
 | Linux | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` under Xvfb | Written; **pending first Linux CI run** |
 | macOS | `FESTERM_NATIVE_WINDOW_SMOKE=1 target/debug/festerm` | Written; **advisory — pending macOS CI run** |
 | Linux | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **pending first Linux CI run** |

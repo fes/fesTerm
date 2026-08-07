@@ -44,7 +44,7 @@ actual platform CI results with their run URLs after GitHub Actions recovers.
 | P1 — protocol/session integration | Implemented | Fixtures cover tab stops, cursor styles, OSC titles, and device attributes; controlled Unix app-path coverage combines terminal modes and resize. |
 | P2 — headless UI event/layout coverage | Implemented | Test-only `egui_kittest` 0.36 drives production `TerminalView` input, diagnostics, and resize. |
 | P3 — visual snapshots | In progress | Eleven Windows WGPU baselines cover default background, attributes/colors, Unicode selection, alternate screen, cursor styles, and the P0 sequence. Linux WGPU adapter confirmation is pending. |
-| P4 — native platform smoke | In progress | Merged #15 supplies Windows-executed real PTY/ConPTY timing and shutdown coverage. The opt-in production eframe/winit self-smoke now observes native viewport metadata/focus, drives the resize sequence, and verifies controlled PTY I/O. Cross-platform CI confirmation and independently driven platform-native focus/accessibility automation remain. |
+| P4 — native platform smoke | In progress | Merged #15 supplies Windows-executed real PTY/ConPTY timing and shutdown coverage. The opt-in production eframe/winit self-smoke observes native viewport metadata/focus, drives the resize sequence, and verifies controlled PTY I/O, but its retained pre-resize text assertion currently fails locally on Windows. Cross-platform CI confirmation and independently driven platform-native focus/accessibility automation remain. |
 | P5 — reference apps, `vttest`, `tack` | Not run | Manual M6 release gate. |
 | P6 — ligature/fallback contract | Blocked | Define and test cell-to-glyph, cursor, selection, and hit-testing mapping before enabling ligatures. |
 

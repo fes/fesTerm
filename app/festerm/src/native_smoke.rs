@@ -29,6 +29,7 @@ const RESIZE_SEQUENCE: [(f32, f32); 4] = [
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Phase {
     AwaitMarker,
+    AwaitPreEcho,
     AwaitResize(usize),
     AwaitInput,
     AwaitEcho,
@@ -107,6 +108,10 @@ impl NativeWindowSmoke {
 
         match self.phase {
             Phase::AwaitMarker if terminal_contains(terminal, "MARKER") => {
+                controller.record_encoded_input(b"pre\r\n");
+                self.phase = Phase::AwaitPreEcho;
+            }
+            Phase::AwaitPreEcho if terminal_contains(terminal, "PRE:pre") => {
                 self.request_resize(context, 0);
             }
             Phase::AwaitResize(index) => {
@@ -130,36 +135,52 @@ impl NativeWindowSmoke {
                 }
             }
             Phase::AwaitInput if self.phase_started.elapsed() >= Duration::from_millis(250) => {
-                controller.record_encoded_input(b"hello\r\n");
+                controller.record_encoded_input(b"post\r\n");
                 self.phase = Phase::AwaitEcho;
             }
             // ConPTY can issue a cursor-position query after resize. The core
             // correctly forwards that reply before the scripted line, so the
-            // child may echo the reply bytes before `hello`.
-            Phase::AwaitEcho if terminal_contains(terminal, "ECHO:") => {
+            // child may echo the reply bytes before `post`.
+            Phase::AwaitEcho if terminal_contains(terminal, "POST:") => {
                 self.phase = Phase::AwaitReportedSize;
             }
             Phase::AwaitReportedSize => {
                 let dimensions = terminal.dimensions();
                 let expected = format!("{} {}", dimensions.rows(), dimensions.columns());
                 if terminal_contains(terminal, &expected) {
-                    if self.focus_observed && self.resize_dimensions.len() == RESIZE_SEQUENCE.len()
+                    let retained_line = terminal_contains(terminal, "PRE:pre");
+                    let retained_marker = terminal_contains(terminal, "MARKER");
+                    if self.focus_observed
+                        && self.resize_dimensions.len() == RESIZE_SEQUENCE.len()
+                        && retained_line
+                        && retained_marker
                     {
                         self.finish(
                             context,
                             "pass",
-                            "native viewport, focus, resizes, PTY input/output verified",
+                            "native viewport, focus, resizes, retained pre-resize text, and PTY input/output verified",
                         );
                     } else {
                         self.finish(
                             context,
                             "fail",
-                            "native focus or resize observations were incomplete",
+                            &format!(
+                                "native focus, resize, or pre-resize text observations were incomplete: \
+                                 focus={}, resize_count={}, line_a={}, marker={}",
+                                self.focus_observed,
+                                self.resize_dimensions.len(),
+                                retained_line,
+                                retained_marker
+                            ),
                         );
                     }
                 }
             }
-            Phase::Finished | Phase::AwaitMarker | Phase::AwaitInput | Phase::AwaitEcho => {}
+            Phase::Finished
+            | Phase::AwaitMarker
+            | Phase::AwaitPreEcho
+            | Phase::AwaitInput
+            | Phase::AwaitEcho => {}
         }
     }
 
