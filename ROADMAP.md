@@ -285,6 +285,15 @@ Users can create an SSH tab without invoking an external SSH executable.
 
 ## Milestone 8 — Tabs, Profiles, and Workspace Restoration
 
+**Note:** By explicit decision, GUI chrome (session chips/tabs, the
+Launcher/Settings surfaces, and a minimal session inspector described in
+[`docs/gui-design.md`](docs/gui-design.md)) is being built as a parallel
+track alongside the M6 compatibility pass rather than waiting for M7/M8 to
+start. SSH tabs, persisted profiles, and workspace restoration remain gated
+on M7/M8 as documented above; only the local-session chrome and its Launcher
+and Settings surfaces are in scope early. This does not change M6/M7/M8
+completion criteria.
+
 ### Outcome
 
 fesTerm operates as a practical multi-session terminal application.

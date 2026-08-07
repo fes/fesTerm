@@ -6,7 +6,10 @@ native SSH client, written in Rust.
 ## Status
 
 Milestones 1 through 5 are implemented with native-window validation pending;
-Milestone 6 compatibility work is in progress. The GUI-independent terminal core has
+Milestone 6 compatibility work is in progress. As an explicit parallel track,
+initial M8-scope GUI chrome (session chips/tabs, Launcher and Settings
+surfaces, and a minimal session inspector) is also underway ahead of M7/M8;
+see the Milestone 8 note in [`ROADMAP.md`](ROADMAP.md). The GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,

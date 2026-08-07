@@ -1,81 +1,55 @@
-use std::sync::Arc;
+use std::time::Duration;
 
-use festerm_core::{Dimensions, Terminal};
-use festerm_pty::{LocalProfile, LocalPtySession};
-use festerm_session::Session;
-use festerm_ui_egui::TerminalView;
+use eframe::egui;
+use festerm_pty::LocalProfile;
+use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 
 use crate::native_smoke::NativeWindowSmoke;
-use crate::session_controller::{seed_session_failure, terminal_size, SessionController};
+use crate::screens;
+use crate::tabs::{AppCommand, AppState, TabContent, TabId};
 
 const APPLICATION_TITLE: &str = "fesTerm";
 
+/// Composition root.
+///
+/// `AppState` owns the always-nonempty tab collection and session/command
+/// policy (`docs/application-command-model.md`); this struct wires it to the
+/// `eframe` event loop, the top-of-window chrome
+/// (`crates/festerm-ui-egui/src/chrome.rs`), and the native-window smoke
+/// driver.
 pub struct FesTermApp {
-    terminal: Terminal,
-    terminal_view: TerminalView,
-    controller: SessionController<LocalPtySession>,
+    state: AppState,
+    /// The tab created at startup, retained so the native-window smoke driver
+    /// (which predates and does not know about tabs) can keep addressing the
+    /// one session it drives.
+    primary_tab: TabId,
     window_title: String,
     native_smoke: Option<NativeWindowSmoke>,
 }
 
 impl FesTermApp {
-    pub fn new(context: &eframe::egui::Context) -> Self {
-        let mut terminal =
-            Terminal::new(Dimensions::new(80, 24).expect("default dimensions are valid"))
-                .expect("default terminal allocation should succeed");
-        let notifier: Arc<dyn festerm_session::SessionEventNotifier> =
-            Arc::new(EguiRepaintNotifier(context.clone()));
-        let size = terminal_size(terminal.dimensions()).expect("default dimensions fit PTY limits");
+    pub fn new(context: &egui::Context) -> Self {
         let native_smoke = NativeWindowSmoke::from_environment();
-        let controller = match Self::start_session(native_smoke.as_ref(), size, notifier) {
-            Ok(session) => {
-                tracing::info!(
-                    target: "festerm::session",
-                    session = %session.id(),
-                    "started default local shell session"
-                );
-                SessionController::with_session(session)
-            }
-            Err(error) => {
-                let msg = error.to_string();
-                tracing::error!(
-                    target: "festerm::session",
-                    %error,
-                    "could not start default local shell"
-                );
-                seed_session_failure(&mut terminal, &msg);
-                SessionController::with_startup_error(msg)
-            }
-        };
+        let smoke_profile = native_smoke.as_ref().map(|smoke| {
+            LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
+        });
+        let (state, primary_tab) = AppState::with_primary_session(context, smoke_profile);
         Self {
-            terminal,
-            terminal_view: TerminalView::default(),
-            controller,
+            state,
+            primary_tab,
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke,
         }
     }
 
-    fn start_session(
-        native_smoke: Option<&NativeWindowSmoke>,
-        size: festerm_session::TerminalSize,
-        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
-    ) -> Result<LocalPtySession, festerm_pty::LocalPtyError> {
-        match native_smoke {
-            Some(smoke) => LocalPtySession::start_with_notifier(
-                LocalProfile::new(smoke.test_child_path())
-                    .with_arguments(smoke.test_child_arguments()),
-                size,
-                notifier,
-            ),
-            None => LocalPtySession::start_default_with_notifier(size, notifier),
-        }
-    }
-
-    fn update_window_title(&mut self, context: &eframe::egui::Context) {
-        let title = Self::window_title(self.terminal.title());
+    fn update_window_title(&mut self, context: &egui::Context) {
+        let terminal_title = match &self.state.active_tab_mut().content {
+            TabContent::Session(session) => session.terminal.title().to_owned(),
+            TabContent::Launcher | TabContent::Settings => String::new(),
+        };
+        let title = Self::window_title(&terminal_title);
         if self.window_title != title {
-            context.send_viewport_cmd(eframe::egui::ViewportCommand::Title(title.clone()));
+            context.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
         }
     }
@@ -86,52 +60,177 @@ impl FesTermApp {
             terminal_title => format!("{terminal_title} - {APPLICATION_TITLE}"),
         }
     }
-}
 
-/// Uses egui's thread-safe wake mechanism instead of polling for PTY output.
-struct EguiRepaintNotifier(eframe::egui::Context);
+    /// Drains every open session's bounded backend queues, independent of
+    /// which tab is active: each session chip represents "a persistent
+    /// object with its own identity and state" (`docs/gui-design.md`) that
+    /// must keep making progress while another tab is focused.
+    fn pump_all_sessions(&mut self, context: &egui::Context) {
+        let mut needs_repaint = false;
+        for session in self.state.session_tabs_mut() {
+            if session.controller.pump_events(&mut session.terminal) {
+                needs_repaint = true;
+            }
+            session
+                .controller
+                .forward_terminal_replies(&mut session.terminal);
+            session.controller.flush_pending_writes();
+            session.controller.flush_pending_resize();
+        }
+        if needs_repaint {
+            context.request_repaint();
+        }
+    }
 
-impl festerm_session::SessionEventNotifier for EguiRepaintNotifier {
-    fn notify(&self) {
-        self.0.request_repaint();
+    fn tab_id_for_chip(&self, chip_id: ChipId) -> Option<TabId> {
+        self.state
+            .tabs()
+            .iter()
+            .find(|tab| tab.id.chip_id() == chip_id.0)
+            .map(|tab| tab.id)
+    }
+
+    /// Translates chrome gestures into `AppCommand`s and dispatches them
+    /// through the single command-handling path
+    /// (`docs/application-command-model.md`).
+    fn dispatch_chrome_actions(&mut self, actions: Vec<ChromeAction>, context: &egui::Context) {
+        for action in actions {
+            match action {
+                ChromeAction::NewTab => self.state.dispatch(AppCommand::NewLauncherTab, context),
+                ChromeAction::OpenSettings => {
+                    self.state.dispatch(AppCommand::OpenSettings, context)
+                }
+                ChromeAction::ToggleInspector => self
+                    .state
+                    .dispatch(AppCommand::ToggleSessionInspector, context),
+                ChromeAction::Activate(chip_id) => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state.dispatch(AppCommand::ActivateTab(id), context);
+                    }
+                }
+                ChromeAction::Close(chip_id) => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state.dispatch(AppCommand::CloseTab(id), context);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Builds this frame's chip view models. Stable tab identity (label)
+    /// always leads; a non-empty terminal-provided title is shown only as
+    /// secondary metadata (`docs/gui-design.md` "Identity precedence").
+    fn chip_view_models(&self) -> (Vec<ChipViewModel>, ChipId) {
+        let chips = self
+            .state
+            .tabs()
+            .iter()
+            .map(|tab| {
+                let (primary, secondary, status) = match &tab.content {
+                    TabContent::Launcher => ("Launcher".to_owned(), None, ChipStatus::Neutral),
+                    TabContent::Settings => ("Settings".to_owned(), None, ChipStatus::Neutral),
+                    TabContent::Session(session) => {
+                        let dynamic_title = session.terminal.title();
+                        let secondary =
+                            (!dynamic_title.is_empty()).then(|| dynamic_title.to_owned());
+                        (session.label.clone(), secondary, session.chip_status())
+                    }
+                };
+                ChipViewModel {
+                    id: ChipId(tab.id.chip_id()),
+                    primary,
+                    secondary,
+                    status,
+                    closable: true,
+                }
+            })
+            .collect();
+        (chips, ChipId(self.state.active().chip_id()))
+    }
+
+    /// Right-side session inspector (`docs/gui-design.md` "Application chrome
+    /// and session context"): hidden by default, and shows only content-free
+    /// connection state and diagnostics for the active session. It never
+    /// hosts Settings.
+    fn show_session_inspector(&self, ui: &mut egui::Ui) {
+        let TabContent::Session(session) = &self.state.active_tab().content else {
+            return;
+        };
+        let status = session.controller.status_line();
+        let diagnostics = session.controller.diagnostics_line();
+        egui::Panel::right("session_inspector")
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.heading("Session Inspector");
+                ui.separator();
+                ui.label(status);
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(diagnostics).small().weak());
+            });
     }
 }
 
 impl eframe::App for FesTermApp {
-    fn logic(&mut self, context: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        if self.controller.pump_events(&mut self.terminal) {
-            context.request_repaint();
-        }
-        self.controller.forward_terminal_replies(&mut self.terminal);
-        self.controller.flush_pending_writes();
-        self.controller.flush_pending_resize();
+    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        self.pump_all_sessions(context);
         self.update_window_title(context);
-        if let Some(smoke) = &mut self.native_smoke {
-            smoke.drive(context, &mut self.terminal, &mut self.controller);
+        if let Some(smoke) = self.native_smoke.as_mut() {
+            if let Some(primary) = self.state.session_tab_mut(self.primary_tab) {
+                smoke.drive(context, &mut primary.terminal, &mut primary.controller);
+            }
         }
     }
 
-    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
-        let session_status = self.controller.status_line();
-        let session_diagnostics = self.controller.diagnostics_line();
-        self.terminal_view.show_with_status(
-            ui,
-            &mut self.terminal,
-            &mut self.controller,
-            &session_status,
-            &session_diagnostics,
-        );
-        self.controller
-            .observe_resize_probe_terminal_state(&self.terminal);
-        self.controller.forward_terminal_replies(&mut self.terminal);
-        self.controller.flush_pending_writes();
-        self.controller.flush_pending_resize();
-        if self.controller.pump_events(&mut self.terminal) {
-            ui.ctx().request_repaint();
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let (chips, active_chip) = self.chip_view_models();
+        let inspector_open = self.state.inspector_open();
+        let actions = chrome::show(ui, &chips, active_chip, inspector_open);
+        ui.separator();
+        self.dispatch_chrome_actions(actions, &ui.ctx().clone());
+
+        if inspector_open {
+            self.show_session_inspector(ui);
         }
+
+        let mut launcher_command = None;
+        {
+            let tab = self.state.active_tab_mut();
+            match &mut tab.content {
+                TabContent::Launcher => {
+                    launcher_command = screens::show_launcher(ui);
+                }
+                TabContent::Settings => screens::show_settings(ui),
+                TabContent::Session(session) => {
+                    let session_status = session.controller.status_line();
+                    let session_diagnostics = session.controller.diagnostics_line();
+                    session.view.show_with_status(
+                        ui,
+                        &mut session.terminal,
+                        &mut session.controller,
+                        &session_status,
+                        &session_diagnostics,
+                    );
+                    session
+                        .controller
+                        .observe_resize_probe_terminal_state(&session.terminal);
+                    session
+                        .controller
+                        .forward_terminal_replies(&mut session.terminal);
+                    session.controller.flush_pending_writes();
+                    session.controller.flush_pending_resize();
+                    if session.controller.pump_events(&mut session.terminal) {
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+        }
+        if let Some(command) = launcher_command {
+            let context = ui.ctx().clone();
+            self.state.dispatch(command, &context);
+        }
+
         if self.native_smoke.is_some() {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(10));
+            ui.ctx().request_repaint_after(Duration::from_millis(10));
         }
     }
 }

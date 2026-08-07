@@ -8,6 +8,7 @@ use egui::Color32;
 use festerm_core::{Cell, Cursor, CursorStyle, Screen, Terminal, TerminalModes};
 
 mod cache;
+pub mod chrome;
 mod geometry;
 mod input;
 mod renderer;

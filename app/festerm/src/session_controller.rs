@@ -362,6 +362,14 @@ impl<S: Session> SessionController<S> {
         self.session.as_ref()
     }
 
+    /// Returns the last observed session lifecycle, without terminal content.
+    ///
+    /// Used by chip-status presentation (`docs/gui-design.md` "Connection
+    /// states"); it never exposes bytes or terminal text.
+    pub fn lifecycle(&self) -> Option<SessionLifecycle> {
+        self.last_lifecycle.clone()
+    }
+
     /// Returns whether another frame is required to continue a bounded drain.
     pub fn pump_events(&mut self, terminal: &mut Terminal) -> bool {
         let Some(session) = &self.session else {
