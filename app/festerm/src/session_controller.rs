@@ -1138,6 +1138,11 @@ mod tests {
             );
         }
 
+        assert!(
+            smoke_row_contains(&terminal, "LINE-A") && smoke_row_contains(&terminal, "MARKER"),
+            "pre-resize output must remain after the complete resize sequence"
+        );
+
         // Step 3: send a line to unblock read-line.
         controller.record_encoded_input(b"hello\r\n");
 

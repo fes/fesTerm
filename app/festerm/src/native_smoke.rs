@@ -120,7 +120,11 @@ impl NativeWindowSmoke {
                     (rect.width() - requested.0).abs() < 8.0
                         && (rect.height() - requested.1).abs() < 8.0
                 });
-                if applied {
+                // The viewport event reaches `logic` before the following
+                // `ui` call applies its measured grid size to the terminal.
+                // Wait one settled frame so the recorded dimensions belong to
+                // this requested native size, rather than the previous one.
+                if applied && self.phase_started.elapsed() >= Duration::from_millis(100) {
                     let dimensions = terminal.dimensions();
                     let pair = (dimensions.columns(), dimensions.rows());
                     if self.resize_dimensions.last() != Some(&pair) {
@@ -166,11 +170,13 @@ impl NativeWindowSmoke {
                             "fail",
                             &format!(
                                 "native focus, resize, or pre-resize text observations were incomplete: \
-                                 focus={}, resize_count={}, line_a={}, marker={}",
+                                 focus={}, resize_count={}, line_a={}, marker={}, dimensions={:?}, rows={:?}",
                                 self.focus_observed,
                                 self.resize_dimensions.len(),
                                 retained_line,
-                                retained_marker
+                                retained_marker,
+                                self.resize_dimensions,
+                                smoke_rows(terminal),
                             ),
                         );
                     }
@@ -223,6 +229,13 @@ fn terminal_contains(terminal: &Terminal, needle: &str) -> bool {
     (0..terminal.dimensions().rows())
         .filter_map(|row| terminal.row_text(row))
         .any(|row| row.contains(needle))
+}
+
+fn smoke_rows(terminal: &Terminal) -> Vec<String> {
+    (0..terminal.dimensions().rows())
+        .filter_map(|row| terminal.row_text(row))
+        .filter(|row| !row.trim().is_empty())
+        .collect()
 }
 
 #[cfg(test)]
