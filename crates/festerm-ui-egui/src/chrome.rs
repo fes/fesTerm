@@ -13,9 +13,8 @@
 //! `docs/application-command-model.md`.
 
 use egui::{
-    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Margin, Order,
-    Popup, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo,
-    WidgetType,
+    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order, Popup,
+    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
 };
 
 /// Chip footprint bounds (`docs/gui-design.md` "Active and inactive tabs"):
@@ -198,26 +197,34 @@ pub fn show(
 /// part of the same family of controls rather than a plain default-styled
 /// button.
 fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
-    let fill = ui.visuals().widgets.inactive.weak_bg_fill;
+    // Match the chip painter's own approach (`paint_chip`): allocate an
+    // exact-height rect and paint fill/stroke directly into it, rather than
+    // going through `Frame`'s margin/stroke-width size accounting, so this
+    // control's height lines up with chips pixel-for-pixel in the same
+    // horizontal row.
+    let padding_x = 10.0;
+    let galley = ui.painter().layout_no_wrap(
+        "+ Launcher".to_owned(),
+        egui::TextStyle::Body.resolve(ui.style()),
+        ui.visuals().text_color(),
+    );
+    let width = galley.size().x + 2.0 * padding_x;
+    let (rect, mut response) = ui.allocate_exact_size(vec2(width, CHIP_HEIGHT), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "+ Launcher"));
+    response = response.on_hover_text("Open a new launcher tab");
+
+    let fill = crate::DEFAULT_BACKGROUND;
     let stroke = Stroke::new(1.0, Color32::from_gray(0x48));
-    let frame = egui::Frame::new()
-        .fill(fill)
-        .stroke(stroke)
-        .corner_radius(6)
-        .inner_margin(Margin::symmetric(10, 0));
-    let inner = frame.show(ui, |ui| {
-        ui.set_min_height(CHIP_HEIGHT - 2.0 * frame.stroke.width);
-        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.label(RichText::new("+ Launcher"));
-        });
-    });
-    let response = ui
-        .interact(
-            inner.response.rect,
-            Id::new("chrome_launcher_button"),
-            Sense::click(),
-        )
-        .on_hover_text("Open a new launcher tab");
+    ui.painter().rect_filled(rect, 6, fill);
+    ui.painter()
+        .rect_stroke(rect, 6, stroke, egui::StrokeKind::Inside);
+    let text_pos = egui::pos2(
+        rect.left() + padding_x,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    ui.painter()
+        .galley(text_pos, galley, ui.visuals().text_color());
+
     if response.clicked() {
         actions.push(ChromeAction::NewTab);
     }
@@ -490,10 +497,11 @@ fn paint_chip(
     actions: &mut Vec<ChromeAction>,
 ) -> egui::Response {
     let corner_radius = 6;
-    // Both states share the same neutral fill (`docs/gui-design.md`): the
+    // Both states share the same neutral fill, matching the rest of the
+    // application's near-black background (`docs/gui-design.md`): the
     // active chip is signified by its outline and close control, not by a
     // distinct accent fill.
-    let fill = ui.visuals().widgets.inactive.weak_bg_fill;
+    let fill = crate::DEFAULT_BACKGROUND;
     let stroke = if active {
         Stroke::new(1.5, Color32::from_gray(0xc8))
     } else {
@@ -505,8 +513,29 @@ fn paint_chip(
     ui.painter()
         .rect_stroke(outer_rect, corner_radius, stroke, egui::StrokeKind::Inside);
 
+    // The close control is positioned from the chip's own outer rect
+    // (evenly inset from the top and right edges) rather than flowing
+    // through the primary line's layout: this keeps its position fixed
+    // regardless of label length and avoids the label being pulled
+    // towards the right edge, which a right-to-left sub-layout previously
+    // caused for short labels.
+    const CLOSE_SIZE: f32 = 16.0;
+    const CLOSE_INSET: f32 = 8.0;
+    let close_rect = if chip.closable && show_close {
+        let rect = egui::Rect::from_min_size(
+            outer_rect.right_top() + vec2(-CLOSE_INSET - CLOSE_SIZE, CLOSE_INSET),
+            vec2(CLOSE_SIZE, CLOSE_SIZE),
+        );
+        let mut close_ui = ui.new_child(UiBuilder::new().max_rect(rect));
+        paint_close_button(&mut close_ui, chip.id, actions);
+        Some(rect)
+    } else {
+        None
+    };
+
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
+        ui.spacing_mut().item_spacing.y = 2.0;
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
         // `Ui::vertical` centers its children horizontally by default; the
         // mockup left-aligns the chip's content (with a small reserved
@@ -523,21 +552,15 @@ fn paint_chip(
                 let rename_id = rename_buffer_id(chip.id);
                 let editing: Option<String> = ui.data(|d| d.get_temp(rename_id));
 
-                if chip.closable && show_close {
-                    // Reserve the close button's space on the right edge
-                    // first, then lay out the label to its left, so the
-                    // label truncates instead of the close button being
-                    // pushed out of the chip. A trailing space keeps the
-                    // close control evenly inset from the chip's right
-                    // edge rather than flush against it.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(6.0);
-                        paint_close_button(ui, chip.id, actions);
-                        paint_chip_primary(ui, chip, active, rename_id, editing, actions);
-                    });
-                } else {
+                // Reserve the close button's width (if shown) so the
+                // label truncates before reaching under it, without
+                // otherwise affecting the label's left-aligned position.
+                let reserved = close_rect.map_or(0.0, |rect| outer_rect.right() - rect.left());
+                ui.scope(|ui| {
+                    let max_width = (ui.available_width() - reserved).max(0.0);
+                    ui.set_max_width(max_width);
                     paint_chip_primary(ui, chip, active, rename_id, editing, actions);
-                }
+                });
             });
             if let Some(secondary) = &chip.secondary {
                 ui.horizontal(|ui| {

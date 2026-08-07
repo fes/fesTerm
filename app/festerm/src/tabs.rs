@@ -346,6 +346,16 @@ impl AppState {
 
     fn start_local_session(&mut self, context: &egui::Context) {
         let session = SessionTab::start_default(context);
+        // Starting a session from the active Launcher tab replaces that
+        // tab in place (same position, same identity) rather than leaving
+        // the disposable launcher behind alongside a new session tab: the
+        // launcher's job is done once it has launched something.
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = TabContent::Session(Box::new(session));
+                return;
+            }
+        }
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
@@ -522,6 +532,45 @@ mod tests {
 
         assert_ne!(state.active(), initial);
         assert_ne!(state.active(), unknown);
+    }
+
+    #[test]
+    fn starting_a_local_session_from_the_active_launcher_replaces_it_in_place() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher_id = state.active();
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+
+        assert_eq!(
+            state.tabs().len(),
+            1,
+            "the launcher tab is replaced, not left behind alongside a new session tab"
+        );
+        assert_eq!(
+            state.active(),
+            launcher_id,
+            "the session tab keeps the launcher's identity/position"
+        );
+        assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+    }
+
+    #[test]
+    fn starting_a_local_session_from_a_non_launcher_active_tab_opens_a_new_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::OpenSettings, &context);
+        assert!(matches!(state.active_tab().content, TabContent::Settings));
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+
+        assert_eq!(
+            state.tabs().len(),
+            3,
+            "Settings and Launcher tabs are left untouched; the new session tab is added"
+        );
+        assert!(matches!(state.active_tab().content, TabContent::Session(_)));
     }
 
     #[test]
