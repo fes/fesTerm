@@ -17,9 +17,11 @@ policy.
 
 ## Decision
 
-fesTerm will use `russh` as its Tokio-native SSH client in a new
-`festerm-ssh` transport crate. Do not enable its insecure legacy `des` or
-`dsa` features.
+fesTerm will use `russh` with its supported `ring` crypto backend as its
+Tokio-native SSH client in a new `festerm-ssh` transport crate. Do not enable
+its insecure legacy `des` or `dsa` features. The default `aws-lc-rs` backend
+is not selected because its Windows build requires NASM, an unnecessary native
+toolchain prerequisite for fesTerm.
 
 `festerm-ssh` will emit the existing bounded `SessionEvent` values and accept
 the same input/resize operations as local sessions. It will not mutate
