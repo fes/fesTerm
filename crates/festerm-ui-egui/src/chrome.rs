@@ -51,6 +51,16 @@ const CHROME_ICON_COLOR_HOVERED: Color32 = Color32::from_gray(0xf0);
 /// keep its "destructive" affordance recognizable.
 const CHROME_CLOSE_HOVER: Color32 = Color32::from_rgb(0xe0, 0x5c, 0x5c);
 
+/// Footprint reserved for the trailing icon controls (overflow menu, panel
+/// toggle, search), each a fixed `22.0`-square icon separated by this row's
+/// `8.0` item spacing, plus one more `8.0` gap between the chip-row block
+/// and the icon block itself. The chip row's own available width is capped
+/// to leave this much room free (`show`), rather than letting the chip row
+/// claim the full row width and only discovering afterward that the icons
+/// no longer fit: on a narrow window that made the icons overlap the chips
+/// instead of wrapping/scrolling around them.
+const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = 3.0 * 22.0 + 3.0 * 8.0;
+
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -195,6 +205,16 @@ pub fn show(
         // while only this narrower sub-block opts into `Align::Min` fixes
         // the chip-row alignment without that regression.
         ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+            // Cap the chip row's own width so it leaves room for the
+            // trailing icon controls painted as this row's next sibling,
+            // rather than claiming the full remaining row width and only
+            // discovering afterward that the icons don't fit: on a narrow
+            // window that made the last chip(s) render underneath the
+            // icons instead of wrapping/scrolling to stay clear of them
+            // (`chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window`).
+            let max_chip_row_width =
+                (ui.available_width() - TRAILING_CONTROLS_RESERVED_WIDTH).max(0.0);
+            ui.set_max_width(max_chip_row_width);
             let chip_row = |ui: &mut Ui| {
                 for chip in chips {
                     show_chip(ui, chip, chip.id == active, &mut actions);
@@ -211,6 +231,7 @@ pub fn show(
                 ChipLayout::SingleRowScroll => {
                     ScrollArea::horizontal()
                         .id_salt("chip_row_scroll")
+                        .max_width(max_chip_row_width)
                         .show(ui, |ui| ui.horizontal(chip_row));
                 }
             }
@@ -823,6 +844,51 @@ mod tests {
             "expected the trailing icon controls to stay within the compact chip-row band \
              rather than centering within the full panel height, got {search_rect:?}"
         );
+    }
+
+    #[test]
+    fn chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window() {
+        // Regression test: on a narrow window, the wrapped chip row
+        // previously computed its wrap width from the *full* remaining row
+        // width (unaware the trailing icon controls still needed to be
+        // painted as its sibling), so its bounding box could extend under -
+        // rather than stop clear of - the search/panel/overflow icons.
+        // `ChipLayout::SingleRowScroll` is not covered here: a horizontally
+        // scrolled chip can legitimately report an off-screen logical rect
+        // past the visible viewport (that's the scrolling mechanism doing
+        // its job, not an overlap bug), so per-chip rect assertions don't
+        // apply there the same way.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 300.0))
+            .with_step_dt(0.01)
+            .build_ui_state(
+                |ui, state: &mut ChromeHarnessState| {
+                    let actions = show(ui, &state.chips, state.active, false, state.layout);
+                    state.observed.extend(actions);
+                },
+                ChromeHarnessState {
+                    chips: vec![
+                        chip(1, "one"),
+                        chip(2, "two"),
+                        chip(3, "three"),
+                        chip(4, "four"),
+                    ],
+                    active: ChipId(1),
+                    layout: ChipLayout::Wrap,
+                    observed: Vec::new(),
+                },
+            );
+        harness.run();
+
+        let search_rect = harness.get_by_label("Search (Ctrl+Shift+P)").rect();
+        for label in ["one chip", "two chip", "three chip", "four chip"] {
+            let chip_rect = harness.get_by_label(label).rect();
+            assert!(
+                chip_rect.right() <= search_rect.left() + 1.0,
+                "expected {label}'s rect ({chip_rect:?}) to stay clear of the search icon \
+                 ({search_rect:?})"
+            );
+        }
     }
 
     #[test]

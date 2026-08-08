@@ -277,6 +277,8 @@ The design must remain usable with many sessions. The implementation should supp
 
 Chips clip overflowing text with an ellipsis rather than growing without bound: both the primary and secondary lines truncate to a fixed chip-width range instead of forcing the whole row layout to widen to fit a long terminal-provided title (for example, a full shell executable path). Where a terminal-provided title looks path-like, the chip's secondary text shows only its final path component (e.g. `cmd.exe`) rather than the full path, so the identity-first chip stays compact; this is purely a display reduction and never mutates the underlying terminal-provided title data.
 
+The chip row and the trailing global icon controls (search, panel toggle, overflow menu) share one horizontal row, so the chip row's own wrap/scroll width budget is capped to leave room for those icons (`TRAILING_CONTROLS_RESERVED_WIDTH` in `crates/festerm-ui-egui/src/chrome.rs`) rather than being computed as if it owned the full row width. This prevents the last wrapped or scrolled chip from rendering underneath the icons on narrow windows.
+
 
 ## Session Creation Workflow
 
@@ -431,6 +433,10 @@ Ligature enabling should remain blocked until the M6 ligature and fallback valid
 ### User control
 
 Users should eventually be able to configure terminal font family, size, fallback behavior, line height, and ligature preference through versioned configuration and GUI settings.
+
+### Cursor appearance
+
+The terminal-correctness spec default cursor style is `BlinkingBlock` (per real xterm/VT100 behavior), which the core terminal model (`crates/festerm-core/src/terminal.rs`) always reports faithfully once a program has requested a style. However, as an additive, GUI-only presentation choice, the renderer (`crates/festerm-ui-egui/src/renderer.rs`) shows a steady vertical bar cursor by default — until the terminal program in the session explicitly requests a style via DECSCUSR (tracked separately via `Terminal::cursor_style_requested_by_program()`), at which point the program's requested style is honored exactly. This avoids the hollow, unfocused-looking empty box appearing by default while never altering the spec-observable `cursor_style()` value itself. When a block-style cursor is in effect and the view is focused, it renders filled (solid) rather than a hollow outline, matching conventional terminal-emulator focus affordance; the character glyph underneath a filled cursor is redrawn in the background color on top so it stays legible.
 
 ## Interaction Conventions
 

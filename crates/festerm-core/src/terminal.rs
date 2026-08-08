@@ -164,6 +164,13 @@ pub struct Terminal {
     active_screen: ActiveScreen,
     modes: TerminalModes,
     cursor_style: CursorStyle,
+    /// Whether the running program has ever requested a cursor style via
+    /// DECSCUSR. GUI front ends use this to distinguish "the spec-mandated
+    /// blinking-block reset state" from "no preference has been expressed
+    /// yet", so they can apply their own default appearance until a program
+    /// actually asks for something specific, without changing what
+    /// `cursor_style()` itself reports (still spec-accurate either way).
+    cursor_style_set: bool,
     tab_stops: Vec<bool>,
     current_attributes: Attributes,
     current_foreground: Color,
@@ -186,6 +193,7 @@ impl Terminal {
             active_screen: ActiveScreen::Primary,
             modes: TerminalModes::default(),
             cursor_style: CursorStyle::default(),
+            cursor_style_set: false,
             tab_stops: default_tab_stops(dimensions),
             current_attributes: Attributes::NONE,
             current_foreground: Color::Default,
@@ -219,6 +227,15 @@ impl Terminal {
 
     pub const fn cursor_style(&self) -> CursorStyle {
         self.cursor_style
+    }
+
+    /// Whether a running program has ever requested a cursor style via
+    /// DECSCUSR (`set_cursor_style`). GUI front ends can use this to apply
+    /// their own default cursor appearance until a program actually
+    /// expresses a preference, without affecting what `cursor_style()`
+    /// itself reports.
+    pub const fn cursor_style_requested_by_program(&self) -> bool {
+        self.cursor_style_set
     }
 
     pub const fn attributes(&self) -> Attributes {
@@ -711,6 +728,7 @@ impl Terminal {
             6 => CursorStyle::SteadyBar,
             _ => return,
         };
+        self.cursor_style_set = true;
     }
 
     fn clear_pending_wrap(&mut self) {

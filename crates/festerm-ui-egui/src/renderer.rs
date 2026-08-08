@@ -357,20 +357,73 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
             } else {
                 DEFAULT_FOREGROUND.gamma_multiply(0.5)
             };
-            paint_cursor(painter, cell_rect, paint.snapshot.cursor_style(), color);
+            // Until the running program explicitly requests a cursor shape
+            // via DECSCUSR, render a vertical bar rather than the
+            // spec-mandated blinking-block reset state: a full hollow box
+            // reads as "unfocused" even when it isn't, and a bar is the
+            // more typical default cursor appearance for a fresh session.
+            // `cursor_style()` itself is untouched and still reports the
+            // spec-accurate value to anything that queries it.
+            let style = if paint.snapshot.cursor_style_requested_by_program() {
+                paint.snapshot.cursor_style()
+            } else {
+                CursorStyle::SteadyBar
+            };
+            let focused_block = paint.focused
+                && matches!(style, CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock);
+            paint_cursor(painter.clone(), cell_rect, style, color, paint.focused);
+            if focused_block {
+                // A filled block would otherwise fully hide the character
+                // underneath; redraw it inverted (background-colored) on
+                // top, matching every other terminal emulator's filled
+                // block-cursor convention.
+                if let Some(cell) = paint.cache.row(cursor.row()).and_then(|row| {
+                    row.get(cursor.column())
+                        .filter(|cell| !cell.text.is_empty())
+                }) {
+                    let galley = glyphs.layout(
+                        &painter,
+                        &cell.text,
+                        cell.attributes,
+                        DEFAULT_BACKGROUND,
+                        paint.fonts,
+                        cell_rect.width(),
+                    );
+                    let text_position = Pos2::new(
+                        cell_rect.left(),
+                        cell_rect.top()
+                            + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                    );
+                    painter.galley(text_position, galley, DEFAULT_BACKGROUND);
+                }
+            }
         }
     }
 }
 
-fn paint_cursor(painter: egui::Painter, cell: Rect, style: CursorStyle, color: Color32) {
+fn paint_cursor(
+    painter: egui::Painter,
+    cell: Rect,
+    style: CursorStyle,
+    color: Color32,
+    focused: bool,
+) {
     match style {
         CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock => {
-            painter.rect_stroke(
-                cell.shrink(0.5),
-                0.0,
-                Stroke::new(1.0_f32, color),
-                StrokeKind::Inside,
-            );
+            // Filled when focused (the conventional "this pane has the
+            // keyboard" look shared by other terminal emulators), hollow
+            // when not, so shape alone communicates focus state rather
+            // than always drawing a hollow box regardless of focus.
+            if focused {
+                painter.rect_filled(cell, 0.0, color);
+            } else {
+                painter.rect_stroke(
+                    cell.shrink(0.5),
+                    0.0,
+                    Stroke::new(1.0_f32, color),
+                    StrokeKind::Inside,
+                );
+            }
         }
         CursorStyle::BlinkingUnderline | CursorStyle::SteadyUnderline => {
             painter.line_segment(

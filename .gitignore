@@ -5,3 +5,6 @@ third_party/conpty/*.nupkg
 **/tests/snapshots/*.old.png
 
 .git_commit_msg.txt
+.session-screenshot.ps1
+.shot.png
+.session-screenshot.png

@@ -72,6 +72,7 @@ pub struct TerminalSnapshot<'a> {
     screen: &'a Screen,
     cursor: Cursor,
     cursor_style: CursorStyle,
+    cursor_style_requested_by_program: bool,
     modes: TerminalModes,
 }
 
@@ -81,6 +82,7 @@ impl<'a> TerminalSnapshot<'a> {
             screen: terminal.screen(),
             cursor: terminal.cursor(),
             cursor_style: terminal.cursor_style(),
+            cursor_style_requested_by_program: terminal.cursor_style_requested_by_program(),
             modes: terminal.modes(),
         }
     }
@@ -95,6 +97,15 @@ impl<'a> TerminalSnapshot<'a> {
 
     pub const fn cursor_style(self) -> CursorStyle {
         self.cursor_style
+    }
+
+    /// Whether the running program inside the terminal has ever explicitly
+    /// requested a cursor style (DECSCUSR). When `false`, the terminal is
+    /// still in its untouched initial state and the GUI is free to apply
+    /// its own preferred default appearance instead of `cursor_style()`'s
+    /// spec-mandated blinking-block value.
+    pub const fn cursor_style_requested_by_program(self) -> bool {
+        self.cursor_style_requested_by_program
     }
 
     pub const fn modes(self) -> TerminalModes {
