@@ -71,6 +71,19 @@ impl TerminalView {
         &self.selection
     }
 
+    /// Marks this view as needing keyboard focus again on its next frame.
+    /// Chip/tab activation switches which session's `show`/`show_in_ui` is
+    /// called each frame (inactive tabs render nothing at all), so the
+    /// one-shot "claim focus on first frame" behavior only fires once ever
+    /// per session, not once per activation - clicking a chip to switch to
+    /// an already-rendered-before session left keyboard focus stranded on
+    /// the chrome row until the user clicked inside the terminal
+    /// themselves. Callers should invoke this whenever a session's tab
+    /// becomes the active tab (`docs/gui-design.md`).
+    pub fn request_focus_on_next_frame(&mut self) {
+        self.has_requested_initial_focus = false;
+    }
+
     /// Shows the terminal, filling all available space in `ui`. Detailed
     /// per-frame diagnostics are not rendered inline (`docs/gui-design.md`
     /// "Bottom status bar"); callers that want to surface them can read
@@ -78,7 +91,21 @@ impl TerminalView {
     /// into their own chrome (e.g. the application status bar).
     pub fn show(&mut self, ui: &mut Ui, terminal: &mut Terminal, sink: &mut impl EncodedInputSink) {
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(DEFAULT_BACKGROUND))
+            .frame(
+                egui::Frame::default()
+                    .fill(DEFAULT_BACKGROUND)
+                    // Share the chrome row's own inset
+                    // (`crate::chrome::CHROME_SIDE_INSET`, equal on every
+                    // side) so the terminal viewport reserves the same
+                    // handful of border pixels on all four edges that
+                    // Windows Terminal/Terminus/the mockup do, instead of
+                    // running flush to the window edges on top/bottom while
+                    // only the sides were inset.
+                    .inner_margin(egui::Margin::symmetric(
+                        crate::chrome::CHROME_SIDE_INSET as i8,
+                        crate::chrome::CHROME_SIDE_INSET as i8,
+                    )),
+            )
             .show(ui, |ui| {
                 self.show_in_ui(ui, terminal, sink);
             });

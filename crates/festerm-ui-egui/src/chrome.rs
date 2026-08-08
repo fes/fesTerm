@@ -37,7 +37,7 @@ const CHIP_HEIGHT: f32 = 38.0;
 /// Light grey used for the active chip's outline and its close control, so
 /// the two read as the same visual "active" affordance rather than the
 /// close control looking dimmer/disabled by comparison.
-const CHIP_ACTIVE_OUTLINE: Color32 = Color32::from_gray(0xc8);
+const CHIP_ACTIVE_OUTLINE: Color32 = Color32::from_gray(0xa0);
 /// Darker grey outline for inactive chips and the Launcher control.
 const CHIP_INACTIVE_OUTLINE: Color32 = Color32::from_gray(0x48);
 /// Always-legible text colors for chip content.
@@ -51,16 +51,56 @@ const CHROME_ICON_COLOR_HOVERED: Color32 = Color32::from_gray(0xf0);
 /// keep its "destructive" affordance recognizable.
 const CHROME_CLOSE_HOVER: Color32 = Color32::from_rgb(0xe0, 0x5c, 0x5c);
 
+/// Background fill for the whole top chrome band, deliberately *lighter*
+/// than the terminal content's `DEFAULT_BACKGROUND` (mockup: the chrome
+/// band reads as a raised/lighter surface the chips sit on, distinct from
+/// the darker content well beneath it).
+const CHROME_BACKGROUND: Color32 = Color32::from_gray(0x26);
+/// Fill for an inactive chip and the "new tab" control: a shade between
+/// `CHROME_BACKGROUND` and the content's `DEFAULT_BACKGROUND`, so chips
+/// read as distinct objects sitting on the chrome band rather than holes
+/// cut into it.
+const CHIP_INACTIVE_FILL: Color32 = Color32::from_gray(0x20);
+/// Fill for the *active* chip: measured directly against the mockup
+/// (`festerm-gui-wireframe-v1.2.png` panel 1), the selected chip's fill is
+/// the lightest surface in the whole panel (lum ~170), noticeably lighter
+/// than both an inactive chip (lum ~151) and the chrome band itself - not
+/// darker/merged with the terminal content beneath it. An earlier iteration
+/// mistakenly made the active chip match `DEFAULT_BACKGROUND` (the
+/// terminal's own, much darker, background), which inverted this ordering:
+/// the "selected" chip ended up the *darkest* element in the row instead of
+/// the lightest. Kept lighter than `CHROME_BACKGROUND` and
+/// `CHIP_INACTIVE_FILL` so the fill alone (not just the outline) reads as
+/// "this one is selected."
+const CHIP_ACTIVE_FILL: Color32 = Color32::from_gray(0x40);
+
+/// Horizontal inset from the window's left/right edges to the first/last
+/// chrome element (mockup: a consistent margin surrounds the chip row, and
+/// the terminal content below shares the same left/right inset -
+/// `TerminalView::show`). Kept equal to `CHROME_TOP_INSET` - the mockup (and
+/// reference terminals like Windows Terminal/Terminus) reserve the same
+/// handful of pixels as a border on every side of the terminal viewport, so
+/// the side inset and top/bottom insets are one shared constant rather than
+/// independently tuned values that happen to look similar.
+pub(crate) const CHROME_SIDE_INSET: f32 = CHROME_TOP_INSET;
+/// Vertical inset from the window's top edge to the chip row itself, and
+/// (via `CHROME_SIDE_INSET`/`TerminalView::show`) the uniform border width
+/// reserved on all four sides of the terminal viewport.
+const CHROME_TOP_INSET: f32 = 8.0;
+/// Vertical inset from the bottom of the chip row to the content below.
+const CHROME_BOTTOM_INSET: f32 = CHROME_TOP_INSET;
+
 /// Footprint reserved for the trailing icon controls (window
 /// minimize/maximize/close, overflow menu, panel toggle, search), each a
 /// fixed `22.0`-square icon separated by this row's `8.0` item spacing, plus
-/// one more `8.0` gap between the chip-row block and the icon block itself.
+/// one more `8.0` gap between the chip-row block and the icon block itself,
+/// plus the same right-edge inset the chip row's left edge gets.
 /// The chip row's own available width is capped to leave this much room
 /// free (`show`), rather than letting the chip row claim the full row width
 /// and only discovering afterward that the icons no longer fit: on a narrow
 /// window that made the icons overlap the chips instead of
 /// wrapping/scrolling around them.
-const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = 6.0 * 22.0 + 6.0 * 8.0;
+const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = 6.0 * 22.0 + 6.0 * 8.0 + CHROME_SIDE_INSET;
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
@@ -191,8 +231,36 @@ pub fn show(
     layout: ChipLayout,
 ) -> Vec<ChromeAction> {
     let mut actions = Vec::new();
+    // Paint the whole chrome band's background *first*, spanning the full
+    // available width and the row's total (inset-inclusive) height, so the
+    // margins added below sit on the same lighter chrome surface as the
+    // chips themselves rather than showing raw/transparent window
+    // background (mockup: the chrome band reads as a distinct, lighter
+    // surface than the terminal content beneath it).
+    let band_rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        vec2(
+            ui.available_width(),
+            CHROME_TOP_INSET + CHIP_HEIGHT + CHROME_BOTTOM_INSET,
+        ),
+    );
+    ui.painter().rect_filled(band_rect, 0.0, CHROME_BACKGROUND);
+    ui.add_space(CHROME_TOP_INSET);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
+        // Clamp this row's own height to the chip's compact content height
+        // (rather than letting it inherit the full remaining panel height,
+        // as a fresh `ui.horizontal` otherwise would): both the chip row's
+        // `Align::Min` sub-layout and the icon block's `Align::Center`
+        // sub-layout below need to agree on the *same* row height for
+        // their vertical centering to land on the same line - previously
+        // only the chip row was height-constrained, so the icon block's
+        // `Align::Center` centered within the whole remaining panel height
+        // instead, landing visibly off from the chips' own vertical
+        // center.
+        ui.set_min_height(CHIP_HEIGHT);
+        ui.set_max_height(CHIP_HEIGHT);
+        ui.add_space(CHROME_SIDE_INSET);
         // Background drag-to-move region for this frameless window
         // (`docs/gui-design.md` "native min/max/close window buttons
         // directly in the same band as the chips"): a fixed-height band
@@ -266,6 +334,7 @@ pub fn show(
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add_space(CHROME_SIDE_INSET);
             paint_close_icon(ui);
             let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
             paint_maximize_icon(ui, maximized);
@@ -279,25 +348,52 @@ pub fn show(
             }
         });
     });
+    // Consume the bottom inset the painted `band_rect` above already
+    // reserved height for: without explicitly advancing the cursor here,
+    // the content painted by the caller immediately after this function
+    // returns starts right at the bottom of the chip row itself, so the
+    // chrome band's bottom margin never actually shows even though its
+    // background was painted tall enough for it (top/left/right insets
+    // were consumed via `add_space` above; this one wasn't, and the gap
+    // collapsed to zero).
+    ui.add_space(CHROME_BOTTOM_INSET);
     actions
 }
 
-/// Compact icon-only "add chip" control placed right after the last chip.
-/// This is the sole way to open a new Launcher tab from the chrome row
-/// (`AGENTS.md`: no duplicate widget-specific copies of the same
-/// operation) - an earlier full "+ Launcher" chip-style button duplicated
-/// this control and was removed as redundant.
+/// Compact "add chip" control placed right after the last chip, painted
+/// with the same chip-style rounded outline as an inactive chip (mockup:
+/// the `+` control reads as a small chip in its own right, not a bare
+/// icon floating in the row) - the sole way to open a new Launcher tab
+/// from the chrome row (`AGENTS.md`: no duplicate widget-specific copies
+/// of the same operation) - an earlier full "+ Launcher" chip-style
+/// button duplicated this control and was removed as redundant.
 fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
-    let size = 22.0;
+    let size = CHIP_HEIGHT;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "New tab"));
-    let color = if response.hovered() {
+    let hovered = response.hovered();
+    // Hover feedback is communicated by matching the active chip's lighter
+    // fill, not by brightening the outline - the outline stays the fixed
+    // `CHIP_INACTIVE_OUTLINE` regardless of hover state.
+    let fill = if hovered {
+        CHIP_ACTIVE_FILL
+    } else {
+        CHIP_INACTIVE_FILL
+    };
+    ui.painter().rect_filled(rect, 6.0, fill);
+    ui.painter().rect_stroke(
+        rect,
+        6.0,
+        Stroke::new(1.0, CHIP_INACTIVE_OUTLINE),
+        egui::StrokeKind::Inside,
+    );
+    let color = if hovered {
         CHROME_ICON_COLOR_HOVERED
     } else {
         CHROME_ICON_COLOR
     };
     let center = rect.center();
-    let half = size * 0.28;
+    let half = size * 0.2;
     ui.painter().line_segment(
         [center - vec2(half, 0.0), center + vec2(half, 0.0)],
         Stroke::new(1.5, color),
@@ -329,7 +425,7 @@ fn paint_minimize_icon(ui: &mut Ui) {
         CHROME_ICON_COLOR
     };
     let center = rect.center();
-    let half = size * 0.22;
+    let half = size * 0.26;
     ui.painter().line_segment(
         [center - vec2(half, 0.0), center + vec2(half, 0.0)],
         Stroke::new(1.5, color),
@@ -397,7 +493,7 @@ fn paint_close_icon(ui: &mut Ui) {
         CHROME_ICON_COLOR
     };
     let center = rect.center();
-    let half = size * 0.22;
+    let half = size * 0.26;
     ui.painter().line_segment(
         [center - vec2(half, half), center + vec2(half, half)],
         Stroke::new(1.5, color),
@@ -567,7 +663,15 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
         let layer_id = LayerId::new(Order::Tooltip, chip_id);
         let mut floating_ui =
             ui.new_child(UiBuilder::new().max_rect(ghost_rect).layer_id(layer_id));
-        let content_response = paint_chip(&mut floating_ui, chip, active, active, chip_id, actions);
+        let content_response = paint_chip(
+            &mut floating_ui,
+            chip,
+            active,
+            false,
+            active,
+            chip_id,
+            actions,
+        );
 
         if let Some(pointer_pos) = ctx.pointer_interact_pos() {
             let delta = pointer_pos - content_response.rect.center();
@@ -596,8 +700,17 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
     // the mockup where inactive chips carry a plain dark-grey outline and
     // no close affordance at all, even on hover.
     let show_close = active;
+    let hovered = bg_response.hovered();
     let mut content_ui = ui.new_child(UiBuilder::new().max_rect(bg_rect));
-    let content_response = paint_chip(&mut content_ui, chip, active, show_close, chip_id, actions);
+    let content_response = paint_chip(
+        &mut content_ui,
+        chip,
+        active,
+        hovered,
+        show_close,
+        chip_id,
+        actions,
+    );
     let clamped_size = vec2(
         content_response
             .rect
@@ -644,16 +757,26 @@ fn paint_chip(
     ui: &mut Ui,
     chip: &ChipViewModel,
     active: bool,
+    hovered: bool,
     show_close: bool,
     chip_id: Id,
     actions: &mut Vec<ChromeAction>,
 ) -> egui::Response {
     let corner_radius = 6;
-    // Both states share the same neutral fill, matching the rest of the
-    // application's near-black background (`docs/gui-design.md`): the
-    // active chip is signified by its outline and close control, not by a
-    // distinct accent fill.
-    let fill = crate::DEFAULT_BACKGROUND;
+    // The active chip's fill is the lightest surface in the row (measured
+    // against the mockup: selected-chip fill lum ~170, the panel's overall
+    // brightest element), not a darker merge with the terminal content -
+    // see `CHIP_ACTIVE_FILL`'s doc comment for the earlier, inverted
+    // assumption this replaces. Hovering an *inactive* chip previews that
+    // same lighter fill (without touching its outline) rather than
+    // brightening the outline - matching `paint_new_chip_button`'s hover
+    // treatment for a consistent hover language across all chip-shaped
+    // controls in the row.
+    let fill = if active || hovered {
+        CHIP_ACTIVE_FILL
+    } else {
+        CHIP_INACTIVE_FILL
+    };
     let stroke = if active {
         Stroke::new(1.5, CHIP_ACTIVE_OUTLINE)
     } else {
@@ -738,6 +861,12 @@ fn paint_chip(
                         egui::Label::new(
                             RichText::new(secondary).color(CHIP_SECONDARY_TEXT).small(),
                         )
+                        // Chip text is identity/navigation chrome, not
+                        // selectable document content: without this, egui's
+                        // default `selectable_labels` style makes the whole
+                        // chip show a text (I-beam) hover cursor instead of
+                        // the plain arrow a clickable chip should have.
+                        .selectable(false)
                         .truncate(),
                     );
                 });
@@ -787,7 +916,15 @@ fn paint_chip_primary(
         }
     } else {
         let label = RichText::new(&chip.primary).color(CHIP_PRIMARY_TEXT);
-        let label_response = ui.add(egui::Label::new(label).sense(Sense::click()).truncate());
+        let label_response = ui.add(
+            egui::Label::new(label)
+                .sense(Sense::click())
+                // See the secondary-line label above: this is clickable
+                // navigation chrome, not selectable text, so the hover
+                // cursor should read as a plain arrow, not an I-beam.
+                .selectable(false)
+                .truncate(),
+        );
         if label_response.clicked() {
             actions.push(ChromeAction::Activate(chip.id));
         }

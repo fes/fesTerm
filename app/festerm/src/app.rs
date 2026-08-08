@@ -136,6 +136,14 @@ impl FesTermApp {
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
                         self.state.dispatch(AppCommand::ActivateTab(id), context);
+                        // Re-claim keyboard focus for the now-active
+                        // session's terminal (`TerminalView::
+                        // request_focus_on_next_frame`): selecting a chip
+                        // otherwise left focus on the chrome row until the
+                        // user clicked inside the terminal themselves.
+                        if let Some(tab) = self.state.session_tab_mut(id) {
+                            tab.view.request_focus_on_next_frame();
+                        }
                     }
                 }
                 ChromeAction::Close(chip_id) => {
@@ -369,26 +377,41 @@ impl FesTermApp {
     /// active session's grid dimensions are always shown alongside the
     /// left segment (`docs/gui-design.md` "Bottom status bar").
     fn show_status_bar(&self, ui: &mut egui::Ui) {
-        let (left, dimensions, status, status_label) = match &self.state.active_tab().content {
-            TabContent::Launcher | TabContent::Settings => {
-                (APPLICATION_TITLE.to_owned(), None, ChipStatus::Neutral, "")
-            }
-            TabContent::Session(session) => {
-                let secondary = (!session.terminal.title().is_empty())
-                    .then(|| Self::display_secondary(session.terminal.title()));
-                let left = match secondary {
-                    Some(secondary) => format!("{} — {}", session.label, secondary),
-                    None => session.label.clone(),
-                };
-                let status = session.chip_status();
-                (
-                    left,
-                    session.view.dimensions_label(),
-                    status,
-                    status.accessible_label(),
-                )
-            }
-        };
+        let (left, dimensions, system, status, status_label) =
+            match &self.state.active_tab().content {
+                TabContent::Launcher | TabContent::Settings => (
+                    APPLICATION_TITLE.to_owned(),
+                    None,
+                    None,
+                    ChipStatus::Neutral,
+                    "",
+                ),
+                TabContent::Session(session) => {
+                    let secondary = (!session.terminal.title().is_empty())
+                        .then(|| Self::display_secondary(session.terminal.title()));
+                    let left = match secondary {
+                        Some(secondary) => format!("{} — {}", session.label, secondary),
+                        None => session.label.clone(),
+                    };
+                    let status = session.chip_status();
+                    (
+                        left,
+                        session.view.dimensions_label(),
+                        // The host platform's real line-ending convention
+                        // (`docs/gui-design.md`): genuinely available data
+                        // (not fabricated shell/encoding metadata), and
+                        // important because it tells the user whether the
+                        // active session's line endings are CRLF or LF.
+                        // All sessions are local shells today, so this is
+                        // simply the platform fesTerm itself runs on; a
+                        // future remote/SSH session would report its own
+                        // host's convention instead.
+                        Some(Self::system_label()),
+                        status,
+                        status.accessible_label(),
+                    )
+                }
+            };
         let now = chrono::Local::now();
         let clock = now.format("%H:%M:%S").to_string();
         let date = now.format("%Y-%m-%d").to_string();
@@ -402,6 +425,7 @@ impl FesTermApp {
                     festerm_ui_egui::statusbar::StatusBarContent {
                         left: &left,
                         dimensions: dimensions.as_deref(),
+                        system,
                         status,
                         status_label,
                         clock: &clock,
@@ -409,6 +433,16 @@ impl FesTermApp {
                     },
                 );
             });
+    }
+
+    /// The active session's host platform, labeled with its real
+    /// line-ending convention (`docs/gui-design.md` "Bottom status bar").
+    fn system_label() -> &'static str {
+        if cfg!(windows) {
+            "Windows (CRLF)"
+        } else {
+            "Unix (LF)"
+        }
     }
 }
 
@@ -445,7 +479,11 @@ impl FesTermApp {
             inspector_open,
             self.state.chip_layout(),
         );
-        ui.separator();
+        // No explicit separator line here: the chrome band now paints its
+        // own lighter `CHROME_BACKGROUND` fill, and the natural color
+        // contrast between that band and the darker terminal content below
+        // it reads as the boundary (mockup: a near-invisible seam, not a
+        // bright rule).
         self.dispatch_chrome_actions(actions, &ui.ctx().clone());
 
         if self.state.status_bar_visible() {
