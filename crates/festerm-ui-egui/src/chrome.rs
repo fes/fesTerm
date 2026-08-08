@@ -180,28 +180,42 @@ pub fn show(
     layout: ChipLayout,
 ) -> Vec<ChromeAction> {
     let mut actions = Vec::new();
-    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        paint_launcher_button(ui, &mut actions);
-        let chip_row = |ui: &mut Ui| {
-            for chip in chips {
-                show_chip(ui, chip, chip.id == active, &mut actions);
+        // Scope the "+ Launcher" control and the chip row to their own
+        // top-aligned sub-layout, rather than changing this whole row's
+        // (or `ui.horizontal_top`'s) cross-axis alignment: both alternatives
+        // hand the *entire* remaining panel height down to the trailing
+        // icon controls' own `Align::Center` sub-layout below (instead of
+        // just this row's compact content height), centering the icons
+        // somewhere in the middle of the whole window and leaving no room
+        // for the terminal view painted after this function returns.
+        // Keeping the outer row's own layout as plain `Align::Center`
+        // (proven safe: `chrome_row_stays_a_compact_band_even_with_a_tall_available_area`)
+        // while only this narrower sub-block opts into `Align::Min` fixes
+        // the launcher/chip alignment without that regression.
+        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+            paint_launcher_button(ui, &mut actions);
+            let chip_row = |ui: &mut Ui| {
+                for chip in chips {
+                    show_chip(ui, chip, chip.id == active, &mut actions);
+                }
+                paint_new_chip_button(ui, &mut actions);
+                // A small strip past the last chip lets a drag be released
+                // (or live-shuffled to) the end of the row.
+                end_of_row_drop_target(ui, &mut actions);
+            };
+            match layout {
+                ChipLayout::Wrap => {
+                    ui.horizontal_wrapped(chip_row);
+                }
+                ChipLayout::SingleRowScroll => {
+                    ScrollArea::horizontal()
+                        .id_salt("chip_row_scroll")
+                        .show(ui, |ui| ui.horizontal(chip_row));
+                }
             }
-            paint_new_chip_button(ui, &mut actions);
-            // A small strip past the last chip lets a drag be released (or
-            // live-shuffled to) the end of the row.
-            end_of_row_drop_target(ui, &mut actions);
-        };
-        match layout {
-            ChipLayout::Wrap => {
-                ui.horizontal_wrapped(chip_row);
-            }
-            ChipLayout::SingleRowScroll => {
-                ScrollArea::horizontal()
-                    .id_salt("chip_row_scroll")
-                    .show(ui, |ui| ui.horizontal(chip_row));
-            }
-        }
+        });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             paint_overflow_menu(ui, &mut actions);
             if paint_panel_icon(ui, inspector_open) {
@@ -797,6 +811,78 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::Activate(ChipId(2))));
+    }
+
+    #[test]
+    fn chrome_row_stays_a_compact_band_even_with_a_tall_available_area() {
+        // Regression test: the chrome row's top-level layout previously
+        // switched from plain `ui.horizontal` (`Align::Center`) to an
+        // `Align::Min` layout (via `with_layout`/`horizontal_top`) directly
+        // on the incoming `ui`, to top-align the "+ Launcher" control with
+        // the chip row. That fixed their alignment but, empirically, an
+        // `Align::Min` top-level layout here hands the *entire* remaining
+        // panel height down through to the trailing icon controls' nested
+        // `Align::Center` sub-layout (instead of just this row's compact
+        // content height) — landing the icons roughly mid-window instead of
+        // near the top, and (in the real app, where `ui.separator()` and
+        // the terminal view are added to the same `ui` right after
+        // `chrome::show` returns) leaving no vertical room for them. Only
+        // plain `Align::Center` at the very top level avoids this; the
+        // launcher/chip alignment fix is instead scoped to a narrower
+        // `Align::Min` sub-layout around just those two elements.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 900.0))
+            .with_step_dt(0.01)
+            .build_ui_state(
+                |ui, state: &mut ChromeHarnessState| {
+                    let actions = show(ui, &state.chips, state.active, false, state.layout);
+                    state.observed.extend(actions);
+                    // Mirrors `app.rs`'s `ui_content`, which adds
+                    // `ui.separator()` immediately after `chrome::show`.
+                    ui.separator();
+                },
+                ChromeHarnessState {
+                    chips: vec![chip(1, "one"), chip(2, "two")],
+                    active: ChipId(1),
+                    layout: ChipLayout::Wrap,
+                    observed: Vec::new(),
+                },
+            );
+        harness.run();
+
+        let launcher_rect = harness.get_by_label("+ Launcher").rect();
+        assert!(
+            launcher_rect.top() < 20.0,
+            "expected the launcher button to sit at the top of a tall panel, got {launcher_rect:?}"
+        );
+
+        let search_rect = harness.get_by_label("Search (Ctrl+Shift+P)").rect();
+        assert!(
+            search_rect.bottom() < 100.0,
+            "expected the trailing icon controls to stay within the compact chip-row band \
+             rather than centering within the full panel height, got {search_rect:?}"
+        );
+    }
+
+    #[test]
+    fn the_launcher_button_and_chip_row_share_the_same_top_edge() {
+        // Regression test for the "+ Launcher unaligned with the chips"
+        // feedback: both should start at the same `y`, not just end up at
+        // the same height by coincidence.
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        let launcher_top = harness.get_by_label("+ Launcher").rect().top();
+        let chip_top = harness.get_by_label("one chip").rect().top();
+        assert!(
+            (launcher_top - chip_top).abs() < 1.0,
+            "expected the launcher button and chip row to share a top edge, got launcher={launcher_top} chip={chip_top}"
+        );
     }
 
     #[test]
