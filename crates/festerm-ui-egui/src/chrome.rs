@@ -182,20 +182,19 @@ pub fn show(
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        // Scope the "+ Launcher" control and the chip row to their own
-        // top-aligned sub-layout, rather than changing this whole row's
-        // (or `ui.horizontal_top`'s) cross-axis alignment: both alternatives
-        // hand the *entire* remaining panel height down to the trailing
-        // icon controls' own `Align::Center` sub-layout below (instead of
-        // just this row's compact content height), centering the icons
-        // somewhere in the middle of the whole window and leaving no room
-        // for the terminal view painted after this function returns.
-        // Keeping the outer row's own layout as plain `Align::Center`
-        // (proven safe: `chrome_row_stays_a_compact_band_even_with_a_tall_available_area`)
+        // Scope the chip row to its own top-aligned sub-layout, rather than
+        // changing this whole row's (or `ui.horizontal_top`'s) cross-axis
+        // alignment: both alternatives hand the *entire* remaining panel
+        // height down to the trailing icon controls' own `Align::Center`
+        // sub-layout below (instead of just this row's compact content
+        // height), centering the icons somewhere in the middle of the whole
+        // window and leaving no room for the terminal view painted after
+        // this function returns. Keeping the outer row's own layout as
+        // plain `Align::Center` (proven safe:
+        // `chrome_row_stays_a_compact_band_even_with_a_tall_available_area`)
         // while only this narrower sub-block opts into `Align::Min` fixes
-        // the launcher/chip alignment without that regression.
+        // the chip-row alignment without that regression.
         ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-            paint_launcher_button(ui, &mut actions);
             let chip_row = |ui: &mut Ui| {
                 for chip in chips {
                     show_chip(ui, chip, chip.id == active, &mut actions);
@@ -229,49 +228,11 @@ pub fn show(
     actions
 }
 
-/// Chip-like "New Launcher" control (`docs/gui-design.md`): painted with
-/// the exact same corner radius, border weight/color, height, and
-/// left-aligned content style as an inactive session chip, so it reads as
-/// part of the same family of controls rather than a plain default-styled
-/// button.
-fn paint_launcher_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
-    // Match the chip painter's own approach (`paint_chip`): allocate an
-    // exact-height rect and paint fill/stroke directly into it, rather than
-    // going through `Frame`'s margin/stroke-width size accounting, so this
-    // control's height lines up with chips pixel-for-pixel in the same
-    // horizontal row.
-    let padding_x = 10.0;
-    let galley = ui.painter().layout_no_wrap(
-        "+ Launcher".to_owned(),
-        egui::TextStyle::Body.resolve(ui.style()),
-        CHIP_PRIMARY_TEXT,
-    );
-    let width = galley.size().x + 2.0 * padding_x;
-    let (rect, mut response) = ui.allocate_exact_size(vec2(width, CHIP_HEIGHT), Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "+ Launcher"));
-    response = response.on_hover_text("Open a new launcher tab");
-
-    let fill = crate::DEFAULT_BACKGROUND;
-    let stroke = Stroke::new(1.0, CHIP_INACTIVE_OUTLINE);
-    ui.painter().rect_filled(rect, 6, fill);
-    ui.painter()
-        .rect_stroke(rect, 6, stroke, egui::StrokeKind::Inside);
-    let text_pos = egui::pos2(
-        rect.left() + padding_x,
-        rect.center().y - galley.size().y / 2.0,
-    );
-    ui.painter().galley(text_pos, galley, CHIP_PRIMARY_TEXT);
-
-    if response.clicked() {
-        actions.push(ChromeAction::NewTab);
-    }
-}
-
-/// Compact icon-only "add chip" control placed right after the last chip,
-/// so a new session can be started without reaching back to the far-left
-/// Launcher button. Emits the same `ChromeAction::NewTab` as the Launcher
-/// button (`AGENTS.md`: no duplicate widget-specific copies of the same
-/// operation).
+/// Compact icon-only "add chip" control placed right after the last chip.
+/// This is the sole way to open a new Launcher tab from the chrome row
+/// (`AGENTS.md`: no duplicate widget-specific copies of the same
+/// operation) - an earlier full "+ Launcher" chip-style button duplicated
+/// this control and was removed as redundant.
 fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let size = 22.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
@@ -850,10 +811,10 @@ mod tests {
             );
         harness.run();
 
-        let launcher_rect = harness.get_by_label("+ Launcher").rect();
+        let chip_rect = harness.get_by_label("one chip").rect();
         assert!(
-            launcher_rect.top() < 20.0,
-            "expected the launcher button to sit at the top of a tall panel, got {launcher_rect:?}"
+            chip_rect.top() < 20.0,
+            "expected the chip row to sit at the top of a tall panel, got {chip_rect:?}"
         );
 
         let search_rect = harness.get_by_label("Search (Ctrl+Shift+P)").rect();
@@ -861,27 +822,6 @@ mod tests {
             search_rect.bottom() < 100.0,
             "expected the trailing icon controls to stay within the compact chip-row band \
              rather than centering within the full panel height, got {search_rect:?}"
-        );
-    }
-
-    #[test]
-    fn the_launcher_button_and_chip_row_share_the_same_top_edge() {
-        // Regression test for the "+ Launcher unaligned with the chips"
-        // feedback: both should start at the same `y`, not just end up at
-        // the same height by coincidence.
-        let mut harness = harness(ChromeHarnessState {
-            chips: vec![chip(1, "one")],
-            active: ChipId(1),
-            layout: ChipLayout::Wrap,
-            observed: Vec::new(),
-        });
-        harness.run();
-
-        let launcher_top = harness.get_by_label("+ Launcher").rect().top();
-        let chip_top = harness.get_by_label("one chip").rect().top();
-        assert!(
-            (launcher_top - chip_top).abs() < 1.0,
-            "expected the launcher button and chip row to share a top edge, got launcher={launcher_top} chip={chip_top}"
         );
     }
 
@@ -996,21 +936,6 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::ToggleChipLayout));
-    }
-
-    #[test]
-    fn new_launcher_button_emits_a_new_tab_action() {
-        let mut harness = harness(ChromeHarnessState {
-            chips: vec![chip(1, "one")],
-            active: ChipId(1),
-            layout: ChipLayout::Wrap,
-            observed: Vec::new(),
-        });
-
-        harness.get_by_label_contains("Launcher").click();
-        harness.run();
-
-        assert!(harness.state().observed.contains(&ChromeAction::NewTab));
     }
 
     #[test]

@@ -419,6 +419,37 @@ mod tests {
             .is_some_and(|grid| grid.is_finite()));
     }
 
+    #[test]
+    fn terminal_view_claims_keyboard_focus_on_its_first_frame_without_a_click() {
+        // A freshly started session should be immediately typeable: the
+        // user shouldn't have to click into the terminal just to start
+        // sending keystrokes to it.
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_status(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        "headless session",
+                        "headless diagnostics",
+                    );
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+
+        assert_eq!(
+            harness.state().sink.0,
+            vec![b"Q".to_vec()],
+            "typed input should reach the terminal without ever clicking into it first"
+        );
+    }
+
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn visual_harness(terminal: Terminal) -> Harness<'static, HeadlessViewState> {
         Harness::builder()

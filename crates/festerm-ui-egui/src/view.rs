@@ -50,6 +50,12 @@ pub struct TerminalView {
     pub(crate) show_diagnostics: bool,
     pub(crate) keyboard: KeyboardOwnership,
     pub(crate) pointer: TerminalPointerState,
+    /// Whether this view has already claimed keyboard focus once. A freshly
+    /// started session should grab focus immediately so typing works without
+    /// first clicking into the terminal, but only on its first frame -
+    /// afterwards the user is free to click elsewhere (e.g. the launcher, a
+    /// rename field) without this view stealing focus back every frame.
+    has_requested_initial_focus: bool,
 }
 
 impl TerminalView {
@@ -168,8 +174,9 @@ impl TerminalView {
         let vp_layout =
             viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
         self.diagnostics.grid_rect = Some(vp_layout.grid);
-        if response.clicked() {
+        if response.clicked() || !self.has_requested_initial_focus {
             response.request_focus();
+            self.has_requested_initial_focus = true;
         }
         ui.memory_mut(|memory| {
             memory.set_focus_lock_filter(
