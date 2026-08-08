@@ -46,9 +46,7 @@ pub(crate) use festerm_core::{
     Modifiers, MouseButton, MouseEvent, MouseEventKind, MAX_CELL_COUNT,
 };
 #[cfg(test)]
-pub(crate) use geometry::{
-    dimensions_from_viewport, grid_view_size, viewport_layout, CellGeometry,
-};
+pub(crate) use geometry::{dimensions_from_viewport, viewport_layout, CellGeometry};
 #[cfg(test)]
 pub(crate) use input::{
     record_terminal_input, route_pointer_event, InputRoutingReports, KeyboardOwnership,
@@ -123,7 +121,7 @@ impl<'a> TerminalSnapshot<'a> {
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
+    use egui_kittest::{Harness, SnapshotResults};
     use festerm_test_support::load_fixture;
 
     use super::*;
@@ -184,24 +182,6 @@ mod tests {
                 cell
             ),
             None
-        );
-    }
-
-    #[test]
-    fn grid_view_reserves_the_diagnostics_footer() {
-        assert_eq!(
-            grid_view_size(Vec2::new(800.0, 600.0), 18.0),
-            ViewSize {
-                width: 800.0,
-                height: 582.0,
-            }
-        );
-        assert_eq!(
-            grid_view_size(Vec2::new(800.0, 12.0), 18.0),
-            ViewSize {
-                width: 800.0,
-                height: 0.0,
-            }
         );
     }
 
@@ -343,13 +323,7 @@ mod tests {
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(
                 |ui, state: &mut HeadlessViewState| {
-                    state.view.show_with_status(
-                        ui,
-                        &mut state.terminal,
-                        &mut state.sink,
-                        "headless session",
-                        "headless diagnostics",
-                    );
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
                 },
                 HeadlessViewState::new(),
             );
@@ -407,12 +381,6 @@ mod tests {
             ]
         );
 
-        {
-            harness.get_by_label("Diagnostics").click();
-        }
-        harness.run();
-        assert!(harness.state().view.show_diagnostics);
-
         harness.set_size(Vec2::new(730.0, 520.0));
         harness.run();
         let state = harness.state();
@@ -440,13 +408,7 @@ mod tests {
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(
                 |ui, state: &mut HeadlessViewState| {
-                    state.view.show_with_status(
-                        ui,
-                        &mut state.terminal,
-                        &mut state.sink,
-                        "headless session",
-                        "headless diagnostics",
-                    );
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
                 },
                 HeadlessViewState::new(),
             );
@@ -471,13 +433,7 @@ mod tests {
             .wgpu()
             .build_ui_state(
                 |ui, state: &mut HeadlessViewState| {
-                    state.view.show_with_status(
-                        ui,
-                        &mut state.terminal,
-                        &mut state.sink,
-                        "snapshot session",
-                        "snapshot diagnostics",
-                    );
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
                 },
                 HeadlessViewState::with_terminal(terminal),
             )

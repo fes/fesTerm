@@ -51,15 +51,16 @@ const CHROME_ICON_COLOR_HOVERED: Color32 = Color32::from_gray(0xf0);
 /// keep its "destructive" affordance recognizable.
 const CHROME_CLOSE_HOVER: Color32 = Color32::from_rgb(0xe0, 0x5c, 0x5c);
 
-/// Footprint reserved for the trailing icon controls (overflow menu, panel
-/// toggle, search), each a fixed `22.0`-square icon separated by this row's
-/// `8.0` item spacing, plus one more `8.0` gap between the chip-row block
-/// and the icon block itself. The chip row's own available width is capped
-/// to leave this much room free (`show`), rather than letting the chip row
-/// claim the full row width and only discovering afterward that the icons
-/// no longer fit: on a narrow window that made the icons overlap the chips
-/// instead of wrapping/scrolling around them.
-const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = 3.0 * 22.0 + 3.0 * 8.0;
+/// Footprint reserved for the trailing icon controls (window
+/// minimize/maximize/close, overflow menu, panel toggle, search), each a
+/// fixed `22.0`-square icon separated by this row's `8.0` item spacing, plus
+/// one more `8.0` gap between the chip-row block and the icon block itself.
+/// The chip row's own available width is capped to leave this much room
+/// free (`show`), rather than letting the chip row claim the full row width
+/// and only discovering afterward that the icons no longer fit: on a narrow
+/// window that made the icons overlap the chips instead of
+/// wrapping/scrolling around them.
+const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = 6.0 * 22.0 + 6.0 * 8.0;
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
@@ -192,6 +193,34 @@ pub fn show(
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
+        // Background drag-to-move region for this frameless window
+        // (`docs/gui-design.md` "native min/max/close window buttons
+        // directly in the same band as the chips"): a fixed-height band
+        // matching the row's own compact content height (not
+        // `ui.max_rect()`, which - before any content has been laid out -
+        // still spans the full remaining panel height, and would swallow
+        // pointer events meant for the terminal view painted below this
+        // row by the caller). Registered *before* the chips/icons below so
+        // their own click handling still takes priority over this
+        // catch-all background sense wherever they visually sit on top of
+        // it (mirrors egui's own `custom_window_frame` example).
+        let row_band = egui::Rect::from_min_size(
+            ui.cursor().min,
+            vec2(ui.available_width(), CHIP_HEIGHT + 6.0),
+        );
+        let drag_response = ui.interact(
+            row_band,
+            Id::new("chrome_row_drag_region"),
+            Sense::click_and_drag(),
+        );
+        if drag_response.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if drag_response.double_clicked() {
+            let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
         // Scope the chip row to its own top-aligned sub-layout, rather than
         // changing this whole row's (or `ui.horizontal_top`'s) cross-axis
         // alignment: both alternatives hand the *entire* remaining panel
@@ -237,6 +266,10 @@ pub fn show(
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            paint_close_icon(ui);
+            let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+            paint_maximize_icon(ui, maximized);
+            paint_minimize_icon(ui);
             paint_overflow_menu(ui, &mut actions);
             if paint_panel_icon(ui, inspector_open) {
                 actions.push(ChromeAction::ToggleInspector);
@@ -276,6 +309,106 @@ fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let response = response.on_hover_text("New tab");
     if response.clicked() {
         actions.push(ChromeAction::NewTab);
+    }
+}
+
+/// Painter-drawn window-minimize icon (a single horizontal line), replacing
+/// the native title-bar minimize button that native decorations would
+/// otherwise have provided (`docs/gui-design.md` "native min/max/close
+/// window buttons directly in the same band as the chips"). Calls
+/// `ViewportCommand::Minimized` directly rather than going through
+/// `ChromeAction`/`AppCommand`, since this is an OS-window-level action with
+/// no application-state implications.
+fn paint_minimize_icon(ui: &mut Ui) {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Minimize"));
+    let color = if response.hovered() {
+        CHROME_ICON_COLOR_HOVERED
+    } else {
+        CHROME_ICON_COLOR
+    };
+    let center = rect.center();
+    let half = size * 0.22;
+    ui.painter().line_segment(
+        [center - vec2(half, 0.0), center + vec2(half, 0.0)],
+        Stroke::new(1.5, color),
+    );
+    let response = response.on_hover_text("Minimize");
+    if response.clicked() {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
+}
+
+/// Painter-drawn window-maximize/restore icon: a single square when the
+/// window is not currently maximized, or two overlapping squares (the
+/// conventional "restore" glyph) when it is. `maximized` reflects the
+/// viewport's real current state (`ui.input(|i| i.viewport().maximized)`)
+/// so the icon's own shape communicates state, not a text label.
+fn paint_maximize_icon(ui: &mut Ui, maximized: bool) {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    let label = if maximized { "Restore" } else { "Maximize" };
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    let color = if response.hovered() {
+        CHROME_ICON_COLOR_HOVERED
+    } else {
+        CHROME_ICON_COLOR
+    };
+    if maximized {
+        let back = rect.shrink(6.5).translate(vec2(-2.0, -2.0));
+        let front = rect.shrink(6.5).translate(vec2(2.0, 2.0));
+        ui.painter()
+            .rect_stroke(back, 1.0, Stroke::new(1.3, color), egui::StrokeKind::Inside);
+        ui.painter()
+            .rect_filled(front, 1.0, ui.visuals().panel_fill);
+        ui.painter().rect_stroke(
+            front,
+            1.0,
+            Stroke::new(1.3, color),
+            egui::StrokeKind::Inside,
+        );
+    } else {
+        ui.painter().rect_stroke(
+            rect.shrink(5.5),
+            1.0,
+            Stroke::new(1.5, color),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let response = response.on_hover_text(label);
+    if response.clicked() {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Painter-drawn window-close icon (an X), colored with the same
+/// destructive-hover red as a chip's own close control
+/// (`CHROME_CLOSE_HOVER`).
+fn paint_close_icon(ui: &mut Ui) {
+    let size = 22.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Close"));
+    let color = if response.hovered() {
+        CHROME_CLOSE_HOVER
+    } else {
+        CHROME_ICON_COLOR
+    };
+    let center = rect.center();
+    let half = size * 0.22;
+    ui.painter().line_segment(
+        [center - vec2(half, half), center + vec2(half, half)],
+        Stroke::new(1.5, color),
+    );
+    ui.painter().line_segment(
+        [center - vec2(half, -half), center + vec2(half, -half)],
+        Stroke::new(1.5, color),
+    );
+    let response = response.on_hover_text("Close");
+    if response.clicked() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 

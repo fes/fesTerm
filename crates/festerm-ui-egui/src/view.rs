@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
 
-use egui::{Label, Sense, TextStyle, Ui, Vec2};
+use egui::{Sense, Ui};
 use festerm_core::{InputEventOutcome, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
-    geometry::{dimensions_from_viewport, grid_view_size, viewport_layout, CellMetrics, ViewSize},
+    geometry::{dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
         KeyboardOwnership, TerminalPointerState,
@@ -47,7 +47,6 @@ pub struct TerminalView {
     pub(crate) selection: Selection,
     pub(crate) resize: ResizeTracker,
     pub(crate) diagnostics: FrameDiagnostics,
-    pub(crate) show_diagnostics: bool,
     pub(crate) keyboard: KeyboardOwnership,
     pub(crate) pointer: TerminalPointerState,
     /// Whether this view has already claimed keyboard focus once. A freshly
@@ -72,70 +71,17 @@ impl TerminalView {
         &self.selection
     }
 
-    /// Shows the terminal with the compatibility no-session status text.
+    /// Shows the terminal, filling all available space in `ui`. Detailed
+    /// per-frame diagnostics are not rendered inline (`docs/gui-design.md`
+    /// "Bottom status bar"); callers that want to surface them can read
+    /// [`TerminalView::diagnostics`] or format [`TerminalView::diagnostics_summary`]
+    /// into their own chrome (e.g. the application status bar).
     pub fn show(&mut self, ui: &mut Ui, terminal: &mut Terminal, sink: &mut impl EncodedInputSink) {
-        self.show_with_status(
-            ui,
-            terminal,
-            sink,
-            "No session attached: encoded input is not sent or retained.",
-            "No session diagnostics are available.",
-        );
-    }
-
-    /// Shows the terminal and application-provided compact and detailed status.
-    pub fn show_with_status(
-        &mut self,
-        ui: &mut Ui,
-        terminal: &mut Terminal,
-        sink: &mut impl EncodedInputSink,
-        session_status: &str,
-        session_diagnostics: &str,
-    ) {
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(DEFAULT_BACKGROUND))
             .show(ui, |ui| {
-                self.show_in_panel(ui, terminal, sink, session_status, session_diagnostics);
+                self.show_in_ui(ui, terminal, sink);
             });
-    }
-
-    fn show_in_panel(
-        &mut self,
-        ui: &mut Ui,
-        terminal: &mut Terminal,
-        sink: &mut impl EncodedInputSink,
-        session_status: &str,
-        session_diagnostics: &str,
-    ) {
-        ui.horizontal(|ui| {
-            ui.heading("fesTerm");
-            if ui
-                .selectable_label(self.show_diagnostics, "Diagnostics")
-                .clicked()
-            {
-                self.show_diagnostics = !self.show_diagnostics;
-            }
-            ui.add_sized(
-                [
-                    ui.available_width(),
-                    ui.text_style_height(&TextStyle::Small),
-                ],
-                Label::new(session_status).truncate(),
-            );
-        });
-        ui.separator();
-        let footer_height = if self.show_diagnostics {
-            ui.text_style_height(&TextStyle::Small)
-        } else {
-            0.0
-        };
-        let grid_size = grid_view_size(ui.available_size_before_wrap(), footer_height);
-        ui.allocate_ui(Vec2::new(grid_size.width, grid_size.height), |ui| {
-            self.show_in_ui(ui, terminal, sink);
-        });
-        if self.show_diagnostics {
-            self.show_diagnostics(ui, session_diagnostics);
-        }
     }
 
     /// Shows the cell grid inside an existing `egui` UI.
@@ -236,7 +182,22 @@ impl TerminalView {
         self.diagnostics.frame_time = Some(frame_started.elapsed());
     }
 
-    fn show_diagnostics(&self, ui: &mut Ui, session_diagnostics: &str) {
+    /// Grid dimensions of the most recently rendered frame, formatted as
+    /// e.g. `"80×24"`, for display in the application status bar
+    /// (`docs/gui-design.md` "Bottom status bar"). `None` before the first
+    /// frame has been shown.
+    pub fn dimensions_label(&self) -> Option<String> {
+        self.diagnostics
+            .calculated_dimensions
+            .map(|size| format!("{}×{}", size.columns(), size.rows()))
+    }
+
+    /// Formats detailed per-frame diagnostics (frame time, dirty rows, input
+    /// queue depth, input-sink counters) as a single line, for optional
+    /// display in the application status bar. `session_diagnostics` is a
+    /// caller-supplied prefix describing session-level state (e.g. shell
+    /// process status) that isn't tracked by this view.
+    pub fn diagnostics_summary(&self, session_diagnostics: &str) -> String {
         let dimensions = self
             .diagnostics
             .calculated_dimensions
@@ -264,16 +225,13 @@ impl TerminalView {
                 )
             },
         );
-        ui.add(
-            Label::new(format!(
-                "{session_diagnostics}; frame {frame}; size {dimensions}; dirty rows {}; \
+        format!(
+            "{session_diagnostics}; frame {frame}; size {dimensions}; dirty rows {}; \
              input {:?}; queue {}; input→paint submission \
              {input_to_paint_submission} (not presentation); {sink}",
-                self.diagnostics.dirty_rows,
-                self.diagnostics.last_input_outcome,
-                self.diagnostics.input_queue_depth,
-            ))
-            .truncate(),
-        );
+            self.diagnostics.dirty_rows,
+            self.diagnostics.last_input_outcome,
+            self.diagnostics.input_queue_depth,
+        )
     }
 }

@@ -20,24 +20,33 @@ use crate::chrome::ChipStatus;
 /// (`docs/gui-design.md` "Quiet by default").
 const STATUS_BAR_HEIGHT: f32 = 24.0;
 const STATUS_BAR_TEXT: Color32 = Color32::from_gray(0x9a);
+const STATUS_BAR_TEXT_DIM: Color32 = Color32::from_gray(0x78);
 const STATUS_BAR_BORDER: Color32 = Color32::from_gray(0x30);
 
+/// Everything the status bar needs to render one frame. Every field is
+/// supplied by the caller (this crate owns no session/tab state); `None`
+/// simply omits that segment rather than fabricating a placeholder.
+pub struct StatusBarContent<'a> {
+    /// Single-line summary of the active session (or a neutral application
+    /// label when no session is active).
+    pub left: &'a str,
+    /// Grid dimensions of the active session's terminal (e.g. `"80×24"`),
+    /// when one is active. This is the one piece of the old per-terminal
+    /// diagnostics panel that was genuinely useful at a glance, so it now
+    /// lives here instead (`docs/gui-design.md` "Bottom status bar").
+    pub dimensions: Option<&'a str>,
+    /// Connection state, using the same non-color-exclusive vocabulary as
+    /// the chip row's status dot.
+    pub status: ChipStatus,
+    pub status_label: &'a str,
+    /// Pre-formatted by the caller so this presentation-only crate never
+    /// needs a date/time dependency of its own.
+    pub clock: &'a str,
+    pub date: &'a str,
+}
+
 /// Renders the bottom status bar band.
-///
-/// `left` is a single-line summary of the active session (or a neutral
-/// application label when no session is active). `status` and
-/// `status_label` describe connection state via the same non-color-exclusive
-/// vocabulary as the chip row's status dot. `clock` and `date` are
-/// pre-formatted by the caller so this presentation-only crate never needs a
-/// date/time dependency of its own.
-pub fn show(
-    ui: &mut Ui,
-    left: &str,
-    status: ChipStatus,
-    status_label: &str,
-    clock: &str,
-    date: &str,
-) {
+pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
     ui.scope(|ui| {
         ui.set_min_height(STATUS_BAR_HEIGHT);
         ui.set_max_height(STATUS_BAR_HEIGHT);
@@ -50,16 +59,23 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.add_space(8.0);
-            ui.label(RichText::new(left).small().color(STATUS_BAR_TEXT));
+            ui.label(RichText::new(content.left).small().color(STATUS_BAR_TEXT));
+            if let Some(dimensions) = content.dimensions {
+                ui.label(RichText::new(dimensions).small().color(STATUS_BAR_TEXT_DIM));
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
-                ui.label(RichText::new(date).small().color(STATUS_BAR_TEXT));
-                ui.label(RichText::new(clock).small().color(STATUS_BAR_TEXT));
-                if !matches!(status, ChipStatus::Neutral) {
-                    ui.label(RichText::new(status_label).small().color(STATUS_BAR_TEXT));
+                ui.label(RichText::new(content.date).small().color(STATUS_BAR_TEXT));
+                ui.label(RichText::new(content.clock).small().color(STATUS_BAR_TEXT));
+                if !matches!(content.status, ChipStatus::Neutral) {
+                    ui.label(
+                        RichText::new(content.status_label)
+                            .small()
+                            .color(STATUS_BAR_TEXT),
+                    );
                     let (response, painter) =
                         ui.allocate_painter(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                    painter.circle_filled(response.rect.center(), 3.5, status.color());
+                    painter.circle_filled(response.rect.center(), 3.5, content.status.color());
                 }
             });
         });
@@ -79,15 +95,19 @@ mod tests {
             .build_ui(|ui| {
                 show(
                     ui,
-                    "Local Shell — cmd.exe",
-                    ChipStatus::Connected,
-                    "Connected",
-                    "12:34:56",
-                    "2026-08-08",
+                    StatusBarContent {
+                        left: "Local Shell — cmd.exe",
+                        dimensions: Some("80×24"),
+                        status: ChipStatus::Connected,
+                        status_label: "Connected",
+                        clock: "12:34:56",
+                        date: "2026-08-08",
+                    },
                 );
             });
         harness.run();
         assert!(harness.query_by_label("Local Shell — cmd.exe").is_some());
+        assert!(harness.query_by_label("80×24").is_some());
         assert!(harness.query_by_label("Connected").is_some());
         assert!(harness.query_by_label("12:34:56").is_some());
         assert!(harness.query_by_label("2026-08-08").is_some());
@@ -100,11 +120,14 @@ mod tests {
             .build_ui(|ui| {
                 show(
                     ui,
-                    "fesTerm",
-                    ChipStatus::Neutral,
-                    "",
-                    "12:34:56",
-                    "2026-08-08",
+                    StatusBarContent {
+                        left: "fesTerm",
+                        dimensions: None,
+                        status: ChipStatus::Neutral,
+                        status_label: "",
+                        clock: "12:34:56",
+                        date: "2026-08-08",
+                    },
                 );
             });
         harness.run();

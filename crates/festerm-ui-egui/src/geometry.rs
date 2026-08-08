@@ -1,13 +1,6 @@
 use egui::{Pos2, Rect, Vec2};
 use festerm_core::{Dimensions, MAX_CELL_COUNT};
 
-pub(crate) fn grid_view_size(available: Vec2, reserved_footer_height: f32) -> ViewSize {
-    ViewSize {
-        width: available.x,
-        height: (available.y - reserved_footer_height).max(0.0),
-    }
-}
-
 pub(crate) fn dimensions_from_viewport(
     available: ViewSize,
     cell: CellMetrics,

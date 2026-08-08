@@ -365,11 +365,13 @@ impl FesTermApp {
     /// status region"): the left segment summarizes the active session using
     /// only genuinely available data (never fabricated shell
     /// version/encoding/line-ending metadata fesTerm doesn't track); the
-    /// right segment shows connection status plus a local clock/date.
+    /// right segment shows connection status plus a local clock/date. The
+    /// active session's grid dimensions are always shown alongside the
+    /// left segment (`docs/gui-design.md` "Bottom status bar").
     fn show_status_bar(&self, ui: &mut egui::Ui) {
-        let (left, status, status_label) = match &self.state.active_tab().content {
+        let (left, dimensions, status, status_label) = match &self.state.active_tab().content {
             TabContent::Launcher | TabContent::Settings => {
-                (APPLICATION_TITLE.to_owned(), ChipStatus::Neutral, "")
+                (APPLICATION_TITLE.to_owned(), None, ChipStatus::Neutral, "")
             }
             TabContent::Session(session) => {
                 let secondary = (!session.terminal.title().is_empty())
@@ -379,7 +381,12 @@ impl FesTermApp {
                     None => session.label.clone(),
                 };
                 let status = session.chip_status();
-                (left, status, status.accessible_label())
+                (
+                    left,
+                    session.view.dimensions_label(),
+                    status,
+                    status.accessible_label(),
+                )
             }
         };
         let now = chrono::Local::now();
@@ -390,7 +397,17 @@ impl FesTermApp {
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(egui::Color32::from_gray(0x14)))
             .show(ui, |ui| {
-                festerm_ui_egui::statusbar::show(ui, &left, status, status_label, &clock, &date);
+                festerm_ui_egui::statusbar::show(
+                    ui,
+                    festerm_ui_egui::statusbar::StatusBarContent {
+                        left: &left,
+                        dimensions: dimensions.as_deref(),
+                        status,
+                        status_label,
+                        clock: &clock,
+                        date: &date,
+                    },
+                );
             });
     }
 }
@@ -465,15 +482,9 @@ impl FesTermApp {
                         screens::show_settings(ui, chip_layout, self.state.status_bar_visible());
                 }
                 TabContent::Session(session) => {
-                    let session_status = session.controller.status_line();
-                    let session_diagnostics = session.controller.diagnostics_line();
-                    session.view.show_with_status(
-                        ui,
-                        &mut session.terminal,
-                        &mut session.controller,
-                        &session_status,
-                        &session_diagnostics,
-                    );
+                    session
+                        .view
+                        .show(ui, &mut session.terminal, &mut session.controller);
                     session
                         .controller
                         .observe_resize_probe_terminal_state(&session.terminal);
