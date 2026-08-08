@@ -90,7 +90,11 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId) -> Option<AppCommand> {
 /// the one persistent preference implemented so far. Returns a command when
 /// the user toggles it, dispatched through the same single command path as
 /// every other invocation surface.
-pub fn show_settings(ui: &mut Ui, chip_layout: ChipLayout) -> Option<AppCommand> {
+pub fn show_settings(
+    ui: &mut Ui,
+    chip_layout: ChipLayout,
+    status_bar_visible: bool,
+) -> Option<AppCommand> {
     let mut command = None;
     ui.vertical(|ui| {
         ui.add_space(24.0);
@@ -111,6 +115,14 @@ pub fn show_settings(ui: &mut Ui, chip_layout: ChipLayout) -> Option<AppCommand>
         };
         if ui.button(label).clicked() {
             command = Some(AppCommand::ToggleChipLayout);
+        }
+        let status_bar_label = if status_bar_visible {
+            "Status bar: shown"
+        } else {
+            "Status bar: hidden"
+        };
+        if ui.button(status_bar_label).clicked() {
+            command = Some(AppCommand::ToggleStatusBar);
         }
     });
     command

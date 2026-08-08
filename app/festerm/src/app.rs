@@ -360,6 +360,39 @@ impl FesTermApp {
                 ui.label(egui::RichText::new(diagnostics).small().weak());
             });
     }
+
+    /// Bottom application status bar (`docs/gui-design.md` "Contextual
+    /// status region"): the left segment summarizes the active session using
+    /// only genuinely available data (never fabricated shell
+    /// version/encoding/line-ending metadata fesTerm doesn't track); the
+    /// right segment shows connection status plus a local clock/date.
+    fn show_status_bar(&self, ui: &mut egui::Ui) {
+        let (left, status, status_label) = match &self.state.active_tab().content {
+            TabContent::Launcher | TabContent::Settings => {
+                (APPLICATION_TITLE.to_owned(), ChipStatus::Neutral, "")
+            }
+            TabContent::Session(session) => {
+                let secondary = (!session.terminal.title().is_empty())
+                    .then(|| Self::display_secondary(session.terminal.title()));
+                let left = match secondary {
+                    Some(secondary) => format!("{} — {}", session.label, secondary),
+                    None => session.label.clone(),
+                };
+                let status = session.chip_status();
+                (left, status, status.accessible_label())
+            }
+        };
+        let now = chrono::Local::now();
+        let clock = now.format("%H:%M:%S").to_string();
+        let date = now.format("%Y-%m-%d").to_string();
+        egui::Panel::bottom("status_bar")
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(egui::Color32::from_gray(0x14)))
+            .show(ui, |ui| {
+                festerm_ui_egui::statusbar::show(ui, &left, status, status_label, &clock, &date);
+            });
+    }
 }
 
 impl eframe::App for FesTermApp {
@@ -398,6 +431,10 @@ impl FesTermApp {
         ui.separator();
         self.dispatch_chrome_actions(actions, &ui.ctx().clone());
 
+        if self.state.status_bar_visible() {
+            self.show_status_bar(ui);
+        }
+
         if let Some(decision) = {
             let items = self.palette_items();
             palette::show(ui.ctx(), &mut self.palette, &items)
@@ -424,7 +461,8 @@ impl FesTermApp {
                     screen_command = screens::show_launcher(ui, active_tab_id);
                 }
                 TabContent::Settings => {
-                    screen_command = screens::show_settings(ui, chip_layout);
+                    screen_command =
+                        screens::show_settings(ui, chip_layout, self.state.status_bar_visible());
                 }
                 TabContent::Session(session) => {
                     let session_status = session.controller.status_line();

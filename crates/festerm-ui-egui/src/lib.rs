@@ -15,6 +15,7 @@ pub mod overlay;
 pub mod palette;
 mod renderer;
 mod selection;
+pub mod statusbar;
 mod view;
 
 pub(crate) const DEFAULT_FOREGROUND: Color32 = Color32::from_rgb(220, 220, 220);

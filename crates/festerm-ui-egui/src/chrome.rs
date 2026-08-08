@@ -86,7 +86,7 @@ impl ChipStatus {
     /// Semantic `status.*` role color (`docs/gui-design.md` "Semantic color
     /// roles"). These are placeholder concrete values until a theme system
     /// exists; the accessible label, not color alone, carries the meaning.
-    const fn color(self) -> Color32 {
+    pub(crate) const fn color(self) -> Color32 {
         match self {
             Self::Connected => Color32::from_rgb(0x3d, 0xc9, 0x6b),
             Self::Starting => Color32::from_rgb(0xe0, 0xb3, 0x3a),

@@ -201,6 +201,10 @@ pub enum AppCommand {
     /// Flips between wrapped and single-row-scroll chip layout
     /// (`docs/gui-design.md` "Wrapping must remain user-configurable").
     ToggleChipLayout,
+    /// Toggles the bottom status bar on/off (`docs/gui-design.md`
+    /// "Contextual status region" / "the status bar should be configurable
+    /// on/off").
+    ToggleStatusBar,
 }
 
 /// Owns the always-nonempty tab collection and the active-tab cursor.
@@ -209,6 +213,7 @@ pub struct AppState {
     active: TabId,
     inspector_open: bool,
     chip_layout: ChipLayout,
+    status_bar_visible: bool,
 }
 
 impl AppState {
@@ -232,6 +237,7 @@ impl AppState {
             active: id,
             inspector_open: false,
             chip_layout: ChipLayout::Wrap,
+            status_bar_visible: true,
         };
         (state, id)
     }
@@ -250,6 +256,10 @@ impl AppState {
 
     pub const fn chip_layout(&self) -> ChipLayout {
         self.chip_layout
+    }
+
+    pub const fn status_bar_visible(&self) -> bool {
+        self.status_bar_visible
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -310,6 +320,9 @@ impl AppState {
                     ChipLayout::Wrap => ChipLayout::SingleRowScroll,
                     ChipLayout::SingleRowScroll => ChipLayout::Wrap,
                 };
+            }
+            AppCommand::ToggleStatusBar => {
+                self.status_bar_visible = !self.status_bar_visible;
             }
         }
     }
@@ -465,6 +478,7 @@ impl AppState {
             active: id,
             inspector_open: false,
             chip_layout: ChipLayout::Wrap,
+            status_bar_visible: true,
         }
     }
 }
@@ -584,6 +598,19 @@ mod tests {
 
         state.dispatch(AppCommand::ToggleChipLayout, &context);
         assert_eq!(state.chip_layout(), ChipLayout::Wrap);
+    }
+
+    #[test]
+    fn toggle_status_bar_flips_visibility_and_defaults_to_shown() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(state.status_bar_visible());
+
+        state.dispatch(AppCommand::ToggleStatusBar, &context);
+        assert!(!state.status_bar_visible());
+
+        state.dispatch(AppCommand::ToggleStatusBar, &context);
+        assert!(state.status_bar_visible());
     }
 
     #[test]

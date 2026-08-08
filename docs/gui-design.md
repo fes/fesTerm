@@ -171,6 +171,10 @@ The bottom status region should normally be absent. It may appear for actionable
 
 It should not display continuous byte counts, queue metrics, dimensions, or frame statistics during normal use.
 
+### Bottom status bar
+
+Distinct from the contextual status region above, a persistent bottom status bar (`crates/festerm-ui-egui/src/statusbar.rs`) may run along the very bottom of the window, matching the reference mockup's footer: the active session's identity on the left, and connection state (dot + accessible label) plus a local clock and date on the right. It is user-configurable on/off (`AppCommand::ToggleStatusBar`, exposed today from the Settings screen), defaulting to shown. Unlike the mockup, it never fabricates fields fesTerm does not actually track (shell version, text encoding, line-ending convention); it only ever shows genuinely available session/tab state, real connection status, and the real local time.
+
 ## Tab Model
 
 ### Independent session chips
