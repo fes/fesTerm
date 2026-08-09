@@ -122,8 +122,8 @@ reference-application acceptance; P5 remains a manual release gate.
 | Hyperlinks | Preserve safe OSC 8 metadata without automatic activation | partial | Core and renderer metadata tests |
 | Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
-| Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji cell test; renderer fallback remains later |
-| Ligatures | Shape supported runs without moving cursor or selection boundaries | planned | Renderer mapping and visual tests |
+| Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji test plus P6 fallback-emoji run-boundary regression; production fallback policy remains #22 |
+| Ligatures | Shape supported runs without moving cursor or selection boundaries | implemented architecture; feature deferred | P6 immutable cell geometry, clipped run seam, and reviewed snapshot; user-visible policy remains #22 |
 | High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
 | Scrollback | Scroll and select smoothly near configured limits | planned | M9 bounded-memory benchmark and GUI integration test |
 | Dirty rendering | Redraw changed content without mandatory full-grid copying | passing | M4 `TerminalSnapshot` and dirty-row cache tests |

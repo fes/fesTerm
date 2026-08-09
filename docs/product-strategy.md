@@ -47,22 +47,14 @@ Validation remains the highest priority. The project has accumulated capability 
 
 The objective is confidence that core state, renderer, session integration, and native-window behavior agree under real workloads and resize/focus/input conditions.
 
-### 2. Prove the GUI/session-management vertical slice
+### 2. Stabilize the GUI/session-management vertical slice
 
-Once the validation seams are sufficiently stable, implement a narrow GUI prototype that proves the product model without waiting for every backend feature.
-
-The slice should include:
-
-- lightweight launcher tab;
-- independent lozenge/chip session tabs;
-- stable local and SSH-style mock identities;
-- active, inactive, reconnecting, disconnected, and failed states;
-- contextual session sidebar hidden by default;
-- command-palette entry point;
-- settings as an application tab; and
-- terminal viewport dominance.
-
-Fake or controlled session metadata is appropriate where necessary. The goal is to validate information architecture and application ownership, not to pull all future milestones into the prototype.
+The narrow GUI slice is implemented: launcher and local-session tabs, chips,
+rename/reorder, command palette, settings, inspector, connection overlays,
+custom title bar, and configurable status bar. The next work is usability and
+platform stabilization, not another chrome feature phase: settle shortcuts,
+chip layout, session-switcher behavior, semantic theming, and custom-title-bar
+validation through actual use and focused evidence.
 
 ### 3. Continue toward native SSH
 

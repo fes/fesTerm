@@ -6,7 +6,7 @@ This document converts the current architectural review into discrete work packa
 
 ## Execution Issues
 
-This document is the canonical scope and acceptance record. The linked issues
+This document is the canonical M6 scope and acceptance record. The linked issues
 are thin execution wrappers; each completing pull request closes one issue and
 updates this plan's status or acceptance evidence.
 
@@ -33,7 +33,11 @@ The implementation has advanced through the terminal core, graphical view, and l
 
 Open issue #3 documents intermittent blank and fragmented Windows rendering during resize. Existing core, pure-layout, and app/session tests provide important evidence, but they do not yet prove that a real egui frame or native window preserves terminal content and viewport coverage under the recorded sequence.
 
-No new major terminal feature or M7 work should take priority over this gate unless required to complete the validation work.
+No new major terminal feature should displace this gate. Narrow, independently
+owned M7 transport-enabler work may proceed in parallel when it preserves
+terminal/session boundaries and does not consume the platform or validation
+work required here; [#28](https://github.com/fes/fesTerm/issues/28) and
+[ADR 0013](adr/0013-russh-native-ssh-transport.md) define that exception.
 
 ## Status Vocabulary
 

@@ -6,14 +6,17 @@ for a compact document map.
 
 ## Current State
 
-Milestones 0 through 5 are implemented with native-window validation pending.
-The application opens one local,
-in-memory shell session through a platform PTY and renders it with `egui`.
-The terminal core, UI, session lifecycle, and PTY backend are separate crates.
+Milestones 0 through 5 are implemented with native-window validation pending;
+M6 is the open compatibility acceptance gate. The application now has
+in-memory local-session tabs, Launcher and Settings surfaces, command palette,
+custom title-bar chrome, and a configurable status bar. The terminal core, UI,
+session lifecycle, PTY backend, and early SSH transport foundation are
+separate crates.
 
-Not implemented: tabs, persisted profiles/configuration, scrollback, SSH,
-ligatures, a custom GPU renderer, terminfo distribution, and reference-TUI
-compatibility sign-off.
+Not implemented: persisted profiles/configuration, live remote SSH sessions,
+scrollback, user-visible ligatures, a custom GPU renderer, terminfo
+distribution, and reference-TUI compatibility sign-off. Read
+[`milestone-progress.md`](milestone-progress.md) before choosing work.
 
 ## Bootstrap
 
@@ -24,9 +27,10 @@ cargo build
 cargo run -p festerm
 ```
 
-The first run opens the platform default local shell. It is intentionally a
-single session, not yet a tabbed workstation. If shell creation fails, the UI
-shows the session error rather than substituting a demo shell.
+The first run opens the platform default local shell in an application session
+tab. Launcher and Settings tabs are available through application chrome; they
+are not persisted profiles or restored workspaces yet. If shell creation
+fails, the UI shows the session error rather than substituting a demo shell.
 
 ## WSL 2 Development and Testing
 
@@ -180,10 +184,12 @@ path without recording terminal content.
 6. Keep status documentation current only after the corresponding behavior and
    validation exist.
 
-Milestone 6 is in progress. Use the
+Milestone 6 is the open acceptance gate. Use the
 [compatibility checklist](m6-compatibility-checklist.md) for reference-
 application scenarios and the [M6 automation backlog](ui-test-plan.md#m6-automation-backlog)
 for implementation order. P0 through P2 are implemented; prioritize P3 visual
 evidence, P4 real-window validation, and P5 manual reference-application
-evidence. Convert every corrected failure into a concrete regression before
-moving to the next milestone.
+evidence. M7 may proceed only in narrow, issue-owned transport slices that do
+not displace those gates; see [#28](https://github.com/fes/fesTerm/issues/28)
+and [ADR 0013](adr/0013-russh-native-ssh-transport.md). Convert every
+corrected failure into a concrete regression before broadening scope.

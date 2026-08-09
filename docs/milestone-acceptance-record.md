@@ -1,8 +1,8 @@
 # fesTerm Milestone Acceptance Record
 
 **Document status:** Active M6 evidence record
-**Candidate SHA:** `bd9516f` (`main`, 2026-08-08; evidence record refreshed
-before the project-truth reconciliation commit)
+**Candidate SHA:** `1b557bc` (`main`, 2026-08-08; evidence record refreshed
+before the milestone-storytelling documentation commit)
 
 ## Status vocabulary
 
@@ -38,6 +38,8 @@ still pending CI recovery.
 The current deterministic and platform evidence is summarized below. Test
 counts are intentionally not carried forward from the pre-merge record; record
 actual platform CI results with their run URLs after GitHub Actions recovers.
+[`milestone-progress.md`](milestone-progress.md) gives the concise narrative
+of how this gate, the parallel GUI vertical slice, and the M7 foundation relate.
 
 | Backlog item | Status | Evidence and remaining condition |
 | --- | --- | --- |

@@ -1,7 +1,9 @@
 # fesTerm Capability Roadmap
 
 **Status:** Milestones 0 through 5 are implemented with native-window
-validation pending; Milestone 6 is in progress.
+validation pending; Milestone 6 is the open acceptance gate. An early M8 GUI
+vertical slice and the M7 SSH transport foundation advance in deliberately
+narrow parallel tracks. See [`docs/milestone-progress.md`](docs/milestone-progress.md).
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -241,6 +243,14 @@ matrix.
 
 **Status:** In progress
 
+P0 through P2 and P6 are implemented. P3/P4/P5 evidence remains the M6
+acceptance gate; see the [acceptance record](docs/milestone-acceptance-record.md)
+and issues [#7](https://github.com/fes/fesTerm/issues/7),
+[#8](https://github.com/fes/fesTerm/issues/8),
+[#21](https://github.com/fes/fesTerm/issues/21),
+[#26](https://github.com/fes/fesTerm/issues/26), and
+[#27](https://github.com/fes/fesTerm/issues/27).
+
 ### Outcome
 
 The terminal is functionally useful with the motivating advanced applications.
@@ -264,6 +274,11 @@ The terminal is functionally useful with the motivating advanced applications.
 ## Milestone 7 — Native SSH Sessions
 
 **Status:** In progress ([#28](https://github.com/fes/fesTerm/issues/28)).
+
+`russh` with the portable `ring` backend is selected, and the
+`festerm-ssh` trust/reconnect foundation plus application host-key prompt
+bridge are implemented. Live SSH transport, authentication, remote PTY/resize,
+and controlled OpenSSH evidence remain M7 work.
 
 ### Outcome
 

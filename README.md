@@ -50,6 +50,8 @@ device-identity and future custom-terminfo strategy.
   commands for coding agents and contributors.
 - [Development handoff](docs/development-handoff.md) — bootstrap, current
   runtime behavior, diagnostics, manual checks, and resuming work.
+- [Milestone progress narrative](docs/milestone-progress.md) — concise story
+  of the evidence-first process, parallel work, and current sequencing.
 - [M6 compatibility checklist](docs/m6-compatibility-checklist.md) — reference
   application scenarios, `TERM` strategy, and regression triage.
 - [GUI design](docs/gui-design.md) — authoritative interaction model, independent
