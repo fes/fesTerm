@@ -174,7 +174,7 @@ It should not display continuous byte counts, queue metrics, dimensions, or fram
 
 ### Bottom status bar
 
-Distinct from the contextual status region above, a persistent bottom status bar (`crates/festerm-ui-egui/src/statusbar.rs`) may run along the very bottom of the window, matching the reference mockup's footer: the active session's identity on the left (plus its terminal grid dimensions, e.g. `80×24`), and connection state (dot + accessible label) plus a local clock and date on the right. It is user-configurable on/off (`AppCommand::ToggleStatusBar`, exposed today from the Settings screen), defaulting to shown. Unlike the mockup, it never fabricates fields fesTerm does not actually track (shell version, text encoding, line-ending convention); it only ever shows genuinely available session/tab state, real connection status, and the real local time.
+Distinct from the contextual status region above, a persistent bottom status bar (`crates/festerm-ui-egui/src/statusbar.rs`) may run along the very bottom of the window, matching the reference mockup's footer: the active session's identity on the left (plus its terminal grid dimensions, e.g. `80×24`, and its locality/host platform, e.g. `Local · Windows`), and connection state (dot + accessible label) plus a local clock and date on the right. It is user-configurable on/off (`AppCommand::ToggleStatusBar`, exposed today from the Settings screen), defaulting to shown. Unlike the mockup, it never fabricates fields fesTerm does not actually track (shell version, text encoding); it only ever shows genuinely available session/tab state, real connection status, and the real local time. The locality/platform field is deliberately labeled `Local · Windows` / `Local · Unix` rather than a line-ending convention such as `Windows (CRLF)`: the host OS a session happens to run on does not reliably imply its byte stream's CRLF/LF semantics, and that framing would become actively misleading once a remote (SSH) session's host platform can differ from the client's — a future remote session reports its own remote host's platform under a `Remote ·` prefix instead.
 
 The terminal viewport itself (`crates/festerm-ui-egui/src/view.rs`) no longer draws its own inline "fesTerm / Diagnostics" header or expandable per-frame diagnostics footer — that duplicated chrome the application already owns and only its grid-dimensions field was in regular use, which now lives in the status bar instead. `TerminalView::show` fills all available space with just the terminal grid; `TerminalView::diagnostics()` remains available for tests and future tooling that need the raw per-frame `FrameDiagnostics`.
 
@@ -264,13 +264,27 @@ State indicators should be compact, accessible, and not rely on color alone.
 The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal. The application defaults to a dark theme (`egui::Visuals::dark()`, set in `app/festerm/src/app.rs`), but the chip chrome (`crates/festerm-ui-egui/src/chrome.rs`) deliberately does **not** derive its colors from `ui.visuals()`/`Style`: egui's built-in semantic colors (`strong_text_color()`, `weak_text_color()`, `error_fg_color`, etc.) are tuned for generic interactive widgets — e.g. `strong_text_color()` resolves to the *pressed-button* text color, which can render nearly black and unreadable against a static chip's own dark fill. Instead, `chrome.rs` defines its own small, explicit color palette as module-level constants and every chip-chrome color is one of these constants:
 
 - `CHIP_ACTIVE_OUTLINE` (`Color32::from_gray(0xc8)`, light grey) — the active chip's border, and also the close button's (non-hover) glyph color, so the close control always visually matches its own chip's outline.
-- `CHIP_INACTIVE_OUTLINE` (`Color32::from_gray(0x48)`, dark grey) — inactive chip borders, and the drag-ghost preview outline.
+- `CHIP_INACTIVE_OUTLINE` (`Color32::from_gray(0x48)`, dark grey) — inactive chip borders, the `+` new-chip button's border (constant regardless of hover — see below), and the drag-ghost preview outline.
+- `CHIP_ACTIVE_FILL` (`Color32::from_gray(0x40)`) — the active/selected chip's own fill, deliberately the lightest surface in the row (measured against the mockup's selected-chip fill), not a merge with the darker terminal/chrome background. Also used as the *hover* fill for inactive chips and the `+` button (see below).
+- `CHIP_INACTIVE_FILL` (`Color32::from_gray(0x20)`) — the resting (non-hovered, non-active) fill for inactive chips and the `+` button.
 - `CHIP_PRIMARY_TEXT` (`Color32::from_gray(0xe6)`) — the chip's primary (title) label, always a light grey regardless of active/inactive state, so text is never hard to read.
 - `CHIP_SECONDARY_TEXT` (`Color32::from_gray(0x9a)`) — the smaller, muted secondary metadata line (e.g. `cmd.exe`).
 - `CHROME_ICON_COLOR` / `CHROME_ICON_COLOR_HOVERED` — default and hover colors for the global chrome icon controls (new-chip, search, panel toggle, overflow menu).
 - `CHROME_CLOSE_HOVER` (a muted red) — the close button's hover color only.
 
-All chips share the terminal viewport's own near-black background fill (`crates/festerm-ui-egui/src/lib.rs`'s `DEFAULT_BACKGROUND`, `Color32::from_rgb(24, 24, 24)`) rather than a lighter widget-style fill, so the chip row reads as part of the same dark surface as the rest of the window; selection is indicated by outline color and the close control alone, not by an accent fill or by highlighting the label text.
+All chips sit on top of the terminal viewport's own near-black chrome-band
+background (`crates/festerm-ui-egui/src/lib.rs`'s `DEFAULT_BACKGROUND`,
+`Color32::from_rgb(24, 24, 24)`); against that shared dark surface, the
+active/selected chip is indicated by both its brighter `CHIP_ACTIVE_OUTLINE`
+border *and* its own lighter `CHIP_ACTIVE_FILL` fill — not by outline alone,
+and not by a saturated accent color or by highlighting the label text.
+Hovering an *inactive* chip, or the `+` new-chip button, previews that same
+`CHIP_ACTIVE_FILL` fill without changing its outline color at all: the
+outline stays fixed (`CHIP_INACTIVE_OUTLINE`) regardless of hover state, so
+hover and selection read as two different, non-conflicting signals — a
+consistent hover language shared by every chip-shaped control in the row
+(`paint_chip`'s `hovered` parameter and `paint_new_chip_button`, both in
+`crates/festerm-ui-egui/src/chrome.rs`).
 
 Every chip, active or not, is drawn with a visible border: the active chip's border is `CHIP_ACTIVE_OUTLINE` (1.5px) and inactive chips use `CHIP_INACTIVE_OUTLINE` (1.0px), so the distinction reads clearly without color being the only cue. Each chip is two lines, left-aligned with a small reserved strip on the left for the status dot: the first line holds the status dot and the stable identity, left-aligned; the second, smaller and muted line holds optional secondary terminal-provided metadata, indented under the first line's label rather than the chip's own left edge. The close control, shown only on the active chip (never on inactive chips, even on hover), is positioned from the chip's own outer corner — evenly inset from the top and right edges — rather than flowing through the label's layout, so its position stays fixed and the label never shifts to accommodate it. Opening a new Launcher tab is done exclusively through the compact icon-only "New tab" control at the end of the chip row (`AGENTS.md`: no duplicate widget-specific copies of the same operation) — an earlier full chip-styled "+ Launcher" button duplicated this control and was removed as redundant.
 
@@ -576,6 +590,20 @@ GUI work should proceed in short design rounds:
 6. **Specification:** update this document and create focused implementation issues.
 
 Implementation should not attempt the entire future UI at once. The first prototype should prove the launcher, tab identity model, session states, hidden diagnostics, and terminal dominance before broader settings or workspace UI is built.
+
+### Mockup-comparison review process
+
+Step 5 (**Evaluation**) above is deliberately not "eyeball the screenshot and move on." Early GUI rounds relied on a general-purpose coding agent doing its own ad hoc visual comparison against the wireframe in the same context as the implementation work, and that repeatedly produced two failure modes: the agent anchored on whichever detail it had just been told to check (missing unrelated regressions elsewhere in the same screenshot), and its pixel-level size/spacing estimates from the image were unreliable — two independent passes over the same screenshot region gave materially different numbers, and at least one flagged "deviation" (an 18px vs. 24px chip-inset asymmetry) turned out to be a false positive once actually measured.
+
+That motivated splitting mockup analysis into its own persisted, reusable custom agent definition (`~/.copilot/agents/mockup-analyst.md`, user-scoped so it is available across repositories/sessions) whose sole job is deep, disinterested visual/UX comparison — not implementation. Its design settled on:
+
+- **Workflow- and aesthetics-first reading, not pattern matching.** It is instructed to first form an understanding of the mockup's intent (border spacing and offsets, alignment axes, typography, color semantics, navigation paradigms, element grouping, and permanent-vs-transient elements) before diffing against any implementation, and to recognize when a single image is a composite of multiple independent screens/states that must be analyzed separately.
+- **A structured Match / Deviation / Ambiguous protocol** for every comparison, rather than free-form prose, so findings are consistently actionable.
+- **A negotiated-deviations ledger** (`~/.copilot/agents/mockup-analyst-deviations.md`): some departures from the mockup are conscious product decisions (for example, the status bar deliberately omitting fabricated shell-version/encoding fields). The agent reads this ledger before every review and reports conformance to a negotiated preference as **Match (negotiated)**, distinct from a plain mockup match, instead of re-flagging an accepted decision as a fresh deviation every round.
+- **Explicit evidence-sufficiency checks.** The agent must say when a screenshot cannot answer the question being asked (e.g. a single-chip screenshot cannot prove active-vs-inactive contrast, an empty terminal cannot prove viewport padding on all four sides, no hover/focus captured cannot assess transient states) and name the specific follow-up screenshot needed, rather than silently passing or failing on insufficient evidence.
+- **Preferring objective pixel measurement over visual estimation for close calls** — script-sampling the actual mockup/screenshot image file (e.g. via a short Python/Pillow snippet run through `powershell`) rather than trusting an LLM's visual read of a rendered image, directly because of the false-positive case above.
+
+The agent is invoked today by pasting its full definition into a fresh general-purpose background-agent context for each review (custom agent definitions are not yet directly selectable as a `task`-tool agent type), so each run is a clean, disinterested pass with no bias carried over from the implementation work in the same session. A comparative run using two different underlying models (Claude and GPT) on the same mockup found they can disagree on the same evidence — for example, only one correctly recognized a status-bar field omission as an already-negotiated decision rather than a fresh deviation — which is the concrete case the negotiated-deviations ledger now exists to prevent.
 
 ## First GUI Prototype
 
