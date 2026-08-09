@@ -1,6 +1,7 @@
 # fesTerm GUI Design
 
-**Status:** Draft design specification
+**Status:** Active design specification; the initial GUI vertical slice is
+implemented and now requires usability and platform validation.
 
 This document defines the interaction model, visual hierarchy, and product-level GUI principles for fesTerm. It complements `ARCHITECTURE.md` and `docs/ui-test-plan.md`: architecture defines ownership and dependencies, the UI test plan defines validation, and this document defines the intended user experience.
 
@@ -594,7 +595,9 @@ It should use fake metadata where necessary so interaction and hierarchy can be 
 
 ## Open Questions
 
-- Exact tab-strip placement relative to native window controls on each platform.
+- Cross-platform custom-title-bar behavior: drag, double-click maximize/restore,
+  snapping, multi-monitor DPI, accessibility, and native convention alignment
+  are tracked in [issue #29](https://github.com/fes/fesTerm/issues/29).
 - Whether launcher tabs may be pinned or automatically close after launching a session.
 - Default shortcut for directly opening the platform default local profile, and final confirmation of the first-pass keyboard bindings above ([issue #23](https://github.com/fes/fesTerm/issues/23)).
 - Searchable session-switcher interaction and placement: today it is folded into the command palette as tab-activation entries; whether a separate, dedicated switcher is still warranted remains open ([issue #25](https://github.com/fes/fesTerm/issues/25)).

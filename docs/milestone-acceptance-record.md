@@ -1,7 +1,8 @@
 # fesTerm Milestone Acceptance Record
 
 **Document status:** Active M6 evidence record
-**Candidate SHA:** `9f65f0655224446518059a72857b12275727961e` (`main`, 2026-08-06)
+**Candidate SHA:** `bd9516f` (`main`, 2026-08-08; evidence record refreshed
+before the project-truth reconciliation commit)
 
 ## Status vocabulary
 
@@ -101,3 +102,24 @@ a minimal deterministic regression for every reproducible failure in
 
 M6 must not be marked **Accepted** until every remaining gate condition is
 completed or explicitly deferred with replacement evidence.
+
+## Parallel progress after the M6 foundation
+
+The M6 gate remains open; the following implemented parallel work must not be
+misread as M6 acceptance:
+
+- **GUI vertical slice:** the application now has independent local-session
+  chips, keyboard launcher navigation, rename/reorder behavior, command
+  palette session activation, Settings, connection overlays, a frameless
+  custom title bar, and configurable status-bar presentation. Usability,
+  semantic theming, and title-bar platform validation remain tracked by
+  [#18](https://github.com/fes/fesTerm/issues/18),
+  [#23](https://github.com/fes/fesTerm/issues/23),
+  [#24](https://github.com/fes/fesTerm/issues/24),
+  [#25](https://github.com/fes/fesTerm/issues/25), and
+  [#29](https://github.com/fes/fesTerm/issues/29).
+- **M7 SSH foundation:** `festerm-ssh` selects `russh` with the portable
+  `ring` backend and defines host-trust/reconnect policy. The async
+  `Session` transport, controlled OpenSSH interoperability, authentication,
+  remote PTY, and reconnect evidence remain in
+  [#28](https://github.com/fes/fesTerm/issues/28).

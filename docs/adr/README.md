@@ -17,6 +17,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0011: Trusted Windows ConPTY Runtime Selection](0011-trusted-windows-conpty-runtime-selection.md)
 - [ADR 0012: Cell Geometry Owns Ligature and Fallback Mapping](0012-cell-geometry-owns-ligature-and-fallback-mapping.md)
 - [ADR 0013: `russh` for Native SSH Transport](0013-russh-native-ssh-transport.md)
+- [ADR 0014: Window, Workspace, Tab, and Session Ownership](0014-window-workspace-tab-session-ownership.md)
 
 ## Status Values
 

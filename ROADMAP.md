@@ -294,7 +294,8 @@ track alongside the M6 compatibility pass rather than waiting for M7/M8 to
 start. SSH tabs, persisted profiles, and workspace restoration remain gated
 on M7/M8 as documented above; only the local-session chrome and its Launcher
 and Settings surfaces are in scope early. This does not change M6/M7/M8
-completion criteria.
+completion criteria. [ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md)
+defines the ownership model that M7 reconnect and M8 persistence must follow.
 
 ### Outcome
 

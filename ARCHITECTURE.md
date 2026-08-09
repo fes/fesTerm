@@ -251,6 +251,9 @@ terminal input remains outside this command model and continues through the
 `festerm-core` typed input path. The detailed rules live in
 `docs/application-command-model.md`.
 
+Window, workspace, tab, session, and transport-attempt lifetime rules are
+defined in [ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md).
+
 ## Runtime Data Flow
 
 ### Session output

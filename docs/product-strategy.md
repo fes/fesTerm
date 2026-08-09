@@ -78,25 +78,18 @@ Menus, shortcuts, launcher actions, command palette entries, tab controls, and f
 
 This is not a plugin API. It is an internal mechanism to ensure that `Reconnect`, `Open Settings`, or `New SSH Session` has one implementation regardless of entry point.
 
-Tracked by GitHub issue #17.
+Implemented through the application command model in
+[`application-command-model.md`](application-command-model.md).
 
 ### Window, workspace, session, and terminal ownership
 
-These concepts need explicit lifetime and ownership rules before tabs, restore, reconnect, and multiple windows mature.
-
-A likely conceptual hierarchy is:
-
-```text
-Application
-  -> Window
-    -> Workspace
-      -> Tabs / Sessions
-        -> Terminal state
-```
-
-The exact cardinality is still a design decision; for example, a future workspace may or may not span multiple windows. What matters now is that transport connections, sessions, terminals, tabs, and windows do not become accidental synonyms.
-
-Tracked by GitHub issue #20.
+Lifetime and ownership rules are defined in
+[ADR 0014](adr/0014-window-workspace-tab-session-ownership.md). It fixes the
+Application -> Window -> Workspace view -> Tab -> Session -> transport-attempt
+model, preserves tab/session identity across reconnect, and keeps restoration
+metadata separate from live process, channel, and terminal state. Issue #20
+tracks the later persistence and restoration tests required to implement that
+model.
 
 ### Semantic GUI theming
 

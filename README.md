@@ -6,10 +6,14 @@ native SSH client, written in Rust.
 ## Status
 
 Milestones 1 through 5 are implemented with native-window validation pending;
-Milestone 6 compatibility work is in progress. As an explicit parallel track,
-initial M8-scope GUI chrome (session chips/tabs, Launcher and Settings
-surfaces, and a minimal session inspector) is also underway ahead of M7/M8;
-see the Milestone 8 note in [`ROADMAP.md`](ROADMAP.md). The GUI-independent terminal core has
+Milestone 6 compatibility work is in progress. The initial M8-scope GUI
+vertical slice is implemented as an explicit parallel track: independent
+session chips, Launcher and Settings surfaces, a session inspector, command
+palette, custom title bar, and configurable status bar. See the Milestone 8
+note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is also in progress: the
+`festerm-ssh` foundation selects an in-process Rust SSH transport and defines
+strict host-trust and reconnect boundaries, but does not yet create remote SSH
+sessions. The GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
@@ -33,8 +37,9 @@ ConPTY sidecar; otherwise the backend safely uses inbox ConPTY rather than a
 directory-discovered DLL. If shell startup fails, it shows a visible no-session error rather
 than a fake shell.
 
-There are deliberately no tabs, persisted/config-file profiles, SSH sessions,
-scrollback, terminfo distribution, or ligature shaping yet. `TERM` remains
+The current application has in-memory local session tabs and GUI preferences,
+but not persisted/config-file profiles, remote SSH sessions, scrollback,
+terminfo distribution, or user-visible ligature support. `TERM` remains
 `xterm-256color` as an interoperability baseline while M6 regression coverage
 defines the supported subset; see the M6 checklist for its conservative
 device-identity and future custom-terminfo strategy.
