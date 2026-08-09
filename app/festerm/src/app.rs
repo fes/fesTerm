@@ -397,15 +397,21 @@ impl FesTermApp {
                     (
                         left,
                         session.view.dimensions_label(),
-                        // The host platform's real line-ending convention
+                        // The session's locality and host platform
                         // (`docs/gui-design.md`): genuinely available data
-                        // (not fabricated shell/encoding metadata), and
-                        // important because it tells the user whether the
-                        // active session's line endings are CRLF or LF.
-                        // All sessions are local shells today, so this is
-                        // simply the platform fesTerm itself runs on; a
-                        // future remote/SSH session would report its own
-                        // host's convention instead.
+                        // (not fabricated shell/encoding metadata). This is
+                        // deliberately *not* labeled as the session's
+                        // line-ending convention - the host OS a session
+                        // happens to run fesTerm on (or connect from) does
+                        // not reliably imply the byte stream's line-ending
+                        // semantics, especially once a session is remote
+                        // (SSH): a Windows client can be connected to a
+                        // Linux host and vice versa. All sessions are local
+                        // shells today, so this is simply the platform
+                        // fesTerm itself runs on; a future remote/SSH
+                        // session would report its own remote host's
+                        // platform instead, still under the "Remote ·"
+                        // prefix.
                         Some(Self::system_label()),
                         status,
                         status.accessible_label(),
@@ -435,13 +441,15 @@ impl FesTermApp {
             });
     }
 
-    /// The active session's host platform, labeled with its real
-    /// line-ending convention (`docs/gui-design.md` "Bottom status bar").
+    /// The active session's locality and host platform, labeled without
+    /// implying a line-ending convention (`docs/gui-design.md` "Bottom
+    /// status bar") - see the call site's doc comment for why CRLF/LF is
+    /// not inferred from the host OS.
     fn system_label() -> &'static str {
         if cfg!(windows) {
-            "Windows (CRLF)"
+            "Local · Windows"
         } else {
-            "Unix (LF)"
+            "Local · Unix"
         }
     }
 }

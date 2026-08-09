@@ -48,11 +48,12 @@ pub struct StatusBarContent<'a> {
     /// diagnostics panel that was genuinely useful at a glance, so it now
     /// lives here instead (`docs/gui-design.md` "Bottom status bar").
     pub dimensions: Option<&'a str>,
-    /// The host platform's line-ending convention (e.g. `"Windows (CRLF)"`
-    /// / `"Unix (LF)"`), when known. This is genuinely available
+    /// The session's locality and host platform (e.g. `"Local · Windows"`
+    /// / `"Local · Unix"`), when known. This is genuinely available
     /// environment data (not fabricated shell/encoding metadata fesTerm
-    /// doesn't track) - important because it tells the user whether the
-    /// active session's line endings are CRLF or LF.
+    /// doesn't track). Deliberately not framed as a line-ending convention:
+    /// the host OS a session runs on does not reliably imply its byte
+    /// stream's CRLF/LF semantics, especially for a remote (SSH) session.
     pub system: Option<&'a str>,
     /// Connection state, using the same non-color-exclusive vocabulary as
     /// the chip row's status dot.
@@ -155,7 +156,7 @@ mod tests {
                     StatusBarContent {
                         left: "Local Shell — cmd.exe",
                         dimensions: Some("80×24"),
-                        system: Some("Windows (CRLF)"),
+                        system: Some("Local · Windows"),
                         status: ChipStatus::Connected,
                         status_label: "Connected",
                         clock: "12:34:56",
@@ -166,7 +167,7 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("Local Shell — cmd.exe").is_some());
         assert!(harness.query_by_label("80×24").is_some());
-        assert!(harness.query_by_label("Windows (CRLF)").is_some());
+        assert!(harness.query_by_label("Local · Windows").is_some());
         assert!(harness.query_by_label("Connected").is_some());
         assert!(harness.query_by_label("12:34:56").is_some());
         assert!(harness.query_by_label("2026-08-08").is_some());
