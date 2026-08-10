@@ -1,6 +1,6 @@
 # VM-Based Native Evidence Framework
 
-**Status:** Proposed implementation handoff  
+**Status:** Proposed implementation handoff; first manual evidence run completed 2026-08-10 (see [Evidence Run Log](#evidence-run-log)) — the automated framework described below is not yet built  
 **Scope:** Deterministic Windows, Linux, and macOS desktop evidence executed as virtual machines on a macOS host  
 **Primary hypervisor:** Parallels Desktop  
 **Secondary hypervisor:** VMware Fusion where the requested guest is supported
@@ -259,6 +259,16 @@ The baseline must not contain:
 Prefer provisioning dependencies once and restoring the baseline before each
 run. The tested repository checkout itself should be recreated or hard-reset to
 an exact candidate SHA on every run.
+
+**Known gap (2026-08-10):** the first manually operated run of this lab found
+that Parallels' default guest templates left **Shared Profile** (host
+Desktop/Documents bind-mounted into the guest), shared clipboard, and shared
+cloud content enabled on one or more of the three VMs, and a leftover ad hoc
+host-folder share on another. These were hardened manually (`prlctl set
+--shared-profile off`, `--shared-clipboard off`, `--shared-cloud off`, and
+removing the stray share) but that fix is not yet captured in a repeatable
+provisioning step or confirmed to survive a snapshot revert. See
+[#36](https://github.com/fes/fesTerm/issues/36).
 
 ## Interactive Desktop Command Relay
 
@@ -1031,6 +1041,40 @@ After a qualifying run, update
 
 Do not change a milestone from `validation pending` to `accepted` merely because
 one VM run passed if another gate condition remains open.
+
+## Evidence Run Log
+
+This section records actual runs of the lab. Entries here are evidence, not
+framework design; keep them append-only and short. The full schema-validated
+manifest/bundle described above is not yet implemented (see Definition of Done
+below) — these entries describe manually operated runs performed directly
+against the three VMs while that automation does not yet exist.
+
+### 2026-08-10: manual VM lab execution
+
+**Candidate SHA:** `bcfd7a7` (`main`). **Operator:** Copilot CLI, driven
+interactively by the repository owner (VM GUI logins performed by the human
+operator; all builds, tests, and screenshots driven by the assistant over
+SSH/`prlctl`).
+
+**Pre-run isolation hardening:** discovered and fixed a lab-isolation gap
+(host Desktop/Documents/clipboard/cloud sharing enabled by VM template
+defaults) before collecting evidence; see [#36](https://github.com/fes/fesTerm/issues/36)
+for making that fix durable.
+
+| Platform | Build | PTY/bounded-shutdown | Native-window smoke | Notes |
+| --- | --- | --- | --- | --- |
+| Linux (Xvfb) | pass | pass (both required tests) | **fail** | `resize_count=4` correct but `generations.len()=5`; see [#33](https://github.com/fes/fesTerm/issues/33). |
+| Linux (real GNOME/Wayland desktop) | — | — | **fail** | `focus=true` achieved (first real-desktop focus evidence for [#21](https://github.com/fes/fesTerm/issues/21)); timed out in `AwaitInitialOutput` before any PTY output was observed, alongside an `eglCreateContext`/`EGL_BAD_MATCH` warning; see [#35](https://github.com/fes/fesTerm/issues/35). |
+| macOS | pass | pass (advisory) | **pass** | Required running the binary as the console-logged-in user, not the SSH-only build user, for the process to attach to the real WindowServer session; passed with real focus and all 4 resize generations after that. |
+| Windows | pass | pass | **could not execute** | No working GPU surface under Vulkan, DX12, or GL; see [#32](https://github.com/fes/fesTerm/issues/32). |
+| Windows (ConPTY retention smoke, `stage-conpty.ps1 -RunSmoke`) | — | — | **fail** | Staged correctly (after installing portable `pwsh` 7 to match CI's `shell: pwsh`, since the VM's Windows PowerShell 5.1 cannot `Expand-Archive` a `.nupkg`), but the bundled retention smoke failed a visible-cell assertion; see [#34](https://github.com/fes/fesTerm/issues/34). |
+
+None of these findings are confirmed product regressions. They require
+correlation against real CI and/or real (non-VM) hardware before being treated
+as anything more than VM-lab environment evidence. Full logs and screenshots
+for this run are retained outside the repository per the no-sensitive-content
+policy below; see the linked issues for reproduction commands and detail.
 
 ## Definition of Done for the VM Framework
 

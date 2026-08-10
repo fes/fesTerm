@@ -22,6 +22,18 @@ conditions are tracked by [#7](https://github.com/fes/fesTerm/issues/7),
 [#26](https://github.com/fes/fesTerm/issues/26), and
 [#27](https://github.com/fes/fesTerm/issues/27).
 
+A manually operated Parallels VM lab (`docs/vm-evidence-framework.md`)
+collected the first real cross-platform native-window evidence on 2026-08-10:
+macOS passed with genuine window focus; Linux and Windows both surfaced new,
+distinct findings rather than closing their gaps — a Linux Xvfb resize-count
+discrepancy, a Linux real-desktop PTY-output timeout despite achieving real
+focus, a Windows ConPTY timing-sensitive assertion failure, and a Windows VM
+GPU-surface limitation that blocks native-window smoke outright. None of these
+are confirmed product regressions yet; they are tracked as
+[#32](https://github.com/fes/fesTerm/issues/32) through
+[#36](https://github.com/fes/fesTerm/issues/36) pending correlation against
+real CI/hardware evidence, and none change M6's acceptance status.
+
 Two narrow parallel tracks proceeded without changing that acceptance status:
 
 - The early M8 GUI vertical slice now supplies independent local-session chips,
