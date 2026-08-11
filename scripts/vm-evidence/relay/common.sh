@@ -5,6 +5,8 @@ set -eu
 relay_root=${FESTERM_VM_EVIDENCE_SPOOL:?FESTERM_VM_EVIDENCE_SPOOL is required}
 relay_repo_root=${FESTERM_VM_EVIDENCE_REPOSITORY:?FESTERM_VM_EVIDENCE_REPOSITORY is required}
 relay_repo_url=${FESTERM_VM_EVIDENCE_REPOSITORY_URL:?FESTERM_VM_EVIDENCE_REPOSITORY_URL is required}
+PATH="$HOME/.cargo/bin:$PATH"
+export PATH
 
 relay_die() {
     printf 'vm-evidence relay: %s\n' "$*" >&2
