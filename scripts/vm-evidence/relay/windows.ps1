@@ -32,7 +32,7 @@ function Write-RelayResult {
         mode = $Mode
         message = $Message
         completed_at = (Get-Date).ToUniversalTime().ToString('o')
-        resolved_sha = $ResolvedSha
+        resolved_sha = if ([string]::IsNullOrEmpty($ResolvedSha)) { $null } else { $ResolvedSha }
         phase = $Phase
     } | ConvertTo-Json -Compress | Set-Content -Path "$Path.partial" -NoNewline
     Move-Item -LiteralPath "$Path.partial" -Destination $Path -Force
