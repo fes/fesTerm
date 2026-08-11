@@ -282,7 +282,8 @@ public-key-authenticated SSH transport, remote PTY/resize, and controlled
 OpenSSH container evidence are implemented. The container evidence exercises
 both authentication methods and opt-in live reconnect after a fixture restart,
 including fresh host-key verification and a usable new shell, without claiming
-remote shell-state restoration.
+remote shell-state restoration. It also uses an ECDSA P-256-only server
+host-key profile and verifies the SHA-256 trust prompt before a shell exchange.
 The safe OpenSSH metadata importer and deterministic reconnect planner are
 implemented. Live reconnect is opt-in, bounded, re-verifies host trust for
 every fresh transport, and never claims remote process restoration. Profile/UI

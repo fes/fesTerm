@@ -221,6 +221,81 @@ fn controlled_openssh_public_key_interoperability() {
     }
 }
 
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_ecdsa_p256_host_key_interoperability() {
+    const ECDSA_MARKER: &[u8] = b"__FESTERM_OPENSSH_ECDSA_P256_HOST_KEY_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let expected_fingerprint = required_environment("FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT")
+        .expect("OpenSSH fixture ECDSA host-key fingerprint is invalid");
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+    )
+    .expect("could not start ECDSA host-key OpenSSH session");
+    let resolver = session.host_key_decision_resolver();
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut host_key_prompt_seen = false;
+    let mut running = false;
+    let mut marker_seen_in_output = false;
+    let mut output_tail = Vec::new();
+
+    while Instant::now() < deadline && !(running && marker_seen_in_output) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) if !host_key_prompt_seen => {
+                assert_eq!(prompt.host(), configuration.host.as_str());
+                assert_eq!(prompt.port(), configuration.port);
+                assert_eq!(prompt.sha256_fingerprint(), expected_fingerprint.as_str());
+                resolver
+                    .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                    .expect("could not accept the ECDSA test server host key");
+                host_key_prompt_seen = true;
+            }
+            Ok(SessionEvent::HostKeyVerification(_)) => {
+                panic!("ECDSA host-key OpenSSH session emitted more than one host-key prompt")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(b"printf '__FESTERM_OPENSSH_ECDSA_P256_HOST_KEY_OK__\\n'\n")
+                    .expect("could not send ECDSA host-key controlled SSH shell command");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                marker_seen_in_output |= marker_seen(&mut output_tail, &bytes, ECDSA_MARKER);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "ECDSA host-key SSH session emitted a {:?} error before controlled exchange completed",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("ECDSA host-key SSH session event stream closed before controlled exchange completed");
+            }
+        }
+    }
+
+    assert!(
+        host_key_prompt_seen,
+        "ECDSA host-key OpenSSH session did not request host-key verification"
+    );
+    assert!(
+        running,
+        "ECDSA host-key OpenSSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        marker_seen_in_output,
+        "ECDSA host-key controlled SSH shell command did not produce its expected marker"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("ECDSA host-key SSH session did not shut down within the test timeout"),
+    }
+}
+
 struct DockerFixture {
     container_name: String,
 }

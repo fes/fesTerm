@@ -13,6 +13,7 @@ $password = $null
 $keyDirectory = $null
 $privateKeyPath = $null
 $publicKeyPath = $null
+$hostKeyFingerprint = $null
 $previousValues = $null
 
 function Write-Result([string] $result) {
@@ -91,6 +92,7 @@ try {
         $env:FESTERM_OPENSSH_PASSWORD = $password
         & docker run --detach --name $containerName --env FESTERM_OPENSSH_PASSWORD `
             --mount "type=bind,source=$publicKeyPath,target=/run/festerm-authorized-key,readonly" `
+            --env 'FESTERM_OPENSSH_HOST_KEY_PROFILE=ecdsa-p256' `
             -p "127.0.0.1:$candidatePort`:22" $imageTag *> $null
         $runExitCode = $LASTEXITCODE
         if ($null -eq $previousPassword) {
@@ -122,6 +124,12 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { Fail 'container-readiness-timed-out' }
+    $hostKeyDetails = ((& docker exec $containerName ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub -E sha256) |
+        Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $hostKeyDetails -notmatch '\b(SHA256:[A-Za-z0-9+/]+)\b') {
+        Fail 'host-key-fingerprint-unavailable'
+    }
+    $hostKeyFingerprint = $Matches[1]
 
     $previousValues = @{
         FESTERM_OPENSSH_HOST = $env:FESTERM_OPENSSH_HOST
@@ -130,6 +138,7 @@ try {
         FESTERM_OPENSSH_PASSWORD = $env:FESTERM_OPENSSH_PASSWORD
         FESTERM_OPENSSH_CONTAINER_NAME = $env:FESTERM_OPENSSH_CONTAINER_NAME
         FESTERM_OPENSSH_PRIVATE_KEY_PATH = $env:FESTERM_OPENSSH_PRIVATE_KEY_PATH
+        FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT = $env:FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT
     }
     $env:FESTERM_OPENSSH_HOST = '127.0.0.1'
     $env:FESTERM_OPENSSH_PORT = $port
@@ -137,6 +146,7 @@ try {
     $env:FESTERM_OPENSSH_PASSWORD = $password
     $env:FESTERM_OPENSSH_CONTAINER_NAME = $containerName
     $env:FESTERM_OPENSSH_PRIVATE_KEY_PATH = $privateKeyPath
+    $env:FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT = $hostKeyFingerprint
     & cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1
     $testExitCode = $LASTEXITCODE
     Restore-Environment $previousValues

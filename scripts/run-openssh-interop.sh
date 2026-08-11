@@ -9,6 +9,7 @@ password=
 key_dir=
 private_key_path=
 public_key_path=
+host_key_fingerprint=
 
 write_result() {
     printf '%s\n' "$1" >"$result_path"
@@ -71,6 +72,7 @@ while [ "$attempt" -lt 10 ]; do
     candidate_port=$((49152 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 16384))
     if FESTERM_OPENSSH_PASSWORD="$password" docker run --detach --name "$container_name" \
         --env FESTERM_OPENSSH_PASSWORD \
+        --env FESTERM_OPENSSH_HOST_KEY_PROFILE=ecdsa-p256 \
         --mount "type=bind,src=$public_key_path,dst=/run/festerm-authorized-key,readonly" \
         -p "127.0.0.1:$candidate_port:22" "$image_tag" >/dev/null; then
         port=$candidate_port
@@ -96,11 +98,20 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     sleep 1
 done
 [ "$ready" = true ] || fail 'container-readiness-timed-out'
+host_key_details="$(docker exec "$container_name" ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub -E sha256)" ||
+    fail 'host-key-fingerprint-unavailable'
+host_key_fingerprint="${host_key_details#* }"
+host_key_fingerprint="${host_key_fingerprint%% *}"
+case "$host_key_fingerprint" in
+    SHA256:*) ;;
+    *) fail 'host-key-fingerprint-unavailable' ;;
+esac
 
 if FESTERM_OPENSSH_HOST=127.0.0.1 FESTERM_OPENSSH_PORT="$port" \
     FESTERM_OPENSSH_USER=festerm FESTERM_OPENSSH_PASSWORD="$password" \
     FESTERM_OPENSSH_CONTAINER_NAME="$container_name" \
     FESTERM_OPENSSH_PRIVATE_KEY_PATH="$private_key_path" \
+    FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT="$host_key_fingerprint" \
     cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1; then
     write_result 'status=pass'
 else

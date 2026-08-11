@@ -163,6 +163,25 @@ restoration. Run it alone with `scripts/run-openssh-interop.sh` or
 daemon is unavailable, it records `status=skipped reason=docker-unavailable`;
 an available Docker installation reports test failures normally.
 
+### OpenSSH-derived acceptance matrix
+
+The [OpenSSH portable `regress/`](https://github.com/openssh/openssh-portable/tree/master/regress)
+suite is a behavioral source for this matrix; fesTerm does not invoke, copy,
+or adapt its CLI-coupled scripts. The repository-owned fixture remains
+loopback-only and is the evidence for the scenarios below.
+
+| Scenario | Status and evidence |
+| --- | --- |
+| Password authentication | Implemented: a generated password authenticates the fixture user. |
+| Unencrypted in-memory OpenSSH Ed25519 client key | Implemented: a runner-generated key is bind-mounted only as the fixture user's authorized key. |
+| ECDSA P-256 server host key | Implemented: the selected fixture profile exposes only its generated ECDSA P-256 host key; the test checks its runner-read SHA-256 fingerprint and canonical host/port prompt, accepts it once, then reaches a shell marker. |
+| Remote PTY, shell, resize, output, and shutdown | Implemented through the controlled password session. |
+| Bounded reconnect | Implemented: killing and restarting the same fixture requires a fresh trust decision and reaches a new shell marker; remote shell state is not restored. |
+| Encrypted client keys and passphrases | Deferred until fesTerm has encrypted-key parsing plus a secure passphrase prompt and corresponding fixture coverage. |
+| Agent authentication | Deferred until fesTerm owns cross-platform agent adapters, user consent policy, and fixture coverage. |
+| Port/X11/agent forwarding and SFTP | Deferred until channel APIs, authorization policy, lifecycle handling, and isolated fixture tests exist. |
+| OpenSSH user/host certificates | Deferred until certificate selection and host-trust policy are exposed by fesTerm and covered by a dedicated fixture. |
+
 The suite does not replace manual P5 observations that require screen
 semantics or user intent: GitHub Copilot CLI, `vttest`, `tack`, native
 selection/focus, paste behavior, and application-specific visual inspection.

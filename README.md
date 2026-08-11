@@ -15,7 +15,9 @@ note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is also in progress: the
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture; encrypted keys/passphrases,
 agents, key-file references, SSH tabs, profiles, and reconnect controls remain
-incomplete. The GUI-independent terminal core has
+incomplete. The fixture includes an ECDSA P-256-only server-host-key case
+whose SHA-256 trust prompt is checked before a shell exchange. The
+GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
