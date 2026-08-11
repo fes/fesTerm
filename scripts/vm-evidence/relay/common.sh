@@ -17,7 +17,7 @@ relay_validate_job() {
         (.sha | type == "string" and test("^[0-9a-f]{40}$|^[0-9a-f]{64}$")) and
         (.run_id | type == "string" and test("^[A-Za-z0-9._-]{1,128}$")) and
         (.source_bundle | type == "string" and test("^[A-Za-z0-9._-]{1,128}\\.bundle$")) and
-        (.mode == "readiness-probe" or .mode == "native-smoke" or .mode == "optional-validation")
+        (.mode == "readiness-probe" or .mode == "native-smoke" or .mode == "os-input-smoke" or .mode == "optional-validation")
     ' "$job_path" >/dev/null
 }
 
@@ -85,6 +85,17 @@ relay_execute_validation() {
             FESTERM_NATIVE_SMOKE_RESULT_PATH="$relay_root/results/$run_id.native.txt" \
             "$relay_repo_root/target/debug/festerm" || return
             grep -qx 'status=pass' "$relay_root/results/$run_id.native.txt"
+            ;;
+        os-input-smoke)
+            relay_write_result "$relay_root/results/$run_id.json" running "$run_id" "$sha" "$mode" \
+                'running externally driven OS-input smoke' "$resolved_sha" app
+            case "${FESTERM_VM_EVIDENCE_PLATFORM:-}" in
+                linux) smoke_script="$relay_repo_root/scripts/run-linux-os-input-smoke.sh" ;;
+                macos) smoke_script="$relay_repo_root/scripts/run-macos-os-input-smoke.sh" ;;
+                *) echo 'OS-input smoke is unsupported for this Unix relay platform' >&2; return 1 ;;
+            esac
+            "$smoke_script" "$relay_root/results/$run_id.os-input.txt"
+            grep -qx 'status=pass' "$relay_root/results/$run_id.os-input.txt"
             ;;
         optional-validation)
             relay_write_result "$relay_root/results/$run_id.json" running "$run_id" "$sha" "$mode" \

@@ -23,6 +23,7 @@ cat >"$plist_path" <<EOF
     <key>FESTERM_VM_EVIDENCE_SPOOL</key><string>$1</string>
     <key>FESTERM_VM_EVIDENCE_REPOSITORY</key><string>$2</string>
     <key>FESTERM_VM_EVIDENCE_REPOSITORY_URL</key><string>$3</string>
+    <key>FESTERM_VM_EVIDENCE_PLATFORM</key><string>macos</string>
   </dict>
   <key>StartInterval</key><integer>10</integer>
 </dict></plist>

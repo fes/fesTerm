@@ -318,7 +318,7 @@ run_platform() {
     mode=$3
     validate_platform "$platform"
     validate_sha "$sha"
-    case "$mode" in native-smoke|optional-validation) ;; *) die "unsupported relay mode: $mode" ;; esac
+    case "$mode" in native-smoke|os-input-smoke|optional-validation) ;; *) die "unsupported relay mode: $mode" ;; esac
 
     short_sha=$(printf '%s' "$sha" | cut -c1-7)
     run_id="$(date -u +%Y%m%dT%H%M%SZ)-$platform-$short_sha-$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -372,8 +372,8 @@ Usage:
   host.sh status <windows|linux|macos>
   host.sh reset <windows|linux|macos>
   host.sh capture <windows|linux|macos> <png-path>
-  host.sh <windows|linux|macos> <candidate-sha> [native-smoke|optional-validation]
-  host.sh all <candidate-sha> [native-smoke|optional-validation]
+  host.sh <windows|linux|macos> <candidate-sha> [native-smoke|os-input-smoke|optional-validation]
+  host.sh all <candidate-sha> [native-smoke|os-input-smoke|optional-validation]
 EOF
     exit 2
 }
