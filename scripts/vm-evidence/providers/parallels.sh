@@ -11,7 +11,7 @@ provider_vm_exists() {
 }
 
 provider_reset() {
-    prlctl snapshot-switch "$1" --id "$2" --skip-resume
+    prlctl snapshot-switch "$1" --id "$2"
 }
 
 provider_wait_for_restore() {
@@ -27,7 +27,8 @@ provider_wait_for_restore() {
 }
 
 provider_start() {
-    prlctl start "$1"
+    state=$(prlctl list "$1" --json | jq -er '.[0].status')
+    [ "$state" = running ] || prlctl start "$1"
 }
 
 provider_stop() {
