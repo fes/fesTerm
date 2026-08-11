@@ -12,6 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$env:Path = "$env:USERPROFILE\.cargo\bin;C:\Program Files\Git\cmd;$env:Path"
 
 function Write-RelayResult {
     param(
