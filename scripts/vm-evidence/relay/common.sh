@@ -16,6 +16,7 @@ relay_validate_job() {
     jq -e '
         (.sha | type == "string" and test("^[0-9a-f]{40}$|^[0-9a-f]{64}$")) and
         (.run_id | type == "string" and test("^[A-Za-z0-9._-]{1,128}$")) and
+        (.source_bundle | type == "string" and test("^[A-Za-z0-9._-]{1,128}\\.bundle$")) and
         (.mode == "readiness-probe" or .mode == "native-smoke" or .mode == "optional-validation")
     ' "$job_path" >/dev/null
 }
@@ -46,6 +47,8 @@ relay_execute_validation() {
     sha=$1
     mode=$2
     run_id=$3
+    source_bundle=$4
+    bundle_path="$relay_root/bundles/$source_bundle"
 
     relay_write_result "$relay_root/results/$run_id.json" running "$run_id" "$sha" "$mode" \
         'checking graphical-session build prerequisites' '' preflight
@@ -60,10 +63,12 @@ relay_execute_validation() {
 
     relay_write_result "$relay_root/results/$run_id.json" running "$run_id" "$sha" "$mode" \
         'checking out requested revision' '' checkout
+    [ -f "$bundle_path" ] || { echo "source bundle missing: $source_bundle" >&2; return 1; }
     if [ ! -d "$relay_repo_root/.git" ]; then
-        git clone "$relay_repo_url" "$relay_repo_root" || return
+        git clone "$bundle_path" "$relay_repo_root" || return
+    else
+        git -C "$relay_repo_root" fetch "$bundle_path" "$sha" || return
     fi
-    git -C "$relay_repo_root" fetch --no-tags "$relay_repo_url" "$sha" || return
     git -C "$relay_repo_root" checkout --detach --force "$sha" || return
     resolved_sha=$(git -C "$relay_repo_root" rev-parse HEAD) || return
     [ "$resolved_sha" = "$sha" ] || { echo 'resolved SHA differs from requested SHA' >&2; return 1; }
@@ -98,6 +103,7 @@ relay_run_job() {
     run_id=$(jq -er '.run_id' "$job_path")
     sha=$(jq -er '.sha' "$job_path")
     mode=$(jq -er '.mode' "$job_path")
+    source_bundle=$(jq -er '.source_bundle' "$job_path")
     result_path="$relay_root/results/$run_id.json"
     log_path="$relay_root/logs/$run_id.log"
     resolved_sha=
@@ -105,7 +111,7 @@ relay_run_job() {
     [ ! -e "$result_path" ] || relay_die "result already exists for run ID: $run_id"
     relay_write_result "$result_path" running "$run_id" "$sha" "$mode" 'relay accepted job' '' queued
 
-    if relay_execute_validation "$sha" "$mode" "$run_id" >"$log_path" 2>&1; then
+    if relay_execute_validation "$sha" "$mode" "$run_id" "$source_bundle" >"$log_path" 2>&1; then
         relay_write_result "$result_path" pass "$run_id" "$sha" "$mode" 'repository-owned validation passed' "$resolved_sha" complete ||
         relay_write_result "$result_path" fail "$run_id" "$sha" "$mode" "validation failed; inspect $log_path" "$resolved_sha" complete
     else

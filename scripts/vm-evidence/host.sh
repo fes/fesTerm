@@ -44,6 +44,7 @@ load_config() {
     require_command ssh
     require_command scp
     require_command uuidgen
+    require_command git
     jq -e '
         .provider == "parallels" and
         (.artifact_root | type == "string" and length > 0) and
@@ -162,11 +163,16 @@ write_job() {
     run_id=$4
     spool=$(vm_field "$platform" relay_spool)
     job_path=$(mktemp "${TMPDIR:-/tmp}/festerm-vm-job.XXXXXX")
+    bundle_path=$(mktemp "${TMPDIR:-/tmp}/festerm-vm-bundle.XXXXXX")
+    bundle_name="$run_id.bundle"
+    repository_root=$(git -C "$script_dir/../.." rev-parse --show-toplevel)
+    git -C "$repository_root" bundle create "$bundle_path" --all
     jq -n \
         --arg sha "$sha" \
         --arg mode "$mode" \
         --arg run_id "$run_id" \
-        '{sha: $sha, mode: $mode, run_id: $run_id}' >"$job_path"
+        --arg source_bundle "$bundle_name" \
+        '{sha: $sha, mode: $mode, run_id: $run_id, source_bundle: $source_bundle}' >"$job_path"
     case "$platform" in
         windows)
             temporary_path="$spool\\jobs\\.$run_id.partial"
@@ -187,11 +193,15 @@ write_job() {
         *)
             temporary_path="$spool/jobs/.$run_id.partial"
             final_path="$spool/jobs/$run_id.json"
+            guest_ssh "$platform" "mkdir -p '$spool/bundles'"
+            guest_scp "$platform" "$bundle_path" "$spool/bundles/.$bundle_name.partial"
+            guest_ssh "$platform" "mv '$spool/bundles/.$bundle_name.partial' '$spool/bundles/$bundle_name'"
             guest_scp "$platform" "$job_path" "$temporary_path"
             guest_ssh "$platform" "mv '$temporary_path' '$final_path'"
             ;;
     esac
     rm -f "$job_path"
+    rm -f "$bundle_path"
 }
 
 read_result() {
