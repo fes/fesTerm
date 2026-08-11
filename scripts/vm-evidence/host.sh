@@ -219,7 +219,11 @@ wait_for_result() {
     run_id=$2
     sha=$3
     purpose=$4
-    overall_timeout=$(watchdog_seconds "$purpose" 1800)
+    case "$purpose" in
+        readiness) overall_timeout=$(watchdog_seconds readiness 180) ;;
+        overall) overall_timeout=$(watchdog_seconds overall 1800) ;;
+        *) die "unsupported result-wait purpose: $purpose" ;;
+    esac
     poll=$(poll_seconds)
     elapsed=0
     phase=
