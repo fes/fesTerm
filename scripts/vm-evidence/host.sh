@@ -327,6 +327,7 @@ run_platform() {
     product_mode=$mode
 
     reset "$platform"
+    provider_wait_for_restore "$(vm_name "$platform")"
     provider_start "$(vm_name "$platform")"
     run_started=1
     wait_for_ssh "$platform"

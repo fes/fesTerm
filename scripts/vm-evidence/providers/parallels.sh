@@ -14,6 +14,18 @@ provider_reset() {
     prlctl snapshot-switch "$1" --id "$2" --skip-resume
 }
 
+provider_wait_for_restore() {
+    vm_name=$1
+    attempt=0
+    while [ "$attempt" -lt 60 ]; do
+        state=$(prlctl list "$vm_name" --json | jq -er '.[0].status')
+        [ "$state" != restoring ] && return 0
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+    die "$vm_name remained in Parallels restoring state for 120 seconds"
+}
+
 provider_start() {
     prlctl start "$1"
 }
