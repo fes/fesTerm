@@ -79,6 +79,57 @@ pub enum HostTrustDecision {
     AcceptAndPersist,
 }
 
+/// Transient authentication selected for one new SSH session.
+///
+/// Password authentication is the only supported method in this slice.
+/// Public-key, agent, and keyboard-interactive authentication are deliberately
+/// not represented until their secret-handling lifetimes can be bounded
+/// without retaining key material or challenge responses in configuration.
+pub enum SshAuthentication {
+    Password(SshPassword),
+}
+
+impl SshAuthentication {
+    /// Selects password authentication for this session.
+    ///
+    /// The password is moved directly to the worker, used for one
+    /// authentication attempt, and is never exposed through this API, cloned,
+    /// persisted, or included in debug output.
+    pub fn password(password: impl Into<String>) -> Self {
+        Self::Password(SshPassword {
+            password: password.into(),
+        })
+    }
+
+    fn into_password(self) -> String {
+        match self {
+            Self::Password(password) => password.password,
+        }
+    }
+}
+
+impl fmt::Debug for SshAuthentication {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Password(_) => formatter.write_str("SshAuthentication::Password([REDACTED])"),
+        }
+    }
+}
+
+/// Password material consumed by [`SshAuthentication`] for a single attempt.
+///
+/// This type intentionally has no getter, `Clone`, or derived `Debug`
+/// implementation. It is not a persistent connection-profile field.
+pub struct SshPassword {
+    password: String,
+}
+
+impl fmt::Debug for SshPassword {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SshPassword([REDACTED])")
+    }
+}
+
 /// Validated, secret-free connection inputs for a future interactive SSH PTY.
 ///
 /// Authentication material is intentionally absent. In particular, callers
@@ -579,7 +630,6 @@ impl WorkerShared {
         }
     }
 
-    #[cfg(test)]
     fn record_input_sent(&self, bytes: usize) {
         let mut metrics = self
             .metrics
@@ -588,7 +638,6 @@ impl WorkerShared {
         metrics.input_bytes = metrics.input_bytes.saturating_add(bytes as u64);
     }
 
-    #[cfg(test)]
     fn record_resize_applied(&self, size: TerminalSize) {
         let mut metrics = self
             .metrics
@@ -861,9 +910,8 @@ impl std::error::Error for SshSessionStartError {}
 /// command, and is stopped when the worker completes. This is an interim
 /// crate-local boundary until application runtime ownership is available.
 ///
-/// The worker performs TCP connection and strict host-key verification only.
-/// Authentication, channels, PTY allocation, input, and resize are explicitly
-/// unsupported; queued input and resize requests emit an `Unsupported` error.
+/// The worker performs TCP connection, strict host-key verification, password
+/// authentication, and interactive session-channel setup.
 pub struct SshSession {
     foundation: SshWorkerFoundation,
     host_key_resolver: HostKeyDecisionResolver,
@@ -874,13 +922,17 @@ pub struct SshSession {
 
 impl SshSession {
     /// Starts a session with the default no-op event notifier.
-    pub fn start(profile: SshConnectionProfile) -> Result<Self, SshSessionStartError> {
-        Self::start_with_notifier(profile, noop_session_event_notifier())
+    pub fn start(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+    ) -> Result<Self, SshSessionStartError> {
+        Self::start_with_notifier(profile, authentication, noop_session_event_notifier())
     }
 
     /// Starts a session and wakes `event_notifier` after every queued event.
     pub fn start_with_notifier(
         profile: SshConnectionProfile,
+        authentication: SshAuthentication,
         event_notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, SshSessionStartError> {
         let (foundation, command_receiver, host_key_resolver) =
@@ -903,7 +955,13 @@ impl SshSession {
                     .build()
                     .map_err(|_| ssh_failure(&shared, "SSH runtime could not start"))
                     .and_then(|runtime| {
-                        runtime.block_on(ssh_worker(profile, shared, command_receiver, worker_gate))
+                        runtime.block_on(ssh_worker(
+                            profile,
+                            authentication,
+                            shared,
+                            command_receiver,
+                            worker_gate,
+                        ))
                     });
                 let _ = completion_sender.send(result);
             })
@@ -1029,11 +1087,12 @@ impl russh::client::Handler for SshClientHandler {
 
 async fn ssh_worker(
     profile: SshConnectionProfile,
+    authentication: SshAuthentication,
     shared: Arc<WorkerShared>,
     command_receiver: WorkerCommandReceiver,
     host_key_gate: Arc<HostKeyDecisionGate>,
 ) -> Result<ShutdownResult, SessionError> {
-    if process_commands(&command_receiver, &shared, &host_key_gate) {
+    if process_commands_before_running(&command_receiver, &shared, &host_key_gate) {
         shared.set_lifecycle(SessionLifecycle::Stopped);
         return Ok(ShutdownResult::Stopped);
     }
@@ -1056,7 +1115,7 @@ async fn ssh_worker(
     let connection_timeout = tokio::time::sleep(CONNECT_TIMEOUT);
     tokio::pin!(connection_timeout);
 
-    let handle = loop {
+    let mut handle = loop {
         tokio::select! {
             result = &mut connection => match result {
                 Ok(handle) => break handle,
@@ -1066,19 +1125,181 @@ async fn ssh_worker(
                 return Err(ssh_failure(&shared, "SSH connection timed out"));
             }
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                if process_commands(&command_receiver, &shared, &host_key_gate) {
+                if process_commands_before_running(&command_receiver, &shared, &host_key_gate) {
                     shared.set_lifecycle(SessionLifecycle::Stopped);
                     return Ok(ShutdownResult::Stopped);
                 }
             }
         }
     };
+
+    let password = authentication.into_password();
+    let authentication_result = wait_for_ssh_operation(
+        handle.authenticate_password(profile.username(), password),
+        &command_receiver,
+        &shared,
+        &host_key_gate,
+    )
+    .await;
+    let authenticated = match authentication_result {
+        WorkerWait::Completed(Ok(result)) if result.success() => true,
+        WorkerWait::Completed(Ok(_)) => false,
+        WorkerWait::Completed(Err(_)) => {
+            return Err(ssh_failure(&shared, "SSH authentication failed"));
+        }
+        WorkerWait::Shutdown => {
+            return stop_handle(handle, &shared).await;
+        }
+    };
+    if !authenticated {
+        return Err(ssh_failure(&shared, "SSH authentication failed"));
+    }
+
+    let channel = match wait_for_ssh_operation(
+        handle.channel_open_session(),
+        &command_receiver,
+        &shared,
+        &host_key_gate,
+    )
+    .await
+    {
+        WorkerWait::Completed(Ok(channel)) => channel,
+        WorkerWait::Completed(Err(_)) => {
+            return Err(ssh_failure(&shared, "SSH session channel could not open"));
+        }
+        WorkerWait::Shutdown => {
+            return stop_handle(handle, &shared).await;
+        }
+    };
+    let mut channel = channel;
+    let dimensions = ssh_terminal_dimensions(profile.initial_size());
+    match wait_for_ssh_operation(
+        channel.request_pty(
+            true,
+            profile.terminal_type(),
+            dimensions.0,
+            dimensions.1,
+            dimensions.2,
+            dimensions.3,
+            &[],
+        ),
+        &command_receiver,
+        &shared,
+        &host_key_gate,
+    )
+    .await
+    {
+        WorkerWait::Completed(Ok(())) => {}
+        WorkerWait::Completed(Err(_)) => {
+            return Err(ssh_failure(&shared, "SSH PTY request failed"));
+        }
+        WorkerWait::Shutdown => {
+            return stop_handle(handle, &shared).await;
+        }
+    }
+    match wait_for_channel_request_reply(&mut channel, &command_receiver, &shared, &host_key_gate)
+        .await
+    {
+        ChannelRequestReply::Accepted => {}
+        ChannelRequestReply::Rejected => {
+            return Err(ssh_failure(&shared, "SSH PTY request was rejected"));
+        }
+        ChannelRequestReply::Shutdown => {
+            return stop_handle(handle, &shared).await;
+        }
+    }
+
+    match wait_for_ssh_operation(
+        channel.request_shell(true),
+        &command_receiver,
+        &shared,
+        &host_key_gate,
+    )
+    .await
+    {
+        WorkerWait::Completed(Ok(())) => {}
+        WorkerWait::Completed(Err(_)) => {
+            return Err(ssh_failure(&shared, "SSH shell request failed"));
+        }
+        WorkerWait::Shutdown => {
+            return stop_handle(handle, &shared).await;
+        }
+    }
+    match wait_for_channel_request_reply(&mut channel, &command_receiver, &shared, &host_key_gate)
+        .await
+    {
+        ChannelRequestReply::Accepted => {}
+        ChannelRequestReply::Rejected => {
+            return Err(ssh_failure(&shared, "SSH shell request was rejected"));
+        }
+        ChannelRequestReply::Shutdown => {
+            return stop_handle(handle, &shared).await;
+        }
+    }
+
     shared.set_lifecycle(SessionLifecycle::Running);
-    await_connection_close(handle, command_receiver, shared, host_key_gate).await
+    run_authenticated_channel(handle, channel, command_receiver, shared, host_key_gate).await
 }
 
-async fn await_connection_close(
+enum WorkerWait<T> {
+    Completed(Result<T, russh::Error>),
+    Shutdown,
+}
+
+async fn wait_for_ssh_operation<T, F>(
+    operation: F,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> WorkerWait<T>
+where
+    F: std::future::Future<Output = Result<T, russh::Error>>,
+{
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            result = &mut operation => return WorkerWait::Completed(result),
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return WorkerWait::Shutdown;
+                }
+            }
+        }
+    }
+}
+
+enum ChannelRequestReply {
+    Accepted,
+    Rejected,
+    Shutdown,
+}
+
+async fn wait_for_channel_request_reply(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> ChannelRequestReply {
+    loop {
+        tokio::select! {
+            message = channel.wait() => match message {
+                Some(russh::ChannelMsg::Success) => return ChannelRequestReply::Accepted,
+                Some(russh::ChannelMsg::Data { data }) => emit_channel_output(shared, data.as_ref()),
+                Some(russh::ChannelMsg::Failure | russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => return ChannelRequestReply::Rejected,
+                Some(_) => {}
+            },
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return ChannelRequestReply::Shutdown;
+                }
+            }
+        }
+    }
+}
+
+async fn run_authenticated_channel(
     mut handle: russh::client::Handle<SshClientHandler>,
+    mut channel: russh::Channel<russh::client::Msg>,
     command_receiver: WorkerCommandReceiver,
     shared: Arc<WorkerShared>,
     host_key_gate: Arc<HostKeyDecisionGate>,
@@ -1087,26 +1308,99 @@ async fn await_connection_close(
         tokio::select! {
             result = &mut handle => match result {
                 Ok(()) => {
-                    shared.set_lifecycle(SessionLifecycle::Stopped);
-                    return Ok(ShutdownResult::Stopped);
+                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_exit_code(0)));
+                    return Ok(ShutdownResult::AlreadyStopped);
                 }
                 Err(_) => return Err(ssh_failure(&shared, "SSH connection ended unexpectedly")),
             },
+            message = channel.wait() => match message {
+                Some(russh::ChannelMsg::Data { data }) => emit_channel_output(&shared, data.as_ref()),
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_exit_code(exit_status)));
+                    return Ok(ShutdownResult::AlreadyStopped);
+                }
+                Some(russh::ChannelMsg::ExitSignal { .. }) => {
+                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_signal(0, "remote signal")));
+                    return Ok(ShutdownResult::AlreadyStopped);
+                }
+                Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
+                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_exit_code(0)));
+                    return Ok(ShutdownResult::AlreadyStopped);
+                }
+                Some(_) => {}
+            },
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                if process_commands(&command_receiver, &shared, &host_key_gate) {
-                    let _ = handle
-                        .disconnect(russh::Disconnect::ByApplication, "fesTerm shutdown", "")
-                        .await;
-                    let _ = tokio::time::timeout(DISCONNECT_TIMEOUT, &mut handle).await;
-                    shared.set_lifecycle(SessionLifecycle::Stopped);
-                    return Ok(ShutdownResult::Stopped);
+                match process_authenticated_commands(&mut channel, &command_receiver, &shared, &host_key_gate).await {
+                    Ok(false) => {}
+                    Ok(true) => return stop_handle(handle, &shared).await,
+                    Err(error) => return Err(error),
                 }
             }
         }
     }
 }
 
-fn process_commands(
+async fn process_authenticated_commands(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> Result<bool, SessionError> {
+    loop {
+        match command_receiver.try_recv() {
+            Ok(WorkerCommand::Input(bytes)) => {
+                let byte_count = bytes.len();
+                match wait_for_ssh_operation(
+                    channel.data_bytes(bytes),
+                    command_receiver,
+                    shared,
+                    host_key_gate,
+                )
+                .await
+                {
+                    WorkerWait::Completed(Ok(())) => shared.record_input_sent(byte_count),
+                    WorkerWait::Completed(Err(_)) => {
+                        return Err(ssh_failure_with_kind(
+                            shared,
+                            SessionErrorKind::Input,
+                            "SSH input failed",
+                        ));
+                    }
+                    WorkerWait::Shutdown => return Ok(true),
+                }
+            }
+            Ok(WorkerCommand::Resize(size)) => {
+                let dimensions = ssh_terminal_dimensions(size);
+                match wait_for_ssh_operation(
+                    channel.window_change(dimensions.0, dimensions.1, dimensions.2, dimensions.3),
+                    command_receiver,
+                    shared,
+                    host_key_gate,
+                )
+                .await
+                {
+                    WorkerWait::Completed(Ok(())) => shared.record_resize_applied(size),
+                    WorkerWait::Completed(Err(_)) => {
+                        return Err(ssh_failure_with_kind(
+                            shared,
+                            SessionErrorKind::Resize,
+                            "SSH resize failed",
+                        ));
+                    }
+                    WorkerWait::Shutdown => return Ok(true),
+                }
+            }
+            Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                host_key_gate.reject_pending();
+                shared.set_lifecycle(SessionLifecycle::Stopping);
+                return Ok(true);
+            }
+            Err(TryRecvError::Empty) => return Ok(false),
+        }
+    }
+}
+
+fn process_commands_before_running(
     command_receiver: &WorkerCommandReceiver,
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
@@ -1131,6 +1425,21 @@ fn process_commands(
     }
 }
 
+async fn stop_handle(
+    mut handle: russh::client::Handle<SshClientHandler>,
+    shared: &WorkerShared,
+) -> Result<ShutdownResult, SessionError> {
+    let _ = tokio::time::timeout(DISCONNECT_TIMEOUT, async {
+        let _ = handle
+            .disconnect(russh::Disconnect::ByApplication, "fesTerm shutdown", "")
+            .await;
+        let _ = (&mut handle).await;
+    })
+    .await;
+    shared.set_lifecycle(SessionLifecycle::Stopped);
+    Ok(ShutdownResult::Stopped)
+}
+
 fn report_unsupported(shared: &WorkerShared, message: &'static str) {
     let _ = shared.try_emit(SessionEvent::Error(SessionError::new(
         SessionErrorKind::Unsupported,
@@ -1139,10 +1448,35 @@ fn report_unsupported(shared: &WorkerShared, message: &'static str) {
 }
 
 fn ssh_failure(shared: &WorkerShared, message: &'static str) -> SessionError {
-    let error = SessionError::new(SessionErrorKind::Spawn, message);
+    ssh_failure_with_kind(shared, SessionErrorKind::Spawn, message)
+}
+
+fn ssh_failure_with_kind(
+    shared: &WorkerShared,
+    kind: SessionErrorKind,
+    message: &'static str,
+) -> SessionError {
+    let error = SessionError::new(kind, message);
     let _ = shared.try_emit(SessionEvent::Error(error.clone()));
     shared.set_lifecycle(SessionLifecycle::Failed(error.clone()));
     error
+}
+
+fn ssh_terminal_dimensions(size: TerminalSize) -> (u32, u32, u32, u32) {
+    (
+        u32::from(size.columns()),
+        u32::from(size.rows()),
+        u32::from(size.pixel_width().unwrap_or(0)),
+        u32::from(size.pixel_height().unwrap_or(0)),
+    )
+}
+
+fn emit_channel_output(shared: &WorkerShared, data: &[u8]) {
+    for chunk in data.chunks(MAX_IO_CHUNK_BYTES) {
+        if !shared.try_emit(SessionEvent::Output(chunk.to_vec())) {
+            break;
+        }
+    }
 }
 
 fn sha256_fingerprint(public_key: &russh::keys::PublicKey) -> String {
@@ -1246,6 +1580,28 @@ mod tests {
             ),
             Err(SshConnectionProfileError::TerminalTypeTooLong { .. })
         ));
+    }
+
+    #[test]
+    fn password_authentication_redacts_the_secret() {
+        let authentication = SshAuthentication::password("not-for-debug-output");
+
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::Password([REDACTED])"
+        );
+    }
+
+    #[test]
+    fn terminal_size_converts_to_ssh_pty_dimensions() {
+        assert_eq!(
+            ssh_terminal_dimensions(TerminalSize::new(80, 24).unwrap()),
+            (80, 24, 0, 0)
+        );
+        assert_eq!(
+            ssh_terminal_dimensions(TerminalSize::with_pixels(120, 40, 1200, 800).unwrap()),
+            (120, 40, 1200, 800)
+        );
     }
 
     #[test]
@@ -1553,7 +1909,8 @@ mod tests {
             TerminalSize::new(80, 24).unwrap(),
         )
         .unwrap();
-        let session = SshSession::start(profile).unwrap();
+        let session =
+            SshSession::start(profile, SshAuthentication::password("test-password")).unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(3);
         let error = loop {
