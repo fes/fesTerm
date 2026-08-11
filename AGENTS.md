@@ -14,6 +14,7 @@ Read `README.md`, then use the document that matches the task:
 | Standards and security decisions | `docs/standards-and-implementation-notes.md`, `docs/adr/` |
 | Golden fixtures | `tests/fixtures/README.md` |
 | GUI workflow, chrome, session chips, and visual hierarchy | `docs/gui-design.md` |
+| First-party icons, semantic names, accessibility, and asset pipeline | `docs/icon-system.md` |
 | UI, rendering, and platform test strategy | `docs/ui-test-plan.md` |
 | Bootstrap and manual checks | `docs/development-handoff.md` |
 
@@ -122,6 +123,10 @@ complete policy.
   alongside New Tab and compact global controls. Do not place them on a
   detached shelf below a separate title bar. Preserve stable identity and use
   compact status indicators instead of full-chip state colors.
+- Treat `assets/icons/source` as the canonical first-party icon source and
+  `docs/icon-system.md` as its naming/accessibility contract. Use semantic Icon
+  names in Rust, keep color in UI state, and never add branded OS glyphs as a
+  required remote-session identity.
 - Route application-level GUI actions through
   `docs/application-command-model.md`; invocation surfaces translate intent,
   while application policy remains centralized and testable.

@@ -152,7 +152,7 @@ The main content is either a terminal viewport, launcher, settings page, or diag
 Global application actions and session-specific context are separate concerns.
 
 - The upper application chrome owns compact global actions: New Tab/Launcher, command palette or search, session-inspector toggle, and a deliberately small overflow menu.
-- Global controls are icon-only, painter-drawn glyphs (not text glyphs or words) with accessible labels and hover text carrying their meaning, matching the chip row's own painter-drawn status dot and close control rather than mixing button styles.
+- Global controls are icon-only, using the canonical first-party forms in [the icon system](icon-system.md), with accessible labels and hover text carrying their meaning. Painter-drawn implementations may remain while runtime SVG integration is incremental, but their geometry should converge on the canonical sources rather than creating a second icon vocabulary.
 - The session chips live inside the upper application chrome, in the same top-of-window band as New Tab and compact global controls. They are independent because each lozenge has visible space around it—not because the row is separated from the chrome.
 - The right-side session inspector is normally hidden and shows context for the active session: connection state, host/profile metadata, environment, diagnostics, and relevant actions.
 - Global Settings do not live in the inspector. Settings open as an application surface represented by their own chip, and remain reachable from the command palette and compact overflow menu.
@@ -202,7 +202,7 @@ The wireframe in [Canonical Wireframe](#canonical-wireframe) is the visual contr
 
 The application window disables native OS decorations (`app/festerm/src/main.rs`, `ViewportBuilder::with_decorations(false)`) so the chip row and the window's own minimize/maximize/close controls share one integrated band, rather than a separate native title bar sitting above a detached chip shelf. Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
 
-- The trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, search) is painted in the same row as the chips, using the same painter-drawn icon convention as the other chrome icons (no image assets). Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
+- The trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, search) is painted in the same row as the chips. Its current painter geometry is an implementation detail; [the first-party SVG sources](icon-system.md) are the canonical visual vocabulary for future asset integration. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
 - The maximize/restore icon reads the viewport's real current state (`ui.input(|i| i.viewport().maximized)`) and paints a single square (maximize) or two overlapping squares (restore) accordingly, so the icon's own shape communicates state rather than a text label.
 - A background drag-to-move region is registered across the row's own compact content band (not the full remaining panel height, which - before any content is laid out - would otherwise swallow pointer events meant for the terminal view painted below) *before* the chips/icons are added, so those widgets' own click handling still takes priority over this catch-all background sense wherever they visually sit on top of it. Starting a primary-button drag on that background sends `ViewportCommand::StartDrag`; double-clicking it toggles `ViewportCommand::Maximized`.
 - `TRAILING_CONTROLS_RESERVED_WIDTH` accounts for all six trailing icons (three window controls plus overflow/panel/search) so the chip row never overlaps them, extending the existing narrow-window overlap fix.
@@ -243,7 +243,9 @@ The stable identity remains first. In compact layouts, the secondary title shoul
 
 Icons may help distinguish local shell, SSH, launcher, settings, or other future session types. Icons should aid recognition rather than decorate every control.
 
-Remote operating-system icons may be shown when reliable metadata is available, but the UI must always support a generic remote-host fallback. OS detection must not be required for a coherent tab.
+The repository-owned source set and its semantic Rust names are defined in [Icon System](icon-system.md). Assets are monochrome and receive semantic color from UI code; status remains a separate accessible indicator instead of tinting the entire session icon or chip.
+
+Remote operating-system icons may be shown when reliable metadata is available, but the UI must always use `SshRemote` as a coherent generic remote-host identity. OS detection must not be required, and branded OS logos are outside the first-party set.
 
 ### Connection states
 
@@ -632,7 +634,8 @@ It should use fake metadata where necessary so interaction and hierarchy can be 
 - Default chip width, minimum chip width, and the preference between single-row overflow and optional wrapping: both `ChipLayout::Wrap` and `ChipLayout::SingleRowScroll` are implemented and user-toggleable from Settings, but no default has been chosen based on usability input ([issue #24](https://github.com/fes/fesTerm/issues/24)).
 - Exact responsive behavior and minimum width of the normally hidden right-side session inspector.
 - Theme defaults and application-chrome font selection.
-- Exact icon source, licensing, and fallback policy.
+- Runtime SVG ingestion/raster-cache details and the incremental migration of
+  existing painter-drawn controls to the canonical first-party icon sources.
 - Rules for user-name and host-name privacy in screenshots, notifications, and shared workspaces.
 - Whether a failed/disconnected session should offer a "Retry"/"Reconnect" action; the current connection overlay (`crates/festerm-ui-egui/src/overlay.rs`) only offers "View Diagnostics" and "Close Tab" because no session-restart backend capability exists yet.
 

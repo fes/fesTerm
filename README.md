@@ -56,6 +56,8 @@ device-identity and future custom-terminfo strategy.
   application scenarios, `TERM` strategy, and regression triage.
 - [GUI design](docs/gui-design.md) — authoritative interaction model, independent
   session-chip principles, visual hierarchy, and canonical wireframe.
+- [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
+  names, accessibility rules, color/state policy, and validation pipeline.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
   interaction, rendering, PTY, and platform validation strategy.
 - [Project design](DESIGN.md) — product direction, principles, experience,
