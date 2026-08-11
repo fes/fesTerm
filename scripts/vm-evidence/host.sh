@@ -323,15 +323,16 @@ run_platform() {
     run_platform_name=$platform
     run_started=0
     trap cleanup_run EXIT HUP INT TERM
+    product_run_id=$run_id
 
     reset "$platform"
     provider_start "$(vm_name "$platform")"
     run_started=1
     wait_for_ssh "$platform"
     capture "$platform" "$run_root/desktop-ready.png"
-    preflight_relay "$platform" "$sha" "$run_id-readiness"
-    write_job "$platform" "$sha" "$mode" "$run_id"
-    result=$(wait_for_result "$platform" "$run_id" "$sha" overall)
+    preflight_relay "$platform" "$sha" "$product_run_id-readiness"
+    write_job "$platform" "$sha" "$mode" "$product_run_id"
+    result=$(wait_for_result "$platform" "$product_run_id" "$sha" overall)
     printf '%s\n' "$result" >"$run_root/guest-result.json"
     provider_metadata "$(vm_name "$platform")" >"$run_root/provider-metadata.json"
     jq -n \
