@@ -23,6 +23,7 @@ Environment=FESTERM_VM_EVIDENCE_REPOSITORY_URL=$3
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$HOME/.Xauthority
 Environment=XDG_SESSION_TYPE=x11
+Environment=PATH=$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$script_dir/linux.sh
 EOF
 
