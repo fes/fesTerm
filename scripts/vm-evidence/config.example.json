@@ -1,0 +1,37 @@
+{
+  "provider": "parallels",
+  "artifact_root": "/Users/replace-me/VM-Evidence",
+  "ssh_private_key": "/Users/replace-me/.ssh/festerm-vm-lab",
+  "repository_url": "https://github.com/fes/fesTerm.git",
+  "vms": {
+    "windows": {
+      "name": "festerm-windows",
+      "snapshot_id": "replace-with-parallels-snapshot-uuid",
+      "host": "festerm-windows.local",
+      "port": 22,
+      "user": "festerm",
+      "relay_spool": "C:\\Users\\festerm\\vm-evidence-spool",
+      "relay_script": "C:\\Users\\festermadmin\\.local\\share\\festerm-vm-evidence-relay\\windows.ps1",
+      "relay_repository": "C:\\Users\\festermadmin\\fesTerm-evidence",
+      "qualification": "diagnostic"
+    },
+    "linux": {
+      "name": "festerm-linux",
+      "snapshot_id": "replace-with-parallels-snapshot-uuid",
+      "host": "festerm-linux.local",
+      "port": 22,
+      "user": "festerm",
+      "relay_spool": "/home/festerm/vm-evidence-spool",
+      "qualification": "qualifying-xorg"
+    },
+    "macos": {
+      "name": "festerm-macos",
+      "snapshot_id": "replace-with-parallels-snapshot-uuid",
+      "host": "festerm-macos.local",
+      "port": 22,
+      "user": "festerm",
+      "relay_spool": "/Users/festerm/vm-evidence-spool",
+      "qualification": "qualifying-console"
+    }
+  }
+}

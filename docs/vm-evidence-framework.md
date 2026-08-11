@@ -1,6 +1,6 @@
 # VM-Based Native Evidence Framework
 
-**Status:** Proposed implementation handoff; first manual evidence run completed 2026-08-10 (see [Evidence Run Log](#evidence-run-log)) — the automated framework described below is not yet built  
+**Status:** Automation foundation implemented; first manual evidence run completed 2026-08-10 (see [Evidence Run Log](#evidence-run-log)). Guest baselines and relay installation remain environment provisioning work.
 **Scope:** Deterministic Windows, Linux, and macOS desktop evidence executed as virtual machines on a macOS host  
 **Primary hypervisor:** Parallels Desktop  
 **Secondary hypervisor:** VMware Fusion where the requested guest is supported
@@ -1013,6 +1013,42 @@ native-desktop layer.
 
 **Exit:** a manually dispatched workflow can produce a three-platform evidence
 bundle for a selected candidate SHA.
+
+## Implemented Automation Foundation
+
+The repository now contains the first bounded implementation at
+`scripts/vm-evidence/`:
+
+- `host.sh` validates a user-local configuration, resets/starts a Parallels VM,
+  waits for SSH only as a control plane, submits an allowlisted relay job,
+  captures the display through `prlctl`, and writes a JSON manifest. Its
+  configuration template is `config.example.json`; real VM names, addresses,
+  keys, and artifact paths remain outside Git.
+- The Unix relays run only in a graphical session. Linux qualifying execution
+  requires Xorg explicitly; the macOS relay requires the console user's
+  `gui/<uid>` launchd domain. Both reject arbitrary job fields and accept only
+  a Git SHA plus `native-smoke` or `optional-validation`.
+- The Windows relay is executed through Parallels as the active console user.
+  It can automate ConPTY and CPU-rendered diagnostic evidence, but the
+  Parallels Windows-on-ARM guest remains `diagnostic`: Parallels does not
+  expose a hardware-capable wgpu backend there.
+
+Install each relay using `scripts/vm-evidence/relay/README.md`, then place a
+real configuration at `~/.config/festerm-vm-lab/config.json`. A normal run is:
+
+```sh
+scripts/vm-evidence/host.sh linux <full-candidate-sha>
+scripts/vm-evidence/host.sh macos <full-candidate-sha>
+scripts/vm-evidence/host.sh windows <full-candidate-sha>
+```
+
+`all` preserves individual platform failures and returns nonzero after all
+three attempts. No failed guest test is retried automatically.
+
+The host controller intentionally does **not** install guest dependencies,
+grant Accessibility/TCC permissions, disable Parallels sharing, or alter a
+baseline. Those are explicit one-time provisioning tasks and must be captured
+in the next clean baseline before the controller is trusted for acceptance.
 
 ### Phase 8 — Reliability qualification
 
