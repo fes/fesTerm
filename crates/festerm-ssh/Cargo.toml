@@ -10,6 +10,7 @@ description = "Native SSH session transport and trust policy for fesTerm."
 [dependencies]
 festerm-session = { path = "../festerm-session" }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
+tokio = { version = "1.17.0", default-features = false, features = ["net", "rt", "sync", "time"] }
 
 [lints]
 workspace = true

@@ -1,21 +1,19 @@
-//! Native SSH transport policy and worker foundations.
-//!
-//! This crate deliberately does not create a remote connection yet.  It
-//! defines the validated, secret-free profile and bounded worker seams that a
-//! dedicated Tokio/`russh` worker will use.
+//! Native SSH transport policy and bounded `russh` session lifecycle.
 
 use std::{
     fmt,
     sync::{
-        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Condvar, Mutex,
     },
+    thread,
     time::Duration,
 };
 
 use festerm_session::{
-    noop_session_event_notifier, FlowDirection, SessionEvent, SessionEventNotifier, SessionId,
-    SessionLifecycle, SessionMetrics, SessionOperation, SessionSendError, SessionTryReceiveError,
+    noop_session_event_notifier, FlowDirection, Session, SessionError, SessionErrorKind,
+    SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
+    SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
     TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 
@@ -337,6 +335,7 @@ enum HostKeyGateState {
 struct HostKeyDecisionGate {
     state: Mutex<HostKeyGateState>,
     changed: Condvar,
+    notified: tokio::sync::Notify,
 }
 
 #[allow(dead_code)]
@@ -345,6 +344,7 @@ impl HostKeyDecisionGate {
         Self {
             state: Mutex::new(HostKeyGateState::Idle),
             changed: Condvar::new(),
+            notified: tokio::sync::Notify::new(),
         }
     }
 
@@ -381,6 +381,7 @@ impl HostKeyDecisionGate {
             HostKeyGateState::Waiting(current) if current == prompt => {
                 *state = HostKeyGateState::Resolved(decision);
                 self.changed.notify_all();
+                self.notified.notify_waiters();
                 Ok(())
             }
             HostKeyGateState::Waiting(_) => Err(HostKeyDecisionResolutionError::PromptMismatch),
@@ -403,6 +404,7 @@ impl HostKeyDecisionGate {
             HostKeyGateState::Waiting(current) if current == prompt => {
                 *state = HostKeyGateState::Cancelled;
                 self.changed.notify_all();
+                self.notified.notify_waiters();
                 Ok(())
             }
             HostKeyGateState::Waiting(_) => Err(HostKeyDecisionResolutionError::PromptMismatch),
@@ -431,6 +433,50 @@ impl HostKeyDecisionGate {
             }
         };
         *state = HostKeyGateState::Idle;
+        self.notified.notify_waiters();
+        decision
+    }
+
+    fn reject_pending(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("host-key gate lock is not poisoned");
+        if matches!(*state, HostKeyGateState::Waiting(_)) {
+            *state = HostKeyGateState::Cancelled;
+            self.changed.notify_all();
+            self.notified.notify_waiters();
+        }
+    }
+
+    async fn wait_for_decision_async(&self, timeout: Duration) -> HostTrustDecision {
+        let decision = tokio::time::timeout(timeout, async {
+            loop {
+                let notified = self.notified.notified();
+                {
+                    let state = self
+                        .state
+                        .lock()
+                        .expect("host-key gate lock is not poisoned");
+                    match *state {
+                        HostKeyGateState::Resolved(decision) => return decision,
+                        HostKeyGateState::Idle | HostKeyGateState::Cancelled => {
+                            return HostTrustDecision::Reject;
+                        }
+                        HostKeyGateState::Waiting(_) => {}
+                    }
+                }
+                notified.await;
+            }
+        })
+        .await
+        .unwrap_or(HostTrustDecision::Reject);
+        *self
+            .state
+            .lock()
+            .expect("host-key gate lock is not poisoned") = HostKeyGateState::Idle;
+        self.changed.notify_all();
+        self.notified.notify_waiters();
         decision
     }
 }
@@ -446,29 +492,29 @@ impl HostKeyDecisionWaiter {
     fn wait(self, gate: &HostKeyDecisionGate, timeout: Duration) -> HostTrustDecision {
         gate.wait_for_decision(timeout)
     }
+
+    async fn wait_async(self, gate: &HostKeyDecisionGate, timeout: Duration) -> HostTrustDecision {
+        gate.wait_for_decision_async(timeout).await
+    }
 }
 
-#[allow(dead_code)]
 enum WorkerCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
     Shutdown,
 }
 
-/// Private receiver handed to the eventual dedicated SSH worker.
-#[allow(dead_code)]
+/// Private receiver handed to the dedicated SSH worker.
 struct WorkerCommandReceiver {
     receiver: Receiver<WorkerCommand>,
 }
 
-#[allow(dead_code)]
 impl WorkerCommandReceiver {
     fn try_recv(&self) -> Result<WorkerCommand, TryRecvError> {
         self.receiver.try_recv()
     }
 }
 
-#[allow(dead_code)]
 struct WorkerShared {
     id: SessionId,
     lifecycle: Mutex<SessionLifecycle>,
@@ -477,7 +523,6 @@ struct WorkerShared {
     event_notifier: Arc<dyn SessionEventNotifier>,
 }
 
-#[allow(dead_code)]
 impl WorkerShared {
     fn lifecycle(&self) -> SessionLifecycle {
         self.lifecycle
@@ -534,6 +579,7 @@ impl WorkerShared {
         }
     }
 
+    #[cfg(test)]
     fn record_input_sent(&self, bytes: usize) {
         let mut metrics = self
             .metrics
@@ -542,6 +588,7 @@ impl WorkerShared {
         metrics.input_bytes = metrics.input_bytes.saturating_add(bytes as u64);
     }
 
+    #[cfg(test)]
     fn record_resize_applied(&self, size: TerminalSize) {
         let mut metrics = self
             .metrics
@@ -552,6 +599,7 @@ impl WorkerShared {
         let _ = self.try_emit(SessionEvent::ResizeApplied(size));
     }
 
+    #[cfg(test)]
     fn record_output(&self, bytes: Vec<u8>) -> bool {
         self.try_emit(SessionEvent::Output(bytes))
     }
@@ -572,12 +620,9 @@ impl WorkerShared {
     }
 }
 
-/// Bounded, runtime-independent coordination owned by a future SSH worker.
-///
-/// It is intentionally private until a live `russh` worker can implement the
-/// complete `festerm_session::Session` contract without pretending to connect.
-#[allow(dead_code)]
+/// Bounded coordination owned by one SSH worker.
 struct SshWorkerFoundation {
+    #[cfg(test)]
     profile: SshConnectionProfile,
     shared: Arc<WorkerShared>,
     command_sender: SyncSender<WorkerCommand>,
@@ -586,8 +631,8 @@ struct SshWorkerFoundation {
     host_key_gate: Arc<HostKeyDecisionGate>,
 }
 
-#[allow(dead_code)]
 impl SshWorkerFoundation {
+    #[cfg(test)]
     fn new(
         profile: SshConnectionProfile,
     ) -> (Self, WorkerCommandReceiver, HostKeyDecisionResolver) {
@@ -605,6 +650,8 @@ impl SshWorkerFoundation {
         event_capacity: usize,
         event_notifier: Arc<dyn SessionEventNotifier>,
     ) -> (Self, WorkerCommandReceiver, HostKeyDecisionResolver) {
+        #[cfg(not(test))]
+        let _ = profile;
         assert!(
             command_capacity > 0,
             "SSH command queue capacity must be nonzero"
@@ -629,6 +676,7 @@ impl SshWorkerFoundation {
         shared.set_lifecycle(SessionLifecycle::Starting);
         (
             Self {
+                #[cfg(test)]
                 profile,
                 shared,
                 command_sender,
@@ -657,6 +705,7 @@ impl SshWorkerFoundation {
         self.shared.metrics()
     }
 
+    #[cfg(test)]
     fn set_running(&self) {
         self.shared.set_lifecycle(SessionLifecycle::Running);
     }
@@ -730,34 +779,42 @@ impl SshWorkerFoundation {
         }
     }
 
+    #[cfg(test)]
     fn request_host_key_verification(
         &self,
         sha256_fingerprint: &str,
     ) -> Result<HostKeyDecisionWaiter, HostKeyVerificationRequestError> {
-        if !is_sha256_fingerprint(sha256_fingerprint) {
-            return Err(HostKeyVerificationRequestError::InvalidFingerprint);
-        }
-        let prompt = festerm_session::HostKeyPrompt::new(
-            self.profile.identity.host(),
-            self.profile.identity.port(),
+        request_host_key_verification(
+            &self.profile.identity,
+            &self.shared,
+            &self.host_key_gate,
             sha256_fingerprint,
-        );
-        let waiter = self
-            .host_key_gate
-            .begin(prompt.clone())
-            .map_err(HostKeyVerificationRequestError::Resolution)?;
-        if self
-            .shared
-            .try_emit(SessionEvent::HostKeyVerification(prompt.clone()))
-        {
-            Ok(waiter)
-        } else {
-            let _ = self.host_key_gate.cancel(&prompt);
-            // No waiter escaped on this path, so reset the rejection before a
-            // future reconnect retries host verification.
-            let _ = self.host_key_gate.wait_for_decision(Duration::ZERO);
-            Err(HostKeyVerificationRequestError::EventQueueFull)
-        }
+        )
+    }
+}
+
+fn request_host_key_verification(
+    identity: &HostIdentity,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+    sha256_fingerprint: &str,
+) -> Result<HostKeyDecisionWaiter, HostKeyVerificationRequestError> {
+    if !is_sha256_fingerprint(sha256_fingerprint) {
+        return Err(HostKeyVerificationRequestError::InvalidFingerprint);
+    }
+    let prompt =
+        festerm_session::HostKeyPrompt::new(identity.host(), identity.port(), sha256_fingerprint);
+    let waiter = host_key_gate
+        .begin(prompt.clone())
+        .map_err(HostKeyVerificationRequestError::Resolution)?;
+    if shared.try_emit(SessionEvent::HostKeyVerification(prompt.clone())) {
+        Ok(waiter)
+    } else {
+        let _ = host_key_gate.cancel(&prompt);
+        // No waiter escaped on this path, so reset the rejection before a
+        // future reconnect retries host verification.
+        let _ = host_key_gate.wait_for_decision(Duration::ZERO);
+        Err(HostKeyVerificationRequestError::EventQueueFull)
     }
 }
 
@@ -780,11 +837,331 @@ enum HostKeyVerificationRequestError {
     Resolution(HostKeyDecisionResolutionError),
 }
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
+const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Failure to create the dedicated SSH worker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SshSessionStartError;
+
+impl fmt::Display for SshSessionStartError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("could not start SSH worker thread")
+    }
+}
+
+impl std::error::Error for SshSessionStartError {}
+
+/// A live SSH transport session with bounded application-facing queues.
+///
+/// Each instance owns exactly one dedicated OS thread and one current-thread
+/// Tokio runtime. The runtime is created once at session start, never per
+/// command, and is stopped when the worker completes. This is an interim
+/// crate-local boundary until application runtime ownership is available.
+///
+/// The worker performs TCP connection and strict host-key verification only.
+/// Authentication, channels, PTY allocation, input, and resize are explicitly
+/// unsupported; queued input and resize requests emit an `Unsupported` error.
+pub struct SshSession {
+    foundation: SshWorkerFoundation,
+    host_key_resolver: HostKeyDecisionResolver,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+    completion_receiver: Mutex<Receiver<Result<ShutdownResult, SessionError>>>,
+    completion: Mutex<Option<Result<ShutdownResult, SessionError>>>,
+}
+
+impl SshSession {
+    /// Starts a session with the default no-op event notifier.
+    pub fn start(profile: SshConnectionProfile) -> Result<Self, SshSessionStartError> {
+        Self::start_with_notifier(profile, noop_session_event_notifier())
+    }
+
+    /// Starts a session and wakes `event_notifier` after every queued event.
+    pub fn start_with_notifier(
+        profile: SshConnectionProfile,
+        event_notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, SshSessionStartError> {
+        let (foundation, command_receiver, host_key_resolver) =
+            SshWorkerFoundation::new_with_capacities(
+                profile.clone(),
+                DEFAULT_COMMAND_QUEUE_CAPACITY,
+                DEFAULT_EVENT_QUEUE_CAPACITY,
+                event_notifier,
+            );
+        let shared = Arc::clone(&foundation.shared);
+        let host_key_gate = Arc::clone(&foundation.host_key_gate);
+        let worker_gate = Arc::clone(&host_key_gate);
+        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name(format!("festerm-ssh-{}", foundation.id()))
+            .spawn(move || {
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .enable_time()
+                    .build()
+                    .map_err(|_| ssh_failure(&shared, "SSH runtime could not start"))
+                    .and_then(|runtime| {
+                        runtime.block_on(ssh_worker(profile, shared, command_receiver, worker_gate))
+                    });
+                let _ = completion_sender.send(result);
+            })
+            .map_err(|_| SshSessionStartError)?;
+
+        Ok(Self {
+            foundation,
+            host_key_resolver,
+            host_key_gate,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        })
+    }
+
+    /// Returns a resolver for the current host-key verification request.
+    pub fn host_key_decision_resolver(&self) -> HostKeyDecisionResolver {
+        self.host_key_resolver.clone()
+    }
+
+    fn await_completion(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
+        let mut completion = self
+            .completion
+            .lock()
+            .expect("SSH completion lock is not poisoned");
+        if let Some(result) = completion.clone() {
+            return result.map_err(ShutdownError::Failed);
+        }
+        match self
+            .completion_receiver
+            .lock()
+            .expect("SSH completion receiver lock is not poisoned")
+            .recv_timeout(timeout)
+        {
+            Ok(result) => {
+                *completion = Some(result.clone());
+                result.map_err(ShutdownError::Failed)
+            }
+            Err(RecvTimeoutError::Timeout) => Err(ShutdownError::TimedOut { timeout }),
+            Err(RecvTimeoutError::Disconnected) => Err(ShutdownError::Failed(SessionError::new(
+                SessionErrorKind::Shutdown,
+                "SSH worker ended without reporting shutdown completion",
+            ))),
+        }
+    }
+}
+
+impl Session for SshSession {
+    fn id(&self) -> SessionId {
+        self.foundation.id()
+    }
+
+    fn lifecycle(&self) -> SessionLifecycle {
+        self.foundation.lifecycle()
+    }
+
+    fn metrics(&self) -> SessionMetrics {
+        self.foundation.metrics()
+    }
+
+    fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+        self.foundation.try_send_input(bytes)
+    }
+
+    fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+        self.foundation.try_resize(size)
+    }
+
+    fn try_shutdown(&self) -> Result<(), SessionSendError> {
+        self.host_key_gate.reject_pending();
+        self.foundation.try_shutdown()
+    }
+
+    fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+        self.foundation.try_recv_event()
+    }
+
+    fn shutdown(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
+        let _ = self.try_shutdown();
+        self.await_completion(timeout)
+    }
+}
+
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        // Explicit `Session::shutdown` performs the caller-bounded wait. This
+        // destructor only wakes the worker and never blocks application exit.
+        self.host_key_gate.reject_pending();
+        let _ = self.foundation.try_shutdown();
+    }
+}
+
+struct SshClientHandler {
+    identity: HostIdentity,
+    shared: Arc<WorkerShared>,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+}
+
+impl russh::client::Handler for SshClientHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &russh::keys::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        let fingerprint = sha256_fingerprint(server_public_key);
+        let waiter = match request_host_key_verification(
+            &self.identity,
+            &self.shared,
+            &self.host_key_gate,
+            &fingerprint,
+        ) {
+            Ok(waiter) => waiter,
+            Err(_) => return Ok(false),
+        };
+        Ok(matches!(
+            waiter
+                .wait_async(&self.host_key_gate, HOST_KEY_DECISION_TIMEOUT)
+                .await,
+            HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist
+        ))
+    }
+}
+
+async fn ssh_worker(
+    profile: SshConnectionProfile,
+    shared: Arc<WorkerShared>,
+    command_receiver: WorkerCommandReceiver,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+) -> Result<ShutdownResult, SessionError> {
+    if process_commands(&command_receiver, &shared, &host_key_gate) {
+        shared.set_lifecycle(SessionLifecycle::Stopped);
+        return Ok(ShutdownResult::Stopped);
+    }
+
+    let config = Arc::new(russh::client::Config {
+        nodelay: true,
+        ..Default::default()
+    });
+    let handler = SshClientHandler {
+        identity: profile.identity.clone(),
+        shared: Arc::clone(&shared),
+        host_key_gate: Arc::clone(&host_key_gate),
+    };
+    let connection = russh::client::connect(
+        config,
+        (profile.identity.host(), profile.identity.port()),
+        handler,
+    );
+    tokio::pin!(connection);
+    let connection_timeout = tokio::time::sleep(CONNECT_TIMEOUT);
+    tokio::pin!(connection_timeout);
+
+    let handle = loop {
+        tokio::select! {
+            result = &mut connection => match result {
+                Ok(handle) => break handle,
+                Err(_) => return Err(ssh_failure(&shared, "SSH connection failed")),
+            },
+            _ = &mut connection_timeout => {
+                return Err(ssh_failure(&shared, "SSH connection timed out"));
+            }
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands(&command_receiver, &shared, &host_key_gate) {
+                    shared.set_lifecycle(SessionLifecycle::Stopped);
+                    return Ok(ShutdownResult::Stopped);
+                }
+            }
+        }
+    };
+    shared.set_lifecycle(SessionLifecycle::Running);
+    await_connection_close(handle, command_receiver, shared, host_key_gate).await
+}
+
+async fn await_connection_close(
+    mut handle: russh::client::Handle<SshClientHandler>,
+    command_receiver: WorkerCommandReceiver,
+    shared: Arc<WorkerShared>,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+) -> Result<ShutdownResult, SessionError> {
+    loop {
+        tokio::select! {
+            result = &mut handle => match result {
+                Ok(()) => {
+                    shared.set_lifecycle(SessionLifecycle::Stopped);
+                    return Ok(ShutdownResult::Stopped);
+                }
+                Err(_) => return Err(ssh_failure(&shared, "SSH connection ended unexpectedly")),
+            },
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands(&command_receiver, &shared, &host_key_gate) {
+                    let _ = handle
+                        .disconnect(russh::Disconnect::ByApplication, "fesTerm shutdown", "")
+                        .await;
+                    let _ = tokio::time::timeout(DISCONNECT_TIMEOUT, &mut handle).await;
+                    shared.set_lifecycle(SessionLifecycle::Stopped);
+                    return Ok(ShutdownResult::Stopped);
+                }
+            }
+        }
+    }
+}
+
+fn process_commands(
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> bool {
+    loop {
+        match command_receiver.try_recv() {
+            Ok(WorkerCommand::Input(bytes)) => {
+                let _ = bytes.len();
+                report_unsupported(shared, "SSH input is not available");
+            }
+            Ok(WorkerCommand::Resize(size)) => {
+                let _ = size.columns();
+                report_unsupported(shared, "SSH resize is not available")
+            }
+            Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                host_key_gate.reject_pending();
+                shared.set_lifecycle(SessionLifecycle::Stopping);
+                return true;
+            }
+            Err(TryRecvError::Empty) => return false,
+        }
+    }
+}
+
+fn report_unsupported(shared: &WorkerShared, message: &'static str) {
+    let _ = shared.try_emit(SessionEvent::Error(SessionError::new(
+        SessionErrorKind::Unsupported,
+        message,
+    )));
+}
+
+fn ssh_failure(shared: &WorkerShared, message: &'static str) -> SessionError {
+    let error = SessionError::new(SessionErrorKind::Spawn, message);
+    let _ = shared.try_emit(SessionEvent::Error(error.clone()));
+    shared.set_lifecycle(SessionLifecycle::Failed(error.clone()));
+    error
+}
+
+fn sha256_fingerprint(public_key: &russh::keys::PublicKey) -> String {
+    public_key
+        .fingerprint(russh::keys::HashAlg::Sha256)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        net::TcpListener,
+        sync::atomic::{AtomicUsize, Ordering},
+        thread,
+        time::Instant,
+    };
 
     use super::*;
+    use russh::client::Handler as _;
 
     fn profile() -> SshConnectionProfile {
         SshConnectionProfile::new(
@@ -1104,6 +1481,105 @@ mod tests {
             Err(HostKeyDecisionResolutionError::NoPendingPrompt)
         );
         assert_eq!(worker.metrics().backpressure_count, 1);
+    }
+
+    #[test]
+    fn sha256_fingerprint_uses_canonical_unpadded_ssh_format() {
+        let public_key = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
+        )
+        .unwrap();
+
+        assert_eq!(
+            sha256_fingerprint(&public_key),
+            "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ"
+        );
+    }
+
+    #[test]
+    fn handler_accepts_only_resolved_host_key_decisions() {
+        let (worker, _receiver, resolver) = SshWorkerFoundation::new(profile());
+        let public_key = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
+        )
+        .unwrap();
+        let identity = worker.profile.identity.clone();
+        let shared = Arc::clone(&worker.shared);
+        let gate = Arc::clone(&worker.host_key_gate);
+        let callback = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            let mut handler = SshClientHandler {
+                identity,
+                shared,
+                host_key_gate: gate,
+            };
+            runtime
+                .block_on(handler.check_server_key(&public_key))
+                .unwrap()
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let prompt = loop {
+            match worker.try_recv_event() {
+                Ok(SessionEvent::HostKeyVerification(prompt)) => break prompt,
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "host-key callback did not prompt"
+                    );
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("host-key callback closed early"),
+            }
+        };
+        resolver
+            .resolve(&prompt, HostTrustDecision::AcceptAndPersist)
+            .unwrap();
+        assert!(callback.join().unwrap());
+    }
+
+    #[test]
+    fn closed_loopback_connection_fails_within_a_bounded_timeout() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let profile = SshConnectionProfile::new(
+            HostIdentity::new("127.0.0.1", port).unwrap(),
+            "alice",
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            TerminalSize::new(80, 24).unwrap(),
+        )
+        .unwrap();
+        let session = SshSession::start(profile).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let error = loop {
+            match session.try_recv_event() {
+                Ok(SessionEvent::Error(error)) => break error,
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "closed loopback connection did not fail promptly"
+                    );
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("SSH worker closed without an error"),
+            }
+        };
+        assert_eq!(error.kind(), SessionErrorKind::Spawn);
+        assert!(matches!(
+            session.lifecycle(),
+            SessionLifecycle::Failed(SessionError { .. })
+        ));
+        match session.shutdown(Duration::from_secs(1)) {
+            Err(ShutdownError::Failed(error)) => {
+                assert_eq!(error.kind(), SessionErrorKind::Spawn);
+            }
+            result => panic!("expected failed SSH shutdown, received {result:?}"),
+        }
     }
 
     #[derive(Default)]
