@@ -280,8 +280,9 @@ The terminal is functionally useful with the motivating advanced applications.
 bridge are implemented. Live password-authenticated SSH transport, remote
 PTY/resize, and controlled OpenSSH container evidence are implemented.
 The safe OpenSSH metadata importer and deterministic reconnect planner are
-implemented. Profile/UI integration, additional authentication paths, and live
-reconnect behavior remain M7 work.
+implemented. Live reconnect is opt-in, bounded, re-verifies host trust for
+every fresh transport, and never claims remote process restoration. Profile/UI
+integration and additional authentication paths remain M7 work.
 
 ### Outcome
 

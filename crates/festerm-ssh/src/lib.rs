@@ -3,6 +3,7 @@
 use std::{
     fmt,
     sync::{
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Condvar, Mutex,
     },
@@ -92,9 +93,10 @@ pub enum SshAuthentication {
 impl SshAuthentication {
     /// Selects password authentication for this session.
     ///
-    /// The password is moved directly to the worker, used for one
-    /// authentication attempt, and is never exposed through this API, cloned,
-    /// persisted, or included in debug output.
+    /// The password is moved directly to the worker and is never exposed
+    /// through this API, persisted, or included in debug output. An explicit
+    /// reconnect policy retains it in that worker for its bounded fresh
+    /// authentication attempts only.
     pub fn password(password: impl Into<String>) -> Self {
         Self::Password(SshPassword {
             password: password.into(),
@@ -116,7 +118,7 @@ impl fmt::Debug for SshAuthentication {
     }
 }
 
-/// Password material consumed by [`SshAuthentication`] for a single attempt.
+/// Password material consumed by [`SshAuthentication`] by the worker.
 ///
 /// This type intentionally has no getter, `Clone`, or derived `Debug`
 /// implementation. It is not a persistent connection-profile field.
@@ -296,6 +298,37 @@ impl ReconnectPolicy {
 
     pub const fn maximum_attempts(self) -> u8 {
         self.maximum_attempts
+    }
+}
+
+/// Explicit optional behavior for a live [`SshSession`].
+///
+/// Reconnect is disabled by default. When enabled, each reconnect is a new
+/// SSH transport, channel, PTY, and shell; remote process state and unsent or
+/// in-flight input are never restored.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SshSessionOptions {
+    reconnect_policy: Option<ReconnectPolicy>,
+}
+
+impl SshSessionOptions {
+    /// Creates options with automatic reconnect disabled.
+    pub const fn new() -> Self {
+        Self {
+            reconnect_policy: None,
+        }
+    }
+
+    /// Enables bounded reconnect using `policy`.
+    pub const fn with_reconnect_policy(policy: ReconnectPolicy) -> Self {
+        Self {
+            reconnect_policy: Some(policy),
+        }
+    }
+
+    /// Returns the selected reconnect policy, if automatic reconnect is on.
+    pub const fn reconnect_policy(self) -> Option<ReconnectPolicy> {
+        self.reconnect_policy
     }
 }
 
@@ -1360,6 +1393,8 @@ impl WorkerCommandReceiver {
 struct WorkerShared {
     id: SessionId,
     lifecycle: Mutex<SessionLifecycle>,
+    reconnecting: AtomicBool,
+    shutdown_requested: AtomicBool,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
@@ -1379,6 +1414,22 @@ impl WorkerShared {
             .lock()
             .expect("SSH lifecycle lock is not poisoned") = lifecycle.clone();
         let _ = self.try_emit(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn set_reconnecting(&self, reconnecting: bool) {
+        self.reconnecting.store(reconnecting, Ordering::Release);
+    }
+
+    fn is_reconnecting(&self) -> bool {
+        self.reconnecting.load(Ordering::Acquire)
+    }
+
+    fn request_shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::Release);
+    }
+
+    fn shutdown_requested(&self) -> bool {
+        self.shutdown_requested.load(Ordering::Acquire)
     }
 
     fn metrics(&self) -> SessionMetrics {
@@ -1506,6 +1557,8 @@ impl SshWorkerFoundation {
         let shared = Arc::new(WorkerShared {
             id: SessionId::next(),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
+            reconnecting: AtomicBool::new(false),
+            shutdown_requested: AtomicBool::new(false),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: event_capacity,
                 ..SessionMetrics::default()
@@ -1558,6 +1611,11 @@ impl SshWorkerFoundation {
                 actual: bytes.len(),
             });
         }
+        if self.shared.is_reconnecting() {
+            return Err(SessionSendError::Closed {
+                operation: SessionOperation::Input,
+            });
+        }
         self.try_send_command(
             WorkerCommand::Input(bytes.to_vec()),
             SessionOperation::Input,
@@ -1565,10 +1623,16 @@ impl SshWorkerFoundation {
     }
 
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+        if self.shared.is_reconnecting() {
+            return Err(SessionSendError::Closed {
+                operation: SessionOperation::Resize,
+            });
+        }
         self.try_send_command(WorkerCommand::Resize(size), SessionOperation::Resize)
     }
 
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
+        self.shared.request_shutdown();
         self.try_send_command(WorkerCommand::Shutdown, SessionOperation::Shutdown)
     }
 
@@ -1717,13 +1781,42 @@ impl SshSession {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
     ) -> Result<Self, SshSessionStartError> {
-        Self::start_with_notifier(profile, authentication, noop_session_event_notifier())
+        Self::start_with_options(profile, authentication, SshSessionOptions::new())
+    }
+
+    /// Starts a session with explicit optional live-session behavior.
+    pub fn start_with_options(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        options: SshSessionOptions,
+    ) -> Result<Self, SshSessionStartError> {
+        Self::start_with_notifier_and_options(
+            profile,
+            authentication,
+            options,
+            noop_session_event_notifier(),
+        )
     }
 
     /// Starts a session and wakes `event_notifier` after every queued event.
     pub fn start_with_notifier(
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
+        event_notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, SshSessionStartError> {
+        Self::start_with_notifier_and_options(
+            profile,
+            authentication,
+            SshSessionOptions::new(),
+            event_notifier,
+        )
+    }
+
+    /// Starts a session with an event notifier and explicit live-session behavior.
+    pub fn start_with_notifier_and_options(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        options: SshSessionOptions,
         event_notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, SshSessionStartError> {
         let (foundation, command_receiver, host_key_resolver) =
@@ -1749,6 +1842,7 @@ impl SshSession {
                         runtime.block_on(ssh_worker(
                             profile,
                             authentication,
+                            options.reconnect_policy(),
                             shared,
                             command_receiver,
                             worker_gate,
@@ -1848,6 +1942,7 @@ struct SshClientHandler {
     identity: HostIdentity,
     shared: Arc<WorkerShared>,
     host_key_gate: Arc<HostKeyDecisionGate>,
+    host_key_rejected: Arc<AtomicBool>,
 }
 
 impl russh::client::Handler for SshClientHandler {
@@ -1865,37 +1960,239 @@ impl russh::client::Handler for SshClientHandler {
             &fingerprint,
         ) {
             Ok(waiter) => waiter,
-            Err(_) => return Ok(false),
+            Err(_) => {
+                self.host_key_rejected.store(true, Ordering::Release);
+                return Ok(false);
+            }
         };
-        Ok(matches!(
+        let accepted = matches!(
             waiter
                 .wait_async(&self.host_key_gate, HOST_KEY_DECISION_TIMEOUT)
                 .await,
             HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist
-        ))
+        );
+        if !accepted {
+            self.host_key_rejected.store(true, Ordering::Release);
+        }
+        Ok(accepted)
     }
 }
 
 async fn ssh_worker(
     profile: SshConnectionProfile,
     authentication: SshAuthentication,
+    reconnect_policy: Option<ReconnectPolicy>,
     shared: Arc<WorkerShared>,
     command_receiver: WorkerCommandReceiver,
     host_key_gate: Arc<HostKeyDecisionGate>,
 ) -> Result<ShutdownResult, SessionError> {
-    if process_commands_before_running(&command_receiver, &shared, &host_key_gate) {
-        shared.set_lifecycle(SessionLifecycle::Stopped);
-        return Ok(ShutdownResult::Stopped);
-    }
+    let password = authentication.into_password();
+    let mut planner = reconnect_policy.map(ReconnectPlanner::new);
 
+    loop {
+        match establish_connection(
+            &profile,
+            password.as_str(),
+            &shared,
+            &command_receiver,
+            &host_key_gate,
+        )
+        .await
+        {
+            ConnectionAttempt::Established(handle, channel) => {
+                if let Some(planner) = planner.as_mut() {
+                    let _ = planner.connection_established();
+                }
+                shared.set_reconnecting(false);
+                shared.set_lifecycle(SessionLifecycle::Running);
+                match run_authenticated_channel(
+                    handle,
+                    channel,
+                    &command_receiver,
+                    &shared,
+                    &host_key_gate,
+                )
+                .await
+                {
+                    RunningOutcome::Shutdown(result) => return Ok(result),
+                    RunningOutcome::Exited(exit) => {
+                        shared.set_lifecycle(SessionLifecycle::Exited(exit));
+                        return Ok(ShutdownResult::AlreadyStopped);
+                    }
+                    RunningOutcome::ConnectionLost => {
+                        match schedule_reconnect(
+                            &mut planner,
+                            ConnectionFailure::Transport,
+                            &command_receiver,
+                            &shared,
+                            &host_key_gate,
+                        )
+                        .await
+                        {
+                            ReconnectSchedule::Reconnect => continue,
+                            ReconnectSchedule::Shutdown => return Ok(ShutdownResult::Stopped),
+                            ReconnectSchedule::Unavailable => {}
+                        }
+                        return Err(ssh_failure(&shared, "SSH connection ended unexpectedly"));
+                    }
+                }
+            }
+            ConnectionAttempt::Retryable(failure, message) => {
+                match schedule_reconnect(
+                    &mut planner,
+                    failure,
+                    &command_receiver,
+                    &shared,
+                    &host_key_gate,
+                )
+                .await
+                {
+                    ReconnectSchedule::Reconnect => continue,
+                    ReconnectSchedule::Shutdown => return Ok(ShutdownResult::Stopped),
+                    ReconnectSchedule::Unavailable => {}
+                }
+                return Err(ssh_failure(&shared, message));
+            }
+            ConnectionAttempt::Permanent(failure, message) => {
+                debug_assert!(!reconnect_is_eligible(planner.is_some(), failure));
+                return Err(ssh_failure(&shared, message));
+            }
+            ConnectionAttempt::Shutdown => {
+                shared.set_reconnecting(false);
+                shared.set_lifecycle(SessionLifecycle::Stopped);
+                return Ok(ShutdownResult::Stopped);
+            }
+        }
+    }
+}
+
+/// These categories deliberately retry only network loss. Host-trust
+/// rejection, authentication failure, and PTY/shell setup failures are
+/// security, credential, or configuration outcomes and never retry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionFailure {
+    Transport,
+    HostTrust,
+    Authentication,
+    Setup,
+}
+
+fn reconnect_is_eligible(policy_enabled: bool, failure: ConnectionFailure) -> bool {
+    policy_enabled && matches!(failure, ConnectionFailure::Transport)
+}
+
+enum ConnectionAttempt {
+    Established(
+        russh::client::Handle<SshClientHandler>,
+        russh::Channel<russh::client::Msg>,
+    ),
+    Retryable(ConnectionFailure, &'static str),
+    Permanent(ConnectionFailure, &'static str),
+    Shutdown,
+}
+
+enum ReconnectSchedule {
+    Reconnect,
+    Unavailable,
+    Shutdown,
+}
+
+async fn schedule_reconnect(
+    planner: &mut Option<ReconnectPlanner>,
+    failure: ConnectionFailure,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> ReconnectSchedule {
+    let action = reconnect_action_for_failure(planner, failure);
+    let ReconnectAction::ScheduleAttempt { delay, .. } = action else {
+        return ReconnectSchedule::Unavailable;
+    };
+    shared.set_reconnecting(true);
+    shared.set_lifecycle(SessionLifecycle::Starting);
+    if wait_for_reconnect_delay(delay, command_receiver, shared, host_key_gate).await {
+        if let Some(planner) = planner.as_mut() {
+            let _ = planner.cancel();
+        }
+        shared.set_reconnecting(false);
+        shared.set_lifecycle(SessionLifecycle::Stopped);
+        return ReconnectSchedule::Shutdown;
+    }
+    let Some(planner) = planner.as_mut() else {
+        return ReconnectSchedule::Unavailable;
+    };
+    if matches!(
+        planner.delay_elapsed(),
+        ReconnectAction::StartFreshConnection {
+            host_verification: FreshHostVerification::Required,
+            ..
+        }
+    ) {
+        ReconnectSchedule::Reconnect
+    } else {
+        ReconnectSchedule::Unavailable
+    }
+}
+
+fn reconnect_action_for_failure(
+    planner: &mut Option<ReconnectPlanner>,
+    failure: ConnectionFailure,
+) -> ReconnectAction {
+    if !reconnect_is_eligible(planner.is_some(), failure) {
+        return ReconnectAction::None;
+    }
+    let planner = planner
+        .as_mut()
+        .expect("enabled reconnect policy must have a planner");
+    match planner.state() {
+        ReconnectState::Idle => planner.disconnected(),
+        ReconnectState::Connecting { .. } => planner.connection_failed(),
+        _ => ReconnectAction::None,
+    }
+}
+
+async fn wait_for_reconnect_delay(
+    delay: Duration,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> bool {
+    let elapsed = tokio::time::sleep(delay);
+    tokio::pin!(elapsed);
+    loop {
+        tokio::select! {
+            _ = &mut elapsed => return false,
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+/// Establishes one fresh transport. Every invocation creates a new handler;
+/// its host-key callback begins a new gate sequence and emits a new prompt.
+async fn establish_connection(
+    profile: &SshConnectionProfile,
+    password: &str,
+    shared: &Arc<WorkerShared>,
+    command_receiver: &WorkerCommandReceiver,
+    host_key_gate: &Arc<HostKeyDecisionGate>,
+) -> ConnectionAttempt {
+    if process_commands_before_running(command_receiver, shared, host_key_gate) {
+        return ConnectionAttempt::Shutdown;
+    }
     let config = Arc::new(russh::client::Config {
         nodelay: true,
         ..Default::default()
     });
+    let host_key_rejected = Arc::new(AtomicBool::new(false));
     let handler = SshClientHandler {
         identity: profile.identity.clone(),
-        shared: Arc::clone(&shared),
-        host_key_gate: Arc::clone(&host_key_gate),
+        shared: Arc::clone(shared),
+        host_key_gate: Arc::clone(host_key_gate),
+        host_key_rejected: Arc::clone(&host_key_rejected),
     };
     let connection = russh::client::connect(
         config,
@@ -1910,56 +2207,70 @@ async fn ssh_worker(
         tokio::select! {
             result = &mut connection => match result {
                 Ok(handle) => break handle,
-                Err(_) => return Err(ssh_failure(&shared, "SSH connection failed")),
+                Err(_) if host_key_rejected.load(Ordering::Acquire) => {
+                    return ConnectionAttempt::Permanent(
+                        ConnectionFailure::HostTrust,
+                        "SSH host key was rejected",
+                    );
+                }
+                Err(_) => {
+                    return ConnectionAttempt::Retryable(
+                        ConnectionFailure::Transport,
+                        "SSH connection failed",
+                    )
+                }
             },
-            _ = &mut connection_timeout => {
-                return Err(ssh_failure(&shared, "SSH connection timed out"));
-            }
+            _ = &mut connection_timeout => return ConnectionAttempt::Retryable(
+                ConnectionFailure::Transport,
+                "SSH connection timed out",
+            ),
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                if process_commands_before_running(&command_receiver, &shared, &host_key_gate) {
-                    shared.set_lifecycle(SessionLifecycle::Stopped);
-                    return Ok(ShutdownResult::Stopped);
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return ConnectionAttempt::Shutdown;
                 }
             }
         }
     };
 
-    let password = authentication.into_password();
-    let authentication_result = wait_for_ssh_operation(
+    match wait_for_ssh_operation(
         handle.authenticate_password(profile.username(), password),
-        &command_receiver,
-        &shared,
-        &host_key_gate,
+        command_receiver,
+        shared,
+        host_key_gate,
     )
-    .await;
-    let authenticated = match authentication_result {
-        WorkerWait::Completed(Ok(result)) if result.success() => true,
-        WorkerWait::Completed(Ok(_)) => false,
-        WorkerWait::Completed(Err(_)) => {
-            return Err(ssh_failure(&shared, "SSH authentication failed"));
+    .await
+    {
+        WorkerWait::Completed(Ok(result)) if result.success() => {}
+        WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_)) => {
+            return ConnectionAttempt::Permanent(
+                ConnectionFailure::Authentication,
+                "SSH authentication failed",
+            );
         }
         WorkerWait::Shutdown => {
-            return stop_handle(handle, &shared).await;
+            let _ = stop_handle(handle, shared).await;
+            return ConnectionAttempt::Shutdown;
         }
-    };
-    if !authenticated {
-        return Err(ssh_failure(&shared, "SSH authentication failed"));
     }
 
     let channel = match wait_for_ssh_operation(
         handle.channel_open_session(),
-        &command_receiver,
-        &shared,
-        &host_key_gate,
+        command_receiver,
+        shared,
+        host_key_gate,
     )
     .await
     {
         WorkerWait::Completed(Ok(channel)) => channel,
         WorkerWait::Completed(Err(_)) => {
-            return Err(ssh_failure(&shared, "SSH session channel could not open"));
+            return ConnectionAttempt::Permanent(
+                ConnectionFailure::Setup,
+                "SSH session channel could not open",
+            );
         }
         WorkerWait::Shutdown => {
-            return stop_handle(handle, &shared).await;
+            let _ = stop_handle(handle, shared).await;
+            return ConnectionAttempt::Shutdown;
         }
     };
     let mut channel = channel;
@@ -1974,62 +2285,69 @@ async fn ssh_worker(
             dimensions.3,
             &[],
         ),
-        &command_receiver,
-        &shared,
-        &host_key_gate,
+        command_receiver,
+        shared,
+        host_key_gate,
     )
     .await
     {
         WorkerWait::Completed(Ok(())) => {}
         WorkerWait::Completed(Err(_)) => {
-            return Err(ssh_failure(&shared, "SSH PTY request failed"));
+            return ConnectionAttempt::Permanent(ConnectionFailure::Setup, "SSH PTY request failed")
         }
         WorkerWait::Shutdown => {
-            return stop_handle(handle, &shared).await;
+            let _ = stop_handle(handle, shared).await;
+            return ConnectionAttempt::Shutdown;
         }
     }
-    match wait_for_channel_request_reply(&mut channel, &command_receiver, &shared, &host_key_gate)
+    match wait_for_channel_request_reply(&mut channel, command_receiver, shared, host_key_gate)
         .await
     {
         ChannelRequestReply::Accepted => {}
         ChannelRequestReply::Rejected => {
-            return Err(ssh_failure(&shared, "SSH PTY request was rejected"));
+            return ConnectionAttempt::Permanent(
+                ConnectionFailure::Setup,
+                "SSH PTY request was rejected",
+            );
         }
         ChannelRequestReply::Shutdown => {
-            return stop_handle(handle, &shared).await;
+            let _ = stop_handle(handle, shared).await;
+            return ConnectionAttempt::Shutdown;
         }
     }
 
     match wait_for_ssh_operation(
         channel.request_shell(true),
-        &command_receiver,
-        &shared,
-        &host_key_gate,
+        command_receiver,
+        shared,
+        host_key_gate,
     )
     .await
     {
         WorkerWait::Completed(Ok(())) => {}
         WorkerWait::Completed(Err(_)) => {
-            return Err(ssh_failure(&shared, "SSH shell request failed"));
+            return ConnectionAttempt::Permanent(
+                ConnectionFailure::Setup,
+                "SSH shell request failed",
+            )
         }
         WorkerWait::Shutdown => {
-            return stop_handle(handle, &shared).await;
+            let _ = stop_handle(handle, shared).await;
+            return ConnectionAttempt::Shutdown;
         }
     }
-    match wait_for_channel_request_reply(&mut channel, &command_receiver, &shared, &host_key_gate)
+    match wait_for_channel_request_reply(&mut channel, command_receiver, shared, host_key_gate)
         .await
     {
-        ChannelRequestReply::Accepted => {}
+        ChannelRequestReply::Accepted => ConnectionAttempt::Established(handle, channel),
         ChannelRequestReply::Rejected => {
-            return Err(ssh_failure(&shared, "SSH shell request was rejected"));
+            ConnectionAttempt::Permanent(ConnectionFailure::Setup, "SSH shell request was rejected")
         }
         ChannelRequestReply::Shutdown => {
-            return stop_handle(handle, &shared).await;
+            let _ = stop_handle(handle, shared).await;
+            ConnectionAttempt::Shutdown
         }
     }
-
-    shared.set_lifecycle(SessionLifecycle::Running);
-    run_authenticated_channel(handle, channel, command_receiver, shared, host_key_gate).await
 }
 
 enum WorkerWait<T> {
@@ -2088,43 +2406,44 @@ async fn wait_for_channel_request_reply(
     }
 }
 
+enum RunningOutcome {
+    Shutdown(ShutdownResult),
+    Exited(festerm_session::SessionExit),
+    ConnectionLost,
+}
+
 async fn run_authenticated_channel(
     mut handle: russh::client::Handle<SshClientHandler>,
     mut channel: russh::Channel<russh::client::Msg>,
-    command_receiver: WorkerCommandReceiver,
-    shared: Arc<WorkerShared>,
-    host_key_gate: Arc<HostKeyDecisionGate>,
-) -> Result<ShutdownResult, SessionError> {
+    command_receiver: &WorkerCommandReceiver,
+    shared: &Arc<WorkerShared>,
+    host_key_gate: &Arc<HostKeyDecisionGate>,
+) -> RunningOutcome {
     loop {
         tokio::select! {
             result = &mut handle => match result {
-                Ok(()) => {
-                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_exit_code(0)));
-                    return Ok(ShutdownResult::AlreadyStopped);
-                }
-                Err(_) => return Err(ssh_failure(&shared, "SSH connection ended unexpectedly")),
+                Ok(()) | Err(_) => return RunningOutcome::ConnectionLost,
             },
             message = channel.wait() => match message {
-                Some(russh::ChannelMsg::Data { data }) => emit_channel_output(&shared, data.as_ref()),
+                Some(russh::ChannelMsg::Data { data }) => emit_channel_output(shared, data.as_ref()),
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_exit_code(exit_status)));
-                    return Ok(ShutdownResult::AlreadyStopped);
+                    return RunningOutcome::Exited(festerm_session::SessionExit::with_exit_code(exit_status));
                 }
                 Some(russh::ChannelMsg::ExitSignal { .. }) => {
-                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_signal(0, "remote signal")));
-                    return Ok(ShutdownResult::AlreadyStopped);
+                    return RunningOutcome::Exited(festerm_session::SessionExit::with_signal(0, "remote signal"));
                 }
                 Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
-                    shared.set_lifecycle(SessionLifecycle::Exited(festerm_session::SessionExit::with_exit_code(0)));
-                    return Ok(ShutdownResult::AlreadyStopped);
+                    return RunningOutcome::ConnectionLost;
                 }
                 Some(_) => {}
             },
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                match process_authenticated_commands(&mut channel, &command_receiver, &shared, &host_key_gate).await {
+                match process_authenticated_commands(&mut channel, command_receiver, shared, host_key_gate).await {
                     Ok(false) => {}
-                    Ok(true) => return stop_handle(handle, &shared).await,
-                    Err(error) => return Err(error),
+                    Ok(true) => return RunningOutcome::Shutdown(
+                        stop_handle(handle, shared).await.unwrap_or(ShutdownResult::Stopped)
+                    ),
+                    Err(_) => return RunningOutcome::ConnectionLost,
                 }
             }
         }
@@ -2137,6 +2456,11 @@ async fn process_authenticated_commands(
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
 ) -> Result<bool, SessionError> {
+    if shared.shutdown_requested() {
+        host_key_gate.reject_pending();
+        shared.set_lifecycle(SessionLifecycle::Stopping);
+        return Ok(true);
+    }
     loop {
         match command_receiver.try_recv() {
             Ok(WorkerCommand::Input(bytes)) => {
@@ -2196,6 +2520,11 @@ fn process_commands_before_running(
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
 ) -> bool {
+    if shared.shutdown_requested() {
+        host_key_gate.reject_pending();
+        shared.set_lifecycle(SessionLifecycle::Stopping);
+        return true;
+    }
     loop {
         match command_receiver.try_recv() {
             Ok(WorkerCommand::Input(bytes)) => {
@@ -2408,6 +2737,64 @@ mod tests {
         assert_eq!(
             ReconnectPolicy::new(1, Duration::from_secs(2), Duration::from_secs(1)),
             Err(ReconnectPolicyError::MaximumBeforeInitial)
+        );
+    }
+
+    #[test]
+    fn reconnect_options_are_explicit_and_disabled_by_default() {
+        let policy =
+            ReconnectPolicy::new(2, Duration::from_millis(10), Duration::from_millis(20)).unwrap();
+
+        assert_eq!(SshSessionOptions::new().reconnect_policy(), None);
+        assert_eq!(
+            SshSessionOptions::with_reconnect_policy(policy).reconnect_policy(),
+            Some(policy)
+        );
+    }
+
+    #[test]
+    fn only_transport_failures_wire_a_policy_into_planner_actions() {
+        let policy =
+            ReconnectPolicy::new(2, Duration::from_secs(1), Duration::from_secs(2)).unwrap();
+        let mut disabled = None;
+        assert_eq!(
+            reconnect_action_for_failure(&mut disabled, ConnectionFailure::Transport),
+            ReconnectAction::None
+        );
+
+        let mut planner = Some(ReconnectPlanner::new(policy));
+        assert_eq!(
+            reconnect_action_for_failure(&mut planner, ConnectionFailure::HostTrust),
+            ReconnectAction::None
+        );
+        assert_eq!(
+            reconnect_action_for_failure(&mut planner, ConnectionFailure::Authentication),
+            ReconnectAction::None
+        );
+        assert_eq!(
+            reconnect_action_for_failure(&mut planner, ConnectionFailure::Setup),
+            ReconnectAction::None
+        );
+        assert_eq!(
+            reconnect_action_for_failure(&mut planner, ConnectionFailure::Transport),
+            ReconnectAction::ScheduleAttempt {
+                attempt: 1,
+                delay: Duration::from_secs(1),
+            }
+        );
+        assert!(matches!(
+            planner.as_mut().unwrap().delay_elapsed(),
+            ReconnectAction::StartFreshConnection {
+                host_verification: FreshHostVerification::Required,
+                ..
+            }
+        ));
+        assert_eq!(
+            reconnect_action_for_failure(&mut planner, ConnectionFailure::Transport),
+            ReconnectAction::ScheduleAttempt {
+                attempt: 2,
+                delay: Duration::from_secs(2),
+            }
         );
     }
 
@@ -2730,6 +3117,31 @@ mod tests {
     }
 
     #[test]
+    fn worker_rejects_input_and_resize_while_reconnecting() {
+        let (worker, receiver, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            2,
+            4,
+            noop_session_event_notifier(),
+        );
+        worker.shared.set_reconnecting(true);
+
+        assert_eq!(
+            worker.try_send_input(b"must-not-be-queued"),
+            Err(SessionSendError::Closed {
+                operation: SessionOperation::Input,
+            })
+        );
+        assert_eq!(
+            worker.try_resize(TerminalSize::new(100, 40).unwrap()),
+            Err(SessionSendError::Closed {
+                operation: SessionOperation::Resize,
+            })
+        );
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    #[test]
     fn worker_events_update_lifecycle_metrics_and_notifier() {
         let notifier = Arc::new(CountingNotifier::default());
         let (worker, _receiver, _) =
@@ -2929,6 +3341,7 @@ mod tests {
                 identity,
                 shared,
                 host_key_gate: gate,
+                host_key_rejected: Arc::new(AtomicBool::new(false)),
             };
             runtime
                 .block_on(handler.check_server_key(&public_key))
