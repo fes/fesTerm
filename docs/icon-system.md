@@ -5,6 +5,11 @@ assets live in [`assets/icons/source`](../assets/icons/source); the generated
 [`icon-sheet.svg`](../assets/icons/icon-sheet.svg) is a review artifact, not a
 runtime sprite.
 
+The launch-surface application icon is a related brand asset with different
+color and scaling needs. Its master and rationale live in
+[`assets/app-icon`](../assets/app-icon); it reuses the `AppMark` construction
+without subjecting the branded tile to the monochrome UI-action rules below.
+
 The system is intentionally smaller than a general-purpose pictogram library.
 It covers fesTerm identity, session types, application chrome, connection and
 trust states, and the settings categories the product already anticipates.
