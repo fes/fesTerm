@@ -11,9 +11,10 @@ vertical slice is implemented as an explicit parallel track: independent
 session chips, Launcher and Settings surfaces, a session inspector, command
 palette, custom title bar, and configurable status bar. See the Milestone 8
 note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is also in progress: the
-`festerm-ssh` foundation selects an in-process Rust SSH transport and defines
-strict host-trust and reconnect boundaries, but does not yet create remote SSH
-sessions. The GUI-independent terminal core has
+`festerm-ssh` crate provides an in-process password-authenticated SSH transport
+with strict host trust, remote PTY/shell/resize, and a controlled OpenSSH
+fixture; SSH tabs, profiles, additional authentication paths, and reconnect
+behavior remain incomplete. The GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,

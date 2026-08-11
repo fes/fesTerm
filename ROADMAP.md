@@ -277,8 +277,10 @@ The terminal is functionally useful with the motivating advanced applications.
 
 `russh` with the portable `ring` backend is selected, and the
 `festerm-ssh` trust/reconnect foundation plus application host-key prompt
-bridge are implemented. Live SSH transport, authentication, remote PTY/resize,
-and controlled OpenSSH evidence remain M7 work.
+bridge are implemented. Live password-authenticated SSH transport, remote
+PTY/resize, and controlled OpenSSH container evidence are implemented.
+OpenSSH configuration import, additional authentication paths, and reconnect
+behavior remain M7 work.
 
 ### Outcome
 

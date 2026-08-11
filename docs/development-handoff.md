@@ -13,9 +13,10 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, and early SSH transport foundation are
 separate crates.
 
-Not implemented: persisted profiles/configuration, live remote SSH sessions,
-scrollback, user-visible ligatures, a custom GPU renderer, terminfo
-distribution, and reference-TUI compatibility sign-off. Read
+Not implemented: SSH tabs, persisted profiles/configuration, additional SSH
+authentication paths and reconnect behavior, scrollback, user-visible
+ligatures, a custom GPU renderer, terminfo distribution, and reference-TUI
+compatibility sign-off. Read
 [`milestone-progress.md`](milestone-progress.md) before choosing work.
 
 ## Bootstrap
@@ -130,8 +131,9 @@ evidence; do not bypass it.
 
 Prefer repository-owned automation to repeated manual validation instructions.
 The global opt-in suite runs every currently automated optional probe: the P5
-reference-application PTY probes, P6 renderer/snapshot validation, and the P4
-native-window smoke. It writes
+reference-application PTY probes, P6 renderer/snapshot validation, the P4
+native-window smoke, and the repository-owned OpenSSH interoperability
+fixture. It writes
 content-free suite status only and exits nonzero when an invoked probe fails.
 Run it from a logged-in desktop session; it opens and closes a native window.
 
@@ -149,6 +151,13 @@ and retention smoke to `stage-conpty.ps1 -RunSmoke`; do not duplicate its
 download or staging behavior. The suite remains opt-in because host GUI,
 graphics, and installed reference applications vary. A `not-run` reference
 tool is recorded by the P5 result file and is not acceptance evidence.
+
+The OpenSSH suite builds an Alpine fixture, generates its server host keys and
+password at container start, and lets Docker select a loopback host port. Run
+it alone with `scripts/run-openssh-interop.sh` or
+`pwsh -NoProfile -File scripts\run-openssh-interop.ps1`. If Docker CLI or its
+daemon is unavailable, it records `status=skipped reason=docker-unavailable`;
+an available Docker installation reports test failures normally.
 
 The suite does not replace manual P5 observations that require screen
 semantics or user intent: GitHub Copilot CLI, `vttest`, `tack`, native

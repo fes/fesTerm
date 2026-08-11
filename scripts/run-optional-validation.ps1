@@ -21,6 +21,11 @@ $p6ResultPath = if ($env:FESTERM_P6_RENDER_RESULT_PATH) {
 } else {
     'p6-render-result.txt'
 }
+$opensshResultPath = if ($env:FESTERM_OPENSSH_INTEROP_RESULT_PATH) {
+    $env:FESTERM_OPENSSH_INTEROP_RESULT_PATH
+} else {
+    'openssh-interop-result.txt'
+}
 $nativeResultPath = 'native-smoke-window-result.txt'
 $status = 'pass'
 Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
@@ -45,6 +50,22 @@ if ($LASTEXITCODE -eq 0) {
     Add-Content -Path $ResultPath -Value "`nsuite=p6-renderer status=pass"
 } else {
     Add-Content -Path $ResultPath -Value "`nsuite=p6-renderer status=fail"
+    $status = 'fail'
+}
+
+Remove-Item $opensshResultPath -ErrorAction Ignore
+$env:FESTERM_OPENSSH_INTEROP_RESULT_PATH = $opensshResultPath
+& "$PSScriptRoot\run-openssh-interop.ps1"
+$opensshExitCode = $LASTEXITCODE
+Remove-Item Env:FESTERM_OPENSSH_INTEROP_RESULT_PATH -ErrorAction Ignore
+if ($opensshExitCode -eq 0 -and
+    (Test-Path $opensshResultPath) -and
+    ((Get-Content $opensshResultPath -TotalCount 1) -eq 'status=skipped reason=docker-unavailable')) {
+    Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=skipped reason=docker-unavailable"
+} elseif ($opensshExitCode -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=openssh-interop status=fail"
     $status = 'fail'
 }
 

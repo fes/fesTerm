@@ -12,6 +12,7 @@ fi
 result_path=${FESTERM_OPTIONAL_VALIDATION_RESULT_PATH:-optional-validation-result.txt}
 p5_result_path=${FESTERM_P5_REFERENCE_RESULT_PATH:-p5-reference-result.txt}
 p6_result_path=${FESTERM_P6_RENDER_RESULT_PATH:-p6-render-result.txt}
+openssh_result_path=${FESTERM_OPENSSH_INTEROP_RESULT_PATH:-openssh-interop-result.txt}
 native_result_path=native-smoke-window-result.txt
 status=pass
 
@@ -29,6 +30,18 @@ if scripts/run-p6-render-validation.sh; then
     printf 'suite=p6-renderer status=pass\n' >>"$result_path"
 else
     printf 'suite=p6-renderer status=fail\n' >>"$result_path"
+    status=fail
+fi
+
+rm -f "$openssh_result_path"
+if FESTERM_OPENSSH_INTEROP_RESULT_PATH="$openssh_result_path" scripts/run-openssh-interop.sh; then
+    if grep -qx 'status=skipped reason=docker-unavailable' "$openssh_result_path"; then
+        printf 'suite=openssh-interop status=skipped reason=docker-unavailable\n' >>"$result_path"
+    else
+        printf 'suite=openssh-interop status=pass\n' >>"$result_path"
+    fi
+else
+    printf 'suite=openssh-interop status=fail\n' >>"$result_path"
     status=fail
 fi
 
