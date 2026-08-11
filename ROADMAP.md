@@ -279,8 +279,9 @@ The terminal is functionally useful with the motivating advanced applications.
 `festerm-ssh` trust/reconnect foundation plus application host-key prompt
 bridge are implemented. Live password-authenticated SSH transport, remote
 PTY/resize, and controlled OpenSSH container evidence are implemented.
-OpenSSH configuration import, additional authentication paths, and reconnect
-behavior remain M7 work.
+The safe OpenSSH metadata importer and deterministic reconnect planner are
+implemented. Profile/UI integration, additional authentication paths, and live
+reconnect behavior remain M7 work.
 
 ### Outcome
 
