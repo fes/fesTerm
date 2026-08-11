@@ -261,7 +261,8 @@ wait_for_result() {
 acquire_lock() {
     lock_path=$1
     if ! mkdir "$lock_path" 2>/dev/null; then
-        if [ -f "$lock_path/pid" ] && ! kill -0 "$(cat "$lock_path/pid")" 2>/dev/null; then
+        if [ ! -f "$lock_path/pid" ] ||
+           ! kill -0 "$(cat "$lock_path/pid")" 2>/dev/null; then
             rm -f "$lock_path/pid"
             rmdir "$lock_path" 2>/dev/null || die "stale lock cannot be removed: $lock_path"
             mkdir "$lock_path" || die "cannot acquire lock: $lock_path"
