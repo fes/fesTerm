@@ -6,6 +6,9 @@ result_path=${FESTERM_OPENSSH_INTEROP_RESULT_PATH:-openssh-interop-result.txt}
 container_name=
 image_tag=
 password=
+key_dir=
+private_key_path=
+public_key_path=
 
 write_result() {
     printf '%s\n' "$1" >"$result_path"
@@ -17,6 +20,9 @@ cleanup() {
     fi
     if [ -n "$image_tag" ]; then
         docker image rm --force "$image_tag" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$key_dir" ]; then
+        rm -rf "$key_dir"
     fi
 }
 
@@ -49,6 +55,12 @@ container_name="festerm-openssh-interop-$nonce"
 image_tag="festerm-openssh-interop:$nonce"
 password="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 [ -n "$password" ] || fail 'password-generation-failed'
+key_dir="$(mktemp -d "${TMPDIR:-/tmp}/festerm-openssh-interop-key.XXXXXX")"
+private_key_path="$key_dir/id_ed25519"
+public_key_path="$private_key_path.pub"
+umask 077
+ssh-keygen -q -t ed25519 -N '' -f "$private_key_path" >/dev/null 2>&1 ||
+    fail 'key-generation-failed'
 
 if ! docker build --quiet --tag "$image_tag" tests/openssh >/dev/null; then
     fail 'docker-build-failed'
@@ -58,7 +70,9 @@ attempt=0
 while [ "$attempt" -lt 10 ]; do
     candidate_port=$((49152 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 16384))
     if FESTERM_OPENSSH_PASSWORD="$password" docker run --detach --name "$container_name" \
-        --env FESTERM_OPENSSH_PASSWORD -p "127.0.0.1:$candidate_port:22" "$image_tag" >/dev/null; then
+        --env FESTERM_OPENSSH_PASSWORD \
+        --mount "type=bind,src=$public_key_path,dst=/run/festerm-authorized-key,readonly" \
+        -p "127.0.0.1:$candidate_port:22" "$image_tag" >/dev/null; then
         port=$candidate_port
         break
     fi
@@ -86,6 +100,7 @@ done
 if FESTERM_OPENSSH_HOST=127.0.0.1 FESTERM_OPENSSH_PORT="$port" \
     FESTERM_OPENSSH_USER=festerm FESTERM_OPENSSH_PASSWORD="$password" \
     FESTERM_OPENSSH_CONTAINER_NAME="$container_name" \
+    FESTERM_OPENSSH_PRIVATE_KEY_PATH="$private_key_path" \
     cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1; then
     write_result 'status=pass'
 else

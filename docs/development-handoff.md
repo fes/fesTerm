@@ -13,10 +13,10 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, and early SSH transport foundation are
 separate crates.
 
-Not implemented: SSH tabs, persisted profiles/configuration, additional SSH
-authentication paths and reconnect behavior, scrollback, user-visible
-ligatures, a custom GPU renderer, terminfo distribution, and reference-TUI
-compatibility sign-off. Read
+Not implemented: SSH tabs, persisted profiles/configuration, encrypted-key
+passphrases, agents, key-file references, additional SSH authentication paths
+and reconnect behavior, scrollback, user-visible ligatures, a custom GPU
+renderer, terminfo distribution, and reference-TUI compatibility sign-off. Read
 [`milestone-progress.md`](milestone-progress.md) before choosing work.
 
 ## Bootstrap
@@ -153,7 +153,9 @@ graphics, and installed reference applications vary. A `not-run` reference
 tool is recorded by the P5 result file and is not acceptance evidence.
 
 The OpenSSH suite builds an Alpine fixture, generates its server host keys and
-password at container start, and selects a randomized loopback host port. It
+password at container start, generates an ephemeral client key outside the
+repository, and selects a randomized loopback host port. It runs all ignored
+fixture tests serially, including password and public-key authentication. It
 also restarts that same container to prove opt-in bounded reconnect, including
 a fresh host-key decision and usable new shell; it does not claim shell-state
 restoration. Run it alone with `scripts/run-openssh-interop.sh` or

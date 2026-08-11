@@ -1,5 +1,5 @@
 use std::{
-    env,
+    env, fs,
     process::Command,
     thread,
     time::{Duration, Instant},
@@ -11,7 +11,7 @@ use festerm_session::{
 };
 use festerm_ssh::{
     HostIdentity, HostTrustDecision, ReconnectPolicy, SshAuthentication, SshConnectionProfile,
-    SshSession, SshSessionOptions,
+    SshPrivateKey, SshSession, SshSessionOptions,
 };
 
 const MARKER: &[u8] = b"__FESTERM_OPENSSH_INTEROP_OK__";
@@ -62,6 +62,13 @@ fn connection_profile(configuration: &OpenSshConfiguration) -> SshConnectionProf
         TerminalSize::new(80, 24).expect("initial terminal size must be valid"),
     )
     .expect("OpenSSH fixture connection profile is invalid")
+}
+
+fn generated_private_key_from_environment() -> SshPrivateKey {
+    let path = required_environment("FESTERM_OPENSSH_PRIVATE_KEY_PATH")
+        .expect("OpenSSH fixture private-key path is invalid");
+    let encoded = fs::read(path).expect("could not read generated OpenSSH private key");
+    SshPrivateKey::from_openssh(encoded).expect("generated OpenSSH private key is invalid")
 }
 
 fn marker_seen(output_tail: &mut Vec<u8>, bytes: &[u8], marker: &[u8]) -> bool {
@@ -141,6 +148,76 @@ fn controlled_openssh_interoperability() {
     match session.shutdown(SHUTDOWN_TIMEOUT) {
         Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
         Err(_) => panic!("SSH session did not shut down within the test timeout"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_public_key_interoperability() {
+    const KEY_MARKER: &[u8] = b"__FESTERM_OPENSSH_PUBLIC_KEY_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::public_key(generated_private_key_from_environment()),
+    )
+    .expect("could not start public-key OpenSSH session");
+    let resolver = session.host_key_decision_resolver();
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut host_key_prompt_seen = false;
+    let mut running = false;
+    let mut marker_seen_in_output = false;
+    let mut output_tail = Vec::new();
+
+    while Instant::now() < deadline && !(running && marker_seen_in_output) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) if !host_key_prompt_seen => {
+                resolver
+                    .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                    .expect("could not accept the public-key test server host key");
+                host_key_prompt_seen = true;
+            }
+            Ok(SessionEvent::HostKeyVerification(_)) => {
+                panic!("public-key OpenSSH session emitted more than one host-key prompt")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(b"printf '__FESTERM_OPENSSH_PUBLIC_KEY_OK__\\n'\n")
+                    .expect("could not send public-key controlled SSH shell command");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                marker_seen_in_output |= marker_seen(&mut output_tail, &bytes, KEY_MARKER);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "public-key SSH session emitted a {:?} error before controlled exchange completed",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("public-key SSH session event stream closed before controlled exchange completed");
+            }
+        }
+    }
+
+    assert!(
+        host_key_prompt_seen,
+        "public-key SSH session did not request host-key verification"
+    );
+    assert!(
+        running,
+        "public-key SSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        marker_seen_in_output,
+        "public-key controlled SSH shell command did not produce its expected marker"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("public-key SSH session did not shut down within the test timeout"),
     }
 }
 

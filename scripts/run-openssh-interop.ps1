@@ -10,6 +10,10 @@ param(
 $containerName = $null
 $imageTag = $null
 $password = $null
+$keyDirectory = $null
+$privateKeyPath = $null
+$publicKeyPath = $null
+$previousValues = $null
 
 function Write-Result([string] $result) {
     Set-Content -Path $ResultPath -Value $result -NoNewline
@@ -33,6 +37,16 @@ function Fail([string] $reason) {
     exit 1
 }
 
+function Restore-Environment([hashtable] $values) {
+    foreach ($name in $values.Keys) {
+        if ($null -eq $values[$name]) {
+            Remove-Item "Env:$name" -ErrorAction Ignore
+        } else {
+            Set-Item "Env:$name" $values[$name]
+        }
+    }
+}
+
 try {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         Write-Result 'status=skipped reason=docker-unavailable'
@@ -51,6 +65,20 @@ try {
     $bytes = [byte[]]::new(24)
     [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
     $password = [Convert]::ToHexString($bytes).ToLowerInvariant()
+    $keyDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "festerm-openssh-interop-key-$nonce"
+    $privateKeyPath = Join-Path $keyDirectory 'id_ed25519'
+    $publicKeyPath = "$privateKeyPath.pub"
+    New-Item -ItemType Directory -Path $keyDirectory -ErrorAction Stop *> $null
+    $acl = Get-Acl -Path $keyDirectory
+    $acl.SetAccessRuleProtection($true, $false)
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'
+    )
+    $acl.SetAccessRule($rule)
+    Set-Acl -Path $keyDirectory -AclObject $acl -ErrorAction Stop
+    & ssh-keygen -q -t ed25519 -N '' -f $privateKeyPath *> $null
+    if ($LASTEXITCODE -ne 0) { Fail 'key-generation-failed' }
     $fixturePath = Join-Path $PSScriptRoot '..\tests\openssh'
 
     & docker build --quiet --tag $imageTag $fixturePath *> $null
@@ -62,6 +90,7 @@ try {
         $previousPassword = $env:FESTERM_OPENSSH_PASSWORD
         $env:FESTERM_OPENSSH_PASSWORD = $password
         & docker run --detach --name $containerName --env FESTERM_OPENSSH_PASSWORD `
+            --mount "type=bind,source=$publicKeyPath,target=/run/festerm-authorized-key,readonly" `
             -p "127.0.0.1:$candidatePort`:22" $imageTag *> $null
         $runExitCode = $LASTEXITCODE
         if ($null -eq $previousPassword) {
@@ -100,29 +129,32 @@ try {
         FESTERM_OPENSSH_USER = $env:FESTERM_OPENSSH_USER
         FESTERM_OPENSSH_PASSWORD = $env:FESTERM_OPENSSH_PASSWORD
         FESTERM_OPENSSH_CONTAINER_NAME = $env:FESTERM_OPENSSH_CONTAINER_NAME
+        FESTERM_OPENSSH_PRIVATE_KEY_PATH = $env:FESTERM_OPENSSH_PRIVATE_KEY_PATH
     }
     $env:FESTERM_OPENSSH_HOST = '127.0.0.1'
     $env:FESTERM_OPENSSH_PORT = $port
     $env:FESTERM_OPENSSH_USER = 'festerm'
     $env:FESTERM_OPENSSH_PASSWORD = $password
     $env:FESTERM_OPENSSH_CONTAINER_NAME = $containerName
+    $env:FESTERM_OPENSSH_PRIVATE_KEY_PATH = $privateKeyPath
     & cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1
     $testExitCode = $LASTEXITCODE
-    foreach ($name in $previousValues.Keys) {
-        if ($null -eq $previousValues[$name]) {
-            Remove-Item "Env:$name" -ErrorAction Ignore
-        } else {
-            Set-Item "Env:$name" $previousValues[$name]
-        }
-    }
+    Restore-Environment $previousValues
+    $previousValues = $null
     if ($testExitCode -ne 0) { Fail 'cargo-test-failed' }
 
     Write-Result 'status=pass'
 } finally {
+    if ($previousValues) {
+        Restore-Environment $previousValues
+    }
     if ($containerName) {
         & docker rm --force $containerName *> $null
     }
     if ($imageTag) {
         & docker image rm --force $imageTag *> $null
+    }
+    if ($keyDirectory) {
+        Remove-Item -Path $keyDirectory -Recurse -Force -ErrorAction Ignore
     }
 }

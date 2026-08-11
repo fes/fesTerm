@@ -82,12 +82,13 @@ pub enum HostTrustDecision {
 
 /// Transient authentication selected for one new SSH session.
 ///
-/// Password authentication is the only supported method in this slice.
-/// Public-key, agent, and keyboard-interactive authentication are deliberately
-/// not represented until their secret-handling lifetimes can be bounded
-/// without retaining key material or challenge responses in configuration.
+/// Authentication material is moved into the worker and never belongs in a
+/// connection profile or imported OpenSSH metadata. Public keys supplied here
+/// must be unencrypted OpenSSH private keys. Passphrases, agents, key-file
+/// references, and persisted/UI profile integration are deliberately deferred.
 pub enum SshAuthentication {
     Password(SshPassword),
+    PublicKey(SshPrivateKey),
 }
 
 impl SshAuthentication {
@@ -103,9 +104,19 @@ impl SshAuthentication {
         })
     }
 
-    fn into_password(self) -> String {
+    /// Selects public-key authentication for this session.
+    ///
+    /// `private_key` is moved directly to the worker. An explicit reconnect
+    /// policy retains only its parsed key in that worker for bounded fresh
+    /// authentication attempts.
+    pub fn public_key(private_key: SshPrivateKey) -> Self {
+        Self::PublicKey(private_key)
+    }
+
+    fn into_worker_authentication(self) -> WorkerAuthentication {
         match self {
-            Self::Password(password) => password.password,
+            Self::Password(password) => WorkerAuthentication::Password(password.password),
+            Self::PublicKey(private_key) => WorkerAuthentication::PublicKey(private_key.key),
         }
     }
 }
@@ -114,6 +125,7 @@ impl fmt::Debug for SshAuthentication {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Password(_) => formatter.write_str("SshAuthentication::Password([REDACTED])"),
+            Self::PublicKey(_) => formatter.write_str("SshAuthentication::PublicKey([REDACTED])"),
         }
     }
 }
@@ -130,6 +142,73 @@ impl fmt::Debug for SshPassword {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("SshPassword([REDACTED])")
     }
+}
+
+/// Parsed private key material consumed by [`SshAuthentication`] by the worker.
+///
+/// This type intentionally has no getter, `Clone`, or derived `Debug`
+/// implementation. It parses only unencrypted OpenSSH private-key encodings;
+/// passphrase handling, agents, and key-file references are not supported yet.
+pub struct SshPrivateKey {
+    key: Arc<russh::keys::PrivateKey>,
+}
+
+impl SshPrivateKey {
+    /// Parses an unencrypted in-memory OpenSSH private key.
+    ///
+    /// The supplied bytes are validated immediately and are not retained after
+    /// parsing. Encrypted keys are rejected because this API intentionally has
+    /// no passphrase input.
+    pub fn from_openssh(encoded: impl AsRef<[u8]>) -> Result<Self, SshPrivateKeyError> {
+        let encoded = std::str::from_utf8(encoded.as_ref())
+            .map_err(|_| SshPrivateKeyError::InvalidEncoding)?;
+        if !encoded
+            .trim_start()
+            .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----")
+        {
+            return Err(SshPrivateKeyError::NotOpenSsh);
+        }
+        let key = russh::keys::decode_secret_key(encoded, None).map_err(|error| match error {
+            russh::keys::Error::KeyIsEncrypted => SshPrivateKeyError::Encrypted,
+            _ => SshPrivateKeyError::InvalidKey,
+        })?;
+        Ok(Self { key: Arc::new(key) })
+    }
+}
+
+impl fmt::Debug for SshPrivateKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SshPrivateKey([REDACTED])")
+    }
+}
+
+/// Failure to accept an in-memory OpenSSH private key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshPrivateKeyError {
+    InvalidEncoding,
+    NotOpenSsh,
+    Encrypted,
+    InvalidKey,
+}
+
+impl fmt::Display for SshPrivateKeyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidEncoding => formatter.write_str("SSH private key is not valid UTF-8"),
+            Self::NotOpenSsh => formatter.write_str("SSH private key is not in OpenSSH format"),
+            Self::Encrypted => formatter.write_str(
+                "encrypted SSH private keys are not supported because passphrases are unavailable",
+            ),
+            Self::InvalidKey => formatter.write_str("SSH private key is invalid or unsupported"),
+        }
+    }
+}
+
+impl std::error::Error for SshPrivateKeyError {}
+
+enum WorkerAuthentication {
+    Password(String),
+    PublicKey(Arc<russh::keys::PrivateKey>),
 }
 
 /// Validated, secret-free connection inputs for a future interactive SSH PTY.
@@ -1765,8 +1844,8 @@ impl std::error::Error for SshSessionStartError {}
 /// command, and is stopped when the worker completes. This is an interim
 /// crate-local boundary until application runtime ownership is available.
 ///
-/// The worker performs TCP connection, strict host-key verification, password
-/// authentication, and interactive session-channel setup.
+/// The worker performs TCP connection, strict host-key verification, selected
+/// transient authentication, and interactive session-channel setup.
 pub struct SshSession {
     foundation: SshWorkerFoundation,
     host_key_resolver: HostKeyDecisionResolver,
@@ -1986,13 +2065,13 @@ async fn ssh_worker(
     command_receiver: WorkerCommandReceiver,
     host_key_gate: Arc<HostKeyDecisionGate>,
 ) -> Result<ShutdownResult, SessionError> {
-    let password = authentication.into_password();
+    let authentication = authentication.into_worker_authentication();
     let mut planner = reconnect_policy.map(ReconnectPlanner::new);
 
     loop {
         match establish_connection(
             &profile,
-            password.as_str(),
+            &authentication,
             &shared,
             &command_receiver,
             &host_key_gate,
@@ -2175,7 +2254,7 @@ async fn wait_for_reconnect_delay(
 /// its host-key callback begins a new gate sequence and emits a new prompt.
 async fn establish_connection(
     profile: &SshConnectionProfile,
-    password: &str,
+    authentication: &WorkerAuthentication,
     shared: &Arc<WorkerShared>,
     command_receiver: &WorkerCommandReceiver,
     host_key_gate: &Arc<HostKeyDecisionGate>,
@@ -2232,14 +2311,54 @@ async fn establish_connection(
         }
     };
 
-    match wait_for_ssh_operation(
-        handle.authenticate_password(profile.username(), password),
-        command_receiver,
-        shared,
-        host_key_gate,
-    )
-    .await
-    {
+    let authentication_result = match authentication {
+        WorkerAuthentication::Password(password) => {
+            wait_for_ssh_operation(
+                handle.authenticate_password(profile.username(), password),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+        WorkerAuthentication::PublicKey(private_key) => {
+            let hash_algorithm = match wait_for_ssh_operation(
+                handle.best_supported_rsa_hash(),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+            {
+                WorkerWait::Completed(Ok(hash_algorithm)) => hash_algorithm.flatten(),
+                WorkerWait::Completed(Err(_)) => {
+                    return ConnectionAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        "SSH public-key authentication could not select a signature algorithm",
+                    );
+                }
+                WorkerWait::Shutdown => {
+                    let _ = stop_handle(handle, shared).await;
+                    return ConnectionAttempt::Shutdown;
+                }
+            };
+            wait_for_ssh_operation(
+                handle.authenticate_publickey(
+                    profile.username(),
+                    russh::keys::PrivateKeyWithHashAlg::new(
+                        Arc::clone(private_key),
+                        hash_algorithm,
+                    ),
+                ),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+    };
+
+    match authentication_result {
         WorkerWait::Completed(Ok(result)) if result.success() => {}
         WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_)) => {
             return ConnectionAttempt::Permanent(
@@ -2710,6 +2829,66 @@ mod tests {
             format!("{authentication:?}"),
             "SshAuthentication::Password([REDACTED])"
         );
+    }
+
+    fn generated_private_key() -> SshPrivateKey {
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate test SSH key");
+        let encoded = key
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .expect("could not encode test SSH key");
+        SshPrivateKey::from_openssh(encoded.as_bytes()).expect("could not parse test SSH key")
+    }
+
+    #[test]
+    fn public_key_authentication_redacts_and_dispatches_the_parsed_key() {
+        let private_key = generated_private_key();
+        assert_eq!(format!("{private_key:?}"), "SshPrivateKey([REDACTED])");
+
+        let authentication = SshAuthentication::public_key(private_key);
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::PublicKey([REDACTED])"
+        );
+        assert!(matches!(
+            authentication.into_worker_authentication(),
+            WorkerAuthentication::PublicKey(_)
+        ));
+    }
+
+    #[test]
+    fn public_key_parser_rejects_invalid_and_non_openssh_material_without_echoing_it() {
+        assert!(matches!(
+            SshPrivateKey::from_openssh([0xff]),
+            Err(SshPrivateKeyError::InvalidEncoding)
+        ));
+        assert!(matches!(
+            SshPrivateKey::from_openssh("-----BEGIN PRIVATE KEY-----\ninvalid"),
+            Err(SshPrivateKeyError::NotOpenSsh)
+        ));
+        assert!(matches!(
+            SshPrivateKey::from_openssh("-----BEGIN OPENSSH PRIVATE KEY-----\ninvalid"),
+            Err(SshPrivateKeyError::InvalidKey)
+        ));
+    }
+
+    #[test]
+    fn public_key_parser_rejects_encrypted_openssh_keys_without_a_passphrase_api() {
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate encrypted-key test input");
+        let encrypted = key
+            .encrypt(&mut random, "test passphrase")
+            .expect("could not encrypt test SSH key");
+        let encoded = encrypted
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .expect("could not encode encrypted test SSH key");
+
+        assert!(matches!(
+            SshPrivateKey::from_openssh(encoded.as_bytes()),
+            Err(SshPrivateKeyError::Encrypted)
+        ));
     }
 
     #[test]
