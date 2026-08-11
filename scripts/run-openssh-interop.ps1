@@ -13,8 +13,13 @@ $password = $null
 $keyDirectory = $null
 $privateKeyPath = $null
 $publicKeyPath = $null
+$encryptedPrivateKeyPath = $null
+$encryptedPublicKeyPath = $null
+$encryptedPrivateKeyPassphrase = $null
+$encryptedPrivateKeyAskpassPath = $null
 $hostKeyFingerprint = $null
 $previousValues = $null
+$keyGenerationEnvironment = $null
 
 function Write-Result([string] $result) {
     Set-Content -Path $ResultPath -Value $result -NoNewline
@@ -26,6 +31,9 @@ function Write-Diagnostics {
         $logs = (& docker logs --tail 50 $containerName 2>&1 | Out-String)
         if ($password) {
             $logs = $logs -replace [regex]::Escape($password), '[REDACTED]'
+        }
+        if ($encryptedPrivateKeyPassphrase) {
+            $logs = $logs -replace [regex]::Escape($encryptedPrivateKeyPassphrase), '[REDACTED]'
         }
         Write-Error $logs.TrimEnd()
     }
@@ -69,6 +77,9 @@ try {
     $keyDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "festerm-openssh-interop-key-$nonce"
     $privateKeyPath = Join-Path $keyDirectory 'id_ed25519'
     $publicKeyPath = "$privateKeyPath.pub"
+    $encryptedPrivateKeyPath = Join-Path $keyDirectory 'id_ed25519_encrypted'
+    $encryptedPublicKeyPath = "$encryptedPrivateKeyPath.pub"
+    $encryptedPrivateKeyAskpassPath = Join-Path $keyDirectory 'encrypted-key-askpass.cmd'
     New-Item -ItemType Directory -Path $keyDirectory -ErrorAction Stop *> $null
     $acl = Get-Acl -Path $keyDirectory
     $acl.SetAccessRuleProtection($true, $false)
@@ -80,6 +91,27 @@ try {
     Set-Acl -Path $keyDirectory -AclObject $acl -ErrorAction Stop
     & ssh-keygen -q -t ed25519 -N '' -f $privateKeyPath *> $null
     if ($LASTEXITCODE -ne 0) { Fail 'key-generation-failed' }
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $encryptedPrivateKeyPassphrase = [Convert]::ToHexString($bytes).ToLowerInvariant()
+    Set-Content -Path $encryptedPrivateKeyAskpassPath `
+        -Value "@echo off`r`necho %FESTERM_OPENSSH_KEY_GENERATION_PASSPHRASE%" `
+        -NoNewline -ErrorAction Stop
+    $keyGenerationEnvironment = @{
+        FESTERM_OPENSSH_KEY_GENERATION_PASSPHRASE = $env:FESTERM_OPENSSH_KEY_GENERATION_PASSPHRASE
+        SSH_ASKPASS = $env:SSH_ASKPASS
+        SSH_ASKPASS_REQUIRE = $env:SSH_ASKPASS_REQUIRE
+        DISPLAY = $env:DISPLAY
+    }
+    $env:FESTERM_OPENSSH_KEY_GENERATION_PASSPHRASE = $encryptedPrivateKeyPassphrase
+    $env:SSH_ASKPASS = $encryptedPrivateKeyAskpassPath
+    $env:SSH_ASKPASS_REQUIRE = 'force'
+    $env:DISPLAY = 'festerm-interop'
+    & ssh-keygen -q -t ed25519 -f $encryptedPrivateKeyPath *> $null
+    Restore-Environment $keyGenerationEnvironment
+    $keyGenerationEnvironment = $null
+    if ($LASTEXITCODE -ne 0) { Fail 'encrypted-key-generation-failed' }
+    Remove-Item -Path $encryptedPrivateKeyAskpassPath -Force -ErrorAction Stop
+    $encryptedPrivateKeyAskpassPath = $null
     $fixturePath = Join-Path $PSScriptRoot '..\tests\openssh'
 
     & docker build --quiet --tag $imageTag $fixturePath *> $null
@@ -92,6 +124,7 @@ try {
         $env:FESTERM_OPENSSH_PASSWORD = $password
         & docker run --detach --name $containerName --env FESTERM_OPENSSH_PASSWORD `
             --mount "type=bind,source=$publicKeyPath,target=/run/festerm-authorized-key,readonly" `
+            --mount "type=bind,source=$encryptedPublicKeyPath,target=/run/festerm-encrypted-authorized-key,readonly" `
             --env 'FESTERM_OPENSSH_HOST_KEY_PROFILE=ecdsa-p256' `
             -p "127.0.0.1:$candidatePort`:22" $imageTag *> $null
         $runExitCode = $LASTEXITCODE
@@ -138,6 +171,8 @@ try {
         FESTERM_OPENSSH_PASSWORD = $env:FESTERM_OPENSSH_PASSWORD
         FESTERM_OPENSSH_CONTAINER_NAME = $env:FESTERM_OPENSSH_CONTAINER_NAME
         FESTERM_OPENSSH_PRIVATE_KEY_PATH = $env:FESTERM_OPENSSH_PRIVATE_KEY_PATH
+        FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PATH = $env:FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PATH
+        FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PASSPHRASE = $env:FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PASSPHRASE
         FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT = $env:FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT
     }
     $env:FESTERM_OPENSSH_HOST = '127.0.0.1'
@@ -146,15 +181,21 @@ try {
     $env:FESTERM_OPENSSH_PASSWORD = $password
     $env:FESTERM_OPENSSH_CONTAINER_NAME = $containerName
     $env:FESTERM_OPENSSH_PRIVATE_KEY_PATH = $privateKeyPath
+    $env:FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PATH = $encryptedPrivateKeyPath
+    $env:FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PASSPHRASE = $encryptedPrivateKeyPassphrase
     $env:FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT = $hostKeyFingerprint
     & cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1
     $testExitCode = $LASTEXITCODE
     Restore-Environment $previousValues
     $previousValues = $null
+    $encryptedPrivateKeyPassphrase = $null
     if ($testExitCode -ne 0) { Fail 'cargo-test-failed' }
 
     Write-Result 'status=pass'
 } finally {
+    if ($keyGenerationEnvironment) {
+        Restore-Environment $keyGenerationEnvironment
+    }
     if ($previousValues) {
         Restore-Environment $previousValues
     }
@@ -167,4 +208,5 @@ try {
     if ($keyDirectory) {
         Remove-Item -Path $keyDirectory -Recurse -Force -ErrorAction Ignore
     }
+    $encryptedPrivateKeyPassphrase = $null
 }

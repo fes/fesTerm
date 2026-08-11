@@ -13,10 +13,11 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, and early SSH transport foundation are
 separate crates.
 
-Not implemented: SSH tabs, persisted profiles/configuration, encrypted-key
-passphrases, agents, key-file references, additional SSH authentication paths
-and reconnect behavior, scrollback, user-visible ligatures, a custom GPU
-renderer, terminfo distribution, and reference-TUI compatibility sign-off. Read
+Not implemented: SSH tabs, persisted profiles/configuration, agents, key-file
+references, additional SSH authentication paths and reconnect behavior,
+scrollback, user-visible ligatures, a custom GPU renderer, terminfo
+distribution, and reference-TUI compatibility sign-off. Encrypted-key
+passphrases are transient in-memory parse inputs, never profile data. Read
 [`milestone-progress.md`](milestone-progress.md) before choosing work.
 
 ## Bootstrap
@@ -153,11 +154,13 @@ graphics, and installed reference applications vary. A `not-run` reference
 tool is recorded by the P5 result file and is not acceptance evidence.
 
 The OpenSSH suite builds an Alpine fixture, generates its server host keys and
-password at container start, generates an ephemeral client key outside the
-repository, and selects a randomized loopback host port. It runs all ignored
-fixture tests serially, including password and public-key authentication. It
-also restarts that same container to prove opt-in bounded reconnect, including
-a fresh host-key decision and usable new shell; it does not claim shell-state
+password at container start, generates ephemeral unencrypted and encrypted
+client keys outside the repository, and selects a randomized loopback host
+port. The encrypted key's random passphrase is passed only to the test process
+environment and is never persisted. It runs all ignored fixture tests serially,
+including password and both public-key authentication forms. It also restarts
+that same container to prove opt-in bounded reconnect, including a fresh
+host-key decision and usable new shell; it does not claim shell-state
 restoration. Run it alone with `scripts/run-openssh-interop.sh` or
 `pwsh -NoProfile -File scripts\run-openssh-interop.ps1`. If Docker CLI or its
 daemon is unavailable, it records `status=skipped reason=docker-unavailable`;
@@ -174,10 +177,10 @@ loopback-only and is the evidence for the scenarios below.
 | --- | --- |
 | Password authentication | Implemented: a generated password authenticates the fixture user. |
 | Unencrypted in-memory OpenSSH Ed25519 client key | Implemented: a runner-generated key is bind-mounted only as the fixture user's authorized key. |
+| Encrypted in-memory OpenSSH Ed25519 client key | Implemented: a second runner-generated encrypted key is authorized alongside the unencrypted key; its random passphrase is supplied only through the test-process environment and is consumed during parsing. |
 | ECDSA P-256 server host key | Implemented: the selected fixture profile exposes only its generated ECDSA P-256 host key; the test checks its runner-read SHA-256 fingerprint and canonical host/port prompt, accepts it once, then reaches a shell marker. |
 | Remote PTY, shell, resize, output, and shutdown | Implemented through the controlled password session. |
 | Bounded reconnect | Implemented: killing and restarting the same fixture requires a fresh trust decision and reaches a new shell marker; remote shell state is not restored. |
-| Encrypted client keys and passphrases | Deferred until fesTerm has encrypted-key parsing plus a secure passphrase prompt and corresponding fixture coverage. |
 | Agent authentication | Deferred until fesTerm owns cross-platform agent adapters, user consent policy, and fixture coverage. |
 | Port/X11/agent forwarding and SFTP | Deferred until channel APIs, authorization policy, lifecycle handling, and isolated fixture tests exist. |
 | OpenSSH user/host certificates | Deferred until certificate selection and host-trust policy are exposed by fesTerm and covered by a dedicated fixture. |

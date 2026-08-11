@@ -9,6 +9,9 @@ password=
 key_dir=
 private_key_path=
 public_key_path=
+encrypted_private_key_path=
+encrypted_public_key_path=
+encrypted_private_key_passphrase=
 host_key_fingerprint=
 
 write_result() {
@@ -25,13 +28,20 @@ cleanup() {
     if [ -n "$key_dir" ]; then
         rm -rf "$key_dir"
     fi
+    encrypted_private_key_passphrase=
 }
 
 diagnostics() {
     printf '%s\n' 'openssh-interop diagnostic=container-log-begin' >&2
     if [ -n "$password" ]; then
-        docker logs --tail 50 "$container_name" 2>&1 |
-            sed "s/$password/[REDACTED]/g" >&2 || true
+        if [ -n "$encrypted_private_key_passphrase" ]; then
+            docker logs --tail 50 "$container_name" 2>&1 |
+                sed -e "s/$password/[REDACTED]/g" \
+                    -e "s/$encrypted_private_key_passphrase/[REDACTED]/g" >&2 || true
+        else
+            docker logs --tail 50 "$container_name" 2>&1 |
+                sed "s/$password/[REDACTED]/g" >&2 || true
+        fi
     else
         docker logs --tail 50 "$container_name" >&2 || true
     fi
@@ -59,9 +69,16 @@ password="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 key_dir="$(mktemp -d "${TMPDIR:-/tmp}/festerm-openssh-interop-key.XXXXXX")"
 private_key_path="$key_dir/id_ed25519"
 public_key_path="$private_key_path.pub"
+encrypted_private_key_path="$key_dir/id_ed25519_encrypted"
+encrypted_public_key_path="$encrypted_private_key_path.pub"
 umask 077
 ssh-keygen -q -t ed25519 -N '' -f "$private_key_path" >/dev/null 2>&1 ||
     fail 'key-generation-failed'
+encrypted_private_key_passphrase="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+[ -n "$encrypted_private_key_passphrase" ] || fail 'encrypted-key-passphrase-generation-failed'
+printf '%s\n%s\n' "$encrypted_private_key_passphrase" "$encrypted_private_key_passphrase" |
+    ssh-keygen -q -t ed25519 -f "$encrypted_private_key_path" >/dev/null 2>&1 ||
+    fail 'encrypted-key-generation-failed'
 
 if ! docker build --quiet --tag "$image_tag" tests/openssh >/dev/null; then
     fail 'docker-build-failed'
@@ -74,6 +91,7 @@ while [ "$attempt" -lt 10 ]; do
         --env FESTERM_OPENSSH_PASSWORD \
         --env FESTERM_OPENSSH_HOST_KEY_PROFILE=ecdsa-p256 \
         --mount "type=bind,src=$public_key_path,dst=/run/festerm-authorized-key,readonly" \
+        --mount "type=bind,src=$encrypted_public_key_path,dst=/run/festerm-encrypted-authorized-key,readonly" \
         -p "127.0.0.1:$candidate_port:22" "$image_tag" >/dev/null; then
         port=$candidate_port
         break
@@ -111,6 +129,8 @@ if FESTERM_OPENSSH_HOST=127.0.0.1 FESTERM_OPENSSH_PORT="$port" \
     FESTERM_OPENSSH_USER=festerm FESTERM_OPENSSH_PASSWORD="$password" \
     FESTERM_OPENSSH_CONTAINER_NAME="$container_name" \
     FESTERM_OPENSSH_PRIVATE_KEY_PATH="$private_key_path" \
+    FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PATH="$encrypted_private_key_path" \
+    FESTERM_OPENSSH_ENCRYPTED_PRIVATE_KEY_PASSPHRASE="$encrypted_private_key_passphrase" \
     FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT="$host_key_fingerprint" \
     cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1; then
     write_result 'status=pass'

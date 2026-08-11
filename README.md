@@ -13,10 +13,12 @@ palette, custom title bar, and configurable status bar. See the Milestone 8
 note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is also in progress: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
-reconnect, and a controlled OpenSSH fixture; encrypted keys/passphrases,
-agents, key-file references, SSH tabs, profiles, and reconnect controls remain
-incomplete. The fixture includes an ECDSA P-256-only server-host-key case
-whose SHA-256 trust prompt is checked before a shell exchange. The
+reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
+encrypted in-memory OpenSSH private keys; encrypted-key passphrases are
+transient parse inputs and are never persisted. Agents, key-file references,
+SSH tabs, profiles, and reconnect controls remain incomplete. The fixture
+includes an ECDSA P-256-only server-host-key case whose SHA-256 trust prompt
+is checked before a shell exchange. The
 GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,

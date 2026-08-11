@@ -277,18 +277,19 @@ The terminal is functionally useful with the motivating advanced applications.
 
 `russh` with the portable `ring` backend is selected, and the
 `festerm-ssh` trust/reconnect foundation plus application host-key prompt
-bridge are implemented. Live password and in-memory unencrypted OpenSSH
-public-key-authenticated SSH transport, remote PTY/resize, and controlled
-OpenSSH container evidence are implemented. The container evidence exercises
-both authentication methods and opt-in live reconnect after a fixture restart,
-including fresh host-key verification and a usable new shell, without claiming
-remote shell-state restoration. It also uses an ECDSA P-256-only server
-host-key profile and verifies the SHA-256 trust prompt before a shell exchange.
-The safe OpenSSH metadata importer and deterministic reconnect planner are
-implemented. Live reconnect is opt-in, bounded, re-verifies host trust for
-every fresh transport, and never claims remote process restoration. Profile/UI
-integration, encrypted-key passphrases, agents, key-file references, and other
-authentication paths remain M7 work.
+bridge are implemented. Live password and in-memory OpenSSH public-key
+authentication for unencrypted and encrypted Ed25519 keys, remote PTY/resize,
+and controlled OpenSSH container evidence are implemented. Encrypted-key
+passphrases are transient parse inputs and are never persisted. The container
+evidence exercises both key forms, password authentication, and opt-in live
+reconnect after a fixture restart, including fresh host-key verification and a
+usable new shell, without claiming remote shell-state restoration. It also uses
+an ECDSA P-256-only server host-key profile and verifies the SHA-256 trust
+prompt before a shell exchange. The safe OpenSSH metadata importer and
+deterministic reconnect planner are implemented. Live reconnect is opt-in,
+bounded, re-verifies host trust for every fresh transport, and never claims
+remote process restoration. Profile/UI integration, agents, key-file
+references, and other authentication paths remain M7 work.
 
 ### Outcome
 

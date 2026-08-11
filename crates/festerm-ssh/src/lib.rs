@@ -84,8 +84,8 @@ pub enum HostTrustDecision {
 ///
 /// Authentication material is moved into the worker and never belongs in a
 /// connection profile or imported OpenSSH metadata. Public keys supplied here
-/// must be unencrypted OpenSSH private keys. Passphrases, agents, key-file
-/// references, and persisted/UI profile integration are deliberately deferred.
+/// are parsed in memory before the session starts. Agents, key-file references,
+/// and persisted/UI profile integration are deliberately deferred.
 pub enum SshAuthentication {
     Password(SshPassword),
     PublicKey(SshPrivateKey),
@@ -144,11 +144,35 @@ impl fmt::Debug for SshPassword {
     }
 }
 
+/// Transient passphrase consumed while parsing an encrypted OpenSSH private key.
+///
+/// This type intentionally has no getter, `Clone`, or derived `Debug`
+/// implementation. [`SshPrivateKey::from_encrypted_openssh`] consumes it while
+/// parsing, and the resulting private key retains no passphrase.
+pub struct SshKeyPassphrase {
+    passphrase: String,
+}
+
+impl SshKeyPassphrase {
+    /// Creates a transient passphrase for one encrypted-key parse attempt.
+    pub fn new(passphrase: impl Into<String>) -> Self {
+        Self {
+            passphrase: passphrase.into(),
+        }
+    }
+}
+
+impl fmt::Debug for SshKeyPassphrase {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SshKeyPassphrase([REDACTED])")
+    }
+}
+
 /// Parsed private key material consumed by [`SshAuthentication`] by the worker.
 ///
 /// This type intentionally has no getter, `Clone`, or derived `Debug`
-/// implementation. It parses only unencrypted OpenSSH private-key encodings;
-/// passphrase handling, agents, and key-file references are not supported yet.
+/// implementation. It retains only the parsed private key; input encodings and
+/// encrypted-key passphrases are not retained.
 pub struct SshPrivateKey {
     key: Arc<russh::keys::PrivateKey>,
 }
@@ -157,23 +181,47 @@ impl SshPrivateKey {
     /// Parses an unencrypted in-memory OpenSSH private key.
     ///
     /// The supplied bytes are validated immediately and are not retained after
-    /// parsing. Encrypted keys are rejected because this API intentionally has
-    /// no passphrase input.
+    /// parsing. Encrypted keys must use [`Self::from_encrypted_openssh`] so
+    /// passphrase handling is explicit at the call site.
     pub fn from_openssh(encoded: impl AsRef<[u8]>) -> Result<Self, SshPrivateKeyError> {
-        let encoded = std::str::from_utf8(encoded.as_ref())
-            .map_err(|_| SshPrivateKeyError::InvalidEncoding)?;
-        if !encoded
-            .trim_start()
-            .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----")
-        {
-            return Err(SshPrivateKeyError::NotOpenSsh);
-        }
+        let encoded = openssh_private_key_text(encoded.as_ref())?;
         let key = russh::keys::decode_secret_key(encoded, None).map_err(|error| match error {
             russh::keys::Error::KeyIsEncrypted => SshPrivateKeyError::Encrypted,
             _ => SshPrivateKeyError::InvalidKey,
         })?;
         Ok(Self { key: Arc::new(key) })
     }
+
+    /// Parses an encrypted in-memory OpenSSH private key with a transient passphrase.
+    ///
+    /// The bytes and `passphrase` are consumed during this call. On success,
+    /// this type retains only the parsed private key. Unencrypted keys must use
+    /// [`Self::from_openssh`] instead.
+    pub fn from_encrypted_openssh(
+        encoded: impl AsRef<[u8]>,
+        passphrase: SshKeyPassphrase,
+    ) -> Result<Self, SshPrivateKeyError> {
+        let encoded = openssh_private_key_text(encoded.as_ref())?;
+        match russh::keys::decode_secret_key(encoded, None) {
+            Err(russh::keys::Error::KeyIsEncrypted) => {}
+            Ok(_) => return Err(SshPrivateKeyError::Unencrypted),
+            Err(_) => return Err(SshPrivateKeyError::InvalidKey),
+        }
+        let key = russh::keys::decode_secret_key(encoded, Some(&passphrase.passphrase))
+            .map_err(|_| SshPrivateKeyError::InvalidKey)?;
+        Ok(Self { key: Arc::new(key) })
+    }
+}
+
+fn openssh_private_key_text(encoded: &[u8]) -> Result<&str, SshPrivateKeyError> {
+    let encoded = std::str::from_utf8(encoded).map_err(|_| SshPrivateKeyError::InvalidEncoding)?;
+    if !encoded
+        .trim_start()
+        .starts_with("-----BEGIN OPENSSH PRIVATE KEY-----")
+    {
+        return Err(SshPrivateKeyError::NotOpenSsh);
+    }
+    Ok(encoded)
 }
 
 impl fmt::Debug for SshPrivateKey {
@@ -188,6 +236,7 @@ pub enum SshPrivateKeyError {
     InvalidEncoding,
     NotOpenSsh,
     Encrypted,
+    Unencrypted,
     InvalidKey,
 }
 
@@ -196,9 +245,10 @@ impl fmt::Display for SshPrivateKeyError {
         match self {
             Self::InvalidEncoding => formatter.write_str("SSH private key is not valid UTF-8"),
             Self::NotOpenSsh => formatter.write_str("SSH private key is not in OpenSSH format"),
-            Self::Encrypted => formatter.write_str(
-                "encrypted SSH private keys are not supported because passphrases are unavailable",
-            ),
+            Self::Encrypted => formatter
+                .write_str("encrypted SSH private keys require an explicit transient passphrase"),
+            Self::Unencrypted => formatter
+                .write_str("unencrypted SSH private keys must use the unencrypted OpenSSH parser"),
             Self::InvalidKey => formatter.write_str("SSH private key is invalid or unsupported"),
         }
     }
@@ -2867,27 +2917,73 @@ mod tests {
             SshPrivateKey::from_openssh("-----BEGIN PRIVATE KEY-----\ninvalid"),
             Err(SshPrivateKeyError::NotOpenSsh)
         ));
-        assert!(matches!(
-            SshPrivateKey::from_openssh("-----BEGIN OPENSSH PRIVATE KEY-----\ninvalid"),
-            Err(SshPrivateKeyError::InvalidKey)
-        ));
+        let malformed = "-----BEGIN OPENSSH PRIVATE KEY-----\nmalformed-private-material";
+        let error = SshPrivateKey::from_openssh(malformed)
+            .expect_err("malformed OpenSSH private key must not parse");
+        assert_eq!(error, SshPrivateKeyError::InvalidKey);
+        assert!(!error.to_string().contains(malformed));
     }
 
-    #[test]
-    fn public_key_parser_rejects_encrypted_openssh_keys_without_a_passphrase_api() {
+    fn encrypted_private_key_fixture() -> String {
         let mut random = russh::keys::key::safe_rng();
         let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
             .expect("could not generate encrypted-key test input");
         let encrypted = key
-            .encrypt(&mut random, "test passphrase")
+            .encrypt(&mut random, "test encrypted-key passphrase")
             .expect("could not encrypt test SSH key");
-        let encoded = encrypted
+        encrypted
             .to_openssh(russh::keys::ssh_key::LineEnding::LF)
-            .expect("could not encode encrypted test SSH key");
+            .expect("could not encode encrypted test SSH key")
+            .to_string()
+    }
+
+    #[test]
+    fn public_key_parser_rejects_encrypted_openssh_keys_without_a_passphrase() {
+        let encoded = encrypted_private_key_fixture();
 
         assert!(matches!(
             SshPrivateKey::from_openssh(encoded.as_bytes()),
             Err(SshPrivateKeyError::Encrypted)
+        ));
+    }
+
+    #[test]
+    fn encrypted_private_key_parser_consumes_and_redacts_its_passphrase() {
+        let encoded = encrypted_private_key_fixture();
+        let passphrase = "test encrypted-key passphrase";
+        let secret = SshKeyPassphrase::new(passphrase);
+        assert_eq!(format!("{secret:?}"), "SshKeyPassphrase([REDACTED])");
+
+        let private_key = SshPrivateKey::from_encrypted_openssh(encoded.as_bytes(), secret)
+            .expect("could not parse encrypted test SSH key");
+        assert_eq!(format!("{private_key:?}"), "SshPrivateKey([REDACTED])");
+
+        let error = SshPrivateKey::from_encrypted_openssh(
+            encoded.as_bytes(),
+            SshKeyPassphrase::new("wrong encrypted-key passphrase"),
+        )
+        .expect_err("wrong passphrase must not parse an encrypted SSH key");
+        assert_eq!(error, SshPrivateKeyError::InvalidKey);
+        assert!(!error.to_string().contains(passphrase));
+        assert!(!error.to_string().contains("wrong encrypted-key passphrase"));
+        assert!(!error.to_string().contains(encoded.trim()));
+    }
+
+    #[test]
+    fn encrypted_private_key_parser_rejects_unencrypted_keys() {
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate test SSH key");
+        let encoded = key
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .expect("could not encode test SSH key");
+
+        assert!(matches!(
+            SshPrivateKey::from_encrypted_openssh(
+                encoded.as_bytes(),
+                SshKeyPassphrase::new("unused passphrase")
+            ),
+            Err(SshPrivateKeyError::Unencrypted)
         ));
     }
 
