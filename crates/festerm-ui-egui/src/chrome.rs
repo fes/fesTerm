@@ -24,8 +24,16 @@ use egui::{
 const CHIP_MIN_WIDTH: f32 = 132.0;
 const CHIP_MAX_WIDTH: f32 = 220.0;
 /// Fixed two-line chip height (primary line + secondary line), independent
-/// of whether a chip currently has secondary text.
-const CHIP_HEIGHT: f32 = 38.0;
+/// of whether a chip currently has secondary text. Trimmed from an earlier
+/// `38.0`: pixel-measurement of a live screenshot showed the two text
+/// lines' own ink plus font leading only need about 30 logical px, so the
+/// remaining ~8px was pure top/bottom breathing room (`ui.add_space` calls
+/// in `paint_chip`) rather than text-adjacent minimum spacing - trimming
+/// just that padding (not the shared `CHROME_TOP_INSET`/`CHROME_SIDE_INSET`,
+/// which also sizes the terminal viewport's border) shrinks the whole top
+/// chrome band without crowding either text line or the 22px window-control
+/// icons that share this row.
+const CHIP_HEIGHT: f32 = 34.0;
 
 // This chrome band defines its own small, fixed color palette rather than
 // pulling from `ui.visuals()` (`docs/gui-design.md`): egui's derived
@@ -828,7 +836,7 @@ fn paint_chip(
             // within the row by the parent chip-row layout, instead of
             // sitting flush at the top like every other chip.
             ui.set_min_size(outer_rect.size());
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 if !matches!(chip.status, ChipStatus::Neutral) {
@@ -871,7 +879,7 @@ fn paint_chip(
                     );
                 });
             }
-            ui.add_space(6.0);
+            ui.add_space(4.0);
         });
     });
 
