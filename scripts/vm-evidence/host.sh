@@ -27,6 +27,17 @@ validate_platform() {
     esac
 }
 
+watchdog_seconds() {
+    phase=$1
+    fallback=$2
+    jq -er --arg field "${phase}_seconds" --argjson fallback "$fallback" \
+        '.watchdog[$field] // $fallback' "$config_path"
+}
+
+poll_seconds() {
+    jq -er '.watchdog.poll_seconds // 2' "$config_path"
+}
+
 load_config() {
     [ -f "$config_path" ] || die "configuration not found: $config_path"
     require_command jq
@@ -37,6 +48,7 @@ load_config() {
         .provider == "parallels" and
         (.artifact_root | type == "string" and length > 0) and
         (.repository_url | type == "string" and length > 0) and
+        ((.watchdog // {}) | type == "object") and
         (.vms.windows and .vms.linux and .vms.macos)
     ' "$config_path" >/dev/null ||
         die "invalid configuration: $config_path (copy config.example.json first)"
@@ -102,8 +114,10 @@ guest_windows_powershell() {
 
 wait_for_ssh() {
     platform=$1
+    timeout=$(watchdog_seconds ssh 120)
+    poll=$(poll_seconds)
     attempt=0
-    while [ "$attempt" -lt 60 ]; do
+    while [ $((attempt * poll)) -lt "$timeout" ]; do
         if [ "$platform" = windows ]; then
             if guest_ssh "$platform" 'cmd /c exit 0' >/dev/null 2>&1; then
                 return 0
@@ -114,9 +128,9 @@ wait_for_ssh() {
             fi
         fi
         attempt=$((attempt + 1))
-        sleep 2
+        sleep "$poll"
     done
-    die "$platform did not become reachable over SSH within 120 seconds"
+    die "$platform did not become reachable over SSH within ${timeout} seconds"
 }
 
 status() {
@@ -148,7 +162,6 @@ write_job() {
     run_id=$4
     spool=$(vm_field "$platform" relay_spool)
     job_path=$(mktemp "${TMPDIR:-/tmp}/festerm-vm-job.XXXXXX")
-    trap 'rm -f "$job_path"' EXIT HUP INT TERM
     jq -n \
         --arg sha "$sha" \
         --arg mode "$mode" \
@@ -158,9 +171,12 @@ write_job() {
         windows)
             temporary_path="$spool\\jobs\\.$run_id.partial"
             final_path="$spool\\jobs\\$run_id.json"
+            provider_exec_current_user "$(vm_name "$platform")" \
+                schtasks.exe /Delete /TN 'fesTerm VM Evidence Relay' /F >/dev/null 2>&1 || true
             guest_scp "$platform" "$job_path" "$temporary_path"
             guest_windows_powershell "$platform" "Move-Item -LiteralPath '$temporary_path' -Destination '$final_path'"
             guest_windows_powershell "$platform" "icacls '$final_path' /grant 'Users:R' | Out-Null"
+            guest_windows_powershell "$platform" "icacls '$spool\\logs' /grant '*S-1-3-0:(OI)(CI)F' | Out-Null; icacls '$spool\\results' /grant '*S-1-3-0:(OI)(CI)F' | Out-Null"
             provider_exec_current_user "$(vm_name "$platform")" \
                 powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
                 "$(vm_field "$platform" relay_script)" \
@@ -176,7 +192,6 @@ write_job() {
             ;;
     esac
     rm -f "$job_path"
-    trap - EXIT HUP INT TERM
 }
 
 read_result() {
@@ -185,7 +200,7 @@ read_result() {
     spool=$(vm_field "$platform" relay_spool)
     case "$platform" in
         windows) guest_windows_powershell "$platform" "if (Test-Path -LiteralPath '$spool\\results\\$run_id.json') { Get-Content -Raw -LiteralPath '$spool\\results\\$run_id.json'; exit 0 }; exit 3" ;;
-        *) guest_ssh "$platform" "test -f '$spool/results/$run_id.json' && cat '$spool/results/$run_id.json'" ;;
+        *) guest_ssh "$platform" "if test -f '$spool/results/$run_id.json'; then cat '$spool/results/$run_id.json'; else exit 3; fi" ;;
     esac
 }
 
@@ -193,15 +208,38 @@ wait_for_result() {
     platform=$1
     run_id=$2
     sha=$3
+    purpose=$4
+    overall_timeout=$(watchdog_seconds "$purpose" 1800)
+    poll=$(poll_seconds)
+    elapsed=0
+    phase=
+    phase_elapsed=0
     attempt=0
-    while [ "$attempt" -lt 900 ]; do
+    while [ "$elapsed" -lt "$overall_timeout" ]; do
         if result=$(read_result "$platform" "$run_id" 2>/dev/null); then
-            if printf '%s' "$result" | jq -e '.status == "running"' >/dev/null 2>&1; then
-                :
-            elif printf '%s' "$result" | jq -e --arg sha "$sha" '
+            if printf '%s' "$result" | jq -e '.status == "running" and (.phase | type == "string")' >/dev/null 2>&1; then
+                current_phase=$(printf '%s' "$result" | jq -er '.phase')
+                if [ "$current_phase" != "$phase" ]; then
+                    phase=$current_phase
+                    phase_elapsed=0
+                else
+                    phase_elapsed=$((phase_elapsed + poll))
+                fi
+                case "$phase" in
+                    queued|preflight) phase_timeout=$(watchdog_seconds readiness 180) ;;
+                    checkout) phase_timeout=$(watchdog_seconds checkout 300) ;;
+                    build) phase_timeout=$(watchdog_seconds build 1200) ;;
+                    app) phase_timeout=$(watchdog_seconds app 180) ;;
+                    *) die "$platform relay reported unsupported running phase: $phase" ;;
+                esac
+                [ "$phase_elapsed" -lt "$phase_timeout" ] ||
+                    die "$platform relay exceeded the ${phase} deadline (${phase_timeout} seconds)"
+            elif printf '%s' "$result" | jq -e --arg sha "$sha" --arg purpose "$purpose" '
                 (.status == "pass" or .status == "fail") and
                 .sha == $sha and
-                ((.status == "pass" and .resolved_sha == $sha) or
+                ((.status == "pass" and
+                  (($purpose == "readiness" and .resolved_sha == null) or
+                   ($purpose != "readiness" and .resolved_sha == $sha))) or
                  (.status == "fail" and (.resolved_sha == $sha or .resolved_sha == null)))
             ' >/dev/null 2>&1; then
                 printf '%s\n' "$result"
@@ -214,9 +252,53 @@ wait_for_result() {
             [ "$status" -eq 3 ] || die "$platform control plane failed while reading relay result (exit $status)"
         fi
         attempt=$((attempt + 1))
-        sleep 2
+        elapsed=$((elapsed + poll))
+        sleep "$poll"
     done
-    die "$platform relay did not write a terminal result within 30 minutes"
+    die "$platform relay did not write a terminal result within ${overall_timeout} seconds"
+}
+
+acquire_lock() {
+    lock_path=$1
+    if ! mkdir "$lock_path" 2>/dev/null; then
+        if [ -f "$lock_path/pid" ] && ! kill -0 "$(cat "$lock_path/pid")" 2>/dev/null; then
+            rm -f "$lock_path/pid"
+            rmdir "$lock_path" 2>/dev/null || die "stale lock cannot be removed: $lock_path"
+            mkdir "$lock_path" || die "cannot acquire lock: $lock_path"
+        else
+            die "$(basename "$lock_path") already has an active VM evidence run."
+        fi
+    fi
+    printf '%s\n' "$$" >"$lock_path/pid"
+}
+
+cleanup_run() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    set +e
+    if [ "${run_started:-0}" -eq 1 ]; then
+        capture "$run_platform_name" "$run_root/desktop-final.png"
+        provider_metadata "$(vm_name "$run_platform_name")" >"$run_root/provider-metadata.json"
+        provider_stop "$(vm_name "$run_platform_name")"
+    fi
+    if [ "$status" -ne 0 ]; then
+        printf 'controller exited with status %s at %s\n' "$status" "$(date -u +%FT%TZ)" \
+            >"$run_root/controller-failure.txt"
+    fi
+    rm -f "$lock_path/pid"
+    rmdir "$lock_path" 2>/dev/null || true
+    exit "$status"
+}
+
+preflight_relay() {
+    platform=$1
+    sha=$2
+    run_id=$3
+    write_job "$platform" "$sha" readiness-probe "$run_id"
+    result=$(wait_for_result "$platform" "$run_id" "$sha" readiness)
+    printf '%s\n' "$result" >"$run_root/readiness-result.json"
+    printf '%s' "$result" | jq -e '.status == "pass"' >/dev/null ||
+        die "$platform readiness probe failed; inspect $run_root/readiness-result.json"
 }
 
 run_platform() {
@@ -234,20 +316,22 @@ run_platform() {
     lock_root="$artifact_root/.locks"
     lock_path="$lock_root/$platform"
     mkdir -p "$lock_root"
-    mkdir "$lock_path" 2>/dev/null ||
-        die "$platform already has an active VM evidence run."
-    trap 'rmdir "$lock_path" 2>/dev/null || true' EXIT HUP INT TERM
+    acquire_lock "$lock_path"
     [ ! -e "$run_root" ] || die "run directory already exists: $run_root"
     mkdir -p "$run_root"
+    run_platform_name=$platform
+    run_started=0
+    trap cleanup_run EXIT HUP INT TERM
 
     reset "$platform"
     provider_start "$(vm_name "$platform")"
+    run_started=1
     wait_for_ssh "$platform"
     capture "$platform" "$run_root/desktop-ready.png"
+    preflight_relay "$platform" "$sha" "$run_id-readiness"
     write_job "$platform" "$sha" "$mode" "$run_id"
-    result=$(wait_for_result "$platform" "$run_id" "$sha")
+    result=$(wait_for_result "$platform" "$run_id" "$sha" overall)
     printf '%s\n' "$result" >"$run_root/guest-result.json"
-    capture "$platform" "$run_root/desktop-final.png"
     provider_metadata "$(vm_name "$platform")" >"$run_root/provider-metadata.json"
     jq -n \
         --arg run_id "$run_id" \
@@ -256,16 +340,16 @@ run_platform() {
         --arg sha "$sha" \
         --arg mode "$mode" \
         --arg created_at "$(date -u +%FT%TZ)" \
+        --slurpfile readiness "$run_root/readiness-result.json" \
         --slurpfile guest "$run_root/guest-result.json" \
         --slurpfile provider "$run_root/provider-metadata.json" \
         '{run_id: $run_id, platform: $platform, qualification: $qualification,
           requested_sha: $sha, mode: $mode, created_at: $created_at,
           acceptance_eligible: ($platform != "windows"),
-          guest_result: $guest[0], provider_metadata: $provider[0]}' \
+          readiness_result: $readiness[0], guest_result: $guest[0],
+          provider_metadata: $provider[0]}' \
         >"$run_root/manifest.json"
     jq -e '.guest_result.status == "pass"' "$run_root/manifest.json" >/dev/null
-    rmdir "$lock_path"
-    trap - EXIT HUP INT TERM
 }
 
 usage() {

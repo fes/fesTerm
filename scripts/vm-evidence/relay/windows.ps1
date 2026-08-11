@@ -21,7 +21,8 @@ function Write-RelayResult {
         [string] $Sha,
         [string] $Mode,
         [string] $Message,
-        [string] $ResolvedSha = $null
+        [string] $ResolvedSha = $null,
+        [string] $Phase = 'complete'
     )
 
     [ordered]@{
@@ -32,7 +33,9 @@ function Write-RelayResult {
         message = $Message
         completed_at = (Get-Date).ToUniversalTime().ToString('o')
         resolved_sha = $ResolvedSha
-    } | ConvertTo-Json -Compress | Set-Content -Path $Path -NoNewline
+        phase = $Phase
+    } | ConvertTo-Json -Compress | Set-Content -Path "$Path.partial" -NoNewline
+    Move-Item -LiteralPath "$Path.partial" -Destination $Path -Force
 }
 
 function Test-RelayJob {
@@ -42,7 +45,7 @@ function Test-RelayJob {
     $Job.sha -match '^[0-9a-f]{40}$|^[0-9a-f]{64}$' -and
     $Job.run_id -is [string] -and
     $Job.run_id -match '^[A-Za-z0-9._-]{1,128}$' -and
-    @('native-smoke', 'optional-validation') -contains $Job.mode
+    @('readiness-probe', 'native-smoke', 'optional-validation') -contains $Job.mode
 }
 
 $jobsPath = Join-Path $Spool 'jobs'
@@ -69,9 +72,21 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
     }
     $logPath = Join-Path $logsPath "$($job.run_id).log"
     $resolvedSha = $null
-    Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'relay accepted job'
+    Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'relay accepted job' $null 'queued'
 
     try {
+        Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'checking graphical-session build prerequisites' $null 'preflight'
+        foreach ($command in 'git', 'cargo', 'rustc') {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+                throw "Missing required guest command: $command"
+            }
+        }
+        if ($job.mode -eq 'readiness-probe') {
+            Write-RelayResult $resultPath 'pass' $job.run_id $job.sha $job.mode 'graphical relay and build prerequisites are ready' $null 'complete'
+            Move-Item -Path $jobPath -Destination (Join-Path $jobsPath "processed-$($_.Name)")
+            return
+        }
+        Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'checking out requested revision' $null 'checkout'
         if (-not (Test-Path (Join-Path $Repository '.git'))) {
             git clone $RepositoryUrl $Repository
         }
@@ -84,11 +99,13 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
 
         Push-Location $Repository
         if ($job.mode -eq 'native-smoke') {
+            Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'building workspace' $resolvedSha 'build'
             cargo build --workspace *>> $logPath
             if ($LASTEXITCODE -ne 0) {
                 throw 'Workspace build failed.'
             }
             $env:FESTERM_NATIVE_WINDOW_SMOKE = '1'
+            Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'running native-window smoke' $resolvedSha 'app'
             $nativePath = Join-Path $resultsPath "$($job.run_id).native.txt"
             $env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativePath
             & (Join-Path $Repository 'target\debug\festerm.exe') *>> $logPath
@@ -97,6 +114,7 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
                 throw 'Native-window validation failed.'
             }
         } else {
+            Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'running optional validation' $resolvedSha 'app'
             $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
             $optionalPath = Join-Path $resultsPath "$($job.run_id).optional.txt"
             $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH = $optionalPath

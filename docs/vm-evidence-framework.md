@@ -1020,14 +1020,16 @@ The repository now contains the first bounded implementation at
 `scripts/vm-evidence/`:
 
 - `host.sh` validates a user-local configuration, resets/starts a Parallels VM,
-  waits for SSH only as a control plane, submits an allowlisted relay job,
-  captures the display through `prlctl`, and writes a JSON manifest. Its
-  configuration template is `config.example.json`; real VM names, addresses,
-  keys, and artifact paths remain outside Git.
+  waits for SSH only as a control plane, verifies the graphical relay through
+  a disposable readiness probe, submits an allowlisted relay job, captures the
+  display through `prlctl`, writes a JSON manifest, and cleanly stops the VM
+  on every terminal path. Its configuration template is `config.example.json`;
+  real VM names, addresses, keys, and artifact paths remain outside Git.
 - The Unix relays run only in a graphical session. Linux qualifying execution
   requires Xorg explicitly; the macOS relay requires the console user's
   `gui/<uid>` launchd domain. Both reject arbitrary job fields and accept only
-  a Git SHA plus `native-smoke` or `optional-validation`.
+  a Git SHA plus `readiness-probe`, `native-smoke`, or
+  `optional-validation`.
 - The Windows relay is executed through Parallels as the active console user.
   It can automate ConPTY and CPU-rendered diagnostic evidence, but the
   Parallels Windows-on-ARM guest remains `diagnostic`: Parallels does not
@@ -1044,6 +1046,38 @@ scripts/vm-evidence/host.sh windows <full-candidate-sha>
 
 `all` preserves individual platform failures and returns nonzero after all
 three attempts. No failed guest test is retried automatically.
+
+### Watchdog and cleanup contract
+
+Before submitting a product job, the controller restores the configured
+baseline, starts the VM, waits for SSH, captures a ready desktop, and requires
+the GUI relay to complete a `readiness-probe`. That probe verifies the relay's
+actual graphical context and the guest's `git`, `cargo`, and `rustc`
+prerequisites; it is not product evidence.
+
+Relays atomically update a structured running record while progressing through
+`queued`, `preflight`, `checkout`, `build`, and `app`. The controller enforces
+separate configurable deadlines for readiness, checkout, build, app execution,
+and the entire run. A deadline expiry preserves a controller-failure record,
+screenshots, and provider metadata, then stops the VM instead of waiting
+indefinitely. The next run restores its snapshot rather than trying to remove
+repository or build output from a guest.
+
+The local `watchdog` configuration may override these defaults:
+
+```json
+{
+  "watchdog": {
+    "ssh_seconds": 120,
+    "readiness_seconds": 180,
+    "checkout_seconds": 300,
+    "build_seconds": 1200,
+    "app_seconds": 180,
+    "overall_seconds": 1800,
+    "poll_seconds": 2
+  }
+}
+```
 
 The host controller intentionally does **not** install guest dependencies,
 grant Accessibility/TCC permissions, disable Parallels sharing, or alter a

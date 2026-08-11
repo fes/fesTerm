@@ -3,6 +3,15 @@
   "artifact_root": "/Users/replace-me/VM-Evidence",
   "ssh_private_key": "/Users/replace-me/.ssh/festerm-vm-lab",
   "repository_url": "https://github.com/fes/fesTerm.git",
+  "watchdog": {
+    "ssh_seconds": 120,
+    "readiness_seconds": 180,
+    "checkout_seconds": 300,
+    "build_seconds": 1200,
+    "app_seconds": 180,
+    "overall_seconds": 1800,
+    "poll_seconds": 2
+  },
   "vms": {
     "windows": {
       "name": "festerm-windows",

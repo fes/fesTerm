@@ -38,5 +38,6 @@ WantedBy=default.target
 EOF
 
 systemctl --user daemon-reload
+systemctl --user unmask festerm-vm-evidence-relay.path festerm-vm-evidence-relay.service
 systemctl --user enable --now festerm-vm-evidence-relay.path
 echo 'Installed festerm-vm-evidence-relay.service and its job-directory watcher.'

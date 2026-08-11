@@ -14,11 +14,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $scriptPath = Join-Path $PSScriptRoot 'windows.ps1'
-New-Item -ItemType Directory -Force -Path (Join-Path $Spool 'jobs'), (Join-Path $Spool 'logs'), (Join-Path $Spool 'results') | Out-Null
+$jobsPath = Join-Path $Spool 'jobs'
+$logsPath = Join-Path $Spool 'logs'
+$resultsPath = Join-Path $Spool 'results'
+New-Item -ItemType Directory -Force -Path $jobsPath, $logsPath, $resultsPath | Out-Null
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -Spool `"$Spool`" -Repository `"$Repository`" -RepositoryUrl `"$RepositoryUrl`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName 'fesTerm VM Evidence Relay' -Action $action -Trigger $trigger -Principal $principal -Description 'Runs allowlisted fesTerm evidence jobs in the interactive desktop session.' -Force | Out-Null
+# The controller owns the spool root, while each interactive relay execution
+# must retain access to the log and result files it creates.
+& icacls.exe $logsPath /grant '*S-1-3-0:(OI)(CI)F' | Out-Null
+& icacls.exe $resultsPath /grant '*S-1-3-0:(OI)(CI)F' | Out-Null
 
-Write-Output 'Installed the interactive Scheduled Task. It runs at the next graphical logon.'
+Unregister-ScheduledTask -TaskName 'fesTerm VM Evidence Relay' -Confirm:$false -ErrorAction SilentlyContinue
+Write-Output 'Installed the Windows relay. The host controller invokes it in the current console session.'
