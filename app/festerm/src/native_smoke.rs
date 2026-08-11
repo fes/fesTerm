@@ -252,9 +252,18 @@ impl NativeWindowSmoke {
                     .into_iter()
                     .filter(|generation| generation.generation >= first_generation)
                     .collect::<Vec<_>>();
-                let all_resizes_applied = generations.len() == RESIZE_SEQUENCE.len()
-                    && generations.iter().all(|generation| generation.applied);
-                let visible_cells_remained = generations
+                // A compositor may apply one startup resize after the smoke
+                // begins but before the first requested viewport size. The
+                // final four generations correspond to the requested sequence.
+                let requested_generations = generations
+                    .iter()
+                    .rev()
+                    .take(RESIZE_SEQUENCE.len())
+                    .copied()
+                    .collect::<Vec<_>>();
+                let all_resizes_applied = requested_generations.len() == RESIZE_SEQUENCE.len()
+                    && requested_generations.iter().all(|generation| generation.applied);
+                let visible_cells_remained = requested_generations
                     .iter()
                     .all(|generation| generation.visible_nonblank_cells > 0);
                 let post_resize_output = controller.resize_probe().observed_output_bytes();
