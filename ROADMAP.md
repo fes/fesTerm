@@ -278,7 +278,10 @@ The terminal is functionally useful with the motivating advanced applications.
 `russh` with the portable `ring` backend is selected, and the
 `festerm-ssh` trust/reconnect foundation plus application host-key prompt
 bridge are implemented. Live password-authenticated SSH transport, remote
-PTY/resize, and controlled OpenSSH container evidence are implemented.
+PTY/resize, and controlled OpenSSH container evidence are implemented. The
+container evidence exercises opt-in live reconnect after a fixture restart,
+including fresh host-key verification and a usable new shell, without claiming
+remote shell-state restoration.
 The safe OpenSSH metadata importer and deterministic reconnect planner are
 implemented. Live reconnect is opt-in, bounded, re-verifies host trust for
 every fresh transport, and never claims remote process restoration. Profile/UI

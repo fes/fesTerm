@@ -153,8 +153,10 @@ graphics, and installed reference applications vary. A `not-run` reference
 tool is recorded by the P5 result file and is not acceptance evidence.
 
 The OpenSSH suite builds an Alpine fixture, generates its server host keys and
-password at container start, and lets Docker select a loopback host port. Run
-it alone with `scripts/run-openssh-interop.sh` or
+password at container start, and selects a randomized loopback host port. It
+also restarts that same container to prove opt-in bounded reconnect, including
+a fresh host-key decision and usable new shell; it does not claim shell-state
+restoration. Run it alone with `scripts/run-openssh-interop.sh` or
 `pwsh -NoProfile -File scripts\run-openssh-interop.ps1`. If Docker CLI or its
 daemon is unavailable, it records `status=skipped reason=docker-unavailable`;
 an available Docker installation reports test failures normally.

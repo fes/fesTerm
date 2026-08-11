@@ -56,45 +56,57 @@ try {
     & docker build --quiet --tag $imageTag $fixturePath *> $null
     if ($LASTEXITCODE -ne 0) { Fail 'docker-build-failed' }
 
-    $previousPassword = $env:FESTERM_OPENSSH_PASSWORD
-    $env:FESTERM_OPENSSH_PASSWORD = $password
-    & docker run --detach --name $containerName --env FESTERM_OPENSSH_PASSWORD `
-        -p 127.0.0.1::22 $imageTag *> $null
-    if ($null -eq $previousPassword) {
-        Remove-Item Env:FESTERM_OPENSSH_PASSWORD -ErrorAction Ignore
-    } else {
-        $env:FESTERM_OPENSSH_PASSWORD = $previousPassword
-    }
-    if ($LASTEXITCODE -ne 0) { Fail 'container-start-failed' }
-
     $port = $null
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $candidatePort = [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(49152, 65536)
+        $previousPassword = $env:FESTERM_OPENSSH_PASSWORD
+        $env:FESTERM_OPENSSH_PASSWORD = $password
+        & docker run --detach --name $containerName --env FESTERM_OPENSSH_PASSWORD `
+            -p "127.0.0.1:$candidatePort`:22" $imageTag *> $null
+        $runExitCode = $LASTEXITCODE
+        if ($null -eq $previousPassword) {
+            Remove-Item Env:FESTERM_OPENSSH_PASSWORD -ErrorAction Ignore
+        } else {
+            $env:FESTERM_OPENSSH_PASSWORD = $previousPassword
+        }
+        if ($runExitCode -eq 0) {
+            $port = $candidatePort
+            break
+        }
+        & docker rm --force $containerName *> $null
+    }
+    if (-not $port) { Fail 'container-start-failed' }
+
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $ready = $false
     while ([DateTime]::UtcNow -lt $deadline) {
         $health = (& docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' `
             $containerName 2>$null)
         if ($health -eq 'healthy') {
             $mapping = (& docker port $containerName 22/tcp)
-            if ($mapping -match ':(\d+)\s*$') {
-                $port = $Matches[1]
+            if ($mapping -match ":$port\s*$") {
+                $ready = $true
                 break
             }
         }
         if ($health -eq 'unhealthy') { Fail 'container-readiness-failed' }
         Start-Sleep -Seconds 1
     }
-    if (-not $port) { Fail 'container-readiness-timed-out' }
+    if (-not $ready) { Fail 'container-readiness-timed-out' }
 
     $previousValues = @{
         FESTERM_OPENSSH_HOST = $env:FESTERM_OPENSSH_HOST
         FESTERM_OPENSSH_PORT = $env:FESTERM_OPENSSH_PORT
         FESTERM_OPENSSH_USER = $env:FESTERM_OPENSSH_USER
         FESTERM_OPENSSH_PASSWORD = $env:FESTERM_OPENSSH_PASSWORD
+        FESTERM_OPENSSH_CONTAINER_NAME = $env:FESTERM_OPENSSH_CONTAINER_NAME
     }
     $env:FESTERM_OPENSSH_HOST = '127.0.0.1'
     $env:FESTERM_OPENSSH_PORT = $port
     $env:FESTERM_OPENSSH_USER = 'festerm'
     $env:FESTERM_OPENSSH_PASSWORD = $password
-    & cargo test -p festerm-ssh --test openssh_interop -- --ignored
+    $env:FESTERM_OPENSSH_CONTAINER_NAME = $containerName
+    & cargo test -p festerm-ssh --test openssh_interop -- --ignored --test-threads=1
     $testExitCode = $LASTEXITCODE
     foreach ($name in $previousValues.Keys) {
         if ($null -eq $previousValues[$name]) {

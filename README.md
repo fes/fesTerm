@@ -12,9 +12,9 @@ session chips, Launcher and Settings surfaces, a session inspector, command
 palette, custom title bar, and configurable status bar. See the Milestone 8
 note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is also in progress: the
 `festerm-ssh` crate provides an in-process password-authenticated SSH transport
-with strict host trust, remote PTY/shell/resize, and a controlled OpenSSH
-fixture; SSH tabs, profiles, additional authentication paths, and reconnect
-behavior remain incomplete. The GUI-independent terminal core has
+with strict host trust, remote PTY/shell/resize, bounded opt-in reconnect, and
+a controlled OpenSSH fixture; SSH tabs, profiles, additional authentication
+paths, and reconnect controls remain incomplete. The GUI-independent terminal core has
 bounded ESC/CSI parsing, primary and alternate screens, cursor and
 scrolling-region behavior, SGR colors and attributes, non-reflow resize,
 interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
