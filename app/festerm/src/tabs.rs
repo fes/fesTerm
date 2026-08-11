@@ -19,7 +19,7 @@ use std::sync::{
 
 use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
-use festerm_pty::{LocalProfile, LocalPtyError, LocalPtySession};
+use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
 use festerm_session::{Session, SessionEventNotifier, SessionLifecycle};
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
@@ -72,6 +72,9 @@ pub struct SessionTab {
     /// Transient terminal-provided titles are shown as secondary metadata and
     /// must never replace this.
     pub label: String,
+    /// The executable selected before a local session starts. This gives the
+    /// chip useful secondary identity before the child emits an OSC title.
+    pub launch_secondary: Option<String>,
 }
 
 impl SessionTab {
@@ -79,7 +82,14 @@ impl SessionTab {
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
         let result = LocalPtySession::start_default_with_notifier(size, make_notifier(context));
-        Self::from_session_result(result, dimensions, "Local Shell")
+        Self::from_session_result(
+            result,
+            dimensions,
+            "Local Shell",
+            default_local_profile()
+                .ok()
+                .and_then(|profile| local_profile_secondary(&profile)),
+        )
     }
 
     /// Starts the application's first tab, honoring an optional
@@ -92,17 +102,26 @@ impl SessionTab {
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
         let notifier = make_notifier(context);
+        let launch_secondary = smoke_profile
+            .as_ref()
+            .and_then(local_profile_secondary)
+            .or_else(|| {
+                default_local_profile()
+                    .ok()
+                    .and_then(|profile| local_profile_secondary(&profile))
+            });
         let result = match smoke_profile {
             Some(profile) => LocalPtySession::start_with_notifier(profile, size, notifier),
             None => LocalPtySession::start_default_with_notifier(size, notifier),
         };
-        Self::from_session_result(result, dimensions, "Local Shell")
+        Self::from_session_result(result, dimensions, "Local Shell", launch_secondary)
     }
 
     fn from_session_result(
         result: Result<LocalPtySession, LocalPtyError>,
         dimensions: Dimensions,
         label: &str,
+        launch_secondary: Option<String>,
     ) -> Self {
         let mut terminal =
             Terminal::new(dimensions).expect("default terminal allocation should succeed");
@@ -131,6 +150,7 @@ impl SessionTab {
             controller,
             view: TerminalView::default(),
             label: label.to_owned(),
+            launch_secondary,
         }
     }
 
@@ -140,6 +160,7 @@ impl SessionTab {
         if self.controller.start_error().is_some() {
             return ChipStatus::Failed;
         }
+
         match self.controller.lifecycle() {
             None | Some(SessionLifecycle::Starting) => ChipStatus::Starting,
             Some(SessionLifecycle::Running) => ChipStatus::Connected,
@@ -148,6 +169,14 @@ impl SessionTab {
             Some(SessionLifecycle::Failed(_)) => ChipStatus::Failed,
         }
     }
+}
+
+fn local_profile_secondary(profile: &LocalProfile) -> Option<String> {
+    profile
+        .executable()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
 }
 
 /// The content of one tab.
@@ -494,6 +523,16 @@ mod tests {
             .filter(|tab| matches!(tab.content, TabContent::Launcher))
             .map(|tab| tab.id)
             .collect()
+    }
+
+    #[test]
+    fn local_profile_secondary_uses_the_launch_executable_name() {
+        let profile = LocalProfile::new("C:/Windows/System32/cmd.exe");
+
+        assert_eq!(
+            local_profile_secondary(&profile).as_deref(),
+            Some("cmd.exe")
+        );
     }
 
     #[test]

@@ -1158,6 +1158,7 @@ mod tests {
                     .try_send_input(&replies)
                     .expect("cursor-position reply reaches ConPTY");
             }
+
             std::thread::sleep(Duration::from_millis(5));
         }
 
@@ -1242,6 +1243,65 @@ mod tests {
             session.shutdown(Duration::from_secs(2)),
             Ok(festerm_session::ShutdownResult::Stopped)
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_default_shell_keeps_the_prompt_column_across_a_command_newline() {
+        use festerm_pty::LocalPtySession;
+
+        let session = LocalPtySession::start_default(TerminalSize::new(87, 26).unwrap())
+            .expect("default Windows shell starts");
+        let mut controller = SessionController::with_session(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(87, 26).unwrap()).expect("terminal allocation");
+
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |terminal| {
+                (0..terminal.dimensions().rows()).any(|row| {
+                    terminal
+                        .row_text(row)
+                        .is_some_and(|text| text.starts_with("C:\\"))
+                })
+            },
+            Duration::from_secs(3),
+            "initial default-shell prompt",
+        );
+
+        let initial_cursor = terminal.cursor();
+        controller.record_encoded_input(b"ver\r");
+        controller.flush_pending_writes();
+        pump_controlled_until(
+            &mut controller,
+            &mut terminal,
+            |terminal| terminal.cursor().row() > initial_cursor.row(),
+            Duration::from_secs(3),
+            "default-shell command output",
+        );
+
+        let cursor = terminal.cursor();
+        let prompt = terminal
+            .row_text(cursor.row())
+            .expect("visible cursor row exists");
+        assert!(
+            prompt.starts_with("C:\\"),
+            "command output must return to a left-aligned cmd prompt, got {prompt:?}"
+        );
+        assert_eq!(
+            cursor.column(),
+            prompt.trim_end().chars().count(),
+            "the cursor must follow the returned prompt rather than retaining a prior output column"
+        );
+        assert!(matches!(
+            controller
+                .session()
+                .expect("session remains available")
+                .shutdown(Duration::from_secs(2)),
+            Ok(festerm_session::ShutdownResult::Stopped)
+                | Ok(festerm_session::ShutdownResult::AlreadyStopped)
+        ));
     }
 
     // ─── Tier 6 native-platform smoke tests ─────────────────────────────────

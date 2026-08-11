@@ -223,7 +223,9 @@ impl FesTermApp {
                 TabContent::Settings => ("Settings".to_owned(), None),
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
-                    let hint = (!dynamic_title.is_empty()).then(|| dynamic_title.to_owned());
+                    let hint = (!dynamic_title.is_empty())
+                        .then(|| dynamic_title.to_owned())
+                        .or_else(|| session.launch_secondary.clone());
                     (session.label.clone(), hint)
                 }
             };
@@ -326,7 +328,8 @@ impl FesTermApp {
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = (!dynamic_title.is_empty())
-                            .then(|| Self::display_secondary(dynamic_title));
+                            .then(|| Self::display_secondary(dynamic_title))
+                            .or_else(|| session.launch_secondary.clone());
                         (session.label.clone(), secondary, session.chip_status())
                     }
                 };
@@ -388,7 +391,8 @@ impl FesTermApp {
                 ),
                 TabContent::Session(session) => {
                     let secondary = (!session.terminal.title().is_empty())
-                        .then(|| Self::display_secondary(session.terminal.title()));
+                        .then(|| Self::display_secondary(session.terminal.title()))
+                        .or_else(|| session.launch_secondary.clone());
                     let left = match secondary {
                         Some(secondary) => format!("{} — {}", session.label, secondary),
                         None => session.label.clone(),
