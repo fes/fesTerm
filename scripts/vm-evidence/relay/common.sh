@@ -116,9 +116,12 @@ relay_run_job() {
 relay_process_jobs() {
     mkdir -p "$relay_root/jobs" "$relay_root/logs" "$relay_root/results"
     find "$relay_root/jobs" -maxdepth 1 -type f -name '*.json' \
-        ! -name 'processed-*' ! -name 'rejected-*' ! -name 'infrastructure-failed-*' -print | sort |
+        ! -name '.running-*' ! -name 'processed-*' ! -name 'rejected-*' ! -name 'infrastructure-failed-*' -print | sort |
     while IFS= read -r job_path; do
-        relay_run_job "$job_path"
-        mv "$job_path" "$relay_root/jobs/processed-$(basename "$job_path")"
+        job_name=$(basename "$job_path")
+        claimed_path="$relay_root/jobs/.running-$job_name"
+        mv "$job_path" "$claimed_path" 2>/dev/null || continue
+        relay_run_job "$claimed_path"
+        mv "$claimed_path" "$relay_root/jobs/processed-$job_name"
     done
 }
