@@ -108,7 +108,7 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
         Push-Location $Repository
         if ($job.mode -eq 'native-smoke') {
             Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'building workspace' $resolvedSha 'build'
-            cargo build --workspace *>> $logPath
+            cmd.exe /d /c "cargo build --workspace >> `"$logPath`" 2>&1"
             if ($LASTEXITCODE -ne 0) {
                 throw 'Workspace build failed.'
             }
@@ -116,7 +116,8 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
             Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'running native-window smoke' $resolvedSha 'app'
             $nativePath = Join-Path $resultsPath "$($job.run_id).native.txt"
             $env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativePath
-            & (Join-Path $Repository 'target\debug\festerm.exe') *>> $logPath
+            $applicationPath = Join-Path $Repository 'target\debug\festerm.exe'
+            cmd.exe /d /c "`"$applicationPath`" >> `"$logPath`" 2>&1"
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path $nativePath) -or
                 (Get-Content $nativePath -TotalCount 1) -ne 'status=pass') {
                 throw 'Native-window validation failed.'
