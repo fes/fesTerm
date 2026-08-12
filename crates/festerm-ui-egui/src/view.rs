@@ -58,7 +58,7 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
     pub(crate) fn enable_cell_run_shaping_for_test(&mut self) {
         self.cell_run_shaping = true;
     }

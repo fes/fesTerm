@@ -15,13 +15,14 @@
 use egui::{vec2, Align, Color32, Layout, RichText, Ui, UiBuilder};
 
 use crate::chrome::ChipStatus;
+use crate::theme;
 
 /// Fixed height for the bottom status bar, kept compact
 /// (`docs/gui-design.md` "Quiet by default").
 const STATUS_BAR_HEIGHT: f32 = 24.0;
-const STATUS_BAR_TEXT: Color32 = Color32::from_gray(0x9a);
-const STATUS_BAR_TEXT_DIM: Color32 = Color32::from_gray(0x78);
-const STATUS_BAR_BORDER: Color32 = Color32::from_gray(0x30);
+const STATUS_BAR_TEXT: Color32 = theme::TEXT_SECONDARY;
+const STATUS_BAR_TEXT_DIM: Color32 = theme::TEXT_MUTED;
+const STATUS_BAR_BORDER: Color32 = theme::BORDER_SUBTLE;
 /// Left inset before the first (`left`) segment - deliberately more
 /// generous than the `8.0` gap used between the bar's other segments
 /// (mockup: the status bar's leading text sits noticeably more indented

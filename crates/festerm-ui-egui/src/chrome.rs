@@ -17,6 +17,8 @@ use egui::{
     RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
 };
 
+use crate::theme;
+
 /// Chip footprint bounds (`docs/gui-design.md` "Active and inactive tabs"):
 /// chips clip long secondary text with an ellipsis rather than growing
 /// without bound, and never shrink below a minimum that still fits the
@@ -42,45 +44,37 @@ const CHIP_HEIGHT: f32 = 34.0;
 // unreadably dark against a near-black fill) are tuned for generic
 // buttons/labels, not this row's specific dark-chip design, and produced
 // exactly this readability bug in practice.
-/// Light grey used for the active chip's outline and its close control, so
+/// Cool light grey used for the active chip's outline and its close control, so
 /// the two read as the same visual "active" affordance rather than the
 /// close control looking dimmer/disabled by comparison.
-const CHIP_ACTIVE_OUTLINE: Color32 = Color32::from_gray(0xa0);
-/// Darker grey outline for inactive chips and the Launcher control.
-const CHIP_INACTIVE_OUTLINE: Color32 = Color32::from_gray(0x48);
+const CHIP_ACTIVE_OUTLINE: Color32 = theme::BORDER_ACTIVE;
+/// Subtle blue-grey outline for inactive chips and the Launcher control.
+const CHIP_INACTIVE_OUTLINE: Color32 = theme::BORDER_SUBTLE;
 /// Always-legible text colors for chip content.
-const CHIP_PRIMARY_TEXT: Color32 = Color32::from_gray(0xe6);
-const CHIP_SECONDARY_TEXT: Color32 = Color32::from_gray(0x9a);
+const CHIP_PRIMARY_TEXT: Color32 = theme::TEXT_PRIMARY;
+const CHIP_SECONDARY_TEXT: Color32 = theme::TEXT_SECONDARY;
 /// Default and hovered colors for the row's painter-drawn icon controls
 /// (new-tab, search, panel toggle, overflow menu).
-const CHROME_ICON_COLOR: Color32 = Color32::from_gray(0x9a);
-const CHROME_ICON_COLOR_HOVERED: Color32 = Color32::from_gray(0xf0);
+const CHROME_ICON_COLOR: Color32 = theme::TEXT_SECONDARY;
+const CHROME_ICON_COLOR_HOVERED: Color32 = theme::TEXT_PRIMARY;
 /// Close-button hover color, distinct from the chip outline/icon palette to
 /// keep its "destructive" affordance recognizable.
-const CHROME_CLOSE_HOVER: Color32 = Color32::from_rgb(0xe0, 0x5c, 0x5c);
+const CHROME_CLOSE_HOVER: Color32 = theme::STATUS_ERROR;
 
 /// Background fill for the whole top chrome band, deliberately *lighter*
 /// than the terminal content's `DEFAULT_BACKGROUND` (mockup: the chrome
 /// band reads as a raised/lighter surface the chips sit on, distinct from
 /// the darker content well beneath it).
-const CHROME_BACKGROUND: Color32 = Color32::from_gray(0x26);
+const CHROME_BACKGROUND: Color32 = theme::SURFACE_CHROME;
 /// Fill for an inactive chip and the "new tab" control: a shade between
 /// `CHROME_BACKGROUND` and the content's `DEFAULT_BACKGROUND`, so chips
 /// read as distinct objects sitting on the chrome band rather than holes
 /// cut into it.
-const CHIP_INACTIVE_FILL: Color32 = Color32::from_gray(0x20);
-/// Fill for the *active* chip: measured directly against the mockup
-/// (`festerm-gui-wireframe-v1.2.png` panel 1), the selected chip's fill is
-/// the lightest surface in the whole panel (lum ~170), noticeably lighter
-/// than both an inactive chip (lum ~151) and the chrome band itself - not
-/// darker/merged with the terminal content beneath it. An earlier iteration
-/// mistakenly made the active chip match `DEFAULT_BACKGROUND` (the
-/// terminal's own, much darker, background), which inverted this ordering:
-/// the "selected" chip ended up the *darkest* element in the row instead of
-/// the lightest. Kept lighter than `CHROME_BACKGROUND` and
-/// `CHIP_INACTIVE_FILL` so the fill alone (not just the outline) reads as
-/// "this one is selected."
-const CHIP_ACTIVE_FILL: Color32 = Color32::from_gray(0x40);
+const CHIP_INACTIVE_FILL: Color32 = theme::SURFACE_TAB_INACTIVE;
+/// Fill for the *active* chip: the lightest blue-graphite surface in the
+/// chrome hierarchy. It stays lighter than both the inactive chip and chrome
+/// band so fill and outline independently communicate selection.
+const CHIP_ACTIVE_FILL: Color32 = theme::SURFACE_TAB_ACTIVE;
 
 /// Horizontal inset from the window's left/right edges to the first/last
 /// chrome element (mockup: a consistent margin surrounds the chip row, and
@@ -137,13 +131,13 @@ impl ChipStatus {
     /// exists; the accessible label, not color alone, carries the meaning.
     pub(crate) const fn color(self) -> Color32 {
         match self {
-            Self::Connected => Color32::from_rgb(0x3d, 0xc9, 0x6b),
-            Self::Starting => Color32::from_rgb(0xe0, 0xb3, 0x3a),
-            Self::Reconnecting => Color32::from_rgb(0x4f, 0xa8, 0xe0),
-            Self::Disconnected => Color32::from_rgb(0x8a, 0x8f, 0x98),
-            Self::AuthRequired => Color32::from_rgb(0xa1, 0x7b, 0xd1),
-            Self::Failed => Color32::from_rgb(0xd9, 0x53, 0x4f),
-            Self::Exited => Color32::from_rgb(0x6e, 0x76, 0x81),
+            Self::Connected => theme::STATUS_RUNNING,
+            Self::Starting => theme::STATUS_STARTING,
+            Self::Reconnecting => theme::STATUS_RECONNECTING,
+            Self::Disconnected => theme::STATUS_DISCONNECTED,
+            Self::AuthRequired => theme::STATUS_ATTENTION,
+            Self::Failed => theme::STATUS_ERROR,
+            Self::Exited => theme::STATUS_EXITED,
             Self::Neutral => Color32::TRANSPARENT,
         }
     }
@@ -788,7 +782,7 @@ fn paint_chip(
     let stroke = if active {
         Stroke::new(1.5, CHIP_ACTIVE_OUTLINE)
     } else {
-        Stroke::new(1.0, Color32::from_gray(0x48))
+        Stroke::new(1.0, CHIP_INACTIVE_OUTLINE)
     };
 
     let outer_rect = ui.max_rect();

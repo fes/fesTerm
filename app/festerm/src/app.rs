@@ -5,6 +5,7 @@ use festerm_pty::LocalProfile;
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
+use festerm_ui_egui::theme;
 
 use crate::native_smoke::NativeWindowSmoke;
 use crate::screens;
@@ -32,12 +33,9 @@ pub struct FesTermApp {
 
 impl FesTermApp {
     pub fn new(context: &egui::Context) -> Self {
-        // A single, explicit dark theme for the whole application
-        // (`docs/gui-design.md` "Dark-neutral terminal-first default").
-        // Without this, chrome panels default to egui's light visuals while
-        // the terminal viewport paints its own dark background directly,
-        // producing an inconsistent light/dark chrome-vs-viewport split.
-        context.set_visuals(egui::Visuals::dark());
+        // One semantic blue-graphite default for application surfaces and
+        // widgets. Terminal ANSI and explicit RGB colors remain independent.
+        context.set_visuals(theme::default_visuals());
         let native_smoke = NativeWindowSmoke::from_environment();
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
@@ -428,7 +426,7 @@ impl FesTermApp {
         egui::Panel::bottom("status_bar")
             .resizable(false)
             .show_separator_line(false)
-            .frame(egui::Frame::new().fill(egui::Color32::from_gray(0x14)))
+            .frame(egui::Frame::new().fill(theme::SURFACE_WINDOW))
             .show(ui, |ui| {
                 festerm_ui_egui::statusbar::show(
                     ui,

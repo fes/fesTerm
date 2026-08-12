@@ -16,11 +16,12 @@ pub mod palette;
 mod renderer;
 mod selection;
 pub mod statusbar;
+pub mod theme;
 mod view;
 
-pub(crate) const DEFAULT_FOREGROUND: Color32 = Color32::from_rgb(220, 220, 220);
-pub(crate) const DEFAULT_BACKGROUND: Color32 = Color32::from_rgb(24, 24, 24);
-pub(crate) const SELECTION_BACKGROUND: Color32 = Color32::from_rgb(52, 91, 135);
+pub(crate) const DEFAULT_FOREGROUND: Color32 = theme::TEXT_PRIMARY;
+pub(crate) const DEFAULT_BACKGROUND: Color32 = theme::SURFACE_TERMINAL;
+pub(crate) const SELECTION_BACKGROUND: Color32 = theme::SURFACE_SELECTION;
 pub(crate) const GLYPH_CACHE_CAPACITY: usize = 4_096;
 
 // --- Public re-exports ---
@@ -121,7 +122,9 @@ impl<'a> TerminalSnapshot<'a> {
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use egui_kittest::{Harness, SnapshotResults};
+    use egui_kittest::Harness;
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    use egui_kittest::SnapshotResults;
     use festerm_test_support::load_fixture;
 
     use super::*;
@@ -308,6 +311,7 @@ mod tests {
             }
         }
 
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         fn with_terminal(terminal: Terminal) -> Self {
             Self {
                 view: TerminalView::default(),

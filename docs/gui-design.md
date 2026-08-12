@@ -263,20 +263,19 @@ State indicators should be compact, accessible, and not rely on color alone.
 
 ### Active and inactive tabs
 
-The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal. The application defaults to a dark theme (`egui::Visuals::dark()`, set in `app/festerm/src/app.rs`), but the chip chrome (`crates/festerm-ui-egui/src/chrome.rs`) deliberately does **not** derive its colors from `ui.visuals()`/`Style`: egui's built-in semantic colors (`strong_text_color()`, `weak_text_color()`, `error_fg_color`, etc.) are tuned for generic interactive widgets — e.g. `strong_text_color()` resolves to the *pressed-button* text color, which can render nearly black and unreadable against a static chip's own dark fill. Instead, `chrome.rs` defines its own small, explicit color palette as module-level constants and every chip-chrome color is one of these constants:
+The active tab must remain immediately distinguishable in both light and dark themes. Inactive tabs should be readable without competing visually with the active terminal. The application defaults to the blue-graphite semantic palette in `crates/festerm-ui-egui/src/theme.rs`, applied to egui in `app/festerm/src/app.rs`. Chrome uses those same roles explicitly rather than asking generic widget-state helpers such as `strong_text_color()` to decide static chip identity; those helpers describe momentary button interaction, not the chip hierarchy.
 
-- `CHIP_ACTIVE_OUTLINE` (`Color32::from_gray(0xc8)`, light grey) — the active chip's border, and also the close button's (non-hover) glyph color, so the close control always visually matches its own chip's outline.
-- `CHIP_INACTIVE_OUTLINE` (`Color32::from_gray(0x48)`, dark grey) — inactive chip borders, the `+` new-chip button's border (constant regardless of hover — see below), and the drag-ghost preview outline.
-- `CHIP_ACTIVE_FILL` (`Color32::from_gray(0x40)`) — the active/selected chip's own fill, deliberately the lightest surface in the row (measured against the mockup's selected-chip fill), not a merge with the darker terminal/chrome background. Also used as the *hover* fill for inactive chips and the `+` button (see below).
-- `CHIP_INACTIVE_FILL` (`Color32::from_gray(0x20)`) — the resting (non-hovered, non-active) fill for inactive chips and the `+` button.
-- `CHIP_PRIMARY_TEXT` (`Color32::from_gray(0xe6)`) — the chip's primary (title) label, always a light grey regardless of active/inactive state, so text is never hard to read.
-- `CHIP_SECONDARY_TEXT` (`Color32::from_gray(0x9a)`) — the smaller, muted secondary metadata line (e.g. `cmd.exe`).
-- `CHROME_ICON_COLOR` / `CHROME_ICON_COLOR_HOVERED` — default and hover colors for the global chrome icon controls (new-chip, search, panel toggle, overflow menu).
-- `CHROME_CLOSE_HOVER` (a muted red) — the close button's hover color only.
+- `CHIP_ACTIVE_OUTLINE` maps to `border.active`; the active chip and its close control share this cool light outline.
+- `CHIP_INACTIVE_OUTLINE` maps to `border.subtle`; inactive chips, the New Session control, and drag preview share it.
+- `CHIP_ACTIVE_FILL` maps to `surface.tab.active`, the lightest blue-graphite surface in the chrome hierarchy. It is also the hover fill for inactive chips and New Session.
+- `CHIP_INACTIVE_FILL` maps to `surface.tab.inactive`.
+- `CHIP_PRIMARY_TEXT` and `CHIP_SECONDARY_TEXT` map to `text.primary` and `text.secondary`.
+- `CHROME_ICON_COLOR` / `CHROME_ICON_COLOR_HOVERED` map to `text.secondary` / `text.primary`.
+- `CHROME_CLOSE_HOVER` maps to `status.error`.
 
 All chips sit on top of the terminal viewport's own near-black chrome-band
-background (`crates/festerm-ui-egui/src/lib.rs`'s `DEFAULT_BACKGROUND`,
-`Color32::from_rgb(24, 24, 24)`); against that shared dark surface, the
+background (`crates/festerm-ui-egui/src/lib.rs`'s `DEFAULT_BACKGROUND`, mapped
+to `surface.terminal`); against that shared dark surface, the
 active/selected chip is indicated by both its brighter `CHIP_ACTIVE_OUTLINE`
 border *and* its own lighter `CHIP_ACTIVE_FILL` fill — not by outline alone,
 and not by a saturated accent color or by highlighting the label text.
@@ -392,7 +391,8 @@ Diagnostic views and exported bundles must avoid exposing secrets, credentials, 
 
 ### General style
 
-- Dark-neutral terminal-first default.
+- Blue-graphite terminal-first default: cool undertones in neutral surfaces,
+  with cyan reserved for small, high-information accents.
 - Minimal borders and separators.
 - Compact controls and tab chrome.
 - Purposeful accent color.
@@ -430,6 +430,29 @@ status.attention
 ```
 
 Themes should map these roles to concrete colors while preserving contrast and state distinctions.
+
+The default mapping is centralized in `crates/festerm-ui-egui/src/theme.rs`:
+
+| Role | Default |
+| --- | --- |
+| `surface.window` | `#0e1319` |
+| `surface.terminal` | `#11161e` |
+| `surface.chrome` | `#222b36` |
+| `surface.tab.inactive` | `#1a222c` |
+| `surface.tab.active` | `#303c49` |
+| `surface.overlay` | `#26313d` |
+| `surface.selection` | `#28516b` |
+| `text.primary` | `#e8edf2` |
+| `text.secondary` | `#a7b2bd` |
+| `text.muted` | `#788592` |
+| `border.subtle` | `#35414e` |
+| `border.active` | `#91a7b8` |
+| `accent.primary` | `#42bfd0` |
+
+The accent is not a general surface fill. Use it for links, focus/selection
+details, active controls, and reconnecting activity. Terminal ANSI/indexed and
+explicit RGB colors remain a separate protocol palette and are never remapped
+through these application roles.
 
 ### Typography roles
 
