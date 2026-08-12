@@ -38,6 +38,12 @@ test is still required to prove compositor, DPI, and native-focus behavior.
 These layers do not yet prove that a native rendered window preserves all
 features together.
 
+The qualifying Linux Xorg VM ran the repository-owned optional suite at
+`36537de`, passing the current candidate's P4 native smoke and installed P5
+reference probes after the P6 script-mode repair. This is automated
+content-free evidence, not completion of the remaining Linux WGPU snapshot,
+Wayland, or independently driven desktop scenarios.
+
 Before considering this milestone complete:
 
 1. Complete P0 through P4, or explicitly defer an item in `ROADMAP.md` with a

@@ -55,6 +55,13 @@ An available WSLg Wayland session reproduced the existing Linux P4 blocker at
 llvmpipe/EGL fallback. That corroborates [#35](https://github.com/fes/fesTerm/issues/35);
 it is not a reason to weaken the smoke or accept the Linux path.
 
+At `36537de`, the qualifying Linux Xorg VM completed the repository-owned
+optional suite end-to-end after restoring the missing executable mode on the
+P6 renderer-validation script. This refreshes automated Linux P4/P5/P6
+coverage for the exact candidate, but does not replace Linux WGPU snapshot
+confirmation, the Wayland investigation, or independently driven desktop
+`vttest`/Copilot CLI evidence.
+
 Two narrow parallel tracks proceeded without changing that acceptance status:
 
 - The early M8 GUI vertical slice now supplies independent local-session chips,
