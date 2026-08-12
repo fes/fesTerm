@@ -13,11 +13,13 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, and early SSH transport foundation are
 separate crates.
 
-Not implemented: persisted profiles/configuration, agents, key-file
-references, additional SSH authentication paths and reconnect behavior,
-scrollback, user-visible ligatures, a custom GPU renderer, terminfo
-distribution, and reference-TUI compatibility sign-off. Encrypted-key
-passphrases are transient in-memory parse inputs, never profile data. Read
+Not implemented: persisted profiles/configuration and trust storage,
+[#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
+references, OpenSSH-config import UI, scrollback, user-visible ligatures, a
+custom GPU renderer, terminfo distribution, and reference-TUI compatibility
+sign-off. M7 supplies transient password and in-memory OpenSSH private-key
+authentication plus bounded opt-in reconnect; encrypted-key passphrases are
+transient in-memory parse inputs, never profile data. Read
 [`milestone-progress.md`](milestone-progress.md) before choosing work.
 
 ## Bootstrap

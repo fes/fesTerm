@@ -10,7 +10,7 @@ Milestone 6 compatibility work is in progress. The initial M8-scope GUI
 vertical slice is implemented as an explicit parallel track: independent
 session chips, Launcher and Settings surfaces, a session inspector, command
 palette, custom title bar, and configurable status bar. See the Milestone 8
-note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is also in progress: the
+note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
@@ -44,10 +44,12 @@ directory-discovered DLL. If shell startup fails, it shows a visible no-session 
 than a fake shell.
 
 The current application has in-memory local session tabs and a compact
-Launcher SSH password form. It validates a host, optional port (default 22),
-and username into a secret-free profile, then sends the password only as
-transient UI memory to the typed SSH-session command and clears the field on
-submit. When an active SSH tab needs host trust, it presents the canonical
+Launcher SSH authentication form. It validates a host, optional port (default
+22), and username into a secret-free profile, then sends a transient password
+or a parsed in-memory OpenSSH private key to the typed SSH-session command and
+clears secret text on submit. Encrypted keys may use a transient parse
+passphrase; no key text or passphrase is persisted. When an active SSH tab
+needs host trust, it presents the canonical
 host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
 actions; trust persistence is intentionally deferred to M8. It does not
 provide persisted/config-file profiles, agent or key-file

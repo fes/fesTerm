@@ -122,6 +122,9 @@ misread as M6 acceptance:
   [#29](https://github.com/fes/fesTerm/issues/29).
 - **M7 SSH foundation:** `festerm-ssh` selects `russh` with the portable
   `ring` backend and defines host-trust/reconnect policy. The async
-  `Session` transport, controlled OpenSSH interoperability, authentication,
-  remote PTY, and reconnect evidence remain in
-  [#28](https://github.com/fes/fesTerm/issues/28).
+  `Session` transport, controlled OpenSSH interoperability, transient
+  password/private-key authentication, remote PTY, reconnect evidence, and
+  application integration are implemented in
+  [#28](https://github.com/fes/fesTerm/issues/28). Persistent profiles/trust
+  and key-file references are M8 work; SSH-agent adapters are deferred to
+  [#40](https://github.com/fes/fesTerm/issues/40).

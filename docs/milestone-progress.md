@@ -72,8 +72,12 @@ Two narrow parallel tracks proceeded without changing that acceptance status:
 - M7 selected `russh` with the portable `ring` backend and now provides a live
   SSH `Session`, strict host trust, password and in-memory OpenSSH key
   authentication, remote PTY/resize, bounded opt-in reconnect, and controlled
-  OpenSSH interoperability evidence. Agent/key-file authentication and
-  app/profile integration remain under [#28](https://github.com/fes/fesTerm/issues/28).
+  OpenSSH interoperability evidence. The application offers one-off
+  password-or-private-key SSH tabs, a nonblocking trust prompt, and reconnect
+  controls. M7 is implemented; M8 owns persisted profiles, trust storage,
+  key-file references, and OpenSSH-config import UI, while a separate future
+  [#40](https://github.com/fes/fesTerm/issues/40) owns cross-platform
+  SSH-agent adapters.
 
 The process remains evidence-first: implement a narrow behavior, add
 deterministic automation when a stable oracle exists, retain manual evidence
@@ -84,6 +88,6 @@ refresh milestone/issue truth so parallel work does not become coordination
 drift.
 
 The next sequencing is therefore deliberate: close M6 evidence loops while
-stabilizing the GUI and keeping M7 transport work narrow; then complete M7
-interoperability before M8 profiles/workspace restoration; reserve scrollback
-and reflow for M9, and packaging/terminfo plus broader refinement for M10.
+stabilizing the GUI, then advance M8 profiles/workspace restoration. Reserve
+scrollback and reflow for M9, and packaging/terminfo plus broader refinement
+for M10.

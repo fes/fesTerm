@@ -1528,6 +1528,7 @@ dependencies = [
  "festerm-ssh",
  "festerm-ui-egui",
  "raw-window-handle",
+ "russh",
  "tracing",
  "tracing-subscriber",
 ]

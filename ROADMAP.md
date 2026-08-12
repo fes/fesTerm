@@ -273,7 +273,7 @@ The terminal is functionally useful with the motivating advanced applications.
 
 ## Milestone 7 — Native SSH Sessions
 
-**Status:** In progress ([#28](https://github.com/fes/fesTerm/issues/28)).
+**Status:** Implemented ([#28](https://github.com/fes/fesTerm/issues/28)).
 
 `russh` with the portable `ring` backend is selected, and the
 `festerm-ssh` trust/reconnect foundation plus application host-key prompt
@@ -288,17 +288,21 @@ an ECDSA P-256-only server host-key profile and verifies the SHA-256 trust
 prompt before a shell exchange. The safe OpenSSH metadata importer and
 deterministic reconnect planner are implemented. Live reconnect is opt-in,
 bounded, re-verifies host trust for every fresh transport, and never claims
-remote process restoration. A typed application command can now place an SSH tab
-from supplied secret-free metadata and transient authentication, reusing the
-application host-key prompt boundary. The Launcher now exposes a compact,
-one-off password-authentication form that validates its host, optional port,
-and username before creating that typed command; its password is transient UI
-memory and is cleared on submit. Its transient, unchecked reconnect control
-uses at most three fresh attempts with 500 ms to 2 s delays; each attempt
-re-verifies host trust and starts a new shell rather than restoring remote
-process state. Profile persistence, agents, key-file
-references, OpenSSH-config import UI, and other authentication paths remain
-M7 work.
+remote process restoration. A typed application command can now place an SSH tab from supplied
+secret-free metadata and transient authentication, reusing the application
+host-key prompt boundary. The Launcher exposes a compact, one-off
+password-or-private-key authentication form that validates its host, optional
+port, and username before creating that typed command. Passwords, key text,
+and parse passphrases are transient UI memory and are cleared on submit. Its
+transient, unchecked reconnect control uses at most three fresh attempts with
+500 ms to 2 s delays; each attempt re-verifies host trust and starts a new
+shell rather than restoring remote process state.
+
+Persistent profiles, trust storage, key-file references, and OpenSSH-config
+import UI are M8 configuration/secure-storage work. Cross-platform SSH-agent
+adapters and their consent/fixture policy are deferred to
+[#40](https://github.com/fes/fesTerm/issues/40); port, X11, and agent
+forwarding, SFTP, and SSH certificates remain separate future capabilities.
 
 ### Outcome
 
@@ -308,9 +312,9 @@ Users can create an SSH tab without invoking an external SSH executable.
 
 - Select and integrate a Rust SSH library.
 - Host-key verification UX.
-- Authentication through supported keys, agent, passwords, and secure secret references as selected.
+- Password and in-memory OpenSSH private-key authentication.
 - Remote PTY allocation and resize.
-- OpenSSH configuration parsing or import into internal profiles.
+- Safe OpenSSH configuration parsing as a future profile-import boundary.
 - Automatic reconnect state machine with bounded backoff and user controls.
 - In-process tests where available and containerized OpenSSH interoperability tests.
 
@@ -326,11 +330,10 @@ Users can create an SSH tab without invoking an external SSH executable.
 Launcher/Settings surfaces, and a minimal session inspector described in
 [`docs/gui-design.md`](docs/gui-design.md)) is being built as a parallel
 track alongside the M6 compatibility pass rather than waiting for M7/M8 to
-start. SSH tabs, persisted profiles, and workspace restoration remain gated
-on M7/M8 as documented above; only the local-session chrome and its Launcher
-and Settings surfaces are in scope early. This does not change M6/M7/M8
+start. SSH tabs can launch from the transient M7 Launcher form, while persisted
+profiles and workspace restoration remain M8 work. This does not change M6/M8
 completion criteria. [ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md)
-defines the ownership model that M7 reconnect and M8 persistence must follow.
+defines the ownership model that M7 reconnect and M8 persistence follow.
 
 ### Outcome
 

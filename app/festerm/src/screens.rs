@@ -9,7 +9,8 @@
 use eframe::egui::{self, TextEdit, Ui};
 use festerm_session::TerminalSize;
 use festerm_ssh::{
-    HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshSessionOptions,
+    HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
+    SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
 use festerm_ui_egui::chrome::ChipLayout;
 
@@ -26,7 +27,15 @@ fn start_local_session_command() -> AppCommand {
     AppCommand::StartLocalSession
 }
 
-/// Per-launcher, transient SSH password form state.
+/// Authentication method selected for one transient SSH connection attempt.
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum SshAuthenticationMethod {
+    #[default]
+    Password,
+    PrivateKey,
+}
+
+/// Per-launcher, transient SSH authentication form state.
 ///
 /// This belongs only to egui's temporary per-tab data. In particular, it is
 /// never a profile, workspace, diagnostic, or application-state field.
@@ -35,7 +44,10 @@ struct SshLauncherForm {
     host: String,
     port: String,
     username: String,
+    authentication_method: SshAuthenticationMethod,
     password: String,
+    private_key: String,
+    key_passphrase: String,
     reconnect_enabled: bool,
     feedback: Option<String>,
 }
@@ -65,10 +77,18 @@ impl SshLauncherForm {
 
     /// Converts the transient form into the application's typed SSH command.
     ///
-    /// Taking the password first ensures every submit attempt removes it from
-    /// UI state, including attempts rejected by non-secret input validation.
+    /// Taking every secret first ensures each submit attempt removes it from UI
+    /// state, including attempts rejected by non-secret input validation.
     fn submit(&mut self) -> Result<AppCommand, String> {
         let password = std::mem::take(&mut self.password);
+        let private_key = std::mem::take(&mut self.private_key);
+        let key_passphrase = std::mem::take(&mut self.key_passphrase);
+        let authentication = match self.authentication_method {
+            SshAuthenticationMethod::Password => SshAuthentication::password(password),
+            SshAuthenticationMethod::PrivateKey => {
+                Self::parse_private_key(private_key, key_passphrase)?
+            }
+        };
         let port = if self.port.trim().is_empty() {
             Self::DEFAULT_PORT
         } else {
@@ -90,9 +110,33 @@ impl SshLauncherForm {
 
         Ok(AppCommand::StartSshSession {
             profile,
-            authentication: SshAuthentication::password(password),
+            authentication,
             options: self.session_options(),
         })
+    }
+
+    /// Parses an in-memory key while retaining neither its text nor passphrase.
+    ///
+    /// Encrypted OpenSSH keys use the SSH crate's explicit passphrase API; the
+    /// parser distinguishes that case without trying to persist or log either
+    /// source string.
+    fn parse_private_key(
+        private_key: String,
+        key_passphrase: String,
+    ) -> Result<SshAuthentication, String> {
+        match SshPrivateKey::from_openssh(&private_key) {
+            Ok(private_key) if key_passphrase.is_empty() => {
+                Ok(SshAuthentication::public_key(private_key))
+            }
+            Ok(_) => Err("SSH private key is unencrypted; clear the passphrase".to_owned()),
+            Err(SshPrivateKeyError::Encrypted) => SshPrivateKey::from_encrypted_openssh(
+                &private_key,
+                SshKeyPassphrase::new(key_passphrase),
+            )
+            .map(SshAuthentication::public_key)
+            .map_err(|error| error.to_string()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
@@ -111,10 +155,17 @@ fn ssh_field_id(ui: &Ui, tab_id: TabId, field: &'static str) -> egui::Id {
 }
 
 fn ssh_form_has_focus(ui: &Ui, tab_id: TabId) -> bool {
-    ["host", "port", "username", "password"]
-        .into_iter()
-        .map(|field| ssh_field_id(ui, tab_id, field))
-        .any(|id| ui.memory(|memory| memory.has_focus(id)))
+    [
+        "host",
+        "port",
+        "username",
+        "password",
+        "private_key",
+        "key_passphrase",
+    ]
+    .into_iter()
+    .map(|field| ssh_field_id(ui, tab_id, field))
+    .any(|id| ui.memory(|memory| memory.has_focus(id)))
 }
 
 fn ssh_text_edit(
@@ -138,12 +189,33 @@ fn ssh_text_edit(
     .inner
 }
 
+fn ssh_multiline_secret_text_edit(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: &'static str,
+    label: &str,
+    value: &mut String,
+) -> egui::Response {
+    ui.vertical(|ui| {
+        let label = ui.label(label);
+        ui.add(
+            TextEdit::multiline(value)
+                .id_salt(("launcher_ssh", tab_id, field))
+                .password(true)
+                .desired_width(360.0)
+                .desired_rows(8),
+        )
+        .labelled_by(label.id)
+    })
+    .inner
+}
+
 fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Option<AppCommand> {
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
-    ui.label(egui::RichText::new("SSH password connection").strong());
-    ui.label("Connect once with a transient password. Port defaults to 22.");
+    ui.label(egui::RichText::new("SSH connection").strong());
+    ui.label("Connect once with transient authentication. Port defaults to 22.");
 
     ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false);
     ssh_text_edit(ui, tab_id, "port", "Port (optional)", &mut form.port, false);
@@ -155,8 +227,47 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
         &mut form.username,
         false,
     );
-    let password_response =
-        ssh_text_edit(ui, tab_id, "password", "Password", &mut form.password, true);
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut form.authentication_method,
+            SshAuthenticationMethod::Password,
+            "Password authentication",
+        );
+        ui.radio_value(
+            &mut form.authentication_method,
+            SshAuthenticationMethod::PrivateKey,
+            "Private-key authentication",
+        );
+    });
+    let submit_with_enter = match form.authentication_method {
+        SshAuthenticationMethod::Password => {
+            ssh_text_edit(ui, tab_id, "password", "Password", &mut form.password, true).lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        }
+        SshAuthenticationMethod::PrivateKey => {
+            ssh_multiline_secret_text_edit(
+                ui,
+                tab_id,
+                "private_key",
+                "OpenSSH private key",
+                &mut form.private_key,
+            );
+            ui.label(
+                "The key is masked, parsed only in memory, and never saved. \
+                 An optional passphrase is used only for an encrypted key.",
+            );
+            ssh_text_edit(
+                ui,
+                tab_id,
+                "key_passphrase",
+                "Key passphrase (optional)",
+                &mut form.key_passphrase,
+                true,
+            )
+            .lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        }
+    };
     ui.checkbox(
         &mut form.reconnect_enabled,
         format!(
@@ -171,9 +282,11 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
          and is not saved.",
     );
 
-    let submit_with_enter =
-        password_response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-    if ui.button("Connect with password").clicked() || submit_with_enter {
+    let submit_label = match form.authentication_method {
+        SshAuthenticationMethod::Password => "Connect with password",
+        SshAuthenticationMethod::PrivateKey => "Connect with private key",
+    };
+    if ui.button(submit_label).clicked() || submit_with_enter {
         match form.submit() {
             Ok(command) => {
                 form.feedback = None;
@@ -191,10 +304,10 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
 /// Renders the session launcher content and returns any dispatched command.
 ///
 /// `docs/gui-design.md` ("Session Launcher"): fast, compact, and usable
-/// repeatedly rather than a wizard or onboarding flow. The SSH password form
-/// is a one-off connection surface: it creates no profile and retains its
-/// password only in temporary UI state until submit. Saved profiles and other
-/// authentication methods remain later work.
+/// repeatedly rather than a wizard or onboarding flow. The SSH form is a
+/// one-off connection surface: it creates no profile and retains password,
+/// key text, and key passphrases only in temporary UI state until submit.
+/// Saved profiles and other authentication methods remain later work.
 ///
 /// The list is keyboard-navigable: Up/Down moves a highlighted selection
 /// (persisted per-tab via `tab_id`, so multiple open launcher tabs don't
@@ -334,6 +447,32 @@ mod tests {
         harness.run();
     }
 
+    fn generated_openssh_private_key() -> String {
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate test SSH key");
+        key.to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .expect("could not encode test SSH key")
+            .to_string()
+    }
+
+    fn generated_encrypted_openssh_private_key() -> (String, String) {
+        let passphrase = "test encrypted-key passphrase".to_owned();
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate encrypted test SSH key");
+        let encrypted = key
+            .encrypt(&mut random, &passphrase)
+            .expect("could not encrypt test SSH key");
+        (
+            encrypted
+                .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+                .expect("could not encode encrypted test SSH key")
+                .to_string(),
+            passphrase,
+        )
+    }
+
     #[test]
     fn ssh_form_returns_a_typed_password_command_with_default_port() {
         let mut harness = harness();
@@ -415,6 +554,29 @@ mod tests {
     }
 
     #[test]
+    fn ssh_form_shows_the_masked_multiline_key_input_only_for_key_authentication() {
+        let mut harness = harness();
+        harness.run();
+
+        assert!(harness.query_by_label("OpenSSH private key").is_none());
+
+        harness.get_by_label("Private-key authentication").click();
+        harness.run();
+
+        assert!(harness.query_by_label("Password").is_none());
+        assert!(harness.query_by_label("OpenSSH private key").is_some());
+        assert!(harness
+            .query_by_label("Key passphrase (optional)")
+            .is_some());
+        assert!(harness
+            .query_by_label(
+                "The key is masked, parsed only in memory, and never saved. \
+                 An optional passphrase is used only for an encrypted key."
+            )
+            .is_some());
+    }
+
+    #[test]
     fn ssh_form_shows_constructor_validation_feedback() {
         let mut harness = harness();
         harness.run();
@@ -443,5 +605,80 @@ mod tests {
 
         assert!(form.password.is_empty());
         assert!(!format!("{command:?}").contains(password));
+    }
+
+    #[test]
+    fn ssh_form_submits_a_parsed_transient_private_key_and_clears_all_secret_text() {
+        let private_key = generated_openssh_private_key();
+        let mut form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            authentication_method: SshAuthenticationMethod::PrivateKey,
+            password: "discarded-password".to_owned(),
+            private_key,
+            ..Default::default()
+        };
+
+        let AppCommand::StartSshSession { authentication, .. } =
+            form.submit().expect("valid private-key form must submit")
+        else {
+            unreachable!("the form only creates SSH commands");
+        };
+
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::PublicKey([REDACTED])"
+        );
+        assert!(form.password.is_empty());
+        assert!(form.private_key.is_empty());
+        assert!(form.key_passphrase.is_empty());
+    }
+
+    #[test]
+    fn ssh_form_parses_an_encrypted_private_key_with_a_transient_passphrase() {
+        let (private_key, key_passphrase) = generated_encrypted_openssh_private_key();
+        let mut form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            authentication_method: SshAuthenticationMethod::PrivateKey,
+            private_key,
+            key_passphrase,
+            ..Default::default()
+        };
+
+        let AppCommand::StartSshSession { authentication, .. } = form
+            .submit()
+            .expect("encrypted private-key form must submit")
+        else {
+            unreachable!("the form only creates SSH commands");
+        };
+
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::PublicKey([REDACTED])"
+        );
+        assert!(form.private_key.is_empty());
+        assert!(form.key_passphrase.is_empty());
+    }
+
+    #[test]
+    fn ssh_form_rejects_an_invalid_private_key_and_clears_all_secret_text() {
+        let mut form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            authentication_method: SshAuthenticationMethod::PrivateKey,
+            password: "discarded-password".to_owned(),
+            private_key: "not an OpenSSH private key".to_owned(),
+            key_passphrase: "discarded-passphrase".to_owned(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            form.submit().expect_err("invalid key must not submit"),
+            "SSH private key is not in OpenSSH format"
+        );
+        assert!(form.password.is_empty());
+        assert!(form.private_key.is_empty());
+        assert!(form.key_passphrase.is_empty());
     }
 }
