@@ -156,6 +156,67 @@ capture() {
     provider_capture "$(vm_name "$platform")" "$output_path"
 }
 
+relay_version() {
+    repository_root=$(git -C "$script_dir/../.." rev-parse --show-toplevel)
+    git -C "$repository_root" rev-parse HEAD:scripts/vm-evidence/relay
+}
+
+read_relay_version() {
+    platform=$1
+    spool=$(vm_field "$platform" relay_spool)
+    case "$platform" in
+        windows) guest_windows_powershell "$platform" "if (Test-Path -LiteralPath '$spool\\relay-version.txt') { Get-Content -Raw -LiteralPath '$spool\\relay-version.txt' }" ;;
+        *) guest_ssh "$platform" "test -f '$spool/relay-version.txt' && cat '$spool/relay-version.txt'" ;;
+    esac
+}
+
+sync_relay() {
+    platform=$1
+    sync_version=$2
+    sync_source_dir="$script_dir/relay"
+    sync_spool=$(vm_field "$platform" relay_spool)
+    if installed_version=$(read_relay_version "$platform" 2>/dev/null); then
+        [ "$(printf '%s' "$installed_version" | tr -d '\r\n')" = "$sync_version" ] && return 0
+    fi
+
+    case "$platform" in
+        windows)
+            sync_stage="$sync_spool\\jobs\\.relay-$sync_version.ps1"
+            guest_scp "$platform" "$sync_source_dir/windows.ps1" "$sync_stage"
+            guest_windows_powershell "$platform" "icacls '$sync_stage' /grant 'Users:R' | Out-Null"
+            provider_exec_current_user "$(vm_name "$platform")" \
+                powershell.exe -NoProfile -NonInteractive -Command \
+                "Copy-Item -LiteralPath '$sync_stage' -Destination '$(vm_field "$platform" relay_script)' -Force"
+            guest_windows_powershell "$platform" "Set-Content -LiteralPath '$sync_spool\\relay-version.txt' -Value '$sync_version' -NoNewline; Remove-Item -LiteralPath '$sync_stage' -Force"
+            ;;
+        linux)
+            guest_scp "$platform" "$sync_source_dir/common.sh" ".local/share/festerm-vm-evidence-relay/common.sh"
+            guest_scp "$platform" "$sync_source_dir/linux.sh" ".local/share/festerm-vm-evidence-relay/linux.sh"
+            guest_scp "$platform" "$sync_source_dir/install-linux.sh" ".local/share/festerm-vm-evidence-relay/install-linux.sh"
+            guest_ssh "$platform" "chmod 755 \"\$HOME/.local/share/festerm-vm-evidence-relay/common.sh\" \"\$HOME/.local/share/festerm-vm-evidence-relay/linux.sh\" \"\$HOME/.local/share/festerm-vm-evidence-relay/install-linux.sh\"; printf '%s' '$sync_version' > '$sync_spool/relay-version.txt'"
+            ;;
+        macos)
+            guest_scp "$platform" "$sync_source_dir/common.sh" ".local/share/festerm-vm-evidence-relay/common.sh"
+            guest_scp "$platform" "$sync_source_dir/macos.sh" ".local/share/festerm-vm-evidence-relay/macos.sh"
+            guest_scp "$platform" "$sync_source_dir/install-macos.sh" ".local/share/festerm-vm-evidence-relay/install-macos.sh"
+            guest_ssh "$platform" "chmod 755 \"\$HOME/.local/share/festerm-vm-evidence-relay/common.sh\" \"\$HOME/.local/share/festerm-vm-evidence-relay/macos.sh\" \"\$HOME/.local/share/festerm-vm-evidence-relay/install-macos.sh\"; printf '%s' '$sync_version' > '$sync_spool/relay-version.txt'"
+            ;;
+    esac
+}
+
+prepare_guest_spool() {
+    platform=$1
+    spool=$(vm_field "$platform" relay_spool)
+    case "$platform" in
+        windows)
+            guest_windows_powershell "$platform" "\$jobs = '$spool\\jobs'; Get-ChildItem -LiteralPath \$jobs -Filter '*.json' -File | Where-Object { \$_.Name -notlike 'processed-*' -and \$_.Name -notlike 'rejected-*' -and \$_.Name -notlike 'infrastructure-failed-*' } | ForEach-Object { Move-Item -LiteralPath \$_.FullName -Destination (Join-Path \$jobs ('infrastructure-failed-' + \$_.Name)) }"
+            ;;
+        *)
+            guest_ssh "$platform" "find '$spool/jobs' -maxdepth 1 -type f -name '*.json' ! -name 'processed-*' ! -name 'rejected-*' ! -name 'infrastructure-failed-*' -exec sh -c 'for path; do directory=\$(dirname \"\$path\"); mv \"\$path\" \"\$directory/infrastructure-failed-\$(basename \"\$path\")\"; done' sh {} +; find '$spool/jobs/.locks' -mindepth 1 -maxdepth 1 -type d -exec rmdir {} \\; 2>/dev/null || true; rmdir '$spool/jobs/.locks' 2>/dev/null || true"
+            ;;
+    esac
+}
+
 write_job() {
     platform=$1
     sha=$2
@@ -348,6 +409,9 @@ run_platform() {
     provider_start "$(vm_name "$platform")"
     run_started=1
     wait_for_ssh "$platform"
+    requested_relay_version=$(relay_version)
+    sync_relay "$platform" "$requested_relay_version"
+    prepare_guest_spool "$platform"
     capture "$platform" "$run_root/desktop-ready.png"
     preflight_relay "$platform" "$sha" "$product_run_id-readiness"
     write_job "$platform" "$sha" "$product_mode" "$product_run_id"
@@ -360,12 +424,14 @@ run_platform() {
         --arg qualification "$(if [ "$platform" = windows ]; then printf diagnostic; else vm_field "$platform" qualification; fi)" \
         --arg sha "$sha" \
         --arg mode "$mode" \
+        --arg relay_version "$requested_relay_version" \
         --arg created_at "$(date -u +%FT%TZ)" \
         --slurpfile readiness "$run_root/readiness-result.json" \
         --slurpfile guest "$run_root/guest-result.json" \
         --slurpfile provider "$run_root/provider-metadata.json" \
         '{run_id: $run_id, platform: $platform, qualification: $qualification,
           requested_sha: $sha, mode: $mode, created_at: $created_at,
+          relay_version: $relay_version,
           acceptance_eligible: ($platform != "windows"),
           readiness_result: $readiness[0], guest_result: $guest[0],
           provider_metadata: $provider[0]}' \

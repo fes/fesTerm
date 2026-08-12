@@ -1055,6 +1055,13 @@ the GUI relay to complete a `readiness-probe`. That probe verifies the relay's
 actual graphical context and the guest's `git`, `cargo`, and `rustc`
 prerequisites; it is not product evidence.
 
+The controller also derives a relay-source tree hash from the checked-in
+`scripts/vm-evidence/relay/` package. After each reset it compares that hash
+with the guest spool's relay marker and synchronizes the platform relay before
+publishing a job when they differ. Any unclaimed prior jobs are retained under
+an `infrastructure-failed-` name, so a reset cannot cause an interrupted
+validation to execute during a later run.
+
 Relays atomically update a structured running record while progressing through
 `queued`, `preflight`, `checkout`, `build`, and `app`. The controller enforces
 separate configurable deadlines for readiness, checkout, build, app execution,
