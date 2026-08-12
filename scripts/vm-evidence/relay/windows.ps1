@@ -13,6 +13,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $env:Path = "$env:USERPROFILE\.cargo\bin;C:\Program Files\Git\cmd;$env:Path"
+$vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+$llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
 
 function Write-RelayResult {
     param(
@@ -108,7 +110,10 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
         Push-Location $Repository
         if ($job.mode -eq 'native-smoke') {
             Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'building workspace' $resolvedSha 'build'
-            cmd.exe /d /c "cargo build --workspace >> `"$logPath`" 2>&1"
+            if (-not (Test-Path -LiteralPath $vcvarsallPath) -or -not (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+                throw 'Windows ARM64 Build Tools and Clang are required for evidence builds.'
+            }
+            cmd.exe /d /c "call `"$vcvarsallPath`" arm64 >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && cargo build --workspace >> `"$logPath`" 2>&1"
             if ($LASTEXITCODE -ne 0) {
                 throw 'Workspace build failed.'
             }
