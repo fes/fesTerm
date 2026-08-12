@@ -49,6 +49,7 @@ The intended first enum surface is:
 | `AppMark` | `app-mark.svg` | fesTerm application/product identity |
 | `LocalTerminal` | `local-terminal.svg` | Local shell or local terminal session |
 | `SshRemote` | `ssh-remote.svg` | Generic remote/SSH session; never an OS logo |
+| `Serial` | `serial.svg` | Generic local serial-port session; never a vendor logo |
 | `NewSession` | `new-session.svg` | Open the Launcher/new-session flow |
 | `Settings` | `settings.svg` | Global settings |
 | `SessionInspector` | `session-inspector.svg` | Active-session detail panel |

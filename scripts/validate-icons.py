@@ -21,7 +21,7 @@ EXPECTED = {
     "copy", "diagnostics", "disconnect", "error", "host-key-verification",
     "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
     "new-session", "overflow", "paste", "profile", "reconnect", "restore",
-    "search", "secret-storage", "session-inspector", "settings", "ssh-remote",
+    "search", "secret-storage", "serial", "session-inspector", "settings", "ssh-remote",
     "theme-appearance", "typography-font", "warning", "workspace",
 }
 ALLOWED_ELEMENTS = {"svg", "path", "rect", "circle", "line", "polyline"}

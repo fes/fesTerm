@@ -344,10 +344,11 @@ impl FesTermApp {
     }
 
     /// Recognized global shortcuts (`docs/gui-design.md` "Interaction
-    /// Conventions": "Exact platform shortcuts remain to be specified");
-    /// these are a first, revisitable binding, tracked for confirmation in a
-    /// follow-up usability pass. All bindings dispatch through the same
-    /// `AppCommand` path as chip clicks and the palette.
+    /// Conventions"). Tab creation/closure deliberately use Command on macOS
+    /// and Ctrl+Shift on Windows/Linux, leaving plain Ctrl+T and Ctrl+W
+    /// available to terminal applications such as Vim and Emacs. All bindings
+    /// dispatch through the same `AppCommand` path as chip clicks and the
+    /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let open_palette = ctx.input_mut(|input| {
             input.consume_key(
@@ -363,10 +364,15 @@ impl FesTermApp {
         if self.palette.is_open() {
             return;
         }
+        let tab_management_modifiers = if cfg!(target_os = "macos") {
+            egui::Modifiers::COMMAND
+        } else {
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+        };
         let new_tab =
-            ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::T));
+            ctx.input_mut(|input| input.consume_key(tab_management_modifiers, egui::Key::T));
         let close_tab =
-            ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
+            ctx.input_mut(|input| input.consume_key(tab_management_modifiers, egui::Key::W));
         let next_tab =
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Tab));
         let previous_tab = ctx.input_mut(|input| {
@@ -770,6 +776,14 @@ mod tests {
             )
     }
 
+    fn tab_management_modifiers() -> egui::Modifiers {
+        if cfg!(target_os = "macos") {
+            egui::Modifiers::COMMAND
+        } else {
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+        }
+    }
+
     #[test]
     fn terminal_title_is_scoped_to_the_application_window() {
         assert_eq!(FesTermApp::window_title(""), APPLICATION_TITLE);
@@ -900,15 +914,43 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_t_shortcut_opens_a_new_launcher_tab_end_to_end() {
+    fn platform_new_tab_shortcut_opens_a_new_launcher_tab_end_to_end() {
         let mut harness = harness();
         harness.run();
         let before = harness.state().state.tabs().len();
 
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
 
         assert_eq!(harness.state().state.tabs().len(), before + 1);
+    }
+
+    #[test]
+    fn plain_control_t_and_w_are_not_tab_management_shortcuts() {
+        let mut harness = harness();
+        harness.run();
+        let before = harness.state().state.tabs().len();
+
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::T);
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::W);
+        harness.run();
+
+        assert_eq!(harness.state().state.tabs().len(), before);
+    }
+
+    #[test]
+    fn platform_close_tab_shortcut_closes_the_active_tab_end_to_end() {
+        let mut harness = harness();
+        harness.run();
+        harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
+        harness.run();
+        let before = harness.state().state.tabs().len();
+
+        harness.key_press_modifiers(tab_management_modifiers(), egui::Key::W);
+        harness.run();
+
+        assert_eq!(harness.state().state.tabs().len(), before - 1);
     }
 
     #[test]
@@ -961,7 +1003,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         // Open a second tab so there is one to close without emptying root.
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+        harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
         let before = harness.state().state.tabs().len();
 
