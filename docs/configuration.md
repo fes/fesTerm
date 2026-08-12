@@ -1,9 +1,10 @@
 # Configuration Foundation
 
 `festerm-config` is the first M8 configuration slice. It owns versioned,
-strict TOML parsing and in-memory transactional reload state. File watching,
-workspace persistence, credential-store references, and GUI/profile-launch
-integration are intentionally not part of this slice.
+strict TOML parsing, explicit file I/O, and in-memory transactional reload
+state. File watching, configuration-path discovery, workspace persistence,
+credential-store references, and GUI/profile-launch integration are
+intentionally not part of this slice.
 
 ## Schema version 1
 
@@ -52,3 +53,25 @@ fields are also errors. Secure-storage references are not implemented yet.
 before changing active state. A rejected candidate leaves the previous valid
 configuration active and records a content-free diagnostic. A successful
 replacement atomically replaces active state and clears that diagnostic.
+
+## Explicit file I/O
+
+Callers explicitly select a path with `Configuration::load_from_path` and
+`Configuration::save_to_path`; the crate does not choose or search for config
+locations. Loads read and validate the complete document through
+`Configuration`. `ConfigurationState::reload_from_path` has the same
+transactional state behavior as `reload`: an unreadable or invalid candidate
+does not change the active configuration.
+
+Saves serialize and validate before writing a new file in the target's parent
+directory, sync it, then rename it into place. On Unix the parent directory is
+also synced after replacement. On Windows, where a rename cannot overwrite an
+existing target, the prior target is moved aside and restored if the final
+rename fails; no partially written target is exposed. Temporary files are
+cleaned up on failures where possible.
+
+`ConfigurationFileError` reports stable, content-free categories for missing
+files, reads, parse/validation, serialization, temporary-file writes, and
+replacement steps. It deliberately retains neither TOML content nor
+caller-supplied paths; parse and validation details are available separately
+as the existing content-free `ConfigError`.

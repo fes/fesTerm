@@ -5,7 +5,15 @@
 //! documents contain only the safe metadata needed to construct local and SSH
 //! connection profiles.
 
-use std::{collections::HashSet, fmt, path::Path};
+use std::{
+    collections::HashSet,
+    fmt,
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+    process,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use festerm_pty::LocalProfile;
 use festerm_session::TerminalSize;
@@ -18,6 +26,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_COLUMNS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
+const TEMPORARY_FILE_ATTEMPTS: u32 = 128;
+
+static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// A validated configuration document.
 ///
@@ -65,6 +76,45 @@ impl Configuration {
     pub fn to_toml(&self) -> Result<String, ConfigError> {
         self.validate()?;
         toml::to_string_pretty(self).map_err(|_| ConfigError::new(ConfigErrorKind::Serialization))
+    }
+
+    /// Loads, parses, and validates a complete configuration file at `path`.
+    ///
+    /// The caller chooses `path`; this crate does not discover configuration
+    /// locations. Returned errors never retain the supplied path or document
+    /// contents.
+    pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, ConfigurationFileError> {
+        let document = fs::read_to_string(path.as_ref()).map_err(read_file_error)?;
+        Self::parse(&document).map_err(ConfigurationFileError::parse)
+    }
+
+    /// Atomically replaces the configuration file at `path` with this document.
+    ///
+    /// The caller chooses `path`; this crate does not discover configuration
+    /// locations. The complete replacement is written and synced in the
+    /// target's parent directory before the target is renamed into place.
+    pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), ConfigurationFileError> {
+        let path = path.as_ref();
+        let document = self
+            .to_toml()
+            .map_err(ConfigurationFileError::serialization)?;
+        let parent = parent_directory(path)?;
+        let mut temporary = TemporaryFile::create(parent)?;
+
+        temporary
+            .file_mut()
+            .write_all(document.as_bytes())
+            .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::WriteTemporary))?;
+        temporary
+            .file_mut()
+            .sync_all()
+            .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::SyncTemporary))?;
+        temporary.close_file();
+
+        replace_file(temporary.path(), path)?;
+        temporary.persist();
+        sync_parent_directory(parent)?;
+        Ok(())
     }
 
     /// Returns the current document schema version.
@@ -553,6 +603,285 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// Stable categories for file loading and atomic-saving failures.
+///
+/// These categories deliberately exclude operating-system messages, document
+/// contents, and caller-supplied paths so they are safe for ordinary
+/// diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigurationFileErrorKind {
+    /// The requested file was not present while loading.
+    MissingFile,
+    /// Reading the requested file failed for a reason other than absence.
+    Read,
+    /// The loaded TOML could not be parsed or validated.
+    Parse,
+    /// The supplied target cannot name a regular configuration file.
+    InvalidTargetPath,
+    /// A temporary file could not be created alongside the target.
+    CreateTemporary,
+    /// Writing the complete replacement to its temporary file failed.
+    WriteTemporary,
+    /// Syncing the temporary replacement file failed.
+    SyncTemporary,
+    /// Renaming the complete replacement into place failed.
+    Replace,
+    /// Restoring the prior Windows target after a failed replacement failed.
+    RestorePrevious,
+    /// Cleaning up a completed Windows replacement's prior target failed.
+    CleanupPrevious,
+    /// Syncing the target directory after replacement failed.
+    SyncParentDirectory,
+    /// Serializing the validated in-memory configuration failed.
+    Serialization,
+}
+
+/// A content-free configuration-file diagnostic.
+///
+/// Parse and validation failures expose their existing [`ConfigError`] through
+/// [`Self::configuration_error`]. I/O diagnostics intentionally retain only
+/// stable categories, never an operating-system error or supplied path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfigurationFileError {
+    kind: ConfigurationFileErrorKind,
+    configuration_error: Option<ConfigError>,
+}
+
+impl ConfigurationFileError {
+    const fn new(kind: ConfigurationFileErrorKind) -> Self {
+        Self {
+            kind,
+            configuration_error: None,
+        }
+    }
+
+    const fn parse(error: ConfigError) -> Self {
+        Self {
+            kind: ConfigurationFileErrorKind::Parse,
+            configuration_error: Some(error),
+        }
+    }
+
+    const fn serialization(error: ConfigError) -> Self {
+        Self {
+            kind: ConfigurationFileErrorKind::Serialization,
+            configuration_error: Some(error),
+        }
+    }
+
+    /// Returns the stable category for loading or saving diagnostics.
+    pub const fn kind(self) -> ConfigurationFileErrorKind {
+        self.kind
+    }
+
+    /// Returns the parse, validation, or serialization diagnostic when one
+    /// caused this file operation to fail.
+    pub const fn configuration_error(self) -> Option<ConfigError> {
+        self.configuration_error
+    }
+}
+
+impl fmt::Display for ConfigurationFileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self.kind {
+            ConfigurationFileErrorKind::MissingFile => "configuration file is missing",
+            ConfigurationFileErrorKind::Read => "configuration file could not be read",
+            ConfigurationFileErrorKind::Parse => "configuration file contains invalid content",
+            ConfigurationFileErrorKind::InvalidTargetPath => {
+                "configuration target must name a file"
+            }
+            ConfigurationFileErrorKind::CreateTemporary => {
+                "configuration replacement file could not be created"
+            }
+            ConfigurationFileErrorKind::WriteTemporary => {
+                "configuration replacement file could not be written"
+            }
+            ConfigurationFileErrorKind::SyncTemporary => {
+                "configuration replacement file could not be synced"
+            }
+            ConfigurationFileErrorKind::Replace => {
+                "configuration replacement could not be installed"
+            }
+            ConfigurationFileErrorKind::RestorePrevious => {
+                "configuration replacement failed and the prior file could not be restored"
+            }
+            ConfigurationFileErrorKind::CleanupPrevious => {
+                "configuration replacement was installed but its prior file could not be cleaned up"
+            }
+            ConfigurationFileErrorKind::SyncParentDirectory => {
+                "configuration replacement was installed but its directory could not be synced"
+            }
+            ConfigurationFileErrorKind::Serialization => {
+                "configuration could not be serialized for saving"
+            }
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for ConfigurationFileError {}
+
+fn read_file_error(error: std::io::Error) -> ConfigurationFileError {
+    let kind = if error.kind() == std::io::ErrorKind::NotFound {
+        ConfigurationFileErrorKind::MissingFile
+    } else {
+        ConfigurationFileErrorKind::Read
+    };
+    ConfigurationFileError::new(kind)
+}
+
+fn parent_directory(path: &Path) -> Result<&Path, ConfigurationFileError> {
+    if path.file_name().is_none() {
+        return Err(ConfigurationFileError::new(
+            ConfigurationFileErrorKind::InvalidTargetPath,
+        ));
+    }
+    Ok(path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new(".")))
+}
+
+struct TemporaryFile {
+    path: PathBuf,
+    file: Option<File>,
+    persist: bool,
+}
+
+impl TemporaryFile {
+    fn create(parent: &Path) -> Result<Self, ConfigurationFileError> {
+        for _ in 0..TEMPORARY_FILE_ATTEMPTS {
+            let path = temporary_path(parent, "tmp");
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => {
+                    return Ok(Self {
+                        path,
+                        file: Some(file),
+                        persist: false,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => {
+                    return Err(ConfigurationFileError::new(
+                        ConfigurationFileErrorKind::CreateTemporary,
+                    ));
+                }
+            }
+        }
+        Err(ConfigurationFileError::new(
+            ConfigurationFileErrorKind::CreateTemporary,
+        ))
+    }
+
+    fn file_mut(&mut self) -> &mut File {
+        self.file
+            .as_mut()
+            .expect("temporary configuration file is open until replacement")
+    }
+
+    fn close_file(&mut self) {
+        self.file.take();
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn persist(&mut self) {
+        self.persist = true;
+    }
+}
+
+impl Drop for TemporaryFile {
+    fn drop(&mut self) {
+        if !self.persist {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn temporary_path(parent: &Path, extension: &str) -> PathBuf {
+    let identifier = NEXT_TEMPORARY_FILE_ID.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(
+        ".festerm-config-{}-{identifier}.{extension}",
+        process::id()
+    ))
+}
+
+#[cfg(not(windows))]
+fn replace_file(temporary: &Path, target: &Path) -> Result<(), ConfigurationFileError> {
+    fs::rename(temporary, target)
+        .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::Replace))
+}
+
+#[cfg(windows)]
+fn replace_file(temporary: &Path, target: &Path) -> Result<(), ConfigurationFileError> {
+    match fs::rename(temporary, target) {
+        Ok(()) => Ok(()),
+        Err(_) if target.exists() => replace_existing_windows_file(temporary, target),
+        Err(_) => Err(ConfigurationFileError::new(
+            ConfigurationFileErrorKind::Replace,
+        )),
+    }
+}
+
+#[cfg(windows)]
+fn replace_existing_windows_file(
+    temporary: &Path,
+    target: &Path,
+) -> Result<(), ConfigurationFileError> {
+    let parent = parent_directory(target)?;
+    let previous = rename_previous_windows_file(target, parent)?;
+
+    if fs::rename(temporary, target).is_err() {
+        return match fs::rename(&previous, target) {
+            Ok(()) => Err(ConfigurationFileError::new(
+                ConfigurationFileErrorKind::Replace,
+            )),
+            Err(_) => Err(ConfigurationFileError::new(
+                ConfigurationFileErrorKind::RestorePrevious,
+            )),
+        };
+    }
+
+    fs::remove_file(previous)
+        .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::CleanupPrevious))
+}
+
+#[cfg(windows)]
+fn rename_previous_windows_file(
+    target: &Path,
+    parent: &Path,
+) -> Result<PathBuf, ConfigurationFileError> {
+    for _ in 0..TEMPORARY_FILE_ATTEMPTS {
+        let previous = temporary_path(parent, "previous");
+        match fs::rename(target, &previous) {
+            Ok(()) => return Ok(previous),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => {
+                return Err(ConfigurationFileError::new(
+                    ConfigurationFileErrorKind::Replace,
+                ));
+            }
+        }
+    }
+    Err(ConfigurationFileError::new(
+        ConfigurationFileErrorKind::Replace,
+    ))
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path) -> Result<(), ConfigurationFileError> {
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| ConfigurationFileError::new(ConfigurationFileErrorKind::SyncParentDirectory))
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> Result<(), ConfigurationFileError> {
+    Ok(())
+}
+
 /// Holds the last accepted configuration and applies complete replacements atomically.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigurationState {
@@ -592,6 +921,29 @@ impl ConfigurationState {
             }
             Err(error) => {
                 self.last_error = Some(error);
+                Err(error)
+            }
+        }
+    }
+
+    /// Loads, parses, and validates a complete replacement before modifying
+    /// active state.
+    ///
+    /// A failed file read or invalid candidate leaves `active` untouched. A
+    /// rejected candidate records its content-free parse or validation
+    /// diagnostic; read failures do not retain operating-system details.
+    pub fn reload_from_path(
+        &mut self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), ConfigurationFileError> {
+        match Configuration::load_from_path(path) {
+            Ok(candidate) => {
+                self.active = candidate;
+                self.last_error = None;
+                Ok(())
+            }
+            Err(error) => {
+                self.last_error = error.configuration_error();
                 Err(error)
             }
         }
@@ -868,5 +1220,117 @@ executable = "sh"
             .kind(),
             ConfigErrorKind::InvalidSshProfile
         );
+    }
+
+    #[test]
+    fn saves_and_loads_a_complete_configuration() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("profiles.toml");
+        let configuration = Configuration::parse(COMPLETE_CONFIGURATION).unwrap();
+
+        configuration.save_to_path(&path).unwrap();
+
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), configuration);
+    }
+
+    #[test]
+    fn reload_from_path_keeps_active_configuration_for_invalid_content() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("profiles.toml");
+        fs::write(
+            &path,
+            r#"
+schema_version = 99
+"#,
+        )
+        .unwrap();
+        let original = Configuration::parse(COMPLETE_CONFIGURATION).unwrap();
+        let mut state = ConfigurationState::new(original.clone());
+
+        let error = state.reload_from_path(&path).unwrap_err();
+
+        assert_eq!(error.kind(), ConfigurationFileErrorKind::Parse);
+        assert_eq!(
+            error.configuration_error().map(ConfigError::kind),
+            Some(ConfigErrorKind::UnsupportedSchemaVersion)
+        );
+        assert_eq!(state.active(), &original);
+        assert_eq!(
+            state.last_error().map(ConfigError::kind),
+            Some(ConfigErrorKind::UnsupportedSchemaVersion)
+        );
+    }
+
+    #[test]
+    fn replacement_keeps_the_target_as_valid_complete_toml() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("profiles.toml");
+        let original = Configuration::parse(COMPLETE_CONFIGURATION).unwrap();
+        let replacement =
+            Configuration::new(vec![
+                Profile::local("replacement", "sh", Vec::new(), None).unwrap()
+            ])
+            .unwrap();
+        original.save_to_path(&path).unwrap();
+
+        replacement.save_to_path(&path).unwrap();
+
+        let document = fs::read_to_string(&path).unwrap();
+        assert_eq!(Configuration::parse(&document).unwrap(), replacement);
+        assert_eq!(Configuration::load_from_path(&path).unwrap(), replacement);
+    }
+
+    #[test]
+    fn missing_file_is_classified_without_echoing_its_path() {
+        let directory = TestDirectory::new();
+        let path = directory
+            .path()
+            .join("do-not-echo-this-sensitive-path.toml");
+
+        let error = Configuration::load_from_path(&path).unwrap_err();
+
+        assert_eq!(error.kind(), ConfigurationFileErrorKind::MissingFile);
+        assert!(!error
+            .to_string()
+            .contains("do-not-echo-this-sensitive-path"));
+        assert!(!format!("{error:?}").contains("do-not-echo-this-sensitive-path"));
+    }
+
+    #[test]
+    fn relative_target_uses_the_current_directory_and_empty_target_is_rejected() {
+        assert_eq!(
+            parent_directory(Path::new("profiles.toml")).unwrap(),
+            Path::new(".")
+        );
+        assert_eq!(
+            parent_directory(Path::new("")).unwrap_err().kind(),
+            ConfigurationFileErrorKind::InvalidTargetPath
+        );
+    }
+
+    struct TestDirectory {
+        path: PathBuf,
+    }
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let identifier = NEXT_TEMPORARY_FILE_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::current_dir().unwrap().join(format!(
+                "festerm-config-test-{}-{identifier}",
+                process::id()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }
