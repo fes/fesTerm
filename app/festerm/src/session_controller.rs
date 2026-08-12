@@ -414,6 +414,12 @@ impl<S: Session> SessionController<S> {
         self.last_error = Some(format!("host-key decision could not be applied: {error}"));
     }
 
+    /// Makes a content-free application operation rejection visible through
+    /// the ordinary session status surface.
+    pub fn record_operation_error(&mut self, operation: &str, error: impl std::fmt::Display) {
+        self.last_error = Some(format!("{operation} could not be applied: {error}"));
+    }
+
     /// Returns whether another frame is required to continue a bounded drain.
     pub fn pump_events(&mut self, terminal: &mut Terminal) -> bool {
         let Some(session) = &self.session else {

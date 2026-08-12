@@ -461,6 +461,37 @@ impl SshSessionOptions {
     }
 }
 
+/// A rejected nonblocking request to reconnect a live SSH session.
+///
+/// This error intentionally contains no destination, credential, terminal,
+/// or protocol data, so applications can present it safely.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshReconnectError {
+    Disabled,
+    NotRunning,
+    AlreadyRequested,
+    QueueFull,
+    Closed,
+}
+
+impl fmt::Display for SshReconnectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Disabled => formatter.write_str("SSH reconnect is not enabled for this session"),
+            Self::NotRunning => {
+                formatter.write_str("SSH reconnect is only available while connected")
+            }
+            Self::AlreadyRequested => formatter.write_str("an SSH reconnect is already pending"),
+            Self::QueueFull => formatter.write_str("SSH reconnect request queue is full"),
+            Self::Closed => {
+                formatter.write_str("SSH reconnect request was rejected: session closed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SshReconnectError {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReconnectPolicyError {
     ZeroAttempts,
@@ -1505,6 +1536,7 @@ impl HostKeyDecisionWaiter {
 enum WorkerCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
+    Reconnect,
     Shutdown,
 }
 
@@ -1523,6 +1555,7 @@ struct WorkerShared {
     id: SessionId,
     lifecycle: Mutex<SessionLifecycle>,
     reconnecting: AtomicBool,
+    reconnect_requested: AtomicBool,
     shutdown_requested: AtomicBool,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
@@ -1551,6 +1584,20 @@ impl WorkerShared {
 
     fn is_reconnecting(&self) -> bool {
         self.reconnecting.load(Ordering::Acquire)
+    }
+
+    fn request_reconnect(&self) -> bool {
+        self.reconnect_requested
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn clear_reconnect_request(&self) {
+        self.reconnect_requested.store(false, Ordering::Release);
+    }
+
+    fn reconnect_requested(&self) -> bool {
+        self.reconnect_requested.load(Ordering::Acquire)
     }
 
     fn request_shutdown(&self) {
@@ -1687,6 +1734,7 @@ impl SshWorkerFoundation {
             id: SessionId::next(),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
             reconnecting: AtomicBool::new(false),
+            reconnect_requested: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: event_capacity,
@@ -1763,6 +1811,37 @@ impl SshWorkerFoundation {
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         self.shared.request_shutdown();
         self.try_send_command(WorkerCommand::Shutdown, SessionOperation::Shutdown)
+    }
+
+    fn reconnect_available(&self, reconnect_enabled: bool) -> bool {
+        reconnect_request_is_available(
+            reconnect_enabled,
+            &self.lifecycle(),
+            self.shared.is_reconnecting() || self.shared.reconnect_requested(),
+        )
+    }
+
+    fn try_reconnect(&self, reconnect_enabled: bool) -> Result<(), SshReconnectError> {
+        if !reconnect_enabled {
+            return Err(SshReconnectError::Disabled);
+        }
+        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+            return Err(SshReconnectError::NotRunning);
+        }
+        if !self.shared.request_reconnect() {
+            return Err(SshReconnectError::AlreadyRequested);
+        }
+        match self.command_sender.try_send(WorkerCommand::Reconnect) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                self.shared.clear_reconnect_request();
+                Err(SshReconnectError::QueueFull)
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.shared.clear_reconnect_request();
+                Err(SshReconnectError::Closed)
+            }
+        }
     }
 
     fn try_send_command(
@@ -1898,6 +1977,7 @@ impl std::error::Error for SshSessionStartError {}
 /// transient authentication, and interactive session-channel setup.
 pub struct SshSession {
     foundation: SshWorkerFoundation,
+    reconnect_enabled: bool,
     host_key_resolver: HostKeyDecisionResolver,
     host_key_gate: Arc<HostKeyDecisionGate>,
     completion_receiver: Mutex<Receiver<Result<ShutdownResult, SessionError>>>,
@@ -1983,6 +2063,7 @@ impl SshSession {
 
         Ok(Self {
             foundation,
+            reconnect_enabled: options.reconnect_policy().is_some(),
             host_key_resolver,
             host_key_gate,
             completion_receiver: Mutex::new(completion_receiver),
@@ -1995,6 +2076,24 @@ impl SshSession {
         self.host_key_resolver.clone()
     }
 
+    /// Returns whether this connected session can accept one reconnect request.
+    ///
+    /// The request is available only for a session started with an explicit
+    /// bounded reconnect policy. It does not block on network I/O.
+    pub fn reconnect_available(&self) -> bool {
+        self.foundation.reconnect_available(self.reconnect_enabled)
+    }
+
+    /// Asks the worker to replace the current SSH transport using its existing
+    /// bounded reconnect policy.
+    ///
+    /// This is nonblocking. A successful request only queues worker work; the
+    /// normal lifecycle and host-key event paths report its result. The fresh
+    /// connection has a new PTY and shell, with no remote-state restoration.
+    pub fn try_reconnect(&self) -> Result<(), SshReconnectError> {
+        self.foundation.try_reconnect(self.reconnect_enabled)
+    }
+
     fn await_completion(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
         let mut completion = self
             .completion
@@ -2003,6 +2102,7 @@ impl SshSession {
         if let Some(result) = completion.clone() {
             return result.map_err(ShutdownError::Failed);
         }
+
         match self
             .completion_receiver
             .lock()
@@ -2020,6 +2120,14 @@ impl SshSession {
             ))),
         }
     }
+}
+
+fn reconnect_request_is_available(
+    reconnect_enabled: bool,
+    lifecycle: &SessionLifecycle,
+    request_pending: bool,
+) -> bool {
+    reconnect_enabled && matches!(lifecycle, SessionLifecycle::Running) && !request_pending
 }
 
 impl Session for SshSession {
@@ -2148,7 +2256,7 @@ async fn ssh_worker(
                         shared.set_lifecycle(SessionLifecycle::Exited(exit));
                         return Ok(ShutdownResult::AlreadyStopped);
                     }
-                    RunningOutcome::ConnectionLost => {
+                    RunningOutcome::ConnectionLost | RunningOutcome::ReconnectRequested => {
                         match schedule_reconnect(
                             &mut planner,
                             ConnectionFailure::Transport,
@@ -2238,6 +2346,7 @@ async fn schedule_reconnect(
         return ReconnectSchedule::Unavailable;
     };
     shared.set_reconnecting(true);
+    shared.clear_reconnect_request();
     shared.set_lifecycle(SessionLifecycle::Starting);
     if wait_for_reconnect_delay(delay, command_receiver, shared, host_key_gate).await {
         if let Some(planner) = planner.as_mut() {
@@ -2579,6 +2688,7 @@ enum RunningOutcome {
     Shutdown(ShutdownResult),
     Exited(festerm_session::SessionExit),
     ConnectionLost,
+    ReconnectRequested,
 }
 
 async fn run_authenticated_channel(
@@ -2608,10 +2718,14 @@ async fn run_authenticated_channel(
             },
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
                 match process_authenticated_commands(&mut channel, command_receiver, shared, host_key_gate).await {
-                    Ok(false) => {}
-                    Ok(true) => return RunningOutcome::Shutdown(
+                    Ok(AuthenticatedCommandOutcome::Continue) => {}
+                    Ok(AuthenticatedCommandOutcome::Shutdown) => return RunningOutcome::Shutdown(
                         stop_handle(handle, shared).await.unwrap_or(ShutdownResult::Stopped)
                     ),
+                    Ok(AuthenticatedCommandOutcome::Reconnect) => {
+                        let _ = stop_handle(handle, shared).await;
+                        return RunningOutcome::ReconnectRequested;
+                    }
                     Err(_) => return RunningOutcome::ConnectionLost,
                 }
             }
@@ -2619,16 +2733,22 @@ async fn run_authenticated_channel(
     }
 }
 
+enum AuthenticatedCommandOutcome {
+    Continue,
+    Shutdown,
+    Reconnect,
+}
+
 async fn process_authenticated_commands(
     channel: &mut russh::Channel<russh::client::Msg>,
     command_receiver: &WorkerCommandReceiver,
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
-) -> Result<bool, SessionError> {
+) -> Result<AuthenticatedCommandOutcome, SessionError> {
     if shared.shutdown_requested() {
         host_key_gate.reject_pending();
         shared.set_lifecycle(SessionLifecycle::Stopping);
-        return Ok(true);
+        return Ok(AuthenticatedCommandOutcome::Shutdown);
     }
     loop {
         match command_receiver.try_recv() {
@@ -2650,7 +2770,7 @@ async fn process_authenticated_commands(
                             "SSH input failed",
                         ));
                     }
-                    WorkerWait::Shutdown => return Ok(true),
+                    WorkerWait::Shutdown => return Ok(AuthenticatedCommandOutcome::Shutdown),
                 }
             }
             Ok(WorkerCommand::Resize(size)) => {
@@ -2671,15 +2791,18 @@ async fn process_authenticated_commands(
                             "SSH resize failed",
                         ));
                     }
-                    WorkerWait::Shutdown => return Ok(true),
+                    WorkerWait::Shutdown => return Ok(AuthenticatedCommandOutcome::Shutdown),
                 }
+            }
+            Ok(WorkerCommand::Reconnect) => {
+                return Ok(AuthenticatedCommandOutcome::Reconnect);
             }
             Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                 host_key_gate.reject_pending();
                 shared.set_lifecycle(SessionLifecycle::Stopping);
-                return Ok(true);
+                return Ok(AuthenticatedCommandOutcome::Shutdown);
             }
-            Err(TryRecvError::Empty) => return Ok(false),
+            Err(TryRecvError::Empty) => return Ok(AuthenticatedCommandOutcome::Continue),
         }
     }
 }
@@ -2703,6 +2826,10 @@ fn process_commands_before_running(
             Ok(WorkerCommand::Resize(size)) => {
                 let _ = size.columns();
                 report_unsupported(shared, "SSH resize is not available")
+            }
+            Ok(WorkerCommand::Reconnect) => {
+                shared.clear_reconnect_request();
+                report_unsupported(shared, "SSH reconnect is not available")
             }
             Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                 host_key_gate.reject_pending();
@@ -3025,6 +3152,71 @@ mod tests {
             SshSessionOptions::with_reconnect_policy(policy).reconnect_policy(),
             Some(policy)
         );
+    }
+
+    #[test]
+    fn reconnect_request_is_limited_to_enabled_running_sessions() {
+        assert!(reconnect_request_is_available(
+            true,
+            &SessionLifecycle::Running,
+            false
+        ));
+        assert!(!reconnect_request_is_available(
+            false,
+            &SessionLifecycle::Running,
+            false
+        ));
+        assert!(!reconnect_request_is_available(
+            true,
+            &SessionLifecycle::Starting,
+            false
+        ));
+        assert!(!reconnect_request_is_available(
+            true,
+            &SessionLifecycle::Running,
+            true
+        ));
+    }
+
+    #[test]
+    fn reconnect_request_errors_are_content_free() {
+        for error in [
+            SshReconnectError::Disabled,
+            SshReconnectError::NotRunning,
+            SshReconnectError::AlreadyRequested,
+            SshReconnectError::QueueFull,
+            SshReconnectError::Closed,
+        ] {
+            assert!(!error.to_string().contains("password"));
+            assert!(!error.to_string().contains("private"));
+        }
+    }
+
+    #[test]
+    fn reconnect_request_queues_once_for_an_enabled_running_session() {
+        let (foundation, command_receiver, _) = SshWorkerFoundation::new(profile());
+
+        assert_eq!(
+            foundation.try_reconnect(false),
+            Err(SshReconnectError::Disabled)
+        );
+        assert_eq!(
+            foundation.try_reconnect(true),
+            Err(SshReconnectError::NotRunning)
+        );
+
+        foundation.set_running();
+        assert!(foundation.reconnect_available(true));
+        assert_eq!(foundation.try_reconnect(true), Ok(()));
+        assert!(!foundation.reconnect_available(true));
+        assert_eq!(
+            foundation.try_reconnect(true),
+            Err(SshReconnectError::AlreadyRequested)
+        );
+        assert!(matches!(
+            command_receiver.try_recv(),
+            Ok(WorkerCommand::Reconnect)
+        ));
     }
 
     #[test]

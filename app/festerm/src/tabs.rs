@@ -12,9 +12,12 @@
 //! routes session output through the single-writer `Terminal` +
 //! `SessionController` pair defined in `session_controller.rs`.
 
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
 use eframe::egui;
@@ -26,8 +29,8 @@ use festerm_session::{
     TerminalSize,
 };
 use festerm_ssh::{
-    HostKeyDecisionResolutionError, HostTrustDecision, SshAuthentication, SshConnectionProfile,
-    SshSession, SshSessionStartError,
+    HostKeyDecisionResolutionError, HostTrustDecision, ReconnectPolicy, SshAuthentication,
+    SshConnectionProfile, SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
 };
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
@@ -118,6 +121,22 @@ impl std::fmt::Display for HostKeyTrustResolutionError {
     }
 }
 
+/// An application-level failure to request an SSH reconnect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionReconnectError {
+    NotSshSession,
+    Transport(SshReconnectError),
+}
+
+impl std::fmt::Display for SessionReconnectError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotSshSession => formatter.write_str("the tab is not an SSH session"),
+            Self::Transport(error) => error.fmt(formatter),
+        }
+    }
+}
+
 impl ApplicationSession {
     /// Resolves a host-key prompt through an SSH session without exposing its
     /// resolver to GUI code or allowing persistent acceptance.
@@ -133,6 +152,22 @@ impl ApplicationSession {
             .host_key_decision_resolver()
             .resolve(prompt, decision.into())
             .map_err(HostKeyTrustResolutionError::Transport)
+    }
+
+    /// Reports whether this session can accept a nonblocking user reconnect
+    /// request. Local sessions deliberately never expose this capability.
+    pub fn reconnect_available(&self) -> bool {
+        matches!(self, Self::Ssh(session) if session.reconnect_available())
+    }
+
+    /// Queues one user-directed reconnect on an SSH session.
+    pub fn try_reconnect(&self) -> Result<(), SessionReconnectError> {
+        let Self::Ssh(session) = self else {
+            return Err(SessionReconnectError::NotSshSession);
+        };
+        session
+            .try_reconnect()
+            .map_err(SessionReconnectError::Transport)
     }
 }
 
@@ -269,9 +304,21 @@ impl SessionTab {
             profile.identity().host(),
             profile.identity().port()
         ));
-        let result =
-            SshSession::start_with_notifier(profile, authentication, make_notifier(context))
-                .map(ApplicationSession::Ssh);
+        // Retain authentication only within the SSH worker for the existing
+        // bounded reconnect machinery. The inspector can request a fresh
+        // attempt without introducing a second retry path; one failed fresh
+        // attempt ends this policy cycle and no profile or secret is persisted.
+        let reconnect_policy =
+            ReconnectPolicy::new(1, Duration::from_millis(250), Duration::from_millis(250))
+                .expect("the fixed user reconnect policy is valid");
+        let options = SshSessionOptions::with_reconnect_policy(reconnect_policy);
+        let result = SshSession::start_with_notifier_and_options(
+            profile,
+            authentication,
+            options,
+            make_notifier(context),
+        )
+        .map(ApplicationSession::Ssh);
         Self::from_ssh_session_result(result, dimensions, &label, launch_secondary)
     }
 
@@ -387,6 +434,23 @@ impl SessionTab {
         self.controller.clear_host_key_prompt(&prompt);
         result
     }
+
+    /// Reports whether this is an SSH tab whose current live transport can
+    /// accept one user-directed reconnect request.
+    pub fn reconnect_available(&self) -> bool {
+        self.controller
+            .session()
+            .is_some_and(ApplicationSession::reconnect_available)
+    }
+
+    /// Queues a reconnect without waiting for network activity on the GUI
+    /// thread. Rejection becomes ordinary content-free session diagnostics.
+    pub fn request_reconnect(&mut self) -> Result<(), SessionReconnectError> {
+        self.controller
+            .session()
+            .ok_or(SessionReconnectError::NotSshSession)?
+            .try_reconnect()
+    }
 }
 
 fn local_profile_secondary(profile: &LocalProfile) -> Option<String> {
@@ -441,6 +505,9 @@ pub enum AppCommand {
         tab: TabId,
         decision: HostKeyTrustDecision,
     },
+    /// Requests one bounded fresh SSH transport attempt for `tab`. Local,
+    /// stopped, or already-reconnecting tabs reject this safely.
+    ReconnectSession(TabId),
     ActivateTab(TabId),
     /// Activates the next/previous tab in stable list order
     /// (`docs/gui-design.md` "Next/Previous Tab switch predictably" —
@@ -576,6 +643,7 @@ impl AppState {
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
             }
+            AppCommand::ReconnectSession(tab) => self.request_reconnect(tab),
             AppCommand::ActivateTab(id) => self.activate(id),
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
@@ -644,6 +712,17 @@ impl AppState {
         };
         if let Err(error) = session.resolve_host_key_trust(decision) {
             session.controller.record_host_key_resolution_error(error);
+        }
+    }
+
+    fn request_reconnect(&mut self, tab: TabId) {
+        let Some(session) = self.session_tab_mut(tab) else {
+            return;
+        };
+        if let Err(error) = session.request_reconnect() {
+            session
+                .controller
+                .record_operation_error("reconnect request", error);
         }
     }
 
@@ -874,6 +953,19 @@ mod tests {
         ));
 
         state.dispatch(AppCommand::CloseTab(launcher_id), &context);
+    }
+
+    #[test]
+    fn reconnect_command_ignores_a_non_ssh_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher = state.active();
+
+        state.dispatch(AppCommand::ReconnectSession(launcher), &context);
+
+        assert_eq!(state.active(), launcher);
+        assert_eq!(state.tabs().len(), 1);
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
     }
 
     #[test]

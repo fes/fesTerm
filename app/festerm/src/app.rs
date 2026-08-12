@@ -349,13 +349,16 @@ impl FesTermApp {
     /// and session context"): hidden by default, and shows only content-free
     /// connection state and diagnostics for the active session. It never
     /// hosts Settings.
-    fn show_session_inspector(&self, ui: &mut egui::Ui) {
+    fn show_session_inspector(&self, ui: &mut egui::Ui) -> Option<AppCommand> {
         let TabContent::Session(session) = &self.state.active_tab().content else {
-            return;
+            return None;
         };
+        let reconnect_available = session.reconnect_available();
+        let tab = self.state.active();
         let status = session.controller.status_line();
         let diagnostics = session.controller.diagnostics_line();
         let chip_status = session.chip_status();
+        let mut reconnect = false;
         egui::Panel::right("session_inspector")
             .resizable(false)
             .show(ui, |ui| {
@@ -365,9 +368,22 @@ impl FesTermApp {
                 ui.label(chip_status.accessible_label());
                 ui.add_space(4.0);
                 ui.label(status);
+                if reconnect_available {
+                    ui.add_space(8.0);
+                    if ui
+                        .button("Reconnect")
+                        .on_hover_text(
+                            "Start one fresh SSH connection. The remote shell is not restored.",
+                        )
+                        .clicked()
+                    {
+                        reconnect = true;
+                    }
+                }
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new(diagnostics).small().weak());
             });
+        reconnect.then_some(AppCommand::ReconnectSession(tab))
     }
 
     /// Bottom application status bar (`docs/gui-design.md` "Contextual
@@ -533,9 +549,9 @@ impl FesTermApp {
             }
         }
 
-        if inspector_open {
-            self.show_session_inspector(ui);
-        }
+        let inspector_command = inspector_open
+            .then(|| self.show_session_inspector(ui))
+            .flatten();
 
         let host_key_command = self.show_host_key_prompt(ui);
         let mut screen_command = None;
@@ -572,6 +588,10 @@ impl FesTermApp {
             }
         }
         if let Some(command) = host_key_command {
+            let context = ui.ctx().clone();
+            self.state.dispatch(command, &context);
+        }
+        if let Some(command) = inspector_command {
             let context = ui.ctx().clone();
             self.state.dispatch(command, &context);
         }
