@@ -8,7 +8,9 @@ use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 use festerm_ui_egui::theme;
 
-use crate::configuration_startup::{ConfigurationStartupStatus, StartupConfiguration};
+use crate::configuration_startup::{
+    ConfigurationReloader, ConfigurationStartupStatus, StartupConfiguration,
+};
 use crate::native_smoke::NativeWindowSmoke;
 use crate::screens;
 use crate::tabs::{AppCommand, AppState, HostKeyTrustDecision, TabContent, TabId};
@@ -32,6 +34,7 @@ pub struct FesTermApp {
     native_smoke: Option<NativeWindowSmoke>,
     palette: PaletteState,
     configuration_status: ConfigurationStartupStatus,
+    configuration_reloader: ConfigurationReloader,
 }
 
 impl FesTermApp {
@@ -45,9 +48,10 @@ impl FesTermApp {
         context: &egui::Context,
         startup_configuration: StartupConfiguration,
     ) -> Self {
-        let status = startup_configuration.status();
-        let mut app = Self::with_configuration(context, startup_configuration.configuration());
+        let (configuration, status, configuration_reloader) = startup_configuration.into_parts();
+        let mut app = Self::with_configuration(context, configuration);
         app.configuration_status = status;
+        app.configuration_reloader = configuration_reloader;
         app
     }
 
@@ -72,7 +76,20 @@ impl FesTermApp {
             native_smoke,
             palette: PaletteState::default(),
             configuration_status,
+            configuration_reloader: ConfigurationReloader::unavailable(),
         }
+    }
+
+    /// Handles the only user-triggered configuration I/O. The reloader keeps
+    /// the selected path private; `AppState` receives a complete immutable
+    /// replacement only after successful validation. Session state is not
+    /// involved, so existing transports continue unchanged.
+    fn reload_configuration(&mut self) {
+        let (replacement, status) = self.configuration_reloader.reload();
+        if let Some(configuration) = replacement {
+            self.state.replace_configuration(configuration);
+        }
+        self.configuration_status = status;
     }
 
     fn update_window_title(&mut self, context: &egui::Context) {
@@ -629,8 +646,13 @@ impl FesTermApp {
             self.state.dispatch(command, &context);
         }
         if let Some(command) = screen_command {
-            let context = ui.ctx().clone();
-            self.state.dispatch(command, &context);
+            match command {
+                AppCommand::ReloadConfiguration => self.reload_configuration(),
+                command => {
+                    let context = ui.ctx().clone();
+                    self.state.dispatch(command, &context);
+                }
+            }
         }
         if let Some(action) = overlay_action {
             let context = ui.ctx().clone();
@@ -667,6 +689,7 @@ impl FesTermApp {
             native_smoke: None,
             palette: PaletteState::default(),
             configuration_status: ConfigurationStartupStatus::Missing,
+            configuration_reloader: ConfigurationReloader::unavailable(),
         }
     }
 }

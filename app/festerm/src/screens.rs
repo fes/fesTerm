@@ -419,9 +419,9 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
 ///
 /// `chip_layout` reflects the current chip wrapping mode
 /// (`docs/gui-design.md` "Wrapping must remain user-configurable"); this is
-/// the one persistent preference implemented so far. Returns a command when
-/// the user toggles it, dispatched through the same single command path as
-/// every other invocation surface.
+/// the one persistent preference implemented so far. Returns commands for
+/// Settings actions; the application composition root owns configuration I/O
+/// and applies successful replacements to `AppState`.
 pub fn show_settings(
     ui: &mut Ui,
     chip_layout: ChipLayout,
@@ -432,12 +432,15 @@ pub fn show_settings(
     ui.vertical(|ui| {
         ui.add_space(24.0);
         ui.heading("Settings");
-        ui.label("Configuration is loaded once during startup and is never written automatically.");
+        ui.label("Configuration is never written automatically.");
         let configuration_message = configuration_status.settings_message();
         if configuration_status.is_problem() {
             ui.colored_label(egui::Color32::from_rgb(220, 150, 80), configuration_message);
         } else {
             ui.label(configuration_message);
+        }
+        if ui.button("Reload configuration").clicked() {
+            command = Some(AppCommand::ReloadConfiguration);
         }
         ui.add_space(12.0);
         ui.separator();
@@ -494,6 +497,39 @@ mod tests {
                     command: None,
                 },
             )
+    }
+
+    #[test]
+    fn settings_reload_control_returns_the_reload_command() {
+        #[derive(Default)]
+        struct SettingsHarnessState {
+            command: Option<AppCommand>,
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 360.0))
+            .build_ui_state(
+                |ui, state: &mut SettingsHarnessState| {
+                    if let Some(command) = show_settings(
+                        ui,
+                        ChipLayout::Wrap,
+                        true,
+                        ConfigurationStartupStatus::Loaded,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                SettingsHarnessState::default(),
+            );
+        harness.run();
+
+        harness.get_by_label("Reload configuration").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ReloadConfiguration)
+        ));
     }
 
     fn enter_text(harness: &mut Harness<'static, LauncherHarnessState>, label: &str, text: &str) {

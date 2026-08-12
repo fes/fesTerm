@@ -1,7 +1,4 @@
-use std::{
-    ffi::OsString,
-    path::{Path, PathBuf},
-};
+use std::{ffi::OsString, path::PathBuf};
 
 use directories::ProjectDirs;
 use festerm_config::{Configuration, ConfigurationFileErrorKind};
@@ -9,7 +6,17 @@ use festerm_config::{Configuration, ConfigurationFileErrorKind};
 const CONFIG_PATH_ENV: &str = "FESTERM_CONFIG_PATH";
 const CONFIG_FILE_NAME: &str = "config.toml";
 
-/// Content-free outcome of selecting and loading startup configuration.
+/// Content-free reason why configuration could not be selected or loaded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConfigurationLoadFailure {
+    Invalid,
+    Unreadable,
+    OverrideUnavailable,
+    NativeLocationUnavailable,
+}
+
+/// Content-free outcome of selecting, loading, or explicitly reloading
+/// configuration.
 ///
 /// This deliberately retains neither the selected path nor source TOML. The
 /// application can show it safely in Settings and diagnostics.
@@ -17,74 +24,160 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 pub(crate) enum ConfigurationStartupStatus {
     Loaded,
     Missing,
-    Invalid,
-    Unreadable,
-    OverrideUnavailable,
-    NativeLocationUnavailable,
+    InitialFailure(ConfigurationLoadFailure),
+    Reloaded,
+    ReloadedMissing,
+    ReloadFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
     pub(crate) const fn settings_message(self) -> &'static str {
         match self {
             Self::Loaded => {
-                "Configuration was loaded at startup. Changes to config.toml require restarting fesTerm."
+                "Configuration was loaded at startup. Reload configuration to apply later edits."
             }
             Self::Missing => {
                 "No configuration file was found at startup. fesTerm is using its defaults and will not create one automatically."
             }
-            Self::Invalid => {
-                "Configuration was ignored because it is invalid. Fix config.toml and restart fesTerm."
+            Self::InitialFailure(ConfigurationLoadFailure::Invalid) => {
+                "Configuration was ignored at startup because it is invalid. Fix it, then use Reload configuration."
             }
-            Self::Unreadable => {
-                "Configuration could not be read. Check that config.toml is readable, then restart fesTerm."
+            Self::InitialFailure(ConfigurationLoadFailure::Unreadable) => {
+                "Configuration could not be read at startup. Check that it is readable, then use Reload configuration."
             }
-            Self::OverrideUnavailable => {
+            Self::InitialFailure(ConfigurationLoadFailure::OverrideUnavailable) => {
                 "FESTERM_CONFIG_PATH could not be used. Set it to a non-empty Unicode file path, then restart fesTerm."
             }
-            Self::NativeLocationUnavailable => {
+            Self::InitialFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "The native configuration location is unavailable. Set FESTERM_CONFIG_PATH to a Unicode file path, then restart fesTerm."
+            }
+            Self::Reloaded => {
+                "Configuration was reloaded. Future Launcher choices use it; existing sessions are unchanged."
+            }
+            Self::ReloadedMissing => {
+                "Configuration file is missing. fesTerm is using its defaults; existing sessions are unchanged."
+            }
+            Self::ReloadFailure(ConfigurationLoadFailure::Invalid) => {
+                "Configuration was not reloaded because it is invalid. The previous configuration remains active; fix it and try again."
+            }
+            Self::ReloadFailure(ConfigurationLoadFailure::Unreadable) => {
+                "Configuration was not reloaded because it could not be read. The previous configuration remains active; check access and try again."
+            }
+            Self::ReloadFailure(ConfigurationLoadFailure::OverrideUnavailable) => {
+                "Configuration was not reloaded because FESTERM_CONFIG_PATH is unavailable. The previous configuration remains active; set it to a non-empty Unicode path and restart fesTerm."
+            }
+            Self::ReloadFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
+                "Configuration was not reloaded because its location is unavailable. The previous configuration remains active; set FESTERM_CONFIG_PATH and restart fesTerm."
             }
         }
     }
 
     pub(crate) const fn is_problem(self) -> bool {
-        matches!(
-            self,
-            Self::Invalid
-                | Self::Unreadable
-                | Self::OverrideUnavailable
-                | Self::NativeLocationUnavailable
-        )
+        matches!(self, Self::InitialFailure(_) | Self::ReloadFailure(_))
     }
 }
 
 /// Configuration selected during process startup.
 ///
-/// The configuration is supplied to the application once; this slice does not
-/// watch, reload, or write configuration files.
+/// The selected location stays private to [`ConfigurationReloader`]; it is
+/// never displayed, logged, or placed in application state.
 pub(crate) struct StartupConfiguration {
     configuration: Configuration,
     status: ConfigurationStartupStatus,
+    reloader: ConfigurationReloader,
 }
 
 impl StartupConfiguration {
-    pub(crate) fn configuration(self) -> Configuration {
-        self.configuration
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Configuration,
+        ConfigurationStartupStatus,
+        ConfigurationReloader,
+    ) {
+        (self.configuration, self.status, self.reloader)
+    }
+}
+
+/// Private retained source for an explicit, user-triggered reload.
+///
+/// Its path is intentionally inaccessible outside this module. It performs no
+/// watching, polling, logging, or writes.
+pub(crate) struct ConfigurationReloader {
+    selected_path: Result<PathBuf, ConfigurationLoadFailure>,
+}
+
+impl ConfigurationReloader {
+    fn from_selection(selected_path: Result<PathBuf, ConfigurationLoadFailure>) -> Self {
+        Self { selected_path }
     }
 
-    pub(crate) const fn status(&self) -> ConfigurationStartupStatus {
-        self.status
+    pub(crate) fn unavailable() -> Self {
+        Self::from_selection(Err(ConfigurationLoadFailure::NativeLocationUnavailable))
+    }
+
+    /// Loads one complete candidate from the already-selected location.
+    ///
+    /// `Some` is returned only for a valid replacement or a normal missing
+    /// file (which deliberately replaces the configuration with defaults).
+    /// All other outcomes retain the caller's active configuration.
+    pub(crate) fn reload(&self) -> (Option<Configuration>, ConfigurationStartupStatus) {
+        let path = match &self.selected_path {
+            Ok(path) => path,
+            Err(failure) => {
+                return (None, ConfigurationStartupStatus::ReloadFailure(*failure));
+            }
+        };
+        match Configuration::load_from_path(path) {
+            Ok(configuration) => (Some(configuration), ConfigurationStartupStatus::Reloaded),
+            Err(error) => match error.kind() {
+                ConfigurationFileErrorKind::MissingFile => (
+                    Some(Configuration::empty()),
+                    ConfigurationStartupStatus::ReloadedMissing,
+                ),
+                kind => (
+                    None,
+                    ConfigurationStartupStatus::ReloadFailure(failure_from_file_error(kind)),
+                ),
+            },
+        }
+    }
+
+    fn initial_load(&self) -> (Configuration, ConfigurationStartupStatus) {
+        let path = match &self.selected_path {
+            Ok(path) => path,
+            Err(failure) => {
+                return (
+                    Configuration::empty(),
+                    ConfigurationStartupStatus::InitialFailure(*failure),
+                );
+            }
+        };
+        match Configuration::load_from_path(path) {
+            Ok(configuration) => (configuration, ConfigurationStartupStatus::Loaded),
+            Err(error) => match error.kind() {
+                ConfigurationFileErrorKind::MissingFile => {
+                    (Configuration::empty(), ConfigurationStartupStatus::Missing)
+                }
+                kind => (
+                    Configuration::empty(),
+                    ConfigurationStartupStatus::InitialFailure(failure_from_file_error(kind)),
+                ),
+            },
+        }
     }
 }
 
 pub(crate) fn load() -> StartupConfiguration {
-    let selected_path = select_configuration_path(
+    let reloader = ConfigurationReloader::from_selection(select_configuration_path(
         std::env::var_os(CONFIG_PATH_ENV),
         native_configuration_directory(),
-    );
-    match selected_path {
-        Ok(path) => load_from_path(&path),
-        Err(status) => empty_with_status(status),
+    ));
+    let (configuration, status) = reloader.initial_load();
+    StartupConfiguration {
+        configuration,
+        status,
+        reloader,
     }
 }
 
@@ -96,54 +189,49 @@ fn native_configuration_directory() -> Option<PathBuf> {
 fn select_configuration_path(
     override_value: Option<OsString>,
     native_config_directory: Option<PathBuf>,
-) -> Result<PathBuf, ConfigurationStartupStatus> {
+) -> Result<PathBuf, ConfigurationLoadFailure> {
     if let Some(override_value) = override_value {
         let override_value = override_value
             .into_string()
-            .map_err(|_| ConfigurationStartupStatus::OverrideUnavailable)?;
+            .map_err(|_| ConfigurationLoadFailure::OverrideUnavailable)?;
         if override_value.is_empty() {
-            return Err(ConfigurationStartupStatus::OverrideUnavailable);
+            return Err(ConfigurationLoadFailure::OverrideUnavailable);
         }
         return Ok(PathBuf::from(override_value));
     }
 
     native_config_directory
         .map(|directory| directory.join(CONFIG_FILE_NAME))
-        .ok_or(ConfigurationStartupStatus::NativeLocationUnavailable)
+        .ok_or(ConfigurationLoadFailure::NativeLocationUnavailable)
 }
 
-fn load_from_path(path: &Path) -> StartupConfiguration {
-    match Configuration::load_from_path(path) {
-        Ok(configuration) => StartupConfiguration {
-            configuration,
-            status: ConfigurationStartupStatus::Loaded,
-        },
-        Err(error) => {
-            let status = match error.kind() {
-                ConfigurationFileErrorKind::MissingFile => ConfigurationStartupStatus::Missing,
-                ConfigurationFileErrorKind::Parse => ConfigurationStartupStatus::Invalid,
-                ConfigurationFileErrorKind::Read
-                | ConfigurationFileErrorKind::InvalidTargetPath
-                | ConfigurationFileErrorKind::CreateTemporary
-                | ConfigurationFileErrorKind::WriteTemporary
-                | ConfigurationFileErrorKind::SyncTemporary
-                | ConfigurationFileErrorKind::Replace
-                | ConfigurationFileErrorKind::RestorePrevious
-                | ConfigurationFileErrorKind::CleanupPrevious
-                | ConfigurationFileErrorKind::SyncParentDirectory
-                | ConfigurationFileErrorKind::Serialization => {
-                    ConfigurationStartupStatus::Unreadable
-                }
-            };
-            empty_with_status(status)
-        }
+#[cfg(test)]
+fn load_from_path(path: &std::path::Path) -> StartupConfiguration {
+    let reloader = ConfigurationReloader::from_selection(Ok(path.to_path_buf()));
+    let (configuration, status) = reloader.initial_load();
+    StartupConfiguration {
+        configuration,
+        status,
+        reloader,
     }
 }
 
-fn empty_with_status(status: ConfigurationStartupStatus) -> StartupConfiguration {
-    StartupConfiguration {
-        configuration: Configuration::empty(),
-        status,
+fn failure_from_file_error(kind: ConfigurationFileErrorKind) -> ConfigurationLoadFailure {
+    match kind {
+        ConfigurationFileErrorKind::Parse => ConfigurationLoadFailure::Invalid,
+        ConfigurationFileErrorKind::MissingFile => {
+            unreachable!("missing configuration is a non-failure reload outcome")
+        }
+        ConfigurationFileErrorKind::Read
+        | ConfigurationFileErrorKind::InvalidTargetPath
+        | ConfigurationFileErrorKind::CreateTemporary
+        | ConfigurationFileErrorKind::WriteTemporary
+        | ConfigurationFileErrorKind::SyncTemporary
+        | ConfigurationFileErrorKind::Replace
+        | ConfigurationFileErrorKind::RestorePrevious
+        | ConfigurationFileErrorKind::CleanupPrevious
+        | ConfigurationFileErrorKind::SyncParentDirectory
+        | ConfigurationFileErrorKind::Serialization => ConfigurationLoadFailure::Unreadable,
     }
 }
 
@@ -194,9 +282,10 @@ mod tests {
     fn missing_configuration_uses_empty_configuration() {
         let directory = TestDirectory::new();
         let startup = load_from_path(&directory.file("missing.toml"));
+        let (configuration, status, _) = startup.into_parts();
 
-        assert_eq!(startup.status(), ConfigurationStartupStatus::Missing);
-        assert_eq!(startup.configuration(), Configuration::empty());
+        assert_eq!(status, ConfigurationStartupStatus::Missing);
+        assert_eq!(configuration, Configuration::empty());
     }
 
     #[test]
@@ -210,9 +299,10 @@ mod tests {
         .expect("test configuration can be written");
 
         let startup = load_from_path(&path);
+        let (configuration, status, _) = startup.into_parts();
 
-        assert_eq!(startup.status(), ConfigurationStartupStatus::Loaded);
-        assert_eq!(startup.configuration().profiles().len(), 1);
+        assert_eq!(status, ConfigurationStartupStatus::Loaded);
+        assert_eq!(configuration.profiles().len(), 1);
     }
 
     #[test]
@@ -223,10 +313,14 @@ mod tests {
         fs::write(&path, source_toml).expect("test configuration can be written");
 
         let startup = load_from_path(&path);
-        let diagnostic = startup.status().settings_message();
+        let (configuration, status, _) = startup.into_parts();
+        let diagnostic = status.settings_message();
 
-        assert_eq!(startup.status(), ConfigurationStartupStatus::Invalid);
-        assert_eq!(startup.configuration(), Configuration::empty());
+        assert_eq!(
+            status,
+            ConfigurationStartupStatus::InitialFailure(ConfigurationLoadFailure::Invalid)
+        );
+        assert_eq!(configuration, Configuration::empty());
         assert!(!diagnostic.contains(source_toml));
         assert!(!diagnostic.contains(path.to_string_lossy().as_ref()));
     }
@@ -235,11 +329,107 @@ mod tests {
     fn unreadable_configuration_is_ignored_with_a_content_free_diagnostic() {
         let directory = TestDirectory::new();
         let startup = load_from_path(directory.path());
-        let diagnostic = startup.status().settings_message();
+        let (configuration, status, _) = startup.into_parts();
+        let diagnostic = status.settings_message();
 
-        assert_eq!(startup.status(), ConfigurationStartupStatus::Unreadable);
-        assert_eq!(startup.configuration(), Configuration::empty());
+        assert_eq!(
+            status,
+            ConfigurationStartupStatus::InitialFailure(ConfigurationLoadFailure::Unreadable)
+        );
+        assert_eq!(configuration, Configuration::empty());
         assert!(!diagnostic.contains(directory.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn reload_valid_configuration_replaces_the_complete_candidate() {
+        let directory = TestDirectory::new();
+        let path = directory.file("config.toml");
+        fs::write(
+            &path,
+            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"old\"\nexecutable = \"/bin/sh\"\n",
+        )
+        .expect("initial test configuration can be written");
+        let startup = load_from_path(&path);
+        let (active, _, reloader) = startup.into_parts();
+
+        fs::write(
+            &path,
+            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"new\"\nexecutable = \"/bin/sh\"\n",
+        )
+        .expect("replacement test configuration can be written");
+        let (replacement, status) = reloader.reload();
+
+        assert_eq!(status, ConfigurationStartupStatus::Reloaded);
+        assert_eq!(
+            active
+                .profile("old")
+                .map(festerm_config::Profile::identifier),
+            Some("old")
+        );
+        assert_eq!(
+            replacement
+                .as_ref()
+                .and_then(|configuration| configuration.profile("new"))
+                .map(festerm_config::Profile::identifier),
+            Some("new")
+        );
+    }
+
+    #[test]
+    fn invalid_reload_retains_the_last_known_configuration() {
+        let directory = TestDirectory::new();
+        let path = directory.file("config.toml");
+        fs::write(
+            &path,
+            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"working\"\nexecutable = \"/bin/sh\"\n",
+        )
+        .expect("initial test configuration can be written");
+        let startup = load_from_path(&path);
+        let (active, _, reloader) = startup.into_parts();
+
+        let source_toml = "schema_version = [private source TOML]";
+        fs::write(&path, source_toml).expect("invalid replacement can be written");
+        let (replacement, status) = reloader.reload();
+        let diagnostic = status.settings_message();
+
+        assert_eq!(
+            status,
+            ConfigurationStartupStatus::ReloadFailure(ConfigurationLoadFailure::Invalid)
+        );
+        assert!(replacement.is_none());
+        assert_eq!(
+            active
+                .profile("working")
+                .map(festerm_config::Profile::identifier),
+            Some("working")
+        );
+        assert!(!diagnostic.contains(source_toml));
+        assert!(!diagnostic.contains(path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn missing_reload_replaces_configuration_with_defaults() {
+        let directory = TestDirectory::new();
+        let path = directory.file("config.toml");
+        fs::write(
+            &path,
+            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"working\"\nexecutable = \"/bin/sh\"\n",
+        )
+        .expect("initial test configuration can be written");
+        let startup = load_from_path(&path);
+        let (active, _, reloader) = startup.into_parts();
+
+        fs::remove_file(&path).expect("test configuration can be removed");
+        let (replacement, status) = reloader.reload();
+
+        assert_eq!(status, ConfigurationStartupStatus::ReloadedMissing);
+        assert_eq!(
+            active
+                .profile("working")
+                .map(festerm_config::Profile::identifier),
+            Some("working")
+        );
+        assert_eq!(replacement, Some(Configuration::empty()));
     }
 
     #[test]
@@ -258,7 +448,7 @@ mod tests {
     fn empty_override_is_unavailable() {
         assert_eq!(
             select_configuration_path(Some(OsString::new()), Some(PathBuf::from("native-config"))),
-            Err(ConfigurationStartupStatus::OverrideUnavailable)
+            Err(ConfigurationLoadFailure::OverrideUnavailable)
         );
     }
 
@@ -272,7 +462,7 @@ mod tests {
                 Some(OsString::from_vec(vec![b'/', 0xFF])),
                 Some(PathBuf::from("native-config"))
             ),
-            Err(ConfigurationStartupStatus::OverrideUnavailable)
+            Err(ConfigurationLoadFailure::OverrideUnavailable)
         );
     }
 }

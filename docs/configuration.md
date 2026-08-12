@@ -23,10 +23,15 @@ Diagnostics never expose the selected path or source TOML.
 
 A missing configuration file is normal and starts fesTerm with
 `Configuration::empty()`. An unreadable or invalid file also leaves the app
-running with an empty configuration, while Settings explains the action needed
-before restart. Configuration is loaded only at startup; edit TOML while the
-app is closed, then restart fesTerm to apply it. There is no file watching or
-automatic persistence.
+running with an empty configuration, while Settings explains the action needed.
+Settings offers an explicit **Reload configuration** action that reads the
+same location selected during startup. It validates a complete replacement
+before applying it. A valid replacement affects only future Launcher choices;
+it does not stop or reconfigure existing sessions. A missing file replaces the
+active configuration with `Configuration::empty()`. An unreadable, invalid, or
+unavailable selected location retains the last known configuration and shows a
+content-free actionable diagnostic. There is no file watching, polling,
+configuration editing, or automatic persistence.
 
 ## Schema version 1
 

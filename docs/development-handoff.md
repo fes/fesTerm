@@ -17,9 +17,11 @@ At startup, the app loads `config.toml` from the native per-user project
 configuration location (`com.fes.fesTerm`) or the explicit
 `FESTERM_CONFIG_PATH` support/test override. Missing configuration starts with
 defaults and creates nothing. Invalid or unreadable configuration also starts
-with defaults, and Settings provides a content-free actionable diagnostic; TOML
-changes require a restart. No configuration is watched, edited, or written
-automatically.
+with defaults, and Settings provides a content-free actionable diagnostic.
+Settings can explicitly reload the same selected file: valid changes affect
+future Launcher choices only, missing files switch to defaults, and invalid or
+unreadable candidates retain the active configuration. No configuration is
+watched, edited, or written automatically.
 
 Not implemented: configuration editing/persistence and trust storage,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file

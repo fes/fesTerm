@@ -497,6 +497,10 @@ pub enum AppCommand {
     NewLauncherTab,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
+    /// Explicitly asks the composition root to reload the configuration
+    /// selected at startup. The path stays outside `AppState`; a successful
+    /// candidate is installed through [`AppState::replace_configuration`].
+    ReloadConfiguration,
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
@@ -604,6 +608,13 @@ impl AppState {
         &self.configuration
     }
 
+    /// Atomically replaces the immutable configuration used only by future
+    /// Launcher choices. Existing session tabs retain their live transports
+    /// and are never stopped or reconfigured.
+    pub fn replace_configuration(&mut self, configuration: Configuration) {
+        self.configuration = configuration;
+    }
+
     pub const fn inspector_open(&self) -> bool {
         self.inspector_open
     }
@@ -661,6 +672,9 @@ impl AppState {
         match command {
             AppCommand::NewLauncherTab => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
+            // The composition root owns the private selected file location;
+            // it validates a candidate before calling `replace_configuration`.
+            AppCommand::ReloadConfiguration => {}
             AppCommand::StartLocalSession => self.start_local_session(context),
             AppCommand::StartConfiguredLocalProfile { profile_id } => {
                 self.start_configured_local_profile(&profile_id, context)
@@ -992,6 +1006,45 @@ mod tests {
 
         assert_eq!(state.active(), launcher_id);
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn replacing_configuration_changes_only_future_launcher_choices() {
+        let context = egui::Context::default();
+        let original = Configuration::new(vec![festerm_config::Profile::local(
+            "original",
+            "festerm-profile-test-command-that-does-not-exist",
+            Vec::new(),
+            None,
+        )
+        .expect("original local profile is valid")])
+        .expect("original configuration is valid");
+        let replacement = Configuration::new(vec![festerm_config::Profile::local(
+            "replacement",
+            "festerm-replacement-test-command-that-does-not-exist",
+            Vec::new(),
+            None,
+        )
+        .expect("replacement local profile is valid")])
+        .expect("replacement configuration is valid");
+        let mut state = AppState::for_test_with_configuration(original);
+
+        state.dispatch(
+            AppCommand::StartConfiguredLocalProfile {
+                profile_id: "original".to_owned(),
+            },
+            &context,
+        );
+        let active = state.active();
+        state.replace_configuration(replacement);
+
+        assert_eq!(state.active(), active);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("the already running configured session must remain a session");
+        };
+        assert_eq!(session.label, "original");
+        assert!(state.configuration().profile("original").is_none());
+        assert!(state.configuration().profile("replacement").is_some());
     }
 
     fn ssh_profile() -> SshConnectionProfile {

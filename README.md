@@ -17,7 +17,9 @@ discovers a native per-user `config.toml` (or an explicit
 `FESTERM_CONFIG_PATH` override), injects the immutable configuration into the
 Launcher, and launches saved local profiles. Missing configuration is normal;
 invalid or unreadable configuration leaves the app running with defaults and a
-content-free Settings diagnostic. Changes require restart. Workspace
+content-free Settings diagnostic. Settings can explicitly reload the same
+selected file: valid changes affect only future Launcher choices, while
+invalid or unreadable candidates retain the last valid configuration. Workspace
 persistence/restoration, credential storage, and file watching remain M8 work.
 Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
@@ -119,8 +121,8 @@ custom-terminfo strategy.
 - Behavioral compatibility with advanced full-screen terminal applications.
 - Cross-platform `egui` front end with a GUI-independent terminal engine.
 - First-class local PTY and native in-process SSH session types.
-- Human-readable, versioned TOML configuration loaded at startup; TOML changes
-  require restart.
+- Human-readable, versioned TOML configuration loaded at startup and explicitly
+  reloadable from Settings; no automatic file watching or writes.
 - Fast interactive behavior, ligature-capable rendering, and privacy-aware
   diagnostics.
 - Local-first operation with optional future metadata synchronization.
