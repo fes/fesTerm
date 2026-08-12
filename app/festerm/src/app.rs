@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use eframe::egui;
+use festerm_config::Configuration;
 use festerm_pty::LocalProfile;
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 use festerm_ui_egui::overlay::{self, OverlayAction};
@@ -33,6 +34,13 @@ pub struct FesTermApp {
 
 impl FesTermApp {
     pub fn new(context: &egui::Context) -> Self {
+        Self::with_configuration(context, Configuration::empty())
+    }
+
+    /// Builds the application around explicitly supplied, already-validated
+    /// reusable profile metadata. Configuration discovery and reloading are
+    /// intentionally not application responsibilities in this M8 slice.
+    pub fn with_configuration(context: &egui::Context, configuration: Configuration) -> Self {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
@@ -40,7 +48,8 @@ impl FesTermApp {
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
         });
-        let (state, primary_tab) = AppState::with_primary_session(context, smoke_profile);
+        let (state, primary_tab) =
+            AppState::with_primary_session(context, smoke_profile, configuration);
         Self {
             state,
             primary_tab,
@@ -562,7 +571,11 @@ impl FesTermApp {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
                 TabContent::Launcher => {
-                    screen_command = screens::show_launcher(ui, active_tab_id);
+                    screen_command = screens::show_launcher(
+                        ui,
+                        active_tab_id,
+                        self.state.configuration().profiles(),
+                    );
                 }
                 TabContent::Settings => {
                     screen_command =
@@ -622,11 +635,10 @@ impl FesTermApp {
 #[cfg(test)]
 impl FesTermApp {
     /// Builds a `FesTermApp` around a launcher tab instead of a live local
-    /// shell (`AppState::for_test`), so headless end-to-end UI tests do not
-    /// need a real PTY and do not depend on `eframe::Frame`, which has no
-    /// public/test constructor.
-    fn for_test() -> Self {
-        let state = AppState::for_test();
+    /// shell, so headless end-to-end UI tests do not need a real PTY and do
+    /// not depend on `eframe::Frame`, which has no public/test constructor.
+    fn for_test_with_configuration(configuration: Configuration) -> Self {
+        let state = AppState::for_test_with_configuration(configuration);
         let primary_tab = state.active();
         Self {
             state,
@@ -644,11 +656,15 @@ mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
 
     fn harness() -> Harness<'static, FesTermApp> {
+        harness_with_configuration(Configuration::empty())
+    }
+
+    fn harness_with_configuration(configuration: Configuration) -> Harness<'static, FesTermApp> {
         Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
             .build_ui_state(
                 |ui, app: &mut FesTermApp| app.ui_content(ui),
-                FesTermApp::for_test(),
+                FesTermApp::for_test_with_configuration(configuration),
             )
     }
 
@@ -703,6 +719,28 @@ mod tests {
             harness.state().state.active_tab().content,
             TabContent::Session(_)
         ));
+    }
+
+    #[test]
+    fn configured_local_profile_launcher_action_dispatches_end_to_end() {
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "festerm-profile-test-command-that-does-not-exist",
+            Vec::new(),
+            None,
+        )
+        .expect("test local profile is valid")])
+        .expect("test configuration is valid");
+        let mut harness = harness_with_configuration(configuration);
+        harness.run();
+
+        harness.get_by_label("development (Local profile)").click();
+        harness.step();
+
+        let TabContent::Session(session) = &harness.state().state.active_tab().content else {
+            panic!("the configured profile launcher action must start a session tab");
+        };
+        assert_eq!(session.label, "development");
     }
 
     #[test]

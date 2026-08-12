@@ -12,14 +12,16 @@ session chips, Launcher and Settings surfaces, a session inspector, command
 palette, custom title bar, and configurable status bar. See the Milestone 8
 note in [`ROADMAP.md`](ROADMAP.md). A first GUI-independent M8 configuration
 foundation now parses and serializes strict, versioned, secret-free TOML local
-and SSH profile metadata transactionally; workspace persistence, credential
-storage, file watching, and app integration remain M8 work. Milestone 7 is implemented: the
+and SSH profile metadata transactionally. The graphical Launcher accepts an
+explicitly injected immutable configuration and launches saved local profiles;
+filesystem discovery, workspace persistence/restoration, credential storage,
+and file watching remain M8 work. Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
 encrypted in-memory OpenSSH private keys; encrypted-key passphrases are
-transient parse inputs and are never persisted. Agents, key-file references,
-and profiles remain incomplete. The fixture
+transient parse inputs and are never persisted. Agents and key-file references
+remain incomplete; saved SSH profiles await credential storage. The fixture
 includes an ECDSA P-256-only server-host-key case whose SHA-256 trust prompt
 is checked before a shell exchange. The
 GUI-independent terminal core has
@@ -46,8 +48,11 @@ ConPTY sidecar; otherwise the backend safely uses inbox ConPTY rather than a
 directory-discovered DLL. If shell startup fails, it shows a visible no-session error rather
 than a fake shell.
 
-The current application has in-memory local session tabs and a compact
-Launcher SSH authentication form. It validates a host, optional port (default
+The current application has in-memory local session tabs, explicitly injected
+secret-free reusable local-profile metadata, and a compact Launcher SSH
+authentication form. Saved SSH metadata is display-only until M8 secure
+credential storage; it does not launch or retain credentials. The transient
+form validates a host, optional port (default
 22), and username into a secret-free profile, then sends a transient password
 or a parsed in-memory OpenSSH private key to the typed SSH-session command and
 clears secret text on submit. Encrypted keys may use a transient parse
@@ -55,8 +60,8 @@ passphrase; no key text or passphrase is persisted. When an active SSH tab
 needs host trust, it presents the canonical
 host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
 actions; trust persistence is intentionally deferred to M8. It does not
-provide persisted/config-file profiles, agent or key-file
-UI, OpenSSH-config import UI, scrollback, terminfo distribution, or
+provide configuration-file discovery, agent or key-file UI, OpenSSH-config
+import UI, scrollback, terminfo distribution, or
 user-visible ligature support. SSH reconnect is disabled by default; the
 Launcher has a transient opt-in for a bounded fresh-shell reconnect that
 re-verifies the host key and does not restore remote process state. `TERM`

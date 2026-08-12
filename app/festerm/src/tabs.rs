@@ -18,6 +18,7 @@ use std::sync::{
 };
 
 use eframe::egui;
+use festerm_config::Configuration;
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
 use festerm_session::{
@@ -287,6 +288,24 @@ impl SessionTab {
         )
     }
 
+    /// Starts a local PTY from reusable, secret-free profile metadata.
+    fn start_local_profile(
+        profile: LocalProfile,
+        profile_id: &str,
+        context: &egui::Context,
+    ) -> Self {
+        let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
+        let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
+        let launch_secondary = local_profile_secondary(&profile);
+        let result = LocalPtySession::start_with_notifier(profile, size, make_notifier(context));
+        Self::from_local_session_result(
+            result.map(ApplicationSession::Local),
+            dimensions,
+            profile_id,
+            launch_secondary,
+        )
+    }
+
     fn start_ssh(
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
@@ -481,6 +500,12 @@ pub enum AppCommand {
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
+    /// Starts a local session from a reusable configuration profile. The
+    /// profile identifier is resolved only against this application's
+    /// explicitly supplied immutable configuration.
+    StartConfiguredLocalProfile {
+        profile_id: String,
+    },
     /// Starts one SSH transport from explicitly supplied, secret-free
     /// connection metadata, transient authentication, and explicit session
     /// options. Launcher invocation surfaces validate input into these typed
@@ -530,6 +555,7 @@ pub enum AppCommand {
 pub struct AppState {
     tabs: Vec<Tab>,
     active: TabId,
+    configuration: Configuration,
     inspector_open: bool,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
@@ -545,6 +571,7 @@ impl AppState {
     pub fn with_primary_session(
         context: &egui::Context,
         smoke_profile: Option<LocalProfile>,
+        configuration: Configuration,
     ) -> (Self, TabId) {
         let session = SessionTab::start_primary(context, smoke_profile);
         let id = TabId::next();
@@ -554,6 +581,7 @@ impl AppState {
                 content: TabContent::Session(Box::new(session)),
             }],
             active: id,
+            configuration,
             inspector_open: false,
             chip_layout: ChipLayout::Wrap,
             status_bar_visible: true,
@@ -567,6 +595,13 @@ impl AppState {
 
     pub const fn active(&self) -> TabId {
         self.active
+    }
+
+    /// Returns the immutable, explicitly supplied profile metadata available
+    /// to Launcher tabs. This method never performs configuration discovery
+    /// or filesystem reads.
+    pub const fn configuration(&self) -> &Configuration {
+        &self.configuration
     }
 
     pub const fn inspector_open(&self) -> bool {
@@ -627,6 +662,9 @@ impl AppState {
             AppCommand::NewLauncherTab => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::StartLocalSession => self.start_local_session(context),
+            AppCommand::StartConfiguredLocalProfile { profile_id } => {
+                self.start_configured_local_profile(&profile_id, context)
+            }
             AppCommand::StartSshSession {
                 profile,
                 authentication,
@@ -687,6 +725,20 @@ impl AppState {
 
     fn start_local_session(&mut self, context: &egui::Context) {
         self.place_session(SessionTab::start_default(context));
+    }
+
+    fn start_configured_local_profile(&mut self, profile_id: &str, context: &egui::Context) {
+        let Some(profile) = self.configuration.profile(profile_id) else {
+            return;
+        };
+        let Some(local) = profile.as_local() else {
+            return;
+        };
+        self.place_session(SessionTab::start_local_profile(
+            local.to_local_profile(),
+            local.identifier(),
+            context,
+        ));
     }
 
     fn execute_ssh_session(
@@ -835,6 +887,10 @@ impl AppState {
     /// need a live PTY. `pub(crate)` so `app.rs`'s headless UI tests can also
     /// build a `FesTermApp` without a live PTY session.
     pub(crate) fn for_test() -> Self {
+        Self::for_test_with_configuration(Configuration::empty())
+    }
+
+    pub(crate) fn for_test_with_configuration(configuration: Configuration) -> Self {
         let id = TabId::next();
         Self {
             tabs: vec![Tab {
@@ -842,6 +898,7 @@ impl AppState {
                 content: TabContent::Launcher,
             }],
             active: id,
+            configuration,
             inspector_open: false,
             chip_layout: ChipLayout::Wrap,
             status_bar_visible: true,
@@ -870,6 +927,71 @@ mod tests {
             local_profile_secondary(&profile).as_deref(),
             Some("cmd.exe")
         );
+    }
+
+    #[test]
+    fn configured_local_profile_command_uses_metadata_and_stable_profile_id() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "festerm-profile-test-command-that-does-not-exist",
+            vec!["--interactive".to_owned()],
+            None,
+        )
+        .expect("test local profile is valid")])
+        .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let launcher_id = state.active();
+
+        state.dispatch(
+            AppCommand::StartConfiguredLocalProfile {
+                profile_id: "development".to_owned(),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), launcher_id);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("configured local profile must replace the active launcher");
+        };
+        assert_eq!(session.label, "development");
+        assert_eq!(
+            session.launch_secondary.as_deref(),
+            Some("festerm-profile-test-command-that-does-not-exist")
+        );
+        assert!(
+            session.controller.start_error().is_some(),
+            "the nonexistent executable proves the configured launch path attempted its metadata"
+        );
+    }
+
+    #[test]
+    fn configured_local_profile_command_ignores_an_ssh_profile() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")])
+        .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let launcher_id = state.active();
+
+        state.dispatch(
+            AppCommand::StartConfiguredLocalProfile {
+                profile_id: "production".to_owned(),
+            },
+            &context,
+        );
+
+        assert_eq!(state.active(), launcher_id);
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
     }
 
     fn ssh_profile() -> SshConnectionProfile {

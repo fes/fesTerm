@@ -10,6 +10,7 @@ description = "A scratch, multi-platform SSH/terminal client."
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 eframe = "0"
+festerm-config = { path = "../../crates/festerm-config" }
 festerm-core = { path = "../../crates/festerm-core" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }

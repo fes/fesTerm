@@ -7,6 +7,7 @@
 //! the single command-handling path.
 
 use eframe::egui::{self, TextEdit, Ui};
+use festerm_config::Profile;
 use festerm_session::TerminalSize;
 use festerm_ssh::{
     HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
@@ -16,15 +17,21 @@ use festerm_ui_egui::chrome::ChipLayout;
 
 use crate::tabs::{AppCommand, TabId};
 
-/// One selectable launch option in the launcher list, alongside the
-/// `AppCommand` it dispatches when chosen (by click or via keyboard).
-struct LauncherItem {
-    label: &'static str,
-    command: fn() -> AppCommand,
+/// One selectable local launch option in the Launcher list.
+struct LauncherItem<'a> {
+    label: String,
+    profile_id: Option<&'a str>,
 }
 
-fn start_local_session_command() -> AppCommand {
-    AppCommand::StartLocalSession
+impl LauncherItem<'_> {
+    fn command(&self) -> AppCommand {
+        match self.profile_id {
+            Some(profile_id) => AppCommand::StartConfiguredLocalProfile {
+                profile_id: profile_id.to_owned(),
+            },
+            None => AppCommand::StartLocalSession,
+        }
+    }
 }
 
 /// Authentication method selected for one transient SSH connection attempt.
@@ -301,13 +308,48 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
     None
 }
 
+fn show_saved_ssh_profiles(ui: &mut Ui, profiles: &[Profile]) {
+    let ssh_profiles: Vec<_> = profiles.iter().filter_map(Profile::as_ssh).collect();
+    if ssh_profiles.is_empty() {
+        return;
+    }
+
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new("Saved SSH profiles").strong());
+    for profile in ssh_profiles {
+        ui.group(|ui| {
+            ui.label(
+                egui::RichText::new(format!("Saved SSH profile: {}", profile.identifier()))
+                    .strong(),
+            );
+            ui.label(format!(
+                "{}@{}:{} · {} · {}×{}",
+                profile.username(),
+                profile.host(),
+                profile.port(),
+                profile.terminal_type(),
+                profile.initial_size().0,
+                profile.initial_size().1,
+            ));
+            ui.label(
+                "This saved profile does not launch yet. Use the transient SSH \
+                 authentication form below; secure credential storage is planned for M8.",
+            );
+        });
+    }
+}
+
 /// Renders the session launcher content and returns any dispatched command.
 ///
 /// `docs/gui-design.md` ("Session Launcher"): fast, compact, and usable
 /// repeatedly rather than a wizard or onboarding flow. The SSH form is a
 /// one-off connection surface: it creates no profile and retains password,
 /// key text, and key passphrases only in temporary UI state until submit.
-/// Saved profiles and other authentication methods remain later work.
+/// Saved local profiles launch through a typed application command. Saved SSH
+/// metadata remains visibly non-launching until M8 secure credential storage;
+/// the transient form below is the only SSH launch path.
 ///
 /// The list is keyboard-navigable: Up/Down moves a highlighted selection
 /// (persisted per-tab via `tab_id`, so multiple open launcher tabs don't
@@ -315,11 +357,20 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
 /// requiring the mouse. `tab_id` identifies which launcher tab this is, since
 /// egui's per-frame widget memory is otherwise shared across all callers
 /// within the same panel.
-pub fn show_launcher(ui: &mut Ui, tab_id: TabId) -> Option<AppCommand> {
-    let items = [LauncherItem {
-        label: "Local Shell (platform default)",
-        command: start_local_session_command,
+pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option<AppCommand> {
+    let mut items = vec![LauncherItem {
+        label: "Local Shell (platform default)".to_owned(),
+        profile_id: None,
     }];
+    items.extend(
+        profiles
+            .iter()
+            .filter_map(Profile::as_local)
+            .map(|profile| LauncherItem {
+                label: format!("{} (Local profile)", profile.identifier()),
+                profile_id: Some(profile.identifier()),
+            }),
+    );
 
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
@@ -344,18 +395,19 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId) -> Option<AppCommand> {
         );
         ui.add_space(12.0);
         for (index, item) in items.iter().enumerate() {
-            let response = ui.add(egui::Button::new(item.label).selected(index == state.selected));
+            let response = ui.add(egui::Button::new(&item.label).selected(index == state.selected));
             if response.clicked() {
-                command = Some((item.command)());
+                command = Some(item.command());
             }
         }
         if command.is_none() {
+            show_saved_ssh_profiles(ui, profiles);
             command = show_ssh_form(ui, tab_id, &mut state.ssh);
         }
     });
 
     if command.is_none() && launch_via_keyboard {
-        command = Some((items[state.selected].command)());
+        command = Some(items[state.selected].command());
     }
 
     ui.data_mut(|data| data.insert_temp(state_id, state));
@@ -421,20 +473,26 @@ mod tests {
 
     struct LauncherHarnessState {
         tab_id: TabId,
+        profiles: Vec<Profile>,
         command: Option<AppCommand>,
     }
 
     fn harness() -> Harness<'static, LauncherHarnessState> {
+        harness_with_profiles(Vec::new())
+    }
+
+    fn harness_with_profiles(profiles: Vec<Profile>) -> Harness<'static, LauncherHarnessState> {
         Harness::builder()
             .with_size(egui::vec2(520.0, 560.0))
             .build_ui_state(
                 |ui, state: &mut LauncherHarnessState| {
-                    if let Some(command) = show_launcher(ui, state.tab_id) {
+                    if let Some(command) = show_launcher(ui, state.tab_id, &state.profiles) {
                         state.command = Some(command);
                     }
                 },
                 LauncherHarnessState {
                     tab_id: AppState::for_test().active(),
+                    profiles,
                     command: None,
                 },
             )
@@ -551,6 +609,58 @@ mod tests {
                  and is not saved."
             )
             .is_some());
+    }
+
+    #[test]
+    fn local_profile_is_keyboard_accessible_and_returns_a_typed_command() {
+        let profiles = vec![
+            Profile::local("development", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        assert!(harness
+            .query_by_label("development (Local profile)")
+            .is_some());
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::StartConfiguredLocalProfile { ref profile_id })
+                if profile_id == "development"
+        ));
+    }
+
+    #[test]
+    fn saved_ssh_profile_is_visible_but_not_a_launch_action() {
+        let profiles = vec![Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test profile is valid")];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        assert!(harness
+            .query_by_label("Saved SSH profile: production")
+            .is_some());
+        assert!(harness
+            .query_by_label(
+                "This saved profile does not launch yet. Use the transient SSH \
+                 authentication form below; secure credential storage is planned for M8."
+            )
+            .is_some());
+        assert!(harness.query_by_label("production (SSH profile)").is_none());
+        assert!(harness.state().command.is_none());
     }
 
     #[test]
