@@ -34,6 +34,14 @@ are confirmed product regressions yet; they are tracked as
 [#36](https://github.com/fes/fesTerm/issues/36) pending correlation against
 real CI/hardware evidence, and none change M6's acceptance status.
 
+The controller was rerun on 2026-08-12 at
+`e08197d5a8cedfaacdb6b13eb70e15ac30795009`: Linux qualifying Xorg OS-input
+and macOS qualifying console-session native evidence passed. The
+Windows-on-ARM VM completed the repeatable diagnostic lifecycle but its native
+smoke remains non-acceptance evidence because Parallels cannot provide an
+authoritative accelerated wgpu surface. The next Windows acceptance run must
+execute directly on a hardware-backed, interactive Windows host.
+
 Two narrow parallel tracks proceeded without changing that acceptance status:
 
 - The early M8 GUI vertical slice now supplies independent local-session chips,

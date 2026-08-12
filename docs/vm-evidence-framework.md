@@ -444,7 +444,7 @@ Where this duplicates already-green CI, the workflow may support a narrower
 the full mode unless the acceptance record explicitly links equivalent CI for
 the same candidate SHA.
 
-## Windows VM Evidence
+## Windows Evidence
 
 ### Required environment
 
@@ -455,6 +455,13 @@ the same candidate SHA.
 - PowerShell available;
 - current fesTerm Windows build prerequisites; and
 - interactive desktop relay running as the test user.
+
+For qualifying Windows native-window evidence, run this workflow directly on
+an interactive, hardware-backed Windows host. The Parallels Windows-on-ARM
+guest is retained for repeatable diagnostic coverage only: it can automate
+reset, source staging, build, launch, focus, resize, PTY, screenshot, and
+artifact collection, but it cannot provide an authoritative accelerated wgpu
+surface.
 
 ### Required execution
 
@@ -502,6 +509,15 @@ including:
 Record guest architecture separately. On Apple Silicon, Windows ARM evidence is
 valid for the ARM build/runtime path but does not by itself replace native x64
 Windows evidence where architecture matters.
+
+### Direct native-host execution
+
+On a physical Windows host, run the same reviewed PowerShell entry point from
+an unlocked interactive desktop session. The host must expose a supported
+hardware graphics backend and must not be at a UAC, lock-screen, or other
+secure-desktop prompt. Retain the native-smoke result, OS-input result, and
+sanitized screenshots in the evidence bundle. This is the Windows acceptance
+path; do not classify Parallels Windows-on-ARM output as a replacement.
 
 ## Linux VM Evidence
 
@@ -1034,6 +1050,13 @@ The repository now contains the first bounded implementation at
   It can automate ConPTY and CPU-rendered diagnostic evidence, but the
   Parallels Windows-on-ARM guest remains `diagnostic`: Parallels does not
   expose a hardware-capable wgpu backend there.
+
+On 2026-08-12, the controller was rerun at `e08197d5a8cedfaacdb6b13eb70e15ac30795009`.
+Linux qualifying Xorg OS-input evidence and macOS qualifying console-session
+native evidence passed. Windows completed reset, readiness, exact source
+checkout, build, launch, screenshots, and shutdown, then reported the
+expected diagnostic native-smoke failure; it remains ineligible for
+acceptance until reproduced on hardware-backed Windows.
 
 Install each relay using `scripts/vm-evidence/relay/README.md`, then place a
 real configuration at `~/.config/festerm-vm-lab/config.json`. A normal run is:
