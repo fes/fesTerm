@@ -288,8 +288,10 @@ an ECDSA P-256-only server host-key profile and verifies the SHA-256 trust
 prompt before a shell exchange. The safe OpenSSH metadata importer and
 deterministic reconnect planner are implemented. Live reconnect is opt-in,
 bounded, re-verifies host trust for every fresh transport, and never claims
-remote process restoration. Profile/UI integration, agents, key-file
-references, and other authentication paths remain M7 work.
+remote process restoration. A typed application command can now place an SSH tab
+from supplied secret-free metadata and transient authentication, reusing the
+application host-key prompt boundary. Launcher UI, profile persistence,
+agents, key-file references, and other authentication paths remain M7 work.
 
 ### Outcome
 

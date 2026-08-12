@@ -15,7 +15,11 @@ use crate::tabs::{AppCommand, TabId};
 /// `AppCommand` it dispatches when chosen (by click or via keyboard).
 struct LauncherItem {
     label: &'static str,
-    command: AppCommand,
+    command: fn() -> AppCommand,
+}
+
+fn start_local_session_command() -> AppCommand {
+    AppCommand::StartLocalSession
 }
 
 /// Renders the session launcher content and returns any dispatched command.
@@ -35,7 +39,7 @@ struct LauncherItem {
 pub fn show_launcher(ui: &mut Ui, tab_id: TabId) -> Option<AppCommand> {
     let items = [LauncherItem {
         label: "Local Shell (platform default)",
-        command: AppCommand::StartLocalSession,
+        command: start_local_session_command,
     }];
 
     let selection_id = egui::Id::new(("launcher_selected_index", tab_id));
@@ -64,13 +68,13 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId) -> Option<AppCommand> {
         for (index, item) in items.iter().enumerate() {
             let response = ui.add(egui::Button::new(item.label).selected(index == selected));
             if response.clicked() {
-                command = Some(item.command.clone());
+                command = Some((item.command)());
             }
         }
     });
 
     if command.is_none() && launch_via_keyboard {
-        command = Some(items[selected].command.clone());
+        command = Some((items[selected].command)());
     }
 
     ui.data_mut(|d| d.insert_temp(selection_id, selected));

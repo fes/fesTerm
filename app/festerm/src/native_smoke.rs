@@ -11,7 +11,7 @@ use std::{
 };
 
 use festerm_core::Terminal;
-use festerm_pty::LocalPtySession;
+use festerm_session::Session;
 use festerm_ui_egui::EncodedInputSink;
 
 use crate::session_controller::SessionController;
@@ -123,11 +123,11 @@ impl NativeWindowSmoke {
         }
     }
 
-    pub fn drive(
+    pub fn drive<S: Session>(
         &mut self,
         context: &eframe::egui::Context,
         terminal: &mut Terminal,
-        controller: &mut SessionController<LocalPtySession>,
+        controller: &mut SessionController<S>,
     ) {
         if self.phase == Phase::Finished {
             return;
@@ -327,10 +327,10 @@ impl NativeWindowSmoke {
         }
     }
 
-    fn request_resize(
+    fn request_resize<S: Session>(
         &mut self,
         context: &eframe::egui::Context,
-        controller: &SessionController<LocalPtySession>,
+        controller: &SessionController<S>,
         index: usize,
     ) {
         let (width, height) = RESIZE_SEQUENCE[index];

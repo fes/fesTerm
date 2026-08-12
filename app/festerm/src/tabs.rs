@@ -2,7 +2,7 @@
 //!
 //! This module is the application coordinator described in
 //! `docs/application-command-model.md`: it owns the always-nonempty tab
-//! collection (Launcher, Settings, and Local Shell session tabs), the active
+//! collection (Launcher, Settings, Local Shell, and SSH session tabs), the active
 //! tab cursor, and `AppCommand` dispatch. Invocation surfaces (chip clicks,
 //! launcher buttons, and future shortcuts/command palette entries) send the
 //! same `AppCommand` values here rather than each implementing their own
@@ -20,13 +20,17 @@ use std::sync::{
 use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
-use festerm_session::{Session, SessionEventNotifier, SessionLifecycle};
+use festerm_session::{
+    Session, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
+    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
+};
+use festerm_ssh::{SshAuthentication, SshConnectionProfile, SshSession, SshSessionStartError};
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
     TerminalView,
 };
 
-use crate::session_controller::{seed_session_failure, terminal_size, SessionController};
+use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 
 /// Stable application-level tab identifier.
 ///
@@ -62,18 +66,88 @@ fn make_notifier(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
     Arc::new(EguiRepaintNotifier(context.clone()))
 }
 
-/// A running local-shell session tab: the terminal, its controller, and the
-/// presentation view. `SessionController` remains the sole terminal writer.
+/// Concrete transports that can occupy an application session tab.
+///
+/// The application owns this narrow sum type so terminal/UI code sees only
+/// the common `Session` contract. SSH host-key verification remains the
+/// existing `SessionEvent::HostKeyVerification` boundary handled by
+/// `SessionController`; no secret material is exposed here.
+pub enum ApplicationSession {
+    Local(LocalPtySession),
+    Ssh(SshSession),
+}
+
+impl Session for ApplicationSession {
+    fn id(&self) -> SessionId {
+        match self {
+            Self::Local(session) => session.id(),
+            Self::Ssh(session) => session.id(),
+        }
+    }
+
+    fn lifecycle(&self) -> SessionLifecycle {
+        match self {
+            Self::Local(session) => session.lifecycle(),
+            Self::Ssh(session) => session.lifecycle(),
+        }
+    }
+
+    fn metrics(&self) -> SessionMetrics {
+        match self {
+            Self::Local(session) => session.metrics(),
+            Self::Ssh(session) => session.metrics(),
+        }
+    }
+
+    fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+        match self {
+            Self::Local(session) => session.try_send_input(bytes),
+            Self::Ssh(session) => session.try_send_input(bytes),
+        }
+    }
+
+    fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+        match self {
+            Self::Local(session) => session.try_resize(size),
+            Self::Ssh(session) => session.try_resize(size),
+        }
+    }
+
+    fn try_shutdown(&self) -> Result<(), SessionSendError> {
+        match self {
+            Self::Local(session) => session.try_shutdown(),
+            Self::Ssh(session) => session.try_shutdown(),
+        }
+    }
+
+    fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+        match self {
+            Self::Local(session) => session.try_recv_event(),
+            Self::Ssh(session) => session.try_recv_event(),
+        }
+    }
+
+    fn shutdown(&self, timeout: std::time::Duration) -> Result<ShutdownResult, ShutdownError> {
+        match self {
+            Self::Local(session) => session.shutdown(timeout),
+            Self::Ssh(session) => session.shutdown(timeout),
+        }
+    }
+}
+
+/// A running local-shell or SSH session tab: the terminal, its controller,
+/// and presentation view. `SessionController` remains the sole terminal
+/// writer.
 pub struct SessionTab {
     pub terminal: Terminal,
-    pub controller: SessionController<LocalPtySession>,
+    pub controller: SessionController<ApplicationSession>,
     pub view: TerminalView,
     /// Stable primary identity (`docs/gui-design.md` "Identity precedence").
     /// Transient terminal-provided titles are shown as secondary metadata and
     /// must never replace this.
     pub label: String,
-    /// The executable selected before a local session starts. This gives the
-    /// chip useful secondary identity before the child emits an OSC title.
+    /// Static connection metadata resolved before a session starts. This gives
+    /// the chip useful secondary identity before the child emits an OSC title.
     pub launch_secondary: Option<String>,
 }
 
@@ -82,8 +156,8 @@ impl SessionTab {
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
         let result = LocalPtySession::start_default_with_notifier(size, make_notifier(context));
-        Self::from_session_result(
-            result,
+        Self::from_local_session_result(
+            result.map(ApplicationSession::Local),
             dimensions,
             "Local Shell",
             default_local_profile()
@@ -114,14 +188,58 @@ impl SessionTab {
             Some(profile) => LocalPtySession::start_with_notifier(profile, size, notifier),
             None => LocalPtySession::start_default_with_notifier(size, notifier),
         };
-        Self::from_session_result(result, dimensions, "Local Shell", launch_secondary)
+        Self::from_local_session_result(
+            result.map(ApplicationSession::Local),
+            dimensions,
+            "Local Shell",
+            launch_secondary,
+        )
     }
 
-    fn from_session_result(
-        result: Result<LocalPtySession, LocalPtyError>,
+    fn start_ssh(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        context: &egui::Context,
+    ) -> Self {
+        let size = profile.initial_size();
+        let dimensions = Dimensions::new(usize::from(size.columns()), usize::from(size.rows()))
+            .expect("validated SSH terminal size fits terminal dimensions");
+        let label = format!("{}@{}", profile.username(), profile.identity().host());
+        let launch_secondary = Some(format!(
+            "SSH · {}:{}",
+            profile.identity().host(),
+            profile.identity().port()
+        ));
+        let result =
+            SshSession::start_with_notifier(profile, authentication, make_notifier(context))
+                .map(ApplicationSession::Ssh);
+        Self::from_ssh_session_result(result, dimensions, &label, launch_secondary)
+    }
+
+    fn from_local_session_result(
+        result: Result<ApplicationSession, LocalPtyError>,
         dimensions: Dimensions,
         label: &str,
         launch_secondary: Option<String>,
+    ) -> Self {
+        Self::from_session_result(result, dimensions, label, launch_secondary, "Local shell")
+    }
+
+    fn from_ssh_session_result(
+        result: Result<ApplicationSession, SshSessionStartError>,
+        dimensions: Dimensions,
+        label: &str,
+        launch_secondary: Option<String>,
+    ) -> Self {
+        Self::from_session_result(result, dimensions, label, launch_secondary, "SSH session")
+    }
+
+    fn from_session_result<E: std::fmt::Display>(
+        result: Result<ApplicationSession, E>,
+        dimensions: Dimensions,
+        label: &str,
+        launch_secondary: Option<String>,
+        session_name: &'static str,
     ) -> Self {
         let mut terminal =
             Terminal::new(dimensions).expect("default terminal allocation should succeed");
@@ -130,19 +248,21 @@ impl SessionTab {
                 tracing::info!(
                     target: "festerm::session",
                     session = %session.id(),
-                    "started local shell session"
+                    %session_name,
+                    "started session"
                 );
-                SessionController::with_session(session)
+                SessionController::with_named_session(session, session_name)
             }
             Err(error) => {
                 let message = error.to_string();
                 tracing::error!(
                     target: "festerm::session",
                     %error,
-                    "could not start local shell"
+                    %session_name,
+                    "could not start session"
                 );
-                seed_session_failure(&mut terminal, &message);
-                SessionController::with_startup_error(message)
+                seed_session_startup_failure(&mut terminal, &message, session_name);
+                SessionController::with_named_startup_error(message, session_name)
             }
         };
         Self {
@@ -167,6 +287,15 @@ impl SessionTab {
             Some(SessionLifecycle::Stopping) => ChipStatus::Disconnected,
             Some(SessionLifecycle::Exited(_) | SessionLifecycle::Stopped) => ChipStatus::Exited,
             Some(SessionLifecycle::Failed(_)) => ChipStatus::Failed,
+        }
+    }
+
+    /// Content-free locality/transport text for the status bar.
+    pub fn system_label(&self) -> &'static str {
+        match self.controller.session() {
+            Some(ApplicationSession::Ssh(_)) => "Remote · SSH",
+            Some(ApplicationSession::Local(_)) | None if cfg!(windows) => "Local · Windows",
+            Some(ApplicationSession::Local(_)) | None => "Local · Unix",
         }
     }
 }
@@ -199,7 +328,7 @@ pub struct Tab {
 /// (chip row, launcher buttons, and future shortcuts/command palette), per
 /// `docs/application-command-model.md`. UI code must not implement its own
 /// copy of these operations.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum AppCommand {
     /// "New Tab opens the session launcher" (`docs/gui-design.md`
     /// "Interaction Conventions").
@@ -209,6 +338,14 @@ pub enum AppCommand {
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
+    /// Starts one SSH transport from explicitly supplied, secret-free
+    /// connection metadata and transient authentication. This command is
+    /// deliberately not a launcher action or persisted profile mechanism.
+    #[allow(dead_code)]
+    StartSshSession {
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+    },
     ActivateTab(TabId),
     /// Activates the next/previous tab in stable list order
     /// (`docs/gui-design.md` "Next/Previous Tab switch predictably" —
@@ -337,6 +474,10 @@ impl AppState {
             AppCommand::NewLauncherTab => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::StartLocalSession => self.start_local_session(context),
+            AppCommand::StartSshSession {
+                profile,
+                authentication,
+            } => self.execute_ssh_session(profile, authentication, context),
             AppCommand::ActivateTab(id) => self.activate(id),
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
@@ -387,7 +528,19 @@ impl AppState {
     }
 
     fn start_local_session(&mut self, context: &egui::Context) {
-        let session = SessionTab::start_default(context);
+        self.place_session(SessionTab::start_default(context));
+    }
+
+    fn execute_ssh_session(
+        &mut self,
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        context: &egui::Context,
+    ) {
+        self.place_session(SessionTab::start_ssh(profile, authentication, context));
+    }
+
+    fn place_session(&mut self, session: SessionTab) {
         // Starting a session from the active Launcher tab replaces that
         // tab in place (same position, same identity) rather than leaving
         // the disposable launcher behind alongside a new session tab: the
@@ -533,6 +686,75 @@ mod tests {
             local_profile_secondary(&profile).as_deref(),
             Some("cmd.exe")
         );
+    }
+
+    fn ssh_profile() -> SshConnectionProfile {
+        SshConnectionProfile::new(
+            festerm_ssh::HostIdentity::new("192.0.2.1", 22).expect("test host is valid"),
+            "test-user",
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            TerminalSize::new(80, 24).expect("test size is valid"),
+        )
+        .expect("test profile is valid")
+    }
+
+    #[test]
+    fn ssh_startup_failure_uses_the_existing_no_session_fallback() {
+        let dimensions = Dimensions::new(80, 24).expect("test dimensions are valid");
+        let session = SessionTab::from_ssh_session_result(
+            Err(SshSessionStartError),
+            dimensions,
+            "test-user@example.invalid",
+            Some("SSH · example.invalid:22".to_owned()),
+        );
+
+        assert_eq!(
+            session.controller.start_error(),
+            Some("could not start SSH worker thread")
+        );
+        assert!(
+            session
+                .controller
+                .status_line()
+                .starts_with("SSH session unavailable:"),
+            "SSH failures use the controller's ordinary startup-error state"
+        );
+        assert!(session
+            .terminal
+            .row_text(0)
+            .is_some_and(|row| row.starts_with("SSH session could not start.")));
+    }
+
+    #[test]
+    fn ssh_command_replaces_the_active_launcher_without_a_live_server() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher_id = state.active();
+        let secret = "transient-test-password";
+        let command = AppCommand::StartSshSession {
+            profile: ssh_profile(),
+            authentication: SshAuthentication::password(secret),
+        };
+
+        assert!(
+            !format!("{command:?}").contains(secret),
+            "transient authentication must stay redacted in command debug output"
+        );
+        state.dispatch(command, &context);
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), launcher_id);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("SSH command must place a session tab");
+        };
+        assert_eq!(session.label, "test-user@192.0.2.1");
+        assert_eq!(session.system_label(), "Remote · SSH");
+        assert!(matches!(
+            session.controller.session(),
+            Some(ApplicationSession::Ssh(_))
+        ));
+
+        state.dispatch(AppCommand::CloseTab(launcher_id), &context);
     }
 
     #[test]

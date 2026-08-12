@@ -270,12 +270,12 @@ impl std::fmt::Display for PendingCommandError {
                 attempted,
             } => write!(
                 formatter,
-                "pending local-session writes exceeded their {capacity}-byte bound \
+                "pending session writes exceeded their {capacity}-byte bound \
                  ({queued} queued, {attempted} additional)"
             ),
             Self::TooLarge { maximum, actual } => write!(
                 formatter,
-                "local-session write is {actual} bytes and exceeds the {maximum}-byte limit"
+                "session write is {actual} bytes and exceeds the {maximum}-byte limit"
             ),
         }
     }
@@ -299,6 +299,7 @@ pub(crate) enum PendingFlush {
 /// writer mutates a `Terminal` from session output.
 pub struct SessionController<S: Session> {
     session: Option<S>,
+    session_name: &'static str,
     startup_error: Option<String>,
     diagnostics: InputSinkDiagnostics,
     pending_writes: PendingCommandBuffer,
@@ -317,9 +318,16 @@ impl<S: Session> SessionController<S> {
     /// This is the production constructor when the session was started externally
     /// (e.g. by the bootstrap code that owns the notifier).
     pub fn with_session(session: S) -> Self {
+        Self::with_named_session(session, "Local shell")
+    }
+
+    /// Creates a controller from an already-started session with its
+    /// user-visible transport name.
+    pub fn with_named_session(session: S, session_name: &'static str) -> Self {
         let lifecycle = session.lifecycle();
         Self {
             session: Some(session),
+            session_name,
             startup_error: None,
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
@@ -335,8 +343,15 @@ impl<S: Session> SessionController<S> {
 
     /// Creates a controller in no-session mode with a startup error message.
     pub fn with_startup_error(error: String) -> Self {
+        Self::with_named_startup_error(error, "Local shell")
+    }
+
+    /// Creates a no-session controller with a transport-specific startup
+    /// error while retaining the normal no-session behavior.
+    pub fn with_named_startup_error(error: String, session_name: &'static str) -> Self {
         Self {
             session: None,
+            session_name,
             startup_error: Some(error),
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
@@ -407,7 +422,7 @@ impl<S: Session> SessionController<S> {
     fn observe_session_event(&mut self, event: SessionEvent) {
         match event {
             SessionEvent::Lifecycle(lifecycle) => {
-                tracing::info!(target: "festerm::session", ?lifecycle, "local session lifecycle");
+                tracing::info!(target: "festerm::session", ?lifecycle, "session lifecycle");
                 self.last_lifecycle = Some(lifecycle);
             }
             SessionEvent::ResizeApplied(size) => {
@@ -415,7 +430,7 @@ impl<S: Session> SessionController<S> {
                     target: "festerm::session",
                     columns = size.columns(),
                     rows = size.rows(),
-                    "local PTY resized"
+                    "session resized"
                 );
                 self.last_resize = Some(size);
                 self.resize_probe.record_resize_applied(size);
@@ -424,7 +439,7 @@ impl<S: Session> SessionController<S> {
                 tracing::warn!(
                     target: "festerm::session",
                     ?direction,
-                    "local session queue pressure"
+                    "session queue pressure"
                 );
                 self.last_backpressure = Some(direction);
             }
@@ -441,7 +456,7 @@ impl<S: Session> SessionController<S> {
             self.last_error = Some("terminal reply queue overflowed".to_owned());
             tracing::warn!(
                 target: "festerm::session",
-                "terminal reply queue overflowed before local-session forwarding"
+                "terminal reply queue overflowed before session forwarding"
             );
         }
         let replies = terminal.drain_replies();
@@ -465,7 +480,7 @@ impl<S: Session> SessionController<S> {
             } => {
                 self.record_pending_failure(
                     format!(
-                        "local-session pending writes became unrecoverable after {error}; \
+                        "session pending writes became unrecoverable after {error}; \
                          discarded {dropped_bytes} bytes"
                     ),
                     Some(error),
@@ -509,7 +524,7 @@ impl<S: Session> SessionController<S> {
             target: "festerm::session",
             byte_count = bytes.len(),
             source,
-            "queued content-free local session write"
+            "queued content-free session write"
         );
     }
 
@@ -518,34 +533,34 @@ impl<S: Session> SessionController<S> {
             tracing::warn!(
                 target: "festerm::session",
                 %error,
-                "local session command became unrecoverable"
+                "session command became unrecoverable"
             );
         } else {
             tracing::warn!(
                 target: "festerm::session",
                 %message,
-                "local session pending-write bound exceeded"
+                "session pending-write bound exceeded"
             );
         }
         self.last_error = Some(message);
     }
 
     fn record_send_error(&mut self, error: SessionSendError) {
-        tracing::warn!(target: "festerm::session", %error, "local session command rejected");
+        tracing::warn!(target: "festerm::session", %error, "session command rejected");
         self.last_error = Some(error.to_string());
     }
 
     fn record_session_error(&mut self, error: SessionError) {
-        tracing::error!(target: "festerm::session", %error, "local session backend error");
+        tracing::error!(target: "festerm::session", %error, "session backend error");
         self.last_error = Some(error.to_string());
     }
 
     pub fn status_line(&self) -> String {
         if let Some(error) = &self.startup_error {
-            return format!("Local shell unavailable: {error}");
+            return format!("{} unavailable: {error}", self.session_name);
         }
         let Some(_session) = &self.session else {
-            return "No local session".to_owned();
+            return "No active session".to_owned();
         };
         let lifecycle = self
             .last_lifecycle
@@ -561,17 +576,18 @@ impl<S: Session> SessionController<S> {
             .map(|size| format!("; resize {}x{}", size.columns(), size.rows()))
             .unwrap_or_default();
         format!(
-            "Local shell {lifecycle:?}{latest_resize}{latest_error}",
+            "{} {lifecycle:?}{latest_resize}{latest_error}",
+            self.session_name,
             lifecycle = lifecycle
         )
     }
 
     pub fn diagnostics_line(&self) -> String {
         if let Some(error) = &self.startup_error {
-            return format!("Local shell unavailable: {error}");
+            return format!("{} unavailable: {error}", self.session_name);
         }
         let Some(session) = &self.session else {
-            return "No local session".to_owned();
+            return "No active session".to_owned();
         };
         let metrics = session.metrics();
         let lifecycle = self
@@ -605,9 +621,10 @@ impl<S: Session> SessionController<S> {
             })
             .unwrap_or_default();
         format!(
-            "Local shell {lifecycle:?}; in {} B, out {} B; events {}/{} (high {}); \
+            "{} {lifecycle:?}; in {} B, out {} B; events {}/{} (high {}); \
              pending writes {} entries, {} / {} B; pressure {}; errors {}; resizes {}\
              {latest_resize}{resize_probe}{queue_pressure}{latest_error}",
+            self.session_name,
             metrics.input_bytes,
             metrics.output_bytes,
             metrics.event_queue_depth,
@@ -643,12 +660,12 @@ impl<S: Session> SessionController<S> {
             match session.try_shutdown() {
                 Ok(()) => tracing::debug!(
                     target: "festerm::session",
-                    "requested local session shutdown"
+                    "requested session shutdown"
                 ),
                 Err(error) => tracing::error!(
                     target: "festerm::session",
                     %error,
-                    "could not request local session shutdown"
+                    "could not request session shutdown"
                 ),
             }
         }
@@ -741,20 +758,33 @@ pub fn pump_session_events(
 }
 
 pub fn seed_session_failure(terminal: &mut Terminal, error: &str) {
+    seed_session_startup_failure(terminal, error, "Local shell");
+}
+
+/// Renders the existing visible no-session fallback for any transport whose
+/// startup fails before a session can be created.
+pub fn seed_session_startup_failure(
+    terminal: &mut Terminal,
+    error: &str,
+    session_name: &'static str,
+) {
     terminal.ingest(
-        "\x1b[2J\x1b[H\
-\x1b[1;31mLocal shell could not start.\x1b[0m\r\n\
+        format!(
+            "\x1b[2J\x1b[H\
+\x1b[1;31m{session_name} could not start.\x1b[0m\r\n\
 \r\n\
 \x1b[1;33mfesTerm remains in no-session mode; this is not a shell.\x1b[0m\r\n\
 \r\n\
 Check the session status line for the content-free launch error.\r\n\
-No commands are executed until a local shell can be created.\r\n"
-            .as_bytes(),
+No commands are executed until a session can be created.\r\n"
+        )
+        .as_bytes(),
     );
     tracing::error!(
         target: "festerm::session",
         error,
-        "showing no-session fallback after local shell startup failure"
+        %session_name,
+        "showing no-session fallback after session startup failure"
     );
 }
 
