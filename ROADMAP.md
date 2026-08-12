@@ -418,6 +418,11 @@ The following tracks remain intentionally outside the initial critical path. Arc
 - Scripting and automation.
 - A stable plugin or extension API.
 - Detachable sessions and built-in multiplexing, especially where useful on Windows.
+- Serial connections, scheduled only after local-session, native SSH, and
+  tab/profile/workspace UI work is complete. Its design must define
+  platform-specific device discovery and permissions, explicit serial-port
+  settings, exclusive-access and reconnect behavior, persisted
+  non-secret profile metadata, and deterministic loopback/fixture coverage.
 - Optional metadata synchronization and account identity.
 - Advanced graphics protocols.
 - Persistent, explicitly enabled terminal history.
