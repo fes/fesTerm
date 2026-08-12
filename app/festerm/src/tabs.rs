@@ -21,10 +21,14 @@ use eframe::egui;
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
 use festerm_session::{
-    Session, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
-    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
+    HostKeyPrompt, Session, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle,
+    SessionMetrics, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
+    TerminalSize,
 };
-use festerm_ssh::{SshAuthentication, SshConnectionProfile, SshSession, SshSessionStartError};
+use festerm_ssh::{
+    HostKeyDecisionResolutionError, HostTrustDecision, SshAuthentication, SshConnectionProfile,
+    SshSession, SshSessionStartError,
+};
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
     TerminalView,
@@ -75,6 +79,61 @@ fn make_notifier(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
 pub enum ApplicationSession {
     Local(LocalPtySession),
     Ssh(SshSession),
+}
+
+/// The only host-key decisions exposed by the application during M7.
+///
+/// Persistent trust is deliberately not representable until M8 storage owns
+/// its policy and secure persistence boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostKeyTrustDecision {
+    Reject,
+    AcceptOnce,
+}
+
+impl From<HostKeyTrustDecision> for HostTrustDecision {
+    fn from(value: HostKeyTrustDecision) -> Self {
+        match value {
+            HostKeyTrustDecision::Reject => Self::Reject,
+            HostKeyTrustDecision::AcceptOnce => Self::AcceptOnce,
+        }
+    }
+}
+
+/// An application-level failure to resolve a displayed host-key request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostKeyTrustResolutionError {
+    NoPendingPrompt,
+    NotSshSession,
+    Transport(HostKeyDecisionResolutionError),
+}
+
+impl std::fmt::Display for HostKeyTrustResolutionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPendingPrompt => formatter.write_str("no host-key prompt is pending"),
+            Self::NotSshSession => formatter.write_str("the tab is not an SSH session"),
+            Self::Transport(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl ApplicationSession {
+    /// Resolves a host-key prompt through an SSH session without exposing its
+    /// resolver to GUI code or allowing persistent acceptance.
+    pub fn resolve_host_key_prompt(
+        &self,
+        prompt: &HostKeyPrompt,
+        decision: HostKeyTrustDecision,
+    ) -> Result<(), HostKeyTrustResolutionError> {
+        let Self::Ssh(session) = self else {
+            return Err(HostKeyTrustResolutionError::NotSshSession);
+        };
+        session
+            .host_key_decision_resolver()
+            .resolve(prompt, decision.into())
+            .map_err(HostKeyTrustResolutionError::Transport)
+    }
 }
 
 impl Session for ApplicationSession {
@@ -298,6 +357,36 @@ impl SessionTab {
             Some(ApplicationSession::Local(_)) | None => "Local · Unix",
         }
     }
+
+    /// The active SSH host-key request, if the transport is waiting for one.
+    /// Local tabs never expose this UI state.
+    pub fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {
+        matches!(self.controller.session(), Some(ApplicationSession::Ssh(_)))
+            .then(|| self.controller.host_key_prompt())
+            .flatten()
+    }
+
+    /// Sends a nonblocking, one-time host-key decision to the SSH worker.
+    ///
+    /// The prompt is cleared after either outcome so stale UI cannot submit
+    /// the same decision again. A future request arrives through the normal
+    /// event boundary and replaces this state.
+    pub fn resolve_host_key_trust(
+        &mut self,
+        decision: HostKeyTrustDecision,
+    ) -> Result<(), HostKeyTrustResolutionError> {
+        let prompt = self
+            .host_key_prompt()
+            .cloned()
+            .ok_or(HostKeyTrustResolutionError::NoPendingPrompt)?;
+        let result = self
+            .controller
+            .session()
+            .expect("an SSH host-key prompt requires a session")
+            .resolve_host_key_prompt(&prompt, decision);
+        self.controller.clear_host_key_prompt(&prompt);
+        result
+    }
 }
 
 fn local_profile_secondary(profile: &LocalProfile) -> Option<String> {
@@ -345,6 +434,12 @@ pub enum AppCommand {
     StartSshSession {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
+    },
+    /// Resolves the displayed host-key request for one specific SSH tab.
+    /// This command intentionally has no persistent-trust variant.
+    ResolveHostKeyTrust {
+        tab: TabId,
+        decision: HostKeyTrustDecision,
     },
     ActivateTab(TabId),
     /// Activates the next/previous tab in stable list order
@@ -478,6 +573,9 @@ impl AppState {
                 profile,
                 authentication,
             } => self.execute_ssh_session(profile, authentication, context),
+            AppCommand::ResolveHostKeyTrust { tab, decision } => {
+                self.resolve_host_key_trust(tab, decision)
+            }
             AppCommand::ActivateTab(id) => self.activate(id),
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
@@ -538,6 +636,15 @@ impl AppState {
         context: &egui::Context,
     ) {
         self.place_session(SessionTab::start_ssh(profile, authentication, context));
+    }
+
+    fn resolve_host_key_trust(&mut self, tab: TabId, decision: HostKeyTrustDecision) {
+        let Some(session) = self.session_tab_mut(tab) else {
+            return;
+        };
+        if let Err(error) = session.resolve_host_key_trust(decision) {
+            session.controller.record_host_key_resolution_error(error);
+        }
     }
 
     fn place_session(&mut self, session: SessionTab) {
@@ -696,6 +803,18 @@ mod tests {
             TerminalSize::new(80, 24).expect("test size is valid"),
         )
         .expect("test profile is valid")
+    }
+
+    #[test]
+    fn application_host_key_decisions_cannot_request_persistence() {
+        assert_eq!(
+            HostTrustDecision::from(HostKeyTrustDecision::Reject),
+            HostTrustDecision::Reject
+        );
+        assert_eq!(
+            HostTrustDecision::from(HostKeyTrustDecision::AcceptOnce),
+            HostTrustDecision::AcceptOnce
+        );
     }
 
     #[test]

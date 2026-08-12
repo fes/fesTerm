@@ -394,6 +394,26 @@ impl<S: Session> SessionController<S> {
         self.host_key_prompt.as_ref()
     }
 
+    /// Clears `prompt` only when it is still the current host-key request.
+    ///
+    /// Resolution is performed by the SSH session owner. Keeping this state
+    /// transition here prevents an already-resolved request from remaining in
+    /// the UI while a later request is allowed to replace it.
+    pub fn clear_host_key_prompt(&mut self, prompt: &HostKeyPrompt) -> bool {
+        if self.host_key_prompt.as_ref() == Some(prompt) {
+            self.host_key_prompt = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Makes a host-key decision failure visible through the ordinary session
+    /// status surface without retaining trust-request data.
+    pub fn record_host_key_resolution_error(&mut self, error: impl std::fmt::Display) {
+        self.last_error = Some(format!("host-key decision could not be applied: {error}"));
+    }
+
     /// Returns whether another frame is required to continue a bounded drain.
     pub fn pump_events(&mut self, terminal: &mut Terminal) -> bool {
         let Some(session) = &self.session else {
@@ -991,7 +1011,8 @@ mod tests {
         assert!(!controller.pump_events(&mut terminal));
         let prompt = controller
             .host_key_prompt()
-            .expect("host-key prompt retained");
+            .expect("host-key prompt retained")
+            .clone();
         assert_eq!(prompt.host(), "ssh.example.test");
         assert_eq!(prompt.port(), 2222);
         assert_eq!(
@@ -1001,6 +1022,45 @@ mod tests {
         assert!(terminal
             .row_text(0)
             .is_some_and(|row| row.trim().is_empty()));
+
+        assert!(controller.clear_host_key_prompt(&prompt));
+        assert!(controller.host_key_prompt().is_none());
+    }
+
+    #[test]
+    fn host_key_prompt_is_not_cleared_by_a_different_request() {
+        let session = FakeSession::new([SessionEvent::HostKeyVerification(HostKeyPrompt::new(
+            "ssh.example.test",
+            2222,
+            "SHA256:current",
+        ))]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        assert!(!controller.pump_events(&mut terminal));
+        assert!(!controller.clear_host_key_prompt(&HostKeyPrompt::new(
+            "ssh.example.test",
+            2222,
+            "SHA256:other",
+        )));
+        assert_eq!(
+            controller
+                .host_key_prompt()
+                .map(HostKeyPrompt::sha256_fingerprint),
+            Some("SHA256:current")
+        );
+    }
+
+    #[test]
+    fn host_key_resolution_failure_is_visible_in_session_status() {
+        let mut controller = SessionController::for_test(FakeSession::new([]));
+
+        controller.record_host_key_resolution_error("no host-key prompt is pending");
+
+        assert!(controller
+            .status_line()
+            .contains("host-key decision could not be applied: no host-key prompt is pending"));
     }
 
     #[test]

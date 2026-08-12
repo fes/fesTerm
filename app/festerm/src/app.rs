@@ -9,7 +9,7 @@ use festerm_ui_egui::theme;
 
 use crate::native_smoke::NativeWindowSmoke;
 use crate::screens;
-use crate::tabs::{AppCommand, AppState, TabContent, TabId};
+use crate::tabs::{AppCommand, AppState, HostKeyTrustDecision, TabContent, TabId};
 
 const APPLICATION_TITLE: &str = "fesTerm";
 
@@ -427,6 +427,55 @@ impl FesTermApp {
                 );
             });
     }
+
+    /// Shows the M7 host-trust decision only for the active SSH tab. The
+    /// returned command is dispatched after UI construction, so clicking a
+    /// control only signals the SSH worker and never waits for network I/O on
+    /// the GUI thread.
+    fn show_host_key_prompt(&self, ui: &mut egui::Ui) -> Option<AppCommand> {
+        let tab = self.state.active_tab();
+        let TabContent::Session(session) = &tab.content else {
+            return None;
+        };
+        let prompt = session.host_key_prompt()?;
+        let host_port = Self::canonical_host_port(prompt.host(), prompt.port());
+        let fingerprint = prompt.sha256_fingerprint();
+        let mut decision = None;
+
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.heading("Verify SSH Host Key");
+            ui.label("Verify this host before connecting:");
+            ui.horizontal(|ui| {
+                ui.label("Host:");
+                ui.monospace(&host_port);
+            });
+            ui.horizontal(|ui| {
+                ui.label("SHA-256 fingerprint:");
+                ui.monospace(fingerprint);
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Reject").clicked() {
+                    decision = Some(HostKeyTrustDecision::Reject);
+                }
+                if ui.button("Accept Once").clicked() {
+                    decision = Some(HostKeyTrustDecision::AcceptOnce);
+                }
+            });
+        });
+
+        decision.map(|decision| AppCommand::ResolveHostKeyTrust {
+            tab: tab.id,
+            decision,
+        })
+    }
+
+    fn canonical_host_port(host: &str, port: u16) -> String {
+        if host.contains(':') {
+            format!("[{host}]:{port}")
+        } else {
+            format!("{host}:{port}")
+        }
+    }
 }
 
 impl eframe::App for FesTermApp {
@@ -488,6 +537,7 @@ impl FesTermApp {
             self.show_session_inspector(ui);
         }
 
+        let host_key_command = self.show_host_key_prompt(ui);
         let mut screen_command = None;
         let mut overlay_action = None;
         let chip_layout = self.state.chip_layout();
@@ -520,6 +570,10 @@ impl FesTermApp {
                     overlay_action = overlay::show(ui.ctx(), session.chip_status());
                 }
             }
+        }
+        if let Some(command) = host_key_command {
+            let context = ui.ctx().clone();
+            self.state.dispatch(command, &context);
         }
         if let Some(command) = screen_command {
             let context = ui.ctx().clone();
@@ -582,6 +636,18 @@ mod tests {
     fn terminal_title_is_scoped_to_the_application_window() {
         assert_eq!(FesTermApp::window_title(""), APPLICATION_TITLE);
         assert_eq!(FesTermApp::window_title("editor"), "editor - fesTerm");
+    }
+
+    #[test]
+    fn canonical_host_port_preserves_ssh_destination_boundaries() {
+        assert_eq!(
+            FesTermApp::canonical_host_port("ssh.example.test", 2222),
+            "ssh.example.test:2222"
+        );
+        assert_eq!(
+            FesTermApp::canonical_host_port("2001:db8::7", 22),
+            "[2001:db8::7]:22"
+        );
     }
 
     #[test]
