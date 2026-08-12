@@ -2,6 +2,7 @@
 members = [
     "app/festerm",
     "crates/festerm-core",
+    "crates/festerm-config",
     "crates/festerm-macos-window",
     "crates/festerm-pty",
     "crates/festerm-pty-test-child",

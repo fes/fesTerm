@@ -10,7 +10,10 @@ Milestone 6 compatibility work is in progress. The initial M8-scope GUI
 vertical slice is implemented as an explicit parallel track: independent
 session chips, Launcher and Settings surfaces, a session inspector, command
 palette, custom title bar, and configurable status bar. See the Milestone 8
-note in [`ROADMAP.md`](ROADMAP.md). Milestone 7 is implemented: the
+note in [`ROADMAP.md`](ROADMAP.md). A first GUI-independent M8 configuration
+foundation now parses and serializes strict, versioned, secret-free TOML local
+and SSH profile metadata transactionally; workspace persistence, credential
+storage, file watching, and app integration remain M8 work. Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
@@ -72,6 +75,8 @@ custom-terminfo strategy.
   of the evidence-first process, parallel work, and current sequencing.
 - [M6 compatibility checklist](docs/m6-compatibility-checklist.md) — reference
   application scenarios, `TERM` strategy, and regression triage.
+- [Configuration foundation](docs/configuration.md) — M8 schema version 1
+  profile document, secret boundary, and transactional reload behavior.
 - [GUI design](docs/gui-design.md) — authoritative interaction model, independent
   session-chip principles, visual hierarchy, and canonical wireframe.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust

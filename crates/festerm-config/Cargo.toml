@@ -1,0 +1,18 @@
+[package]
+name = "festerm-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Versioned, secret-free fesTerm profile configuration."
+
+[dependencies]
+festerm-pty = { path = "../festerm-pty" }
+festerm-session = { path = "../festerm-session" }
+festerm-ssh = { path = "../festerm-ssh" }
+serde = { version = "1", features = ["derive"] }
+toml = "1.1.4"
+
+[lints]
+workspace = true

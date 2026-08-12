@@ -6,8 +6,9 @@ This document defines the proposed subsystem boundaries, dependency direction,
 runtime data flow, and Rust workspace structure for fesTerm. The repository
 contains `festerm-core`, `festerm-session`, `festerm-pty`,
 `festerm-test-support`, the `festerm-ui-egui` presentation crate, and the
-application composition shell. Configuration and remote-backend crates remain
-target architecture.
+application composition shell. The first GUI-independent `festerm-config`
+profile-document foundation is implemented; application integration,
+workspace persistence, and credential storage remain target architecture.
 
 ## Architectural Goals
 
@@ -182,6 +183,14 @@ Owns versioned, human-readable configuration and persistence models:
 - References to secrets without storing secret values in TOML.
 
 Operating-system credential storage belongs behind a separate interface and should not leak into configuration documents.
+
+The initial M8 slice parses and serializes schema-versioned, strict TOML
+local and SSH profile metadata. It validates a complete candidate before an
+in-memory reload state atomically replaces the active configuration, retaining
+the prior valid document and a content-free diagnostic on failure. It rejects
+unknown fields and password/private-key material. File watching, workspace
+persistence, credential references, and application integration remain later
+M8 work.
 
 ### `festerm-ui-egui`
 

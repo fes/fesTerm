@@ -335,6 +335,15 @@ profiles and workspace restoration remain M8 work. This does not change M6/M8
 completion criteria. [ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md)
 defines the ownership model that M7 reconnect and M8 persistence follow.
 
+The first configuration vertical slice is also implemented in the
+GUI-independent `festerm-config` crate. It strictly parses and serializes
+schema-versioned TOML local and SSH profile metadata, rejects unknown and
+secret-bearing fields or values, validates complete replacements before
+atomically accepting them, and retains the previous valid configuration with
+content-free diagnostics when reload fails. It intentionally does not yet
+watch files, integrate profile launching into the application, persist
+workspaces, or store/refer to credentials; M8 remains incomplete.
+
 ### Outcome
 
 fesTerm operates as a practical multi-session terminal application.
