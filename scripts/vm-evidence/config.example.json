@@ -31,6 +31,7 @@
       "port": 22,
       "user": "festerm",
       "relay_spool": "/home/festerm/vm-evidence-spool",
+      "display_mode": "2560x1600",
       "qualification": "qualifying-xorg"
     },
     "macos": {

@@ -1086,6 +1086,10 @@ The local `watchdog` configuration may override these defaults:
 }
 ```
 
+The qualifying Linux configuration may also set `vms.linux.display_mode`
+(currently `2560x1600`) to enforce a complete native window in Xorg captures.
+macOS and Windows use Parallels high-resolution guest display negotiation.
+
 The host controller intentionally does **not** install guest dependencies,
 grant Accessibility/TCC permissions, disable Parallels sharing, or alter a
 baseline. Those are explicit one-time provisioning tasks and must be captured

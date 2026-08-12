@@ -217,6 +217,14 @@ prepare_guest_spool() {
     esac
 }
 
+configure_guest_display() {
+    platform=$1
+    [ "$platform" = linux ] || return 0
+    display_mode=$(jq -er '.vms.linux.display_mode // empty' "$config_path")
+    [ -n "$display_mode" ] || return 0
+    guest_ssh linux "DISPLAY=:0 XAUTHORITY=\"\$HOME/.Xauthority\" xrandr --output Virtual-1 --mode '$display_mode'"
+}
+
 write_job() {
     platform=$1
     sha=$2
@@ -410,6 +418,7 @@ run_platform() {
     provider_start "$(vm_name "$platform")"
     run_started=1
     wait_for_ssh "$platform"
+    configure_guest_display "$platform"
     requested_relay_version=$(relay_version)
     sync_relay "$platform" "$requested_relay_version"
     prepare_guest_spool "$platform"
