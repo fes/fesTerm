@@ -105,6 +105,13 @@ Unavailable categories may be omitted until implemented rather than shown as dis
 
 The launcher's options form a single keyboard-navigable list (`app/festerm/src/screens.rs`'s `show_launcher`): Up/Down moves a highlighted selection and Enter launches whichever option is currently highlighted, without requiring the mouse. Selection state is tracked per launcher tab (keyed by `TabId`) so multiple open launcher tabs don't share a highlight.
 
+The current SSH entry is a compact one-off password form: host, optional port
+(default 22), and username are validated into the typed connection profile
+before dispatch. Its password is a masked transient UI field, cleared on
+submit, and is never a profile, workspace, log, or diagnostic value. Saved
+profiles, agents, key-file selection, and OpenSSH-config import controls are
+not part of this form.
+
 ### Launcher as a tab
 
 The launcher should use the same tab model as sessions.

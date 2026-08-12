@@ -43,10 +43,12 @@ ConPTY sidecar; otherwise the backend safely uses inbox ConPTY rather than a
 directory-discovered DLL. If shell startup fails, it shows a visible no-session error rather
 than a fake shell.
 
-The current application has in-memory local session tabs and a typed,
-programmatic SSH-session command that accepts a supplied secret-free profile
-and transient authentication. It does not yet provide SSH launcher UI,
-persisted/config-file profiles, scrollback, terminfo distribution, or
+The current application has in-memory local session tabs and a compact
+Launcher SSH password form. It validates a host, optional port (default 22),
+and username into a secret-free profile, then sends the password only as
+transient UI memory to the typed SSH-session command and clears the field on
+submit. It does not provide persisted/config-file profiles, agent or key-file
+UI, OpenSSH-config import UI, scrollback, terminfo distribution, or
 user-visible ligature support. `TERM` remains `xterm-256color` as an
 interoperability baseline while M6 regression coverage defines the supported
 subset; see the M6 checklist for its conservative device-identity and future

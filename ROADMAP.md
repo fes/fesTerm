@@ -290,8 +290,12 @@ deterministic reconnect planner are implemented. Live reconnect is opt-in,
 bounded, re-verifies host trust for every fresh transport, and never claims
 remote process restoration. A typed application command can now place an SSH tab
 from supplied secret-free metadata and transient authentication, reusing the
-application host-key prompt boundary. Launcher UI, profile persistence,
-agents, key-file references, and other authentication paths remain M7 work.
+application host-key prompt boundary. The Launcher now exposes a compact,
+one-off password-authentication form that validates its host, optional port,
+and username before creating that typed command; its password is transient UI
+memory and is cleared on submit. Profile persistence, agents, key-file
+references, OpenSSH-config import UI, and other authentication paths remain
+M7 work.
 
 ### Outcome
 

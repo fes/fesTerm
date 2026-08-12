@@ -339,9 +339,9 @@ pub enum AppCommand {
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
     /// Starts one SSH transport from explicitly supplied, secret-free
-    /// connection metadata and transient authentication. This command is
-    /// deliberately not a launcher action or persisted profile mechanism.
-    #[allow(dead_code)]
+    /// connection metadata and transient authentication. Launcher invocation
+    /// surfaces validate input into these typed values; this does not create
+    /// a persisted profile.
     StartSshSession {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
