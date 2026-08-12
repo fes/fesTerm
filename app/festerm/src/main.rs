@@ -26,7 +26,11 @@ fn main() -> eframe::Result<()> {
     const APPROX_CELL_HEIGHT: f32 = 18.0;
     const DEFAULT_COLUMNS: f32 = 80.0;
     const DEFAULT_ROWS: f32 = 25.0;
-    const CHROME_HEIGHT: f32 = 8.0 + 34.0; // top inset + compact chip row
+    const CHROME_HEIGHT: f32 = if cfg!(target_os = "macos") {
+        34.0 // chip row aligns with the native traffic-light baseline
+    } else {
+        8.0 + 34.0 // top inset + compact chip row
+    };
     const STATUS_BAR_HEIGHT: f32 = 24.0;
     const SIDE_INSET: f32 = 16.0 * 2.0;
     let default_width = DEFAULT_COLUMNS * APPROX_CELL_WIDTH + SIDE_INSET;

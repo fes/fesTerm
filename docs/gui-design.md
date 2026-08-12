@@ -206,7 +206,8 @@ detached shelf. On Windows and Linux, the window disables native decorations
 renders custom minimize/maximize/close controls in that band. On macOS,
 eframe's full-size content view keeps the native close/minimize/zoom traffic
 lights on the left over the integrated chip band; the application reserves
-their hit-test area and does not render duplicate right-side controls.
+their hit-test area, aligns the chip row to their fixed native baseline, and
+does not render duplicate right-side controls.
 Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
 
 - On Windows and Linux, the trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, search) is painted in the same row as the chips. Its current painter geometry is an implementation detail; [the first-party SVG sources](icon-system.md) are the canonical visual vocabulary for future asset integration. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.

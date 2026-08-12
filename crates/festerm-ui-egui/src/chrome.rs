@@ -75,9 +75,13 @@ const CHIP_ACTIVE_FILL: Color32 = theme::SURFACE_TAB_ACTIVE;
 
 /// Horizontal inset from the window's left/right edges to the first/last
 /// chrome element. The terminal content below shares the same side inset.
-pub(crate) const CHROME_SIDE_INSET: f32 = CHROME_TOP_INSET;
+pub(crate) const CHROME_SIDE_INSET: f32 = 8.0;
 /// Vertical inset from the window's top edge to the chip row itself.
-const CHROME_TOP_INSET: f32 = 8.0;
+///
+/// macOS keeps the standard traffic lights in the transparent titlebar. The
+/// chip row starts at that same baseline so their centers align. Other
+/// platforms retain a small breathing inset above the custom controls.
+const CHROME_TOP_INSET: f32 = if cfg!(target_os = "macos") { 0.0 } else { 8.0 };
 
 /// Footprint reserved for the trailing icon controls. On macOS the native
 /// traffic lights replace the custom window buttons, leaving only overflow,
