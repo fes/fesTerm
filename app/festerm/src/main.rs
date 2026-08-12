@@ -26,11 +26,7 @@ fn main() -> eframe::Result<()> {
     const APPROX_CELL_HEIGHT: f32 = 18.0;
     const DEFAULT_COLUMNS: f32 = 80.0;
     const DEFAULT_ROWS: f32 = 25.0;
-    const CHROME_HEIGHT: f32 = if cfg!(target_os = "macos") {
-        34.0 // chip row aligns with the native traffic-light baseline
-    } else {
-        8.0 + 34.0 // top inset + compact chip row
-    };
+    const CHROME_HEIGHT: f32 = 8.0 + 34.0; // top inset + compact chip row
     const STATUS_BAR_HEIGHT: f32 = 24.0;
     const SIDE_INSET: f32 = 16.0 * 2.0;
     let default_width = DEFAULT_COLUMNS * APPROX_CELL_WIDTH + SIDE_INSET;
@@ -51,6 +47,25 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         APPLICATION_TITLE,
         options,
-        Box::new(|creation_context| Ok(Box::new(FesTermApp::new(&creation_context.egui_ctx)))),
+        Box::new(|creation_context| {
+            align_macos_traffic_lights(creation_context);
+            Ok(Box::new(FesTermApp::new(&creation_context.egui_ctx)))
+        }),
     )
 }
+
+#[cfg(target_os = "macos")]
+fn align_macos_traffic_lights(creation_context: &eframe::CreationContext<'_>) {
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+
+    let Ok(window_handle) = creation_context.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(appkit_handle) = window_handle.as_raw() else {
+        return;
+    };
+    festerm_macos_window::offset_traffic_lights(appkit_handle.ns_view, 8.0);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn align_macos_traffic_lights(_creation_context: &eframe::CreationContext<'_>) {}

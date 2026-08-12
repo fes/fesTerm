@@ -17,6 +17,10 @@ festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+festerm-macos-window = { path = "../../crates/festerm-macos-window" }
+raw-window-handle = "0.6"
+
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }
 

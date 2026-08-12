@@ -206,7 +206,7 @@ detached shelf. On Windows and Linux, the window disables native decorations
 renders custom minimize/maximize/close controls in that band. On macOS,
 eframe's full-size content view keeps the native close/minimize/zoom traffic
 lights on the left over the integrated chip band; the application reserves
-their hit-test area, aligns the chip row to their fixed native baseline, and
+their hit-test area, offsets them to the chip row's centered baseline, and
 does not render duplicate right-side controls.
 Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
 
