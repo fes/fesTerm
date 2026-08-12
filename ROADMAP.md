@@ -293,7 +293,10 @@ from supplied secret-free metadata and transient authentication, reusing the
 application host-key prompt boundary. The Launcher now exposes a compact,
 one-off password-authentication form that validates its host, optional port,
 and username before creating that typed command; its password is transient UI
-memory and is cleared on submit. Profile persistence, agents, key-file
+memory and is cleared on submit. Its transient, unchecked reconnect control
+uses at most three fresh attempts with 500 ms to 2 s delays; each attempt
+re-verifies host trust and starts a new shell rather than restoring remote
+process state. Profile persistence, agents, key-file
 references, OpenSSH-config import UI, and other authentication paths remain
 M7 work.
 

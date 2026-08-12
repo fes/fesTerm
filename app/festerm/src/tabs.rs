@@ -12,12 +12,9 @@
 //! routes session output through the single-writer `Terminal` +
 //! `SessionController` pair defined in `session_controller.rs`.
 
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use eframe::egui;
@@ -29,8 +26,8 @@ use festerm_session::{
     TerminalSize,
 };
 use festerm_ssh::{
-    HostKeyDecisionResolutionError, HostTrustDecision, ReconnectPolicy, SshAuthentication,
-    SshConnectionProfile, SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
+    HostKeyDecisionResolutionError, HostTrustDecision, SshAuthentication, SshConnectionProfile,
+    SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
 };
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
@@ -293,6 +290,7 @@ impl SessionTab {
     fn start_ssh(
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
+        options: SshSessionOptions,
         context: &egui::Context,
     ) -> Self {
         let size = profile.initial_size();
@@ -304,14 +302,6 @@ impl SessionTab {
             profile.identity().host(),
             profile.identity().port()
         ));
-        // Retain authentication only within the SSH worker for the existing
-        // bounded reconnect machinery. The inspector can request a fresh
-        // attempt without introducing a second retry path; one failed fresh
-        // attempt ends this policy cycle and no profile or secret is persisted.
-        let reconnect_policy =
-            ReconnectPolicy::new(1, Duration::from_millis(250), Duration::from_millis(250))
-                .expect("the fixed user reconnect policy is valid");
-        let options = SshSessionOptions::with_reconnect_policy(reconnect_policy);
         let result = SshSession::start_with_notifier_and_options(
             profile,
             authentication,
@@ -492,12 +482,13 @@ pub enum AppCommand {
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
     /// Starts one SSH transport from explicitly supplied, secret-free
-    /// connection metadata and transient authentication. Launcher invocation
-    /// surfaces validate input into these typed values; this does not create
-    /// a persisted profile.
+    /// connection metadata, transient authentication, and explicit session
+    /// options. Launcher invocation surfaces validate input into these typed
+    /// values; this does not create a persisted profile.
     StartSshSession {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
+        options: SshSessionOptions,
     },
     /// Resolves the displayed host-key request for one specific SSH tab.
     /// This command intentionally has no persistent-trust variant.
@@ -639,7 +630,8 @@ impl AppState {
             AppCommand::StartSshSession {
                 profile,
                 authentication,
-            } => self.execute_ssh_session(profile, authentication, context),
+                options,
+            } => self.execute_ssh_session(profile, authentication, options, context),
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
             }
@@ -701,9 +693,15 @@ impl AppState {
         &mut self,
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
+        options: SshSessionOptions,
         context: &egui::Context,
     ) {
-        self.place_session(SessionTab::start_ssh(profile, authentication, context));
+        self.place_session(SessionTab::start_ssh(
+            profile,
+            authentication,
+            options,
+            context,
+        ));
     }
 
     fn resolve_host_key_trust(&mut self, tab: TabId, decision: HostKeyTrustDecision) {
@@ -932,6 +930,7 @@ mod tests {
         let command = AppCommand::StartSshSession {
             profile: ssh_profile(),
             authentication: SshAuthentication::password(secret),
+            options: SshSessionOptions::new(),
         };
 
         assert!(

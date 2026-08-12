@@ -8,7 +8,9 @@
 
 use eframe::egui::{self, TextEdit, Ui};
 use festerm_session::TerminalSize;
-use festerm_ssh::{HostIdentity, SshAuthentication, SshConnectionProfile};
+use festerm_ssh::{
+    HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshSessionOptions,
+};
 use festerm_ui_egui::chrome::ChipLayout;
 
 use crate::tabs::{AppCommand, TabId};
@@ -34,11 +36,32 @@ struct SshLauncherForm {
     port: String,
     username: String,
     password: String,
+    reconnect_enabled: bool,
     feedback: Option<String>,
 }
 
 impl SshLauncherForm {
     const DEFAULT_PORT: u16 = 22;
+    /// The Launcher permits only three fresh connection attempts after a
+    /// user-requested reconnect, starting after 500 ms and capped at 2 s.
+    /// This bounds retained transient authentication and retry activity.
+    const RECONNECT_MAXIMUM_ATTEMPTS: u8 = 3;
+    const RECONNECT_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+    const RECONNECT_MAXIMUM_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+    fn session_options(&self) -> SshSessionOptions {
+        if !self.reconnect_enabled {
+            return SshSessionOptions::new();
+        }
+
+        let policy = ReconnectPolicy::new(
+            Self::RECONNECT_MAXIMUM_ATTEMPTS,
+            Self::RECONNECT_INITIAL_DELAY,
+            Self::RECONNECT_MAXIMUM_DELAY,
+        )
+        .expect("the fixed Launcher reconnect policy is valid");
+        SshSessionOptions::with_reconnect_policy(policy)
+    }
 
     /// Converts the transient form into the application's typed SSH command.
     ///
@@ -68,6 +91,7 @@ impl SshLauncherForm {
         Ok(AppCommand::StartSshSession {
             profile,
             authentication: SshAuthentication::password(password),
+            options: self.session_options(),
         })
     }
 }
@@ -133,6 +157,19 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
     );
     let password_response =
         ssh_text_edit(ui, tab_id, "password", "Password", &mut form.password, true);
+    ui.checkbox(
+        &mut form.reconnect_enabled,
+        format!(
+            "Reconnect after a disconnect (up to {} attempts)",
+            SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS
+        ),
+    );
+    ui.label(
+        "Reconnect creates a fresh remote shell and re-verifies the host key; \
+         it does not restore remote process state. Delays start at 500 ms and \
+         are capped at 2 seconds. This setting applies only to this session \
+         and is not saved.",
+    );
 
     let submit_with_enter =
         password_response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -311,6 +348,7 @@ mod tests {
         let Some(AppCommand::StartSshSession {
             profile,
             authentication,
+            options,
         }) = harness.state().command.as_ref()
         else {
             panic!("the valid SSH form must return a typed SSH command");
@@ -322,6 +360,58 @@ mod tests {
             format!("{authentication:?}"),
             "SshAuthentication::Password([REDACTED])"
         );
+        assert_eq!(
+            options.reconnect_policy(),
+            None,
+            "reconnect must remain disabled until the transient control is selected"
+        );
+    }
+
+    #[test]
+    fn ssh_form_can_opt_into_the_bounded_reconnect_policy() {
+        let mut form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            password: "transient-test-password".to_owned(),
+            reconnect_enabled: true,
+            ..Default::default()
+        };
+
+        let AppCommand::StartSshSession { options, .. } =
+            form.submit().expect("valid form must submit")
+        else {
+            unreachable!("the form only creates SSH commands");
+        };
+
+        assert_eq!(
+            options.reconnect_policy(),
+            Some(
+                ReconnectPolicy::new(
+                    SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS,
+                    SshLauncherForm::RECONNECT_INITIAL_DELAY,
+                    SshLauncherForm::RECONNECT_MAXIMUM_DELAY,
+                )
+                .expect("the fixed Launcher reconnect policy is valid")
+            )
+        );
+    }
+
+    #[test]
+    fn ssh_form_shows_the_transient_reconnect_control_and_warning() {
+        let mut harness = harness();
+        harness.run();
+
+        assert!(harness
+            .query_by_label("Reconnect after a disconnect (up to 3 attempts)")
+            .is_some());
+        assert!(harness
+            .query_by_label(
+                "Reconnect creates a fresh remote shell and re-verifies the host key; \
+                 it does not restore remote process state. Delays start at 500 ms and \
+                 are capped at 2 seconds. This setting applies only to this session \
+                 and is not saved."
+            )
+            .is_some());
     }
 
     #[test]

@@ -16,7 +16,7 @@ SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
 encrypted in-memory OpenSSH private keys; encrypted-key passphrases are
 transient parse inputs and are never persisted. Agents, key-file references,
-SSH tabs, profiles, and reconnect controls remain incomplete. The fixture
+and profiles remain incomplete. The fixture
 includes an ECDSA P-256-only server-host-key case whose SHA-256 trust prompt
 is checked before a shell exchange. The
 GUI-independent terminal core has
@@ -52,7 +52,10 @@ host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
 actions; trust persistence is intentionally deferred to M8. It does not
 provide persisted/config-file profiles, agent or key-file
 UI, OpenSSH-config import UI, scrollback, terminfo distribution, or
-user-visible ligature support. `TERM` remains `xterm-256color` as an
+user-visible ligature support. SSH reconnect is disabled by default; the
+Launcher has a transient opt-in for a bounded fresh-shell reconnect that
+re-verifies the host key and does not restore remote process state. `TERM`
+remains `xterm-256color` as an
 interoperability baseline while M6 regression coverage defines the supported
 subset; see the M6 checklist for its conservative device-identity and future
 custom-terminfo strategy.
