@@ -46,8 +46,14 @@ That direct Windows run completed on 2026-08-12 at `99d028d`: the staged
 ConPTY resize-retention smoke, production native-window self-smoke, and
 independently driven OS-input smoke all passed. The same optional suite found
 every reviewed Windows renderer snapshot invalid after the blue-graphite theme
-change, so P3 remains open under [#7](https://github.com/fes/fesTerm/issues/7)
-pending visual review and deliberate baseline replacement.
+change. Those replacement baselines were reviewed and accepted at `8a3d331`;
+P3 remains open only for Linux confirmation under
+[#7](https://github.com/fes/fesTerm/issues/7).
+
+An available WSLg Wayland session reproduced the existing Linux P4 blocker at
+`8a3d331`: focus was achieved, but initial PTY output timed out under
+llvmpipe/EGL fallback. That corroborates [#35](https://github.com/fes/fesTerm/issues/35);
+it is not a reason to weaken the smoke or accept the Linux path.
 
 Two narrow parallel tracks proceeded without changing that acceptance status:
 
@@ -56,12 +62,11 @@ Two narrow parallel tracks proceeded without changing that acceptance status:
   custom title-bar chrome, connection overlays, and a configurable status
   bar. It is in a usability and platform-stabilization phase, not an excuse
   to claim M8 persistence/profile completion.
-- M7 selected `russh` with the portable `ring` backend and created the
-  `festerm-ssh` foundation, strict host-trust boundary, bounded reconnect
-  policy, and application host-key prompt bridge. It does not yet provide a
-  live SSH `Session`, authentication flow, remote PTY, or reconnect
-  interoperability evidence; [#28](https://github.com/fes/fesTerm/issues/28)
-  owns those slices.
+- M7 selected `russh` with the portable `ring` backend and now provides a live
+  SSH `Session`, strict host trust, password and in-memory OpenSSH key
+  authentication, remote PTY/resize, bounded opt-in reconnect, and controlled
+  OpenSSH interoperability evidence. Agent/key-file authentication and
+  app/profile integration remain under [#28](https://github.com/fes/fesTerm/issues/28).
 
 The process remains evidence-first: implement a narrow behavior, add
 deterministic automation when a stable oracle exists, retain manual evidence
