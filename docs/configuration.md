@@ -2,18 +2,21 @@
 
 `festerm-config` is the first M8 configuration slice. It owns versioned,
 strict TOML parsing, explicit file I/O, and in-memory transactional reload
-state. File watching, configuration-path discovery, workspace persistence,
-credential-store references, and GUI/profile-launch integration are
+state. It also owns a metadata-only workspace persistence model. File
+watching, configuration-path discovery, credential-store references,
+GUI/profile-launch integration, and runtime session restoration are
 intentionally not part of this slice.
 
 ## Schema version 1
 
 Every document begins with `schema_version = 1`. Unknown fields are rejected.
-Profile identifiers are unique and use one to 64 lowercase ASCII letters,
-digits, and internal hyphens.
+Profile and workspace tab identifiers are unique within their respective
+collections and use one to 64 lowercase ASCII letters, digits, and internal
+hyphens.
 
 ```toml
 schema_version = 1
+workspace_enabled = true
 
 [[profiles]]
 kind = "local"
@@ -31,6 +34,27 @@ username = "alice"
 terminal_type = "xterm-256color"
 initial_columns = 132
 initial_rows = 43
+
+[workspace]
+focused_tab_id = "build-tab"
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "launcher"
+
+[[workspace.tabs]]
+kind = "local_session"
+id = "dev-tab"
+profile_id = "dev-shell"
+
+[[workspace.tabs]]
+kind = "ssh_session"
+id = "build-tab"
+profile_id = "build-host"
+
+[[workspace.tabs]]
+kind = "settings"
+id = "settings"
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
@@ -42,12 +66,45 @@ terminal type, and initial dimensions to
 SSH defaults are port `22`, terminal type `xterm-256color`, and an initial
 size of `80` columns by `24` rows.
 
+## Workspace metadata
+
+`workspace_enabled` defaults to `false`. When it is `false`, `[workspace]`
+must be omitted and no workspace is persisted. When it is `true`, a
+non-empty `[workspace]` is required. This explicit opt-in makes a profile-only
+document deterministic and avoids silently persisting window state.
+
+`workspace.tabs` is the saved display order. Every tab has a stable `id` and
+one of these exact strict shapes:
+
+| `kind` | Fields | Meaning |
+| --- | --- | --- |
+| `launcher` | `id` | The Launcher application surface; no session. |
+| `settings` | `id` | The Settings application surface; no session. |
+| `local_session` | `id`, `profile_id` | A fresh local session from an existing `local` profile. |
+| `ssh_session` | `id`, `profile_id` | A fresh SSH session from an existing `ssh` profile. |
+
+`profile_id` must name an existing profile, and the tab kind must match that
+profile's kind. Tab IDs must be unique. If `focused_tab_id` is present, it
+must name one saved tab; when it is omitted, restoration deterministically
+focuses the first tab in order. A workspace cannot be empty. The application
+must replace a final closed tab with a Launcher tab before taking a later
+snapshot, consistent with ADR 0014.
+
+This model stores only tab identities, tab order, optional focus, surface
+kind, and profile references. It does not store terminal screen content,
+scrollback, local processes, SSH channels, remote process memory, transport
+attempts, window integration state, authentication, keys, host trust, or
+credentials. Ad-hoc sessions and mutable launch definitions have no schema
+representation yet: they are omitted rather than serialized. Unknown tab
+kinds and fields are rejected.
+
 ## Secret boundary and reload behavior
 
 Do not place passwords, passphrases, private keys, tokens, key-file paths, or
 credential values in this TOML. The parser rejects known secret-bearing field
-names, private-key material, and recognizable credential options; unknown
-fields are also errors. Secure-storage references are not implemented yet.
+names, private-key material, and recognizable credential options throughout
+profiles and workspaces; unknown fields are also errors. Secure-storage
+references are not implemented yet.
 
 `ConfigurationState::reload` parses and validates a complete replacement
 before changing active state. A rejected candidate leaves the previous valid

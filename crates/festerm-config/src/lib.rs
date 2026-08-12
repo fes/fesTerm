@@ -1,9 +1,9 @@
-//! Versioned, secret-free application configuration and reusable profiles.
+//! Versioned, secret-free application configuration, profiles, and workspace metadata.
 //!
 //! This crate deliberately owns document parsing and validation, but not file
-//! watching, GUI editing, credentials, or workspace persistence. Configuration
-//! documents contain only the safe metadata needed to construct local and SSH
-//! connection profiles.
+//! watching, GUI editing, credentials, or runtime session restoration.
+//! Configuration documents contain only reusable launch metadata and safe,
+//! metadata-only workspace tab descriptors.
 
 use std::{
     collections::HashSet,
@@ -39,6 +39,10 @@ pub struct Configuration {
     schema_version: u32,
     #[serde(default)]
     profiles: Vec<Profile>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    workspace_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<WorkspaceConfiguration>,
 }
 
 impl Configuration {
@@ -47,6 +51,23 @@ impl Configuration {
         let configuration = Self {
             schema_version: SCHEMA_VERSION,
             profiles,
+            workspace_enabled: false,
+            workspace: None,
+        };
+        configuration.validate()?;
+        Ok(configuration)
+    }
+
+    /// Creates and validates a document with enabled workspace persistence.
+    pub fn new_with_workspace(
+        profiles: Vec<Profile>,
+        workspace: WorkspaceConfiguration,
+    ) -> Result<Self, ConfigError> {
+        let configuration = Self {
+            schema_version: SCHEMA_VERSION,
+            profiles,
+            workspace_enabled: true,
+            workspace: Some(workspace),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -57,6 +78,8 @@ impl Configuration {
         Self {
             schema_version: SCHEMA_VERSION,
             profiles: Vec::new(),
+            workspace_enabled: false,
+            workspace: None,
         }
     }
 
@@ -67,6 +90,8 @@ impl Configuration {
         let configuration = Self {
             schema_version: raw.schema_version,
             profiles: raw.profiles,
+            workspace_enabled: raw.workspace_enabled,
+            workspace: raw.workspace,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -134,6 +159,16 @@ impl Configuration {
             .find(|profile| profile.identifier() == identifier)
     }
 
+    /// Returns whether this document opts into workspace metadata persistence.
+    pub const fn workspace_enabled(&self) -> bool {
+        self.workspace_enabled
+    }
+
+    /// Returns the metadata-only workspace when persistence is enabled.
+    pub fn workspace(&self) -> Option<&WorkspaceConfiguration> {
+        self.workspace.as_ref()
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(ConfigErrorKind::UnsupportedSchemaVersion));
@@ -149,7 +184,16 @@ impl Configuration {
             }
             profile.validate()?;
         }
-        Ok(())
+        match (self.workspace_enabled, &self.workspace) {
+            (false, None) => Ok(()),
+            (false, Some(_)) => Err(ConfigError::new(
+                ConfigErrorKind::WorkspacePresentWhenDisabled,
+            )),
+            (true, None) => Err(ConfigError::new(
+                ConfigErrorKind::WorkspaceMissingWhenEnabled,
+            )),
+            (true, Some(workspace)) => workspace.validate(&self.profiles),
+        }
     }
 }
 
@@ -159,6 +203,9 @@ struct RawConfiguration {
     schema_version: u32,
     #[serde(default)]
     profiles: Vec<Profile>,
+    #[serde(default)]
+    workspace_enabled: bool,
+    workspace: Option<WorkspaceConfiguration>,
 }
 
 impl<'de> Deserialize<'de> for Configuration {
@@ -170,9 +217,280 @@ impl<'de> Deserialize<'de> for Configuration {
         let configuration = Self {
             schema_version: raw.schema_version,
             profiles: raw.profiles,
+            workspace_enabled: raw.workspace_enabled,
+            workspace: raw.workspace,
         };
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)
+    }
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Metadata-only state used to restore one window's ordered tab surfaces.
+///
+/// The workspace never contains terminal contents, processes, transport
+/// attempts, authentication, key material, host trust, or mutable ad-hoc
+/// launch definitions. A missing focus means restoration selects the first
+/// tab in document order.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceConfiguration {
+    #[serde(default)]
+    tabs: Vec<WorkspaceTab>,
+    #[serde(default)]
+    focused_tab_id: Option<String>,
+}
+
+impl WorkspaceConfiguration {
+    /// Creates a validated ordered workspace.
+    ///
+    /// A workspace must retain at least one tab. Closing the final tab is an
+    /// application action that replaces it with a Launcher tab before a later
+    /// workspace snapshot is saved.
+    pub fn new(
+        tabs: Vec<WorkspaceTab>,
+        focused_tab_id: Option<String>,
+    ) -> Result<Self, ConfigError> {
+        let workspace = Self {
+            tabs,
+            focused_tab_id,
+        };
+        workspace.validate_structure()?;
+        Ok(workspace)
+    }
+
+    /// Returns the restorable tabs in their saved display order.
+    pub fn tabs(&self) -> &[WorkspaceTab] {
+        &self.tabs
+    }
+
+    /// Returns the saved focused tab identifier, if one was explicitly saved.
+    ///
+    /// When this is `None`, restoration deterministically focuses the first
+    /// item returned by [`Self::tabs`].
+    pub fn focused_tab_id(&self) -> Option<&str> {
+        self.focused_tab_id.as_deref()
+    }
+
+    fn validate(&self, profiles: &[Profile]) -> Result<(), ConfigError> {
+        self.validate_structure()?;
+        for tab in &self.tabs {
+            tab.validate_profile_reference(profiles)?;
+        }
+        Ok(())
+    }
+
+    fn validate_structure(&self) -> Result<(), ConfigError> {
+        if self.tabs.is_empty() {
+            return Err(ConfigError::new(ConfigErrorKind::EmptyWorkspace));
+        }
+
+        let mut identifiers = HashSet::with_capacity(self.tabs.len());
+        for tab in &self.tabs {
+            validate_tab_identifier(tab.identifier())?;
+            if !identifiers.insert(tab.identifier()) {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::DuplicateWorkspaceTabIdentifier,
+                ));
+            }
+            tab.validate_metadata()?;
+        }
+
+        if let Some(focused_tab_id) = &self.focused_tab_id {
+            validate_tab_identifier(focused_tab_id)?;
+            if !identifiers.contains(focused_tab_id.as_str()) {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::UnknownFocusedWorkspaceTab,
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One stable, restorable workspace surface.
+///
+/// Local and SSH session tabs reference reusable profiles by identifier. The
+/// schema deliberately has no ad-hoc session variant, so mutable launch
+/// definitions cannot enter persisted workspace metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkspaceTab {
+    /// The application Launcher surface, with no session.
+    Launcher(LauncherTabConfiguration),
+    /// The application Settings surface, with no session.
+    Settings(SettingsTabConfiguration),
+    /// A local session recreated from a local profile.
+    LocalSession(SessionTabConfiguration),
+    /// An SSH session recreated from an SSH profile.
+    SshSession(SessionTabConfiguration),
+}
+
+impl WorkspaceTab {
+    /// Creates a Launcher application-surface tab.
+    pub fn launcher(identifier: impl Into<String>) -> Result<Self, ConfigError> {
+        let tab = Self::Launcher(LauncherTabConfiguration {
+            id: identifier.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
+    /// Creates a Settings application-surface tab.
+    pub fn settings(identifier: impl Into<String>) -> Result<Self, ConfigError> {
+        let tab = Self::Settings(SettingsTabConfiguration {
+            id: identifier.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
+    /// Creates a local-session tab which will reference a local profile.
+    pub fn local_session(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::LocalSession(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
+    /// Creates an SSH-session tab which will reference an SSH profile.
+    pub fn ssh_session(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::SshSession(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
+    /// Returns this tab's stable, serialized application identifier.
+    pub fn identifier(&self) -> &str {
+        match self {
+            Self::Launcher(tab) => tab.identifier(),
+            Self::Settings(tab) => tab.identifier(),
+            Self::LocalSession(tab) | Self::SshSession(tab) => tab.identifier(),
+        }
+    }
+
+    /// Returns the referenced profile identifier for session tabs.
+    pub fn profile_id(&self) -> Option<&str> {
+        match self {
+            Self::LocalSession(tab) | Self::SshSession(tab) => Some(tab.profile_id()),
+            Self::Launcher(_) | Self::Settings(_) => None,
+        }
+    }
+
+    fn validate_metadata(&self) -> Result<(), ConfigError> {
+        match self {
+            Self::Launcher(tab) => validate_tab_identifier(tab.identifier()),
+            Self::Settings(tab) => validate_tab_identifier(tab.identifier()),
+            Self::LocalSession(tab) | Self::SshSession(tab) => tab.validate(),
+        }
+    }
+
+    fn validate_profile_reference(&self, profiles: &[Profile]) -> Result<(), ConfigError> {
+        match self {
+            Self::LocalSession(tab) => validate_session_profile(profiles, tab.profile_id(), true),
+            Self::SshSession(tab) => validate_session_profile(profiles, tab.profile_id(), false),
+            Self::Launcher(_) | Self::Settings(_) => Ok(()),
+        }
+    }
+}
+
+/// Serialized metadata for a Launcher tab.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LauncherTabConfiguration {
+    id: String,
+}
+
+impl LauncherTabConfiguration {
+    /// Returns this tab's stable application identifier.
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Serialized metadata for a Settings tab.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsTabConfiguration {
+    id: String,
+}
+
+impl SettingsTabConfiguration {
+    /// Returns this tab's stable application identifier.
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Serialized metadata for a profile-backed session tab.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionTabConfiguration {
+    id: String,
+    profile_id: String,
+}
+
+impl SessionTabConfiguration {
+    /// Returns this tab's stable application identifier.
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the reusable profile identifier used to recreate this session.
+    pub fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_tab_identifier(&self.id)?;
+        validate_identifier(&self.profile_id)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidWorkspaceProfileReference))
+    }
+}
+
+fn validate_tab_identifier(identifier: &str) -> Result<(), ConfigError> {
+    validate_identifier(identifier)
+        .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidWorkspaceTabIdentifier))
+}
+
+fn validate_session_profile(
+    profiles: &[Profile],
+    profile_id: &str,
+    expected_local: bool,
+) -> Result<(), ConfigError> {
+    let Some(profile) = profiles
+        .iter()
+        .find(|profile| profile.identifier() == profile_id)
+    else {
+        return Err(ConfigError::new(
+            ConfigErrorKind::UnknownWorkspaceProfileReference,
+        ));
+    };
+
+    let kind_matches = matches!(
+        (expected_local, profile),
+        (true, Profile::Local(_)) | (false, Profile::Ssh(_))
+    );
+    if kind_matches {
+        Ok(())
+    } else {
+        Err(ConfigError::new(
+            ConfigErrorKind::WorkspaceProfileKindMismatch,
+        ))
     }
 }
 
@@ -533,6 +851,15 @@ pub enum ConfigErrorKind {
     DuplicateProfileIdentifier,
     InvalidLocalProfile,
     InvalidSshProfile,
+    WorkspacePresentWhenDisabled,
+    WorkspaceMissingWhenEnabled,
+    EmptyWorkspace,
+    InvalidWorkspaceTabIdentifier,
+    DuplicateWorkspaceTabIdentifier,
+    InvalidWorkspaceProfileReference,
+    UnknownWorkspaceProfileReference,
+    WorkspaceProfileKindMismatch,
+    UnknownFocusedWorkspaceTab,
     Serialization,
 }
 
@@ -594,6 +921,33 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
             ),
+            ConfigErrorKind::WorkspacePresentWhenDisabled => formatter.write_str(
+                "workspace metadata requires workspace_enabled = true",
+            ),
+            ConfigErrorKind::WorkspaceMissingWhenEnabled => formatter.write_str(
+                "workspace_enabled = true requires metadata-only workspace state",
+            ),
+            ConfigErrorKind::EmptyWorkspace => {
+                formatter.write_str("workspace metadata must contain at least one tab")
+            }
+            ConfigErrorKind::InvalidWorkspaceTabIdentifier => formatter.write_str(
+                "workspace tab IDs must be 1-64 lowercase ASCII letters, digits, or internal hyphens",
+            ),
+            ConfigErrorKind::DuplicateWorkspaceTabIdentifier => {
+                formatter.write_str("workspace tab IDs must be unique")
+            }
+            ConfigErrorKind::InvalidWorkspaceProfileReference => formatter.write_str(
+                "workspace session profile references must be valid profile identifiers",
+            ),
+            ConfigErrorKind::UnknownWorkspaceProfileReference => formatter.write_str(
+                "workspace session tabs must reference an existing profile",
+            ),
+            ConfigErrorKind::WorkspaceProfileKindMismatch => formatter.write_str(
+                "workspace session tab kind must match its referenced profile",
+            ),
+            ConfigErrorKind::UnknownFocusedWorkspaceTab => {
+                formatter.write_str("workspace focus must reference a saved tab")
+            }
             ConfigErrorKind::Serialization => {
                 formatter.write_str("configuration could not be serialized")
             }
@@ -956,6 +1310,7 @@ mod tests {
 
     const COMPLETE_CONFIGURATION: &str = r#"
 schema_version = 1
+workspace_enabled = true
 
 [[profiles]]
 kind = "local"
@@ -973,6 +1328,27 @@ username = "alice"
 terminal_type = "xterm-256color"
 initial_columns = 132
 initial_rows = 43
+
+[workspace]
+focused_tab_id = "build-tab"
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "launcher"
+
+[[workspace.tabs]]
+kind = "local_session"
+id = "dev-tab"
+profile_id = "dev-shell"
+
+[[workspace.tabs]]
+kind = "ssh_session"
+id = "build-tab"
+profile_id = "build-host"
+
+[[workspace.tabs]]
+kind = "settings"
+id = "settings"
 "#;
 
     #[test]
@@ -981,6 +1357,19 @@ initial_rows = 43
 
         assert_eq!(configuration.schema_version(), SCHEMA_VERSION);
         assert_eq!(configuration.profiles().len(), 2);
+        assert!(configuration.workspace_enabled());
+        let workspace = configuration.workspace().unwrap();
+        assert_eq!(
+            workspace
+                .tabs()
+                .iter()
+                .map(WorkspaceTab::identifier)
+                .collect::<Vec<_>>(),
+            ["launcher", "dev-tab", "build-tab", "settings"]
+        );
+        assert_eq!(workspace.focused_tab_id(), Some("build-tab"));
+        assert_eq!(workspace.tabs()[1].profile_id(), Some("dev-shell"));
+        assert_eq!(workspace.tabs()[2].profile_id(), Some("build-host"));
         assert_eq!(
             configuration.profile("build-host").unwrap().identifier(),
             "build-host"
@@ -1007,6 +1396,41 @@ initial_rows = 43
 
         let serialized = configuration.to_toml().unwrap();
         assert!(serialized.starts_with("schema_version = 1\n"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn constructs_metadata_only_workspace_with_profile_backed_session_tabs() {
+        let workspace = WorkspaceConfiguration::new(
+            vec![
+                WorkspaceTab::launcher("launcher").unwrap(),
+                WorkspaceTab::local_session("local-tab", "local").unwrap(),
+                WorkspaceTab::ssh_session("ssh-tab", "remote").unwrap(),
+                WorkspaceTab::settings("settings").unwrap(),
+            ],
+            Some("ssh-tab".to_owned()),
+        )
+        .unwrap();
+        let configuration = Configuration::new_with_workspace(
+            vec![
+                Profile::local("local", "sh", Vec::new(), None).unwrap(),
+                Profile::ssh(
+                    "remote",
+                    "example.test",
+                    22,
+                    "alice",
+                    "xterm-256color",
+                    80,
+                    24,
+                )
+                .unwrap(),
+            ],
+            workspace,
+        )
+        .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+        assert!(serialized.contains("workspace_enabled = true"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
     }
 
@@ -1059,6 +1483,19 @@ compression = true
         .unwrap_err();
         assert_eq!(error.kind(), ConfigErrorKind::Parse);
         assert!(!error.to_string().contains("compression"));
+
+        let error = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+launch_definition = "sh"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), ConfigErrorKind::Parse);
+        assert!(!error.to_string().contains("launch_definition"));
     }
 
     #[test]
@@ -1090,6 +1527,24 @@ executable = "{key_material}"
         assert_eq!(value_error.kind(), ConfigErrorKind::ForbiddenSecretValue);
         assert!(!value_error.to_string().contains(key_material));
         assert!(!format!("{value_error:?}").contains(key_material));
+
+        let workspace_secret = "workspace-secret-not-for-diagnostics";
+        let workspace_error = Configuration::parse(&format!(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+password = "{workspace_secret}"
+"#
+        ))
+        .unwrap_err();
+        assert_eq!(
+            workspace_error.kind(),
+            ConfigErrorKind::ForbiddenSecretField
+        );
+        assert!(!workspace_error.to_string().contains(workspace_secret));
+        assert!(!format!("{workspace_error:?}").contains(workspace_secret));
     }
 
     #[test]
@@ -1166,6 +1621,138 @@ username = "alice"
     }
 
     #[test]
+    fn validates_workspace_tab_references_order_and_focus() {
+        let duplicate_tab = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "same"
+
+[[workspace.tabs]]
+kind = "settings"
+id = "same"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate_tab.kind(),
+            ConfigErrorKind::DuplicateWorkspaceTabIdentifier
+        );
+
+        let focused_tab = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+focused_tab_id = "not-saved"
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "launcher"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            focused_tab.kind(),
+            ConfigErrorKind::UnknownFocusedWorkspaceTab
+        );
+        assert!(!focused_tab.to_string().contains("not-saved"));
+
+        let unknown_profile = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "local_session"
+id = "local-tab"
+profile_id = "missing"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            unknown_profile.kind(),
+            ConfigErrorKind::UnknownWorkspaceProfileReference
+        );
+
+        let wrong_kind = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[[profiles]]
+kind = "ssh"
+id = "remote"
+host = "example.test"
+username = "alice"
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "local_session"
+id = "local-tab"
+profile_id = "remote"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            wrong_kind.kind(),
+            ConfigErrorKind::WorkspaceProfileKindMismatch
+        );
+    }
+
+    #[test]
+    fn requires_an_enabled_nonempty_workspace_and_rejects_disabled_metadata() {
+        let missing_workspace = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            missing_workspace.kind(),
+            ConfigErrorKind::WorkspaceMissingWhenEnabled
+        );
+
+        let empty_workspace = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(empty_workspace.kind(), ConfigErrorKind::EmptyWorkspace);
+
+        let disabled_workspace = Configuration::parse(
+            r#"
+schema_version = 1
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "launcher"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            disabled_workspace.kind(),
+            ConfigErrorKind::WorkspacePresentWhenDisabled
+        );
+    }
+
+    #[test]
     fn reload_is_transactional_and_clears_errors_after_valid_replacement() {
         let original = Configuration::parse(COMPLETE_CONFIGURATION).unwrap();
         let mut state = ConfigurationState::new(original.clone());
@@ -1196,6 +1783,33 @@ executable = "sh"
         assert_eq!(state.active().profiles().len(), 1);
         assert_eq!(state.active().profiles()[0].identifier(), "replacement");
         assert_eq!(state.last_error(), None);
+    }
+
+    #[test]
+    fn invalid_workspace_reload_retains_the_previous_workspace() {
+        let original = Configuration::parse(COMPLETE_CONFIGURATION).unwrap();
+        let mut state = ConfigurationState::new(original.clone());
+
+        let error = state
+            .reload(
+                r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+focused_tab_id = "not-saved"
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "launcher"
+"#,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ConfigErrorKind::UnknownFocusedWorkspaceTab);
+        assert_eq!(state.active(), &original);
+        assert_eq!(state.active().workspace(), original.workspace());
+        assert_eq!(state.last_error(), Some(error));
     }
 
     #[test]
