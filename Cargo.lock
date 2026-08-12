@@ -1521,6 +1521,7 @@ dependencies = [
  "chrono",
  "eframe",
  "egui_kittest",
+ "festerm-config",
  "festerm-core",
  "festerm-macos-window",
  "festerm-pty",
