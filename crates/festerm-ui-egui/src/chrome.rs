@@ -61,15 +61,12 @@ const CHROME_ICON_COLOR_HOVERED: Color32 = theme::TEXT_PRIMARY;
 /// keep its "destructive" affordance recognizable.
 const CHROME_CLOSE_HOVER: Color32 = theme::STATUS_ERROR;
 
-/// Background fill for the whole top chrome band, deliberately *lighter*
-/// than the terminal content's `DEFAULT_BACKGROUND` (mockup: the chrome
-/// band reads as a raised/lighter surface the chips sit on, distinct from
-/// the darker content well beneath it).
+/// Background fill for the top chrome band. It deliberately matches the
+/// terminal well so there is no extra title-band border; chips and controls
+/// provide the hierarchy within one continuous surface.
 const CHROME_BACKGROUND: Color32 = theme::SURFACE_CHROME;
-/// Fill for an inactive chip and the "new tab" control: a shade between
-/// `CHROME_BACKGROUND` and the content's `DEFAULT_BACKGROUND`, so chips
-/// read as distinct objects sitting on the chrome band rather than holes
-/// cut into it.
+/// Fill for an inactive chip and the "new tab" control, raised just enough
+/// from the continuous chrome/terminal well to remain an independent object.
 const CHIP_INACTIVE_FILL: Color32 = theme::SURFACE_TAB_INACTIVE;
 /// Fill for the *active* chip: the lightest blue-graphite surface in the
 /// chrome hierarchy. It stays lighter than both the inactive chip and chrome
@@ -77,20 +74,10 @@ const CHIP_INACTIVE_FILL: Color32 = theme::SURFACE_TAB_INACTIVE;
 const CHIP_ACTIVE_FILL: Color32 = theme::SURFACE_TAB_ACTIVE;
 
 /// Horizontal inset from the window's left/right edges to the first/last
-/// chrome element (mockup: a consistent margin surrounds the chip row, and
-/// the terminal content below shares the same left/right inset -
-/// `TerminalView::show`). Kept equal to `CHROME_TOP_INSET` - the mockup (and
-/// reference terminals like Windows Terminal/Terminus) reserve the same
-/// handful of pixels as a border on every side of the terminal viewport, so
-/// the side inset and top/bottom insets are one shared constant rather than
-/// independently tuned values that happen to look similar.
+/// chrome element. The terminal content below shares the same side inset.
 pub(crate) const CHROME_SIDE_INSET: f32 = CHROME_TOP_INSET;
-/// Vertical inset from the window's top edge to the chip row itself, and
-/// (via `CHROME_SIDE_INSET`/`TerminalView::show`) the uniform border width
-/// reserved on all four sides of the terminal viewport.
+/// Vertical inset from the window's top edge to the chip row itself.
 const CHROME_TOP_INSET: f32 = 8.0;
-/// Vertical inset from the bottom of the chip row to the content below.
-const CHROME_BOTTOM_INSET: f32 = CHROME_TOP_INSET;
 
 /// Footprint reserved for the trailing icon controls (window
 /// minimize/maximize/close, overflow menu, panel toggle, search), each a
@@ -233,18 +220,12 @@ pub fn show(
     layout: ChipLayout,
 ) -> Vec<ChromeAction> {
     let mut actions = Vec::new();
-    // Paint the whole chrome band's background *first*, spanning the full
-    // available width and the row's total (inset-inclusive) height, so the
-    // margins added below sit on the same lighter chrome surface as the
-    // chips themselves rather than showing raw/transparent window
-    // background (mockup: the chrome band reads as a distinct, lighter
-    // surface than the terminal content beneath it).
+    // Paint the full inset-inclusive row first. This uses the same surface as
+    // the terminal below, making the frameless chrome and terminal one visual
+    // well instead of stacking a separate colored title band above content.
     let band_rect = egui::Rect::from_min_size(
         ui.cursor().min,
-        vec2(
-            ui.available_width(),
-            CHROME_TOP_INSET + CHIP_HEIGHT + CHROME_BOTTOM_INSET,
-        ),
+        vec2(ui.available_width(), CHROME_TOP_INSET + CHIP_HEIGHT),
     );
     ui.painter().rect_filled(band_rect, 0.0, CHROME_BACKGROUND);
     ui.add_space(CHROME_TOP_INSET);
@@ -350,15 +331,6 @@ pub fn show(
             }
         });
     });
-    // Consume the bottom inset the painted `band_rect` above already
-    // reserved height for: without explicitly advancing the cursor here,
-    // the content painted by the caller immediately after this function
-    // returns starts right at the bottom of the chip row itself, so the
-    // chrome band's bottom margin never actually shows even though its
-    // background was painted tall enough for it (top/left/right insets
-    // were consumed via `add_space` above; this one wasn't, and the gap
-    // collapsed to zero).
-    ui.add_space(CHROME_BOTTOM_INSET);
     actions
 }
 
@@ -812,7 +784,10 @@ fn paint_chip(
 
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.spacing_mut().item_spacing.y = 1.0;
+        // The primary line is optically one pixel high. Moving that pixel
+        // from the inter-row gap to the top inset shifts only the status dot
+        // and title; the secondary line keeps its previous y-position.
+        ui.spacing_mut().item_spacing.y = 0.0;
         // Rows would otherwise reserve `interact_size.y` (a button-sized
         // minimum, ~24px) even for a single line of small text, inflating
         // the gap between the primary and secondary lines well past what
@@ -830,7 +805,7 @@ fn paint_chip(
             // within the row by the parent chip-row layout, instead of
             // sitting flush at the top like every other chip.
             ui.set_min_size(outer_rect.size());
-            ui.add_space(2.0);
+            ui.add_space(3.0);
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 if !matches!(chip.status, ChipStatus::Neutral) {

@@ -23,12 +23,13 @@ fn main() -> eframe::Result<()> {
     // default 14pt monospace font) rather than an arbitrary/oversized
     // window: approximated from typical monospace cell metrics (~9px
     // wide, ~18px tall at 14pt), plus room for the chrome band above
-    // (top/bottom inset + chip row) and the status bar below.
+    // (top inset + chip row; the terminal owns the one shared gap below)
+    // and the status bar below.
     const APPROX_CELL_WIDTH: f32 = 9.0;
     const APPROX_CELL_HEIGHT: f32 = 18.0;
     const DEFAULT_COLUMNS: f32 = 80.0;
     const DEFAULT_ROWS: f32 = 25.0;
-    const CHROME_HEIGHT: f32 = 8.0 + 38.0 + 8.0; // top inset + chip row + bottom inset
+    const CHROME_HEIGHT: f32 = 8.0 + 34.0; // top inset + compact chip row
     const STATUS_BAR_HEIGHT: f32 = 24.0;
     const SIDE_INSET: f32 = 16.0 * 2.0;
     let default_width = DEFAULT_COLUMNS * APPROX_CELL_WIDTH + SIDE_INSET;

@@ -267,7 +267,7 @@ The active tab must remain immediately distinguishable in both light and dark th
 
 - `CHIP_ACTIVE_OUTLINE` maps to `border.active`; the active chip and its close control share this cool light outline.
 - `CHIP_INACTIVE_OUTLINE` maps to `border.subtle`; inactive chips, the New Session control, and drag preview share it.
-- `CHIP_ACTIVE_FILL` maps to `surface.tab.active`, the lightest blue-graphite surface in the chrome hierarchy. It is also the hover fill for inactive chips and New Session.
+- `CHIP_ACTIVE_FILL` maps to `surface.tab.active`, a restrained step above the inactive chip and shared window well. The active outline remains the stronger selection cue. The same quiet fill is the hover treatment for inactive chips and New Session.
 - `CHIP_INACTIVE_FILL` maps to `surface.tab.inactive`.
 - `CHIP_PRIMARY_TEXT` and `CHIP_SECONDARY_TEXT` map to `text.primary` and `text.secondary`.
 - `CHROME_ICON_COLOR` / `CHROME_ICON_COLOR_HOVERED` map to `text.secondary` / `text.primary`.
@@ -287,13 +287,20 @@ consistent hover language shared by every chip-shaped control in the row
 (`paint_chip`'s `hovered` parameter and `paint_new_chip_button`, both in
 `crates/festerm-ui-egui/src/chrome.rs`).
 
+The top chrome band and terminal well intentionally share this exact surface
+color. There is no additional color border or separator between them. The
+chrome consumes only its 8px top inset plus the 34px chip row; the terminal's
+own 8px top margin is the single shared breathing space below the chips. This
+coalesces what would otherwise be two adjacent 8px gaps and reduces the real
+top stack from 50px to 42px without moving the terminal grid toward the chips.
+
 Every chip, active or not, is drawn with a visible border: the active chip's border is `CHIP_ACTIVE_OUTLINE` (1.5px) and inactive chips use `CHIP_INACTIVE_OUTLINE` (1.0px), so the distinction reads clearly without color being the only cue. Each chip is two lines, left-aligned with a small reserved strip on the left for the status dot: the first line holds the status dot and the stable identity, left-aligned; the second, smaller and muted line holds optional secondary terminal-provided metadata, indented under the first line's label rather than the chip's own left edge. The close control, shown only on the active chip (never on inactive chips, even on hover), is positioned from the chip's own outer corner — evenly inset from the top and right edges — rather than flowing through the label's layout, so its position stays fixed and the label never shifts to accommodate it. Opening a new Launcher tab is done exclusively through the compact icon-only "New tab" control at the end of the chip row (`AGENTS.md`: no duplicate widget-specific copies of the same operation) — an earlier full chip-styled "+ Launcher" button duplicated this control and was removed as redundant.
 
 Chips without a secondary line (an open Launcher-type tab, which has no secondary terminal metadata) claim the chip's full footprint (`ui.set_min_size(outer_rect.size())`) before laying out their top-down content, rather than letting the shrink-wrapped one-line content block get vertically centered by the surrounding chip-row layout; without this, a one-line chip would render with visibly larger top/bottom padding than its two-line neighbors even though both share the same `CHIP_HEIGHT`.
 
 The chip row is scoped to its own narrower top-aligned sub-layout (`Layout::left_to_right(Align::Min)`), rather than the *whole* top-level chrome row switching to `Align::Min`: an `Align::Min` layout at the very top level was tried and reverted, because it handed the full remaining panel height down to the trailing icon controls' own nested `Align::Center` sub-layout, centering the icons roughly mid-window instead of near the top and (in the real app, where the terminal view is painted immediately after the chrome row in the same `Ui`) starving the terminal view of any remaining vertical space. Only the outermost row keeps plain `Align::Center` (`ui.horizontal`); scoping `Align::Min` to just the chip-row sub-block fixes its top-alignment without that regression (`crates/festerm-ui-egui/src/chrome.rs`'s `chrome_row_stays_a_compact_band_even_with_a_tall_available_area` test guards this).
 
-The status dot is allocated at the primary label's own text-line height (via `Ui::text_style_height`), not just its own diameter, so the row's `Align::Center` computes one shared center line for both the dot and the label text; allocating the dot at only its diameter let the surrounding row's cross-axis centering land the dot slightly off the label's own optical center.
+The status dot is allocated at the primary label's own text-line height (via `Ui::text_style_height`), not just its own diameter, so the row's `Align::Center` computes one shared center line for both the dot and the label text. The primary row has a one-pixel optical downward adjustment. That pixel is taken from the gap below the primary row, so the smaller secondary line retains its existing position.
 
 ### Tab overflow and wrapping
 
@@ -437,9 +444,9 @@ The default mapping is centralized in `crates/festerm-ui-egui/src/theme.rs`:
 | --- | --- |
 | `surface.window` | `#0e1319` |
 | `surface.terminal` | `#11161e` |
-| `surface.chrome` | `#222b36` |
+| `surface.chrome` | `#11161e` (same as terminal) |
 | `surface.tab.inactive` | `#1a222c` |
-| `surface.tab.active` | `#303c49` |
+| `surface.tab.active` | `#29333e` |
 | `surface.overlay` | `#26313d` |
 | `surface.selection` | `#28516b` |
 | `text.primary` | `#e8edf2` |

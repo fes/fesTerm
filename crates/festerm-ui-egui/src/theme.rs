@@ -8,9 +8,12 @@ use egui::{Color32, Stroke, Visuals};
 
 pub const SURFACE_WINDOW: Color32 = Color32::from_rgb(0x0e, 0x13, 0x19);
 pub const SURFACE_TERMINAL: Color32 = Color32::from_rgb(0x11, 0x16, 0x1e);
-pub const SURFACE_CHROME: Color32 = Color32::from_rgb(0x22, 0x2b, 0x36);
+/// Chrome and terminal intentionally share one continuous window well. Chips,
+/// controls, and content establish hierarchy without a separate title-band
+/// color or separator.
+pub const SURFACE_CHROME: Color32 = SURFACE_TERMINAL;
 pub const SURFACE_TAB_INACTIVE: Color32 = Color32::from_rgb(0x1a, 0x22, 0x2c);
-pub const SURFACE_TAB_ACTIVE: Color32 = Color32::from_rgb(0x30, 0x3c, 0x49);
+pub const SURFACE_TAB_ACTIVE: Color32 = Color32::from_rgb(0x29, 0x33, 0x3e);
 pub const SURFACE_OVERLAY: Color32 = Color32::from_rgb(0x26, 0x31, 0x3d);
 pub const SURFACE_SELECTION: Color32 = Color32::from_rgb(0x28, 0x51, 0x6b);
 
@@ -146,5 +149,12 @@ mod tests {
             assert!(contrast_ratio(TEXT_PRIMARY, surface) >= 4.5);
             assert!(contrast_ratio(TEXT_SECONDARY, surface) >= 4.5);
         }
+    }
+
+    #[test]
+    fn active_tab_fill_stays_quiet_but_distinct() {
+        assert!(relative_luminance(SURFACE_TAB_ACTIVE) > relative_luminance(SURFACE_TAB_INACTIVE));
+        assert!(contrast_ratio(SURFACE_TAB_ACTIVE, SURFACE_CHROME) < 1.5);
+        assert!(contrast_ratio(SURFACE_TAB_ACTIVE, SURFACE_TAB_INACTIVE) >= 1.2);
     }
 }
