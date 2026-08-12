@@ -5,8 +5,8 @@ in-memory transactional reload state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
 to the Launcher. File watching, configuration editing/saving,
-credential-store references, workspace runtime restoration, and saved SSH
-autolaunch are intentionally not part of this slice.
+credential-store references, workspace save UI, and saved SSH autoconnect are
+intentionally not part of this slice.
 
 ## Startup discovery
 
@@ -107,7 +107,7 @@ one of these exact strict shapes:
 | `launcher` | `id` | The Launcher application surface; no session. |
 | `settings` | `id` | The Settings application surface; no session. |
 | `local_session` | `id`, `profile_id` | A fresh local session from an existing `local` profile. |
-| `ssh_session` | `id`, `profile_id` | A fresh SSH session from an existing `ssh` profile. |
+| `ssh_session` | `id`, `profile_id` | An authentication-required surface for an existing `ssh` profile. |
 
 `profile_id` must name an existing profile, and the tab kind must match that
 profile's kind. Tab IDs must be unique. If `focused_tab_id` is present, it
@@ -123,6 +123,33 @@ attempts, window integration state, authentication, keys, host trust, or
 credentials. Ad-hoc sessions and mutable launch definitions have no schema
 representation yet: they are omitted rather than serialized. Unknown tab
 kinds and fields are rejected.
+
+## Startup workspace restoration
+
+When `workspace_enabled = true`, startup restores `workspace.tabs` in saved
+order instead of adding the normal default local-shell tab. Every restored
+runtime tab receives a fresh process-local `TabId`; the saved tab `id` is
+metadata used only to preserve order and select focus. The saved
+`focused_tab_id` selects its fresh tab, or the first saved tab is selected
+when focus is omitted.
+
+Launcher and Settings entries restore as application surfaces. A local-session
+entry starts a fresh local PTY from its referenced profile, preserving that
+profile identifier as the stable label and using the ordinary visible
+no-session startup-failure handling if creation fails. It never restores the
+old shell process or terminal output.
+
+An SSH-session entry restores as an **SSH authentication required** surface
+at its saved position. It retains non-secret destination metadata and
+pre-fills the existing transient authentication form, but starts no SSH
+connection. The user must explicitly supply fresh password or in-memory
+private-key authentication; host trust is requested anew when needed. No
+credentials, key material, connection/channel, process state, or host trust
+is persisted or recreated.
+
+There is no workspace save or edit UI. Users who opt in author this TOML
+manually. fesTerm does not auto-save, watch the file, or persist secure
+storage/trust data.
 
 ## Secret boundary and reload behavior
 

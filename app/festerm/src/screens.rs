@@ -7,7 +7,7 @@
 //! the single command-handling path.
 
 use eframe::egui::{self, TextEdit, Ui};
-use festerm_config::Profile;
+use festerm_config::{Profile, SshProfileConfiguration};
 use festerm_session::TerminalSize;
 use festerm_ssh::{
     HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
@@ -83,6 +83,12 @@ impl SshLauncherForm {
         SshSessionOptions::with_reconnect_policy(policy)
     }
 
+    fn prefill_from_profile(&mut self, profile: &SshProfileConfiguration) {
+        self.host = profile.host().to_owned();
+        self.port = profile.port().to_string();
+        self.username = profile.username().to_owned();
+    }
+
     /// Converts the transient form into the application's typed SSH command.
     ///
     /// Taking every secret first ensures each submit attempt removes it from UI
@@ -152,6 +158,7 @@ impl SshLauncherForm {
 struct LauncherState {
     selected: usize,
     ssh: SshLauncherForm,
+    ssh_profile_prefilled: bool,
 }
 
 fn launcher_state_id(tab_id: TabId) -> egui::Id {
@@ -410,6 +417,45 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
     if command.is_none() && launch_via_keyboard {
         command = Some(items[state.selected].command());
     }
+
+    ui.data_mut(|data| data.insert_temp(state_id, state));
+    command
+}
+
+/// Renders a restored SSH workspace tab without creating a transport.
+///
+/// The destination metadata is copied into the existing transient form only
+/// once. Passwords, keys, and host trust remain absent until the user enters
+/// them and explicitly submits the form.
+pub fn show_ssh_authentication_required(
+    ui: &mut Ui,
+    tab_id: TabId,
+    profile: &SshProfileConfiguration,
+) -> Option<AppCommand> {
+    let state_id = launcher_state_id(tab_id);
+    let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
+    if !state.ssh_profile_prefilled {
+        state.ssh.prefill_from_profile(profile);
+        state.ssh_profile_prefilled = true;
+    }
+
+    let command = ui
+        .vertical(|ui| {
+            ui.add_space(24.0);
+            ui.heading("SSH authentication required");
+            ui.label(format!(
+                "Restored SSH destination: {}@{}:{}",
+                profile.username(),
+                profile.host(),
+                profile.port()
+            ));
+            ui.label(
+                "This workspace restored destination metadata only. Enter fresh authentication \
+                 below to connect; no prior connection, credential, or host trust was restored.",
+            );
+            show_ssh_form(ui, tab_id, &mut state.ssh)
+        })
+        .inner;
 
     ui.data_mut(|data| data.insert_temp(state_id, state));
     command
@@ -695,6 +741,79 @@ mod tests {
             .is_some());
         assert!(harness.query_by_label("production (SSH profile)").is_none());
         assert!(harness.state().command.is_none());
+    }
+
+    #[test]
+    fn restored_ssh_surface_prefills_destination_and_requires_fresh_authentication() {
+        #[derive(Default)]
+        struct RestoredSshHarnessState {
+            tab_id: Option<TabId>,
+            profile: Option<SshProfileConfiguration>,
+            command: Option<AppCommand>,
+        }
+
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test SSH profile is valid")
+        .as_ssh()
+        .expect("test profile is SSH")
+        .clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 560.0))
+            .build_ui_state(
+                |ui, state: &mut RestoredSshHarnessState| {
+                    let tab_id = state.tab_id.expect("test tab id is set");
+                    let profile = state.profile.as_ref().expect("test profile is set");
+                    if let Some(command) = show_ssh_authentication_required(ui, tab_id, profile) {
+                        state.command = Some(command);
+                    }
+                },
+                RestoredSshHarnessState {
+                    tab_id: Some(AppState::for_test().active()),
+                    profile: Some(profile),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        assert!(harness
+            .query_by_label("SSH authentication required")
+            .is_some());
+        assert!(harness
+            .query_by_label(
+                "This workspace restored destination metadata only. Enter fresh authentication \
+                 below to connect; no prior connection, credential, or host trust was restored."
+            )
+            .is_some());
+        harness.get_by_label("Password").click();
+        harness
+            .get_by_label("Password")
+            .type_text("transient-test-password");
+        harness.get_by_label("Connect with password").click();
+        harness.run();
+
+        let Some(AppCommand::StartSshSession {
+            profile,
+            authentication,
+            ..
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("fresh authentication must be required before creating a command");
+        };
+        assert_eq!(profile.identity().host(), "ssh.example.test");
+        assert_eq!(profile.identity().port(), 2200);
+        assert_eq!(profile.username(), "deploy");
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::Password([REDACTED])"
+        );
     }
 
     #[test]

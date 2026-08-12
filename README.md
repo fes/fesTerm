@@ -19,8 +19,13 @@ Launcher, and launches saved local profiles. Missing configuration is normal;
 invalid or unreadable configuration leaves the app running with defaults and a
 content-free Settings diagnostic. Settings can explicitly reload the same
 selected file: valid changes affect only future Launcher choices, while
-invalid or unreadable candidates retain the last valid configuration. Workspace
-persistence/restoration, credential storage, and file watching remain M8 work.
+invalid or unreadable candidates retain the last valid configuration. An
+opt-in, manually authored metadata-only workspace restores ordered Launcher,
+Settings, and fresh local-session tabs at startup; saved SSH tabs restore as
+an authentication-required surface with destination metadata pre-filled,
+never an auto-connected session. Runtime tab IDs, terminal output, processes,
+credentials, keys, and host trust are not restored. Workspace save/edit UI,
+credential storage, auto-save, and file watching remain M8 work.
 Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
@@ -56,9 +61,10 @@ than a fake shell.
 
 The current application has in-memory local session tabs, explicitly injected
 secret-free reusable local-profile metadata, and a compact Launcher SSH
-authentication form. Saved SSH metadata is display-only until M8 secure
-credential storage; it does not launch or retain credentials. The transient
-form validates a host, optional port (default
+authentication form. Saved SSH metadata is display-only except that a restored
+workspace SSH tab opens the same form with destination metadata pre-filled; it
+does not launch or retain credentials. The transient form validates a host,
+optional port (default
 22), and username into a secret-free profile, then sends a transient password
 or a parsed in-memory OpenSSH private key to the typed SSH-session command and
 clears secret text on submit. Encrypted keys may use a transient parse

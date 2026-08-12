@@ -26,10 +26,10 @@ const APPLICATION_TITLE: &str = "fesTerm";
 /// driver.
 pub struct FesTermApp {
     state: AppState,
-    /// The tab created at startup, retained so the native-window smoke driver
-    /// (which predates and does not know about tabs) can keep addressing the
-    /// one session it drives.
-    primary_tab: TabId,
+    /// The default local tab created when startup has no restored workspace.
+    /// The native-window smoke driver (which predates tabs) uses it to address
+    /// the one session it drives.
+    primary_tab: Option<TabId>,
     window_title: String,
     native_smoke: Option<NativeWindowSmoke>,
     palette: PaletteState,
@@ -39,7 +39,7 @@ pub struct FesTermApp {
 
 impl FesTermApp {
     /// Builds the application around explicitly supplied, already-validated
-    /// reusable profile metadata.
+    /// profile and optional workspace metadata.
     pub fn with_configuration(context: &egui::Context, configuration: Configuration) -> Self {
         Self::with_configuration_status(context, configuration, ConfigurationStartupStatus::Missing)
     }
@@ -67,8 +67,16 @@ impl FesTermApp {
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
         });
-        let (state, primary_tab) =
-            AppState::with_primary_session(context, smoke_profile, configuration);
+        let (state, primary_tab) = if let Some(workspace) = configuration.workspace().cloned() {
+            (
+                AppState::with_restored_workspace(context, configuration, &workspace),
+                None,
+            )
+        } else {
+            let (state, primary_tab) =
+                AppState::with_primary_session(context, smoke_profile, configuration);
+            (state, Some(primary_tab))
+        };
         Self {
             state,
             primary_tab,
@@ -95,7 +103,9 @@ impl FesTermApp {
     fn update_window_title(&mut self, context: &egui::Context) {
         let terminal_title = match &self.state.active_tab_mut().content {
             TabContent::Session(session) => session.terminal.title().to_owned(),
-            TabContent::Launcher | TabContent::Settings => String::new(),
+            TabContent::Launcher
+            | TabContent::Settings
+            | TabContent::SshAuthenticationRequired(_) => String::new(),
         };
         let title = Self::window_title(&terminal_title);
         if self.window_title != title {
@@ -261,6 +271,14 @@ impl FesTermApp {
             let (label, hint) = match &tab.content {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
+                TabContent::SshAuthenticationRequired(tab) => (
+                    tab.profile.identifier().to_owned(),
+                    Some(format!(
+                        "SSH authentication required · {}:{}",
+                        tab.profile.host(),
+                        tab.profile.port()
+                    )),
+                ),
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
                     let hint = (!dynamic_title.is_empty())
@@ -365,6 +383,15 @@ impl FesTermApp {
                 let (primary, secondary, status) = match &tab.content {
                     TabContent::Launcher => ("Launcher".to_owned(), None, ChipStatus::Neutral),
                     TabContent::Settings => ("Settings".to_owned(), None, ChipStatus::Neutral),
+                    TabContent::SshAuthenticationRequired(tab) => (
+                        tab.profile.identifier().to_owned(),
+                        Some(format!(
+                            "SSH authentication required · {}:{}",
+                            tab.profile.host(),
+                            tab.profile.port()
+                        )),
+                        ChipStatus::Neutral,
+                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = (!dynamic_title.is_empty())
@@ -438,7 +465,9 @@ impl FesTermApp {
     fn show_status_bar(&self, ui: &mut egui::Ui) {
         let (left, dimensions, system, status, status_label) =
             match &self.state.active_tab().content {
-                TabContent::Launcher | TabContent::Settings => (
+                TabContent::Launcher
+                | TabContent::Settings
+                | TabContent::SshAuthenticationRequired(_) => (
                     APPLICATION_TITLE.to_owned(),
                     None,
                     None,
@@ -541,8 +570,10 @@ impl eframe::App for FesTermApp {
         self.pump_all_sessions(context);
         self.update_window_title(context);
         if let Some(smoke) = self.native_smoke.as_mut() {
-            if let Some(primary) = self.state.session_tab_mut(self.primary_tab) {
-                smoke.drive(context, &mut primary.terminal, &mut primary.controller);
+            if let Some(primary_tab) = self.primary_tab {
+                if let Some(primary) = self.state.session_tab_mut(primary_tab) {
+                    smoke.drive(context, &mut primary.terminal, &mut primary.controller);
+                }
             }
         }
     }
@@ -618,6 +649,10 @@ impl FesTermApp {
                         self.configuration_status,
                     );
                 }
+                TabContent::SshAuthenticationRequired(tab) => {
+                    screen_command =
+                        screens::show_ssh_authentication_required(ui, active_tab_id, &tab.profile);
+                }
                 TabContent::Session(session) => {
                     session
                         .view
@@ -681,7 +716,7 @@ impl FesTermApp {
     /// not depend on `eframe::Frame`, which has no public/test constructor.
     fn for_test_with_configuration(configuration: Configuration) -> Self {
         let state = AppState::for_test_with_configuration(configuration);
-        let primary_tab = state.active();
+        let primary_tab = Some(state.active());
         Self {
             state,
             primary_tab,
@@ -728,6 +763,56 @@ mod tests {
             FesTermApp::canonical_host_port("2001:db8::7", 22),
             "[2001:db8::7]:22"
         );
+    }
+
+    #[test]
+    fn startup_workspace_replaces_the_default_local_session() {
+        let workspace = festerm_config::WorkspaceConfiguration::new(
+            vec![
+                festerm_config::WorkspaceTab::launcher("launcher").expect("launcher tab is valid"),
+                festerm_config::WorkspaceTab::ssh_session("remote", "production")
+                    .expect("SSH tab is valid"),
+            ],
+            Some("remote".to_owned()),
+        )
+        .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(
+            vec![festerm_config::Profile::ssh(
+                "production",
+                "ssh.example.test",
+                2200,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .expect("SSH profile is valid")],
+            workspace,
+        )
+        .expect("configuration is valid");
+
+        let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
+
+        assert!(app.primary_tab.is_none());
+        assert_eq!(app.state.tabs().len(), 2);
+        assert!(matches!(app.state.tabs()[0].content, TabContent::Launcher));
+        assert!(matches!(
+            app.state.tabs()[1].content,
+            TabContent::SshAuthenticationRequired(_)
+        ));
+        assert_eq!(app.state.active(), app.state.tabs()[1].id);
+    }
+
+    #[test]
+    fn default_configuration_keeps_the_primary_local_session_startup() {
+        let context = egui::Context::default();
+        let (mut state, primary_tab) =
+            AppState::with_primary_session(&context, None, Configuration::empty());
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), primary_tab);
+        assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+        state.dispatch(AppCommand::CloseTab(primary_tab), &context);
     }
 
     #[test]

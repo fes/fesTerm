@@ -20,8 +20,15 @@ defaults and creates nothing. Invalid or unreadable configuration also starts
 with defaults, and Settings provides a content-free actionable diagnostic.
 Settings can explicitly reload the same selected file: valid changes affect
 future Launcher choices only, missing files switch to defaults, and invalid or
-unreadable candidates retain the active configuration. No configuration is
-watched, edited, or written automatically.
+unreadable candidates retain the active configuration. When manually authored
+configuration enables a workspace, its ordered Launcher, Settings, and
+local-session entries restore at startup instead of the default local shell;
+local entries create fresh PTYs from their profiles. Saved SSH entries restore
+in place as an **SSH authentication required** surface with destination
+metadata pre-filled, but never connect without fresh transient authentication.
+Runtime tab IDs are new for each launch, and no terminal output, process,
+credential/key, channel, or host-trust state is restored. No configuration is
+watched, edited, auto-saved, or written automatically.
 
 Not implemented: configuration editing/persistence and trust storage,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
@@ -41,10 +48,12 @@ cargo build
 cargo run -p festerm
 ```
 
-The first run opens the platform default local shell in an application session
-tab. Launcher and Settings tabs are available through application chrome; they
-are not persisted profiles or restored workspaces yet. If shell creation
-fails, the UI shows the session error rather than substituting a demo shell.
+Without an enabled workspace, the first run opens the platform default local
+shell in an application session tab. Launcher and Settings tabs are available
+through application chrome. With an enabled manually authored workspace, its
+saved tab order/focus restores instead and users must authenticate again before
+an SSH destination connects. If local-shell creation fails, the UI shows the
+session error rather than substituting a demo shell.
 
 ## WSL 2 Development and Testing
 
