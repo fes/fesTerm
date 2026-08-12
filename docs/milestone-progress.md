@@ -42,6 +42,13 @@ smoke remains non-acceptance evidence because Parallels cannot provide an
 authoritative accelerated wgpu surface. The next Windows acceptance run must
 execute directly on a hardware-backed, interactive Windows host.
 
+That direct Windows run completed on 2026-08-12 at `99d028d`: the staged
+ConPTY resize-retention smoke, production native-window self-smoke, and
+independently driven OS-input smoke all passed. The same optional suite found
+every reviewed Windows renderer snapshot invalid after the blue-graphite theme
+change, so P3 remains open under [#7](https://github.com/fes/fesTerm/issues/7)
+pending visual review and deliberate baseline replacement.
+
 Two narrow parallel tracks proceeded without changing that acceptance status:
 
 - The early M8 GUI vertical slice now supplies independent local-session chips,
