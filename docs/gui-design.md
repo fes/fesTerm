@@ -198,14 +198,21 @@ Implementation requirements:
 
 The wireframe in [Canonical Wireframe](#canonical-wireframe) is the visual contract for these requirements. A detached chip shelf below a separate title bar, connected browser tabs, file-folder tabs, full-chip status colors, and constantly changing primary labels are non-conforming implementations.
 
-### Window chrome (frameless window, custom title-bar controls)
+### Window chrome (integrated title-bar controls)
 
-The application window disables native OS decorations (`app/festerm/src/main.rs`, `ViewportBuilder::with_decorations(false)`) so the chip row and the window's own minimize/maximize/close controls share one integrated band, rather than a separate native title bar sitting above a detached chip shelf. Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
+The chip row and global actions occupy one integrated top band rather than a
+detached shelf. On Windows and Linux, the window disables native decorations
+(`app/festerm/src/main.rs`, `ViewportBuilder::with_decorations(false)`) and
+renders custom minimize/maximize/close controls in that band. On macOS,
+eframe's full-size content view keeps the native close/minimize/zoom traffic
+lights on the left over the integrated chip band; the application reserves
+their hit-test area and does not render duplicate right-side controls.
+Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
 
-- The trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, search) is painted in the same row as the chips. Its current painter geometry is an implementation detail; [the first-party SVG sources](icon-system.md) are the canonical visual vocabulary for future asset integration. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
+- On Windows and Linux, the trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, search) is painted in the same row as the chips. Its current painter geometry is an implementation detail; [the first-party SVG sources](icon-system.md) are the canonical visual vocabulary for future asset integration. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
 - The maximize/restore icon reads the viewport's real current state (`ui.input(|i| i.viewport().maximized)`) and paints a single square (maximize) or two overlapping squares (restore) accordingly, so the icon's own shape communicates state rather than a text label.
 - A background drag-to-move region is registered across the row's own compact content band (not the full remaining panel height, which - before any content is laid out - would otherwise swallow pointer events meant for the terminal view painted below) *before* the chips/icons are added, so those widgets' own click handling still takes priority over this catch-all background sense wherever they visually sit on top of it. Starting a primary-button drag on that background sends `ViewportCommand::StartDrag`; double-clicking it toggles `ViewportCommand::Maximized`.
-- `TRAILING_CONTROLS_RESERVED_WIDTH` accounts for all six trailing icons (three window controls plus overflow/panel/search) so the chip row never overlaps them, extending the existing narrow-window overlap fix.
+- `TRAILING_CONTROLS_RESERVED_WIDTH` accounts for platform-specific trailing icons so the chip row never overlaps them, extending the existing narrow-window overlap fix.
 
 ### Tab anatomy
 

@@ -13,12 +13,9 @@ fn main() -> eframe::Result<()> {
     diagnostics::init();
     tracing::info!(target: "festerm::app", "starting fesTerm");
 
-    // The session-chip chrome row lives in the same band as the window's
-    // own minimize/maximize/close controls (`docs/gui-design.md` "native
-    // min/max/close window buttons directly in the same band as the
-    // chips (no separate OS title bar at all)"), so native decorations are
-    // disabled here and `app.rs` paints its own custom title-bar controls
-    // and drag region instead.
+    // On macOS, retain the native traffic-light controls while allowing the
+    // chip row to occupy the transparent titlebar's content area. Other
+    // platforms keep the integrated custom controls in that same row.
     // A reasonable default terminal size (~80 columns x 25 rows at the
     // default 14pt monospace font) rather than an arbitrary/oversized
     // window: approximated from typical monospace cell metrics (~9px
@@ -36,7 +33,10 @@ fn main() -> eframe::Result<()> {
     let default_height = DEFAULT_ROWS * APPROX_CELL_HEIGHT + CHROME_HEIGHT + STATUS_BAR_HEIGHT;
 
     let viewport = eframe::egui::ViewportBuilder::default()
-        .with_decorations(false)
+        .with_decorations(cfg!(not(target_os = "macos")))
+        .with_fullsize_content_view(cfg!(target_os = "macos"))
+        .with_title_shown(!cfg!(target_os = "macos"))
+        .with_titlebar_shown(!cfg!(target_os = "macos"))
         .with_title(APPLICATION_TITLE)
         .with_inner_size([default_width, default_height])
         .with_min_inner_size([360.0, 240.0]);

@@ -79,17 +79,22 @@ pub(crate) const CHROME_SIDE_INSET: f32 = CHROME_TOP_INSET;
 /// Vertical inset from the window's top edge to the chip row itself.
 const CHROME_TOP_INSET: f32 = 8.0;
 
-/// Footprint reserved for the trailing icon controls (window
-/// minimize/maximize/close, overflow menu, panel toggle, search), each a
-/// fixed `22.0`-square icon separated by this row's `8.0` item spacing, plus
-/// one more `8.0` gap between the chip-row block and the icon block itself,
-/// plus the same right-edge inset the chip row's left edge gets.
+/// Footprint reserved for the trailing icon controls. On macOS the native
+/// traffic lights replace the custom window buttons, leaving only overflow,
+/// panel-toggle, and search controls in this block.
 /// The chip row's own available width is capped to leave this much room
 /// free (`show`), rather than letting the chip row claim the full row width
 /// and only discovering afterward that the icons no longer fit: on a narrow
 /// window that made the icons overlap the chips instead of
 /// wrapping/scrolling around them.
-const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = 6.0 * 22.0 + 6.0 * 8.0 + CHROME_SIDE_INSET;
+const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = (if cfg!(target_os = "macos") { 3.0 } else { 6.0 })
+    * 22.0
+    + (if cfg!(target_os = "macos") { 3.0 } else { 6.0 }) * 8.0
+    + CHROME_SIDE_INSET;
+
+/// The native macOS traffic lights occupy the left side of the transparent
+/// titlebar. Keep the first application control clear of that hit-test area.
+const MACOS_TRAFFIC_LIGHTS_RESERVED_WIDTH: f32 = 76.0;
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
@@ -244,6 +249,9 @@ pub fn show(
         ui.set_min_height(CHIP_HEIGHT);
         ui.set_max_height(CHIP_HEIGHT);
         ui.add_space(CHROME_SIDE_INSET);
+        if cfg!(target_os = "macos") {
+            ui.add_space(MACOS_TRAFFIC_LIGHTS_RESERVED_WIDTH);
+        }
         // Background drag-to-move region for this frameless window
         // (`docs/gui-design.md` "native min/max/close window buttons
         // directly in the same band as the chips"): a fixed-height band
@@ -318,10 +326,12 @@ pub fn show(
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(CHROME_SIDE_INSET);
-            paint_close_icon(ui);
-            let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
-            paint_maximize_icon(ui, maximized);
-            paint_minimize_icon(ui);
+            if !cfg!(target_os = "macos") {
+                paint_close_icon(ui);
+                let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                paint_maximize_icon(ui, maximized);
+                paint_minimize_icon(ui);
+            }
             paint_overflow_menu(ui, &mut actions);
             if paint_panel_icon(ui, inspector_open) {
                 actions.push(ChromeAction::ToggleInspector);
