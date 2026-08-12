@@ -1,11 +1,32 @@
 # Configuration Foundation
 
-`festerm-config` is the first M8 configuration slice. It owns versioned,
-strict TOML parsing, explicit file I/O, and in-memory transactional reload
-state. It also owns a metadata-only workspace persistence model. File
-watching, configuration-path discovery, credential-store references,
-GUI/profile-launch integration, and runtime session restoration are
-intentionally not part of this slice.
+`festerm-config` owns versioned, strict TOML parsing, explicit file I/O, and
+in-memory transactional reload state. It also owns a metadata-only workspace
+persistence model. The `festerm` application discovers and loads one
+configuration file during startup, then supplies its immutable profile metadata
+to the Launcher. File watching, configuration editing/saving,
+credential-store references, workspace runtime restoration, and saved SSH
+autolaunch are intentionally not part of this slice.
+
+## Startup discovery
+
+At startup, `festerm` uses the native per-user configuration location supplied
+by the maintained `directories` crate for the project identity
+`com.fes.fesTerm`, with `config.toml` as the final filename. It does not create
+the directory or file.
+
+`FESTERM_CONFIG_PATH` is an explicit support and test override. When present,
+it must be a non-empty Unicode file path and takes precedence over the native
+location. A non-Unicode or unusable override is ignored safely: fesTerm starts
+with an empty configuration and reports a content-free Settings diagnostic.
+Diagnostics never expose the selected path or source TOML.
+
+A missing configuration file is normal and starts fesTerm with
+`Configuration::empty()`. An unreadable or invalid file also leaves the app
+running with an empty configuration, while Settings explains the action needed
+before restart. Configuration is loaded only at startup; edit TOML while the
+app is closed, then restart fesTerm to apply it. There is no file watching or
+automatic persistence.
 
 ## Schema version 1
 

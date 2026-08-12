@@ -8,6 +8,7 @@ use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 use festerm_ui_egui::theme;
 
+use crate::configuration_startup::{ConfigurationStartupStatus, StartupConfiguration};
 use crate::native_smoke::NativeWindowSmoke;
 use crate::screens;
 use crate::tabs::{AppCommand, AppState, HostKeyTrustDecision, TabContent, TabId};
@@ -30,17 +31,31 @@ pub struct FesTermApp {
     window_title: String,
     native_smoke: Option<NativeWindowSmoke>,
     palette: PaletteState,
+    configuration_status: ConfigurationStartupStatus,
 }
 
 impl FesTermApp {
-    pub fn new(context: &egui::Context) -> Self {
-        Self::with_configuration(context, Configuration::empty())
+    /// Builds the application around explicitly supplied, already-validated
+    /// reusable profile metadata.
+    pub fn with_configuration(context: &egui::Context, configuration: Configuration) -> Self {
+        Self::with_configuration_status(context, configuration, ConfigurationStartupStatus::Missing)
     }
 
-    /// Builds the application around explicitly supplied, already-validated
-    /// reusable profile metadata. Configuration discovery and reloading are
-    /// intentionally not application responsibilities in this M8 slice.
-    pub fn with_configuration(context: &egui::Context, configuration: Configuration) -> Self {
+    pub(crate) fn with_startup_configuration(
+        context: &egui::Context,
+        startup_configuration: StartupConfiguration,
+    ) -> Self {
+        let status = startup_configuration.status();
+        let mut app = Self::with_configuration(context, startup_configuration.configuration());
+        app.configuration_status = status;
+        app
+    }
+
+    fn with_configuration_status(
+        context: &egui::Context,
+        configuration: Configuration,
+        configuration_status: ConfigurationStartupStatus,
+    ) -> Self {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
@@ -56,6 +71,7 @@ impl FesTermApp {
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke,
             palette: PaletteState::default(),
+            configuration_status,
         }
     }
 
@@ -578,8 +594,12 @@ impl FesTermApp {
                     );
                 }
                 TabContent::Settings => {
-                    screen_command =
-                        screens::show_settings(ui, chip_layout, self.state.status_bar_visible());
+                    screen_command = screens::show_settings(
+                        ui,
+                        chip_layout,
+                        self.state.status_bar_visible(),
+                        self.configuration_status,
+                    );
                 }
                 TabContent::Session(session) => {
                     session
@@ -646,6 +666,7 @@ impl FesTermApp {
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke: None,
             palette: PaletteState::default(),
+            configuration_status: ConfigurationStartupStatus::Missing,
         }
     }
 }

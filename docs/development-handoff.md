@@ -13,7 +13,15 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, and early SSH transport foundation are
 separate crates.
 
-Not implemented: persisted profiles/configuration and trust storage,
+At startup, the app loads `config.toml` from the native per-user project
+configuration location (`com.fes.fesTerm`) or the explicit
+`FESTERM_CONFIG_PATH` support/test override. Missing configuration starts with
+defaults and creates nothing. Invalid or unreadable configuration also starts
+with defaults, and Settings provides a content-free actionable diagnostic; TOML
+changes require a restart. No configuration is watched, edited, or written
+automatically.
+
+Not implemented: configuration editing/persistence and trust storage,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
 references, OpenSSH-config import UI, scrollback, user-visible ligatures, a
 custom GPU renderer, terminfo distribution, and reference-TUI compatibility
@@ -200,6 +208,10 @@ path without recording terminal content.
   `festerm=info,warn`.
 - `FESTERM_PROTOCOL_TRACE=1` only reports that tracing was requested; terminal
   content tracing is intentionally not implemented.
+- `FESTERM_CONFIG_PATH` selects a non-empty Unicode configuration-file path
+  instead of the native per-user location. It is intended for support and
+  tests; diagnostics intentionally do not reveal the selected path or source
+  TOML.
 - The normal status line is compact; use the **Diagnostics** control to reveal
   lifecycle, queue pressure, bytes, errors, resize, and input-to-paint-
   submission details. Backend event delivery requests an egui repaint, so an

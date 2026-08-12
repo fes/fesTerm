@@ -12,10 +12,14 @@ session chips, Launcher and Settings surfaces, a session inspector, command
 palette, custom title bar, and configurable status bar. See the Milestone 8
 note in [`ROADMAP.md`](ROADMAP.md). A first GUI-independent M8 configuration
 foundation now parses and serializes strict, versioned, secret-free TOML local
-and SSH profile metadata transactionally. The graphical Launcher accepts an
-explicitly injected immutable configuration and launches saved local profiles;
-filesystem discovery, workspace persistence/restoration, credential storage,
-and file watching remain M8 work. Milestone 7 is implemented: the
+and SSH profile metadata transactionally. At startup the graphical app
+discovers a native per-user `config.toml` (or an explicit
+`FESTERM_CONFIG_PATH` override), injects the immutable configuration into the
+Launcher, and launches saved local profiles. Missing configuration is normal;
+invalid or unreadable configuration leaves the app running with defaults and a
+content-free Settings diagnostic. Changes require restart. Workspace
+persistence/restoration, credential storage, and file watching remain M8 work.
+Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
@@ -59,9 +63,8 @@ clears secret text on submit. Encrypted keys may use a transient parse
 passphrase; no key text or passphrase is persisted. When an active SSH tab
 needs host trust, it presents the canonical
 host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
-actions; trust persistence is intentionally deferred to M8. It does not
-provide configuration-file discovery, agent or key-file UI, OpenSSH-config
-import UI, scrollback, terminfo distribution, or
+actions; trust persistence is intentionally deferred to M8. It does not provide configuration editing or automatic persistence, agent or
+key-file UI, OpenSSH-config import UI, scrollback, terminfo distribution, or
 user-visible ligature support. SSH reconnect is disabled by default; the
 Launcher has a transient opt-in for a bounded fresh-shell reconnect that
 re-verifies the host key and does not restore remote process state. `TERM`
@@ -116,7 +119,8 @@ custom-terminfo strategy.
 - Behavioral compatibility with advanced full-screen terminal applications.
 - Cross-platform `egui` front end with a GUI-independent terminal engine.
 - First-class local PTY and native in-process SSH session types.
-- Human-readable, versioned TOML configuration with safe hot reload.
+- Human-readable, versioned TOML configuration loaded at startup; TOML changes
+  require restart.
 - Fast interactive behavior, ligature-capable rendering, and privacy-aware
   diagnostics.
 - Local-first operation with optional future metadata synchronization.

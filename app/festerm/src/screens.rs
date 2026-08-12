@@ -15,6 +15,7 @@ use festerm_ssh::{
 };
 use festerm_ui_egui::chrome::ChipLayout;
 
+use crate::configuration_startup::ConfigurationStartupStatus;
 use crate::tabs::{AppCommand, TabId};
 
 /// One selectable local launch option in the Launcher list.
@@ -416,12 +417,6 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
 
 /// Renders the Settings application surface.
 ///
-/// Versioned, persisted configuration (`festerm-config`) is M8 work and not
-/// implemented yet. This establishes Settings as its own first-class
-/// application surface with a dedicated chip today, per `docs/gui-design.md`
-/// ("Settings as an application surface"): Settings never lives inside the
-/// session inspector.
-///
 /// `chip_layout` reflects the current chip wrapping mode
 /// (`docs/gui-design.md` "Wrapping must remain user-configurable"); this is
 /// the one persistent preference implemented so far. Returns a command when
@@ -431,16 +426,19 @@ pub fn show_settings(
     ui: &mut Ui,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
+    configuration_status: ConfigurationStartupStatus,
 ) -> Option<AppCommand> {
     let mut command = None;
     ui.vertical(|ui| {
         ui.add_space(24.0);
         ui.heading("Settings");
-        ui.label(
-            "Versioned, persisted configuration is not implemented yet. \
-             Settings exists as its own application surface now so future \
-             preferences have a stable, discoverable home.",
-        );
+        ui.label("Configuration is loaded once during startup and is never written automatically.");
+        let configuration_message = configuration_status.settings_message();
+        if configuration_status.is_problem() {
+            ui.colored_label(egui::Color32::from_rgb(220, 150, 80), configuration_message);
+        } else {
+            ui.label(configuration_message);
+        }
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(12.0);
