@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, fs, path::PathBuf};
 
 use directories::ProjectDirs;
 use festerm_config::{Configuration, ConfigurationFileErrorKind};
@@ -28,6 +28,8 @@ pub(crate) enum ConfigurationStartupStatus {
     Reloaded,
     ReloadedMissing,
     ReloadFailure(ConfigurationLoadFailure),
+    WorkspaceSaved,
+    WorkspaceSaveFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
@@ -69,11 +71,29 @@ impl ConfigurationStartupStatus {
             Self::ReloadFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "Configuration was not reloaded because its location is unavailable. The previous configuration remains active; set FESTERM_CONFIG_PATH and restart fesTerm."
             }
+            Self::WorkspaceSaved => {
+                "Workspace metadata was saved. Only restorable tab order, focus, and configured profile references were written."
+            }
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::Invalid) => {
+                "Workspace metadata was not saved because the configuration is invalid. The active configuration remains unchanged."
+            }
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::Unreadable) => {
+                "Workspace metadata could not be saved. The active configuration remains unchanged; check access and try again."
+            }
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::OverrideUnavailable) => {
+                "Workspace metadata was not saved because FESTERM_CONFIG_PATH is unavailable. The active configuration remains unchanged."
+            }
+            Self::WorkspaceSaveFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
+                "Workspace metadata was not saved because its location is unavailable. The active configuration remains unchanged."
+            }
         }
     }
 
     pub(crate) const fn is_problem(self) -> bool {
-        matches!(self, Self::InitialFailure(_) | Self::ReloadFailure(_))
+        matches!(
+            self,
+            Self::InitialFailure(_) | Self::ReloadFailure(_) | Self::WorkspaceSaveFailure(_)
+        )
     }
 }
 
@@ -99,21 +119,46 @@ impl StartupConfiguration {
     }
 }
 
-/// Private retained source for an explicit, user-triggered reload.
+struct SelectedConfigurationPath {
+    path: PathBuf,
+    /// Present only for the native default source. An explicit override never
+    /// receives directory-creation behavior.
+    native_directory: Option<PathBuf>,
+}
+
+/// Private retained source for an explicit, user-triggered reload or save.
 ///
 /// Its path is intentionally inaccessible outside this module. It performs no
-/// watching, polling, logging, or writes.
+/// watching, polling, or logging; writes occur only through
+/// [`Self::save_workspace`] after an explicit Settings action.
 pub(crate) struct ConfigurationReloader {
-    selected_path: Result<PathBuf, ConfigurationLoadFailure>,
+    selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
 }
 
 impl ConfigurationReloader {
+    #[cfg(test)]
     fn from_selection(selected_path: Result<PathBuf, ConfigurationLoadFailure>) -> Self {
+        Self {
+            selected_path: selected_path.map(|path| SelectedConfigurationPath {
+                path,
+                native_directory: None,
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_path_for_test(path: PathBuf) -> Self {
+        Self::from_selection(Ok(path))
+    }
+
+    fn from_source_selection(
+        selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
+    ) -> Self {
         Self { selected_path }
     }
 
     pub(crate) fn unavailable() -> Self {
-        Self::from_selection(Err(ConfigurationLoadFailure::NativeLocationUnavailable))
+        Self::from_source_selection(Err(ConfigurationLoadFailure::NativeLocationUnavailable))
     }
 
     /// Loads one complete candidate from the already-selected location.
@@ -123,7 +168,7 @@ impl ConfigurationReloader {
     /// All other outcomes retain the caller's active configuration.
     pub(crate) fn reload(&self) -> (Option<Configuration>, ConfigurationStartupStatus) {
         let path = match &self.selected_path {
-            Ok(path) => path,
+            Ok(selected) => &selected.path,
             Err(failure) => {
                 return (None, ConfigurationStartupStatus::ReloadFailure(*failure));
             }
@@ -145,7 +190,7 @@ impl ConfigurationReloader {
 
     fn initial_load(&self) -> (Configuration, ConfigurationStartupStatus) {
         let path = match &self.selected_path {
-            Ok(path) => path,
+            Ok(selected) => &selected.path,
             Err(failure) => {
                 return (
                     Configuration::empty(),
@@ -166,10 +211,61 @@ impl ConfigurationReloader {
             },
         }
     }
+
+    /// Saves an already validated complete replacement only after an explicit
+    /// Settings action. For the native source alone, a missing final config
+    /// directory may be created with normal user/default permissions; no
+    /// override directory and no configuration file is created otherwise.
+    pub(crate) fn save_workspace(
+        &self,
+        configuration: &Configuration,
+    ) -> ConfigurationStartupStatus {
+        let selected = match &self.selected_path {
+            Ok(selected) => selected,
+            Err(failure) => {
+                return ConfigurationStartupStatus::WorkspaceSaveFailure(*failure);
+            }
+        };
+        if let Some(directory) = &selected.native_directory {
+            if !directory.exists() && create_native_configuration_directory(directory).is_err() {
+                return ConfigurationStartupStatus::WorkspaceSaveFailure(
+                    ConfigurationLoadFailure::Unreadable,
+                );
+            }
+        }
+        match configuration.save_to_path(&selected.path) {
+            Ok(()) => ConfigurationStartupStatus::WorkspaceSaved,
+            Err(error) => ConfigurationStartupStatus::WorkspaceSaveFailure(
+                failure_from_file_error(error.kind()),
+            ),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn create_native_configuration_directory(directory: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(directory) {
+        Ok(()) => Ok(()),
+        Err(_error) if directory.is_dir() => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn create_native_configuration_directory(directory: &std::path::Path) -> std::io::Result<()> {
+    match fs::create_dir(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if directory.is_dir() => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn load() -> StartupConfiguration {
-    let reloader = ConfigurationReloader::from_selection(select_configuration_path(
+    let reloader = ConfigurationReloader::from_source_selection(select_configuration_source(
         std::env::var_os(CONFIG_PATH_ENV),
         native_configuration_directory(),
     ));
@@ -186,10 +282,19 @@ fn native_configuration_directory() -> Option<PathBuf> {
         .map(|directories| directories.config_dir().to_path_buf())
 }
 
+#[cfg(test)]
 fn select_configuration_path(
     override_value: Option<OsString>,
     native_config_directory: Option<PathBuf>,
 ) -> Result<PathBuf, ConfigurationLoadFailure> {
+    select_configuration_source(override_value, native_config_directory)
+        .map(|selected| selected.path)
+}
+
+fn select_configuration_source(
+    override_value: Option<OsString>,
+    native_config_directory: Option<PathBuf>,
+) -> Result<SelectedConfigurationPath, ConfigurationLoadFailure> {
     if let Some(override_value) = override_value {
         let override_value = override_value
             .into_string()
@@ -197,11 +302,17 @@ fn select_configuration_path(
         if override_value.is_empty() {
             return Err(ConfigurationLoadFailure::OverrideUnavailable);
         }
-        return Ok(PathBuf::from(override_value));
+        return Ok(SelectedConfigurationPath {
+            path: PathBuf::from(override_value),
+            native_directory: None,
+        });
     }
 
     native_config_directory
-        .map(|directory| directory.join(CONFIG_FILE_NAME))
+        .map(|directory| SelectedConfigurationPath {
+            path: directory.join(CONFIG_FILE_NAME),
+            native_directory: Some(directory),
+        })
         .ok_or(ConfigurationLoadFailure::NativeLocationUnavailable)
 }
 
@@ -464,5 +575,58 @@ mod tests {
             ),
             Err(ConfigurationLoadFailure::OverrideUnavailable)
         );
+    }
+
+    #[test]
+    fn explicit_workspace_save_creates_only_the_missing_native_directory_and_loads() {
+        let directory = TestDirectory::new();
+        let native_directory = directory.file("native");
+        let source = select_configuration_source(None, Some(native_directory.clone())).unwrap();
+        let reloader = ConfigurationReloader::from_source_selection(Ok(source));
+        let workspace = festerm_config::WorkspaceConfiguration::new(
+            vec![festerm_config::WorkspaceTab::launcher("tab-1").unwrap()],
+            Some("tab-1".to_owned()),
+        )
+        .unwrap();
+        let configuration = Configuration::empty().with_workspace(workspace).unwrap();
+
+        assert!(!native_directory.exists());
+        assert_eq!(
+            reloader.save_workspace(&configuration),
+            ConfigurationStartupStatus::WorkspaceSaved
+        );
+        assert!(native_directory.is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                fs::metadata(&native_directory)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o077,
+                0
+            );
+        }
+        let loaded =
+            Configuration::load_from_path(native_directory.join(CONFIG_FILE_NAME)).unwrap();
+        assert_eq!(loaded, configuration);
+    }
+
+    #[test]
+    fn failed_workspace_save_is_content_free() {
+        let directory = TestDirectory::new();
+        let source_path = directory.path().to_path_buf();
+        let reloader = ConfigurationReloader::from_path_for_test(source_path.clone());
+        let status = reloader.save_workspace(&Configuration::empty());
+        let diagnostic = status.settings_message();
+
+        assert!(matches!(
+            status,
+            ConfigurationStartupStatus::WorkspaceSaveFailure(ConfigurationLoadFailure::Unreadable)
+        ));
+        assert!(!diagnostic.contains(source_path.to_string_lossy().as_ref()));
+        assert!(!diagnostic.contains("schema_version"));
     }
 }

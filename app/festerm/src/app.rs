@@ -100,6 +100,26 @@ impl FesTermApp {
         self.configuration_status = status;
     }
 
+    /// Captures a metadata-only workspace and saves it only for an explicit
+    /// Settings action. The current configuration changes only after the
+    /// atomic file replacement has succeeded.
+    fn save_workspace(&mut self) {
+        let replacement = match self.state.capture_workspace_configuration() {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status = ConfigurationStartupStatus::WorkspaceSaveFailure(
+                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                );
+                return;
+            }
+        };
+        let status = self.configuration_reloader.save_workspace(&replacement);
+        if matches!(status, ConfigurationStartupStatus::WorkspaceSaved) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
     fn update_window_title(&mut self, context: &egui::Context) {
         let terminal_title = match &self.state.active_tab_mut().content {
             TabContent::Session(session) => session.terminal.title().to_owned(),
@@ -683,6 +703,7 @@ impl FesTermApp {
         if let Some(command) = screen_command {
             match command {
                 AppCommand::ReloadConfiguration => self.reload_configuration(),
+                AppCommand::SaveWorkspace => self.save_workspace(),
                 command => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
@@ -731,6 +752,8 @@ impl FesTermApp {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
 
@@ -813,6 +836,67 @@ mod tests {
         assert_eq!(state.active(), primary_tab);
         assert!(matches!(state.active_tab().content, TabContent::Session(_)));
         state.dispatch(AppCommand::CloseTab(primary_tab), &context);
+    }
+
+    #[test]
+    fn successful_workspace_save_replaces_configuration_after_writing() {
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "sh",
+            Vec::new(),
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-workspace-save-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+
+        app.save_workspace();
+
+        assert_eq!(
+            app.configuration_status,
+            ConfigurationStartupStatus::WorkspaceSaved
+        );
+        assert_eq!(
+            app.state.configuration().profiles(),
+            configuration.profiles()
+        );
+        assert!(app.state.configuration().workspace_enabled());
+        assert_eq!(
+            Configuration::load_from_path(&path).unwrap(),
+            *app.state.configuration()
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_workspace_save_retains_configuration_without_path_or_content_leakage() {
+        let configuration = Configuration::empty();
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-workspace-save-failure-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(directory.clone());
+
+        app.save_workspace();
+
+        let diagnostic = app.configuration_status.settings_message();
+        assert!(matches!(
+            app.configuration_status,
+            ConfigurationStartupStatus::WorkspaceSaveFailure(_)
+        ));
+        assert_eq!(app.state.configuration(), &configuration);
+        assert!(!diagnostic.contains(directory.to_string_lossy().as_ref()));
+        assert!(!diagnostic.contains("schema_version"));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

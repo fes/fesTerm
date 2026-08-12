@@ -488,6 +488,9 @@ pub fn show_settings(
         if ui.button("Reload configuration").clicked() {
             command = Some(AppCommand::ReloadConfiguration);
         }
+        if ui.button("Save workspace").clicked() {
+            command = Some(AppCommand::SaveWorkspace);
+        }
         ui.add_space(12.0);
         ui.separator();
         ui.add_space(12.0);
@@ -575,6 +578,39 @@ mod tests {
         assert!(matches!(
             harness.state().command,
             Some(AppCommand::ReloadConfiguration)
+        ));
+    }
+
+    #[test]
+    fn settings_save_workspace_control_returns_the_save_command() {
+        #[derive(Default)]
+        struct SettingsHarnessState {
+            command: Option<AppCommand>,
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 360.0))
+            .build_ui_state(
+                |ui, state: &mut SettingsHarnessState| {
+                    if let Some(command) = show_settings(
+                        ui,
+                        ChipLayout::Wrap,
+                        true,
+                        ConfigurationStartupStatus::Loaded,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                SettingsHarnessState::default(),
+            );
+        harness.run();
+
+        harness.get_by_label("Save workspace").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SaveWorkspace)
         ));
     }
 

@@ -4,9 +4,10 @@
 in-memory transactional reload state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
-to the Launcher. File watching, configuration editing/saving,
-credential-store references, workspace save UI, and saved SSH autoconnect are
-intentionally not part of this slice.
+to the Launcher. Settings can explicitly save a fresh workspace snapshot while
+preserving the manually authored profiles. File watching, profile editing,
+credential-store references, and saved SSH autoconnect are intentionally not
+part of this slice.
 
 ## Startup discovery
 
@@ -147,8 +148,20 @@ private-key authentication; host trust is requested anew when needed. No
 credentials, key material, connection/channel, process state, or host trust
 is persisted or recreated.
 
-There is no workspace save or edit UI. Users who opt in author this TOML
-manually. fesTerm does not auto-save, watch the file, or persist secure
+Settings has an explicit **Save workspace** action. It snapshots only the
+restorable metadata described above in current tab order: Launcher, Settings,
+authentication-required restored SSH profile surfaces, and sessions launched
+from configured local profiles. It omits default/ad-hoc local sessions and
+live SSH sessions. If nothing is eligible, it saves one Launcher descriptor.
+The saved focus is always a captured descriptor (or the first descriptor when
+the active tab was omitted). Workspace descriptor IDs are fresh deterministic
+metadata, never runtime `TabId`s.
+
+Saving preserves the existing profile list, enables `workspace_enabled`, and
+uses the selected startup configuration source atomically. It is the only
+operation that may create a missing native configuration directory; an explicit
+`FESTERM_CONFIG_PATH` override never has its parent created. Profile editing
+remains manual. fesTerm does not auto-save, watch the file, or persist secure
 storage/trust data.
 
 ## Secret boundary and reload behavior

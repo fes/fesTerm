@@ -19,7 +19,7 @@ use std::sync::{
 
 use eframe::egui;
 use festerm_config::{
-    Configuration, SshProfileConfiguration, WorkspaceConfiguration, WorkspaceTab,
+    ConfigError, Configuration, SshProfileConfiguration, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
@@ -243,6 +243,11 @@ pub struct SessionTab {
     /// Static connection metadata resolved before a session starts. This gives
     /// the chip useful secondary identity before the child emits an OSC title.
     pub launch_secondary: Option<String>,
+    /// The configuration profile that explicitly launched this local session.
+    ///
+    /// Default, ad-hoc, and SSH sessions deliberately leave this empty. It is
+    /// metadata only; no runtime process or connection state is captured.
+    pub profile_identifier: Option<String>,
 }
 
 /// A restored SSH workspace surface that deliberately has no live session.
@@ -266,6 +271,7 @@ impl SessionTab {
             default_local_profile()
                 .ok()
                 .and_then(|profile| local_profile_secondary(&profile)),
+            None,
         )
     }
 
@@ -296,6 +302,7 @@ impl SessionTab {
             dimensions,
             "Local Shell",
             launch_secondary,
+            None,
         )
     }
 
@@ -314,6 +321,7 @@ impl SessionTab {
             dimensions,
             profile_id,
             launch_secondary,
+            Some(profile_id.to_owned()),
         )
     }
 
@@ -347,8 +355,16 @@ impl SessionTab {
         dimensions: Dimensions,
         label: &str,
         launch_secondary: Option<String>,
+        profile_identifier: Option<String>,
     ) -> Self {
-        Self::from_session_result(result, dimensions, label, launch_secondary, "Local shell")
+        Self::from_session_result(
+            result,
+            dimensions,
+            label,
+            launch_secondary,
+            profile_identifier,
+            "Local shell",
+        )
     }
 
     fn from_ssh_session_result(
@@ -357,7 +373,14 @@ impl SessionTab {
         label: &str,
         launch_secondary: Option<String>,
     ) -> Self {
-        Self::from_session_result(result, dimensions, label, launch_secondary, "SSH session")
+        Self::from_session_result(
+            result,
+            dimensions,
+            label,
+            launch_secondary,
+            None,
+            "SSH session",
+        )
     }
 
     fn from_session_result<E: std::fmt::Display>(
@@ -365,6 +388,7 @@ impl SessionTab {
         dimensions: Dimensions,
         label: &str,
         launch_secondary: Option<String>,
+        profile_identifier: Option<String>,
         session_name: &'static str,
     ) -> Self {
         let mut terminal =
@@ -397,6 +421,7 @@ impl SessionTab {
             view: TerminalView::default(),
             label: label.to_owned(),
             launch_secondary,
+            profile_identifier,
         }
     }
 
@@ -513,6 +538,9 @@ pub enum AppCommand {
     /// selected at startup. The path stays outside `AppState`; a successful
     /// candidate is installed through [`AppState::replace_configuration`].
     ReloadConfiguration,
+    /// Explicitly saves a fresh metadata-only workspace snapshot through the
+    /// composition root's private selected configuration source.
+    SaveWorkspace,
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
@@ -681,6 +709,53 @@ impl AppState {
         self.configuration = configuration;
     }
 
+    /// Captures only restorable workspace metadata in current display order.
+    ///
+    /// Runtime tab IDs, terminal state, active processes, and SSH transports
+    /// never leave this application state. A session is represented only when
+    /// it retained a configured local-profile identifier and that profile is
+    /// still present in the document being replaced.
+    pub fn capture_workspace_configuration(&self) -> Result<Configuration, ConfigError> {
+        let mut tabs = Vec::new();
+        let mut focused_tab_id = None;
+
+        for tab in &self.tabs {
+            let identifier = format!("tab-{}", tabs.len() + 1);
+            let workspace_tab = match &tab.content {
+                TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
+                TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
+                TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
+                    identifier.clone(),
+                    ssh.profile.identifier(),
+                )?),
+                TabContent::Session(session) => session
+                    .profile_identifier
+                    .as_deref()
+                    .filter(|profile_id| {
+                        self.configuration
+                            .profile(profile_id)
+                            .is_some_and(|profile| profile.as_local().is_some())
+                    })
+                    .map(|profile_id| WorkspaceTab::local_session(identifier, profile_id))
+                    .transpose()?,
+            };
+            if let Some(workspace_tab) = workspace_tab {
+                if tab.id == self.active {
+                    focused_tab_id = Some(workspace_tab.identifier().to_owned());
+                }
+                tabs.push(workspace_tab);
+            }
+        }
+
+        if tabs.is_empty() {
+            tabs.push(WorkspaceTab::launcher("tab-1")?);
+        }
+        let focused_tab_id =
+            focused_tab_id.or_else(|| tabs.first().map(|tab| tab.identifier().to_owned()));
+        let workspace = WorkspaceConfiguration::new(tabs, focused_tab_id)?;
+        self.configuration.with_workspace(workspace)
+    }
+
     pub const fn inspector_open(&self) -> bool {
         self.inspector_open
     }
@@ -744,7 +819,7 @@ impl AppState {
             AppCommand::OpenSettings => self.open_settings(),
             // The composition root owns the private selected file location;
             // it validates a candidate before calling `replace_configuration`.
-            AppCommand::ReloadConfiguration => {}
+            AppCommand::ReloadConfiguration | AppCommand::SaveWorkspace => {}
             AppCommand::StartLocalSession => self.start_local_session(context),
             AppCommand::StartConfiguredLocalProfile { profile_id } => {
                 self.start_configured_local_profile(&profile_id, context)
@@ -1047,6 +1122,7 @@ mod tests {
             session.launch_secondary.as_deref(),
             Some("festerm-profile-test-command-that-does-not-exist")
         );
+        assert_eq!(session.profile_identifier.as_deref(), Some("development"));
         assert!(
             session.controller.start_error().is_some(),
             "the nonexistent executable proves the configured launch path attempted its metadata"
@@ -1223,6 +1299,90 @@ mod tests {
             1,
             "the SSH restoration starts no network transport"
         );
+    }
+
+    #[test]
+    fn workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![
+            festerm_config::Profile::local(
+                "development",
+                "festerm-workspace-capture-command-that-does-not-exist",
+                Vec::new(),
+                None,
+            )
+            .unwrap(),
+            festerm_config::Profile::ssh(
+                "production",
+                "ssh.example.test",
+                22,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let mut state = AppState::for_test_with_configuration(configuration);
+        state.dispatch(
+            AppCommand::StartConfiguredLocalProfile {
+                profile_id: "development".to_owned(),
+            },
+            &context,
+        );
+        state.dispatch(AppCommand::OpenSettings, &context);
+        let settings = state.active();
+        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let TabContent::Session(ad_hoc) = &mut state.active_tab_mut().content else {
+            panic!("default launch creates a session");
+        };
+        assert_eq!(ad_hoc.profile_identifier, None);
+        let ssh = state
+            .configuration()
+            .profile("production")
+            .and_then(festerm_config::Profile::as_ssh)
+            .unwrap()
+            .clone();
+        state.tabs.push(Tab {
+            id: TabId::next(),
+            content: TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
+                profile: ssh,
+            }),
+        });
+        state.active = settings;
+
+        let captured = state.capture_workspace_configuration().unwrap();
+        let workspace = captured.workspace().unwrap();
+
+        assert_eq!(
+            workspace
+                .tabs()
+                .iter()
+                .map(WorkspaceTab::identifier)
+                .collect::<Vec<_>>(),
+            ["tab-1", "tab-2", "tab-3"]
+        );
+        assert!(matches!(workspace.tabs()[0], WorkspaceTab::LocalSession(_)));
+        assert!(matches!(workspace.tabs()[1], WorkspaceTab::Settings(_)));
+        assert!(matches!(workspace.tabs()[2], WorkspaceTab::SshSession(_)));
+        assert_eq!(workspace.focused_tab_id(), Some("tab-2"));
+        assert_eq!(captured.profiles(), state.configuration().profiles());
+    }
+
+    #[test]
+    fn workspace_capture_uses_a_launcher_when_every_tab_is_omitted() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+
+        let captured = state.capture_workspace_configuration().unwrap();
+        let workspace = captured.workspace().unwrap();
+
+        assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
+        assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
+        state.dispatch(AppCommand::CloseTab(state.active()), &context);
     }
 
     #[test]

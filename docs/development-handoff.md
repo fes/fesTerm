@@ -28,9 +28,14 @@ in place as an **SSH authentication required** surface with destination
 metadata pre-filled, but never connect without fresh transient authentication.
 Runtime tab IDs are new for each launch, and no terminal output, process,
 credential/key, channel, or host-trust state is restored. No configuration is
-watched, edited, auto-saved, or written automatically.
+watched, edited, auto-saved, or written automatically. Settings can explicitly
+**Save workspace** metadata to the same selected source, preserving the
+manually authored profiles. It saves only ordered Launcher/Settings surfaces,
+restored SSH authentication-required profile surfaces, and configured-local
+profile tabs; default, ad-hoc, and live SSH sessions are omitted. There is no
+credential storage.
 
-Not implemented: configuration editing/persistence and trust storage,
+Not implemented: configuration profile editing and trust storage,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
 references, OpenSSH-config import UI, scrollback, user-visible ligatures, a
 custom GPU renderer, terminfo distribution, and reference-TUI compatibility

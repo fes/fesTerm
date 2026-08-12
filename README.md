@@ -24,8 +24,10 @@ opt-in, manually authored metadata-only workspace restores ordered Launcher,
 Settings, and fresh local-session tabs at startup; saved SSH tabs restore as
 an authentication-required surface with destination metadata pre-filled,
 never an auto-connected session. Runtime tab IDs, terminal output, processes,
-credentials, keys, and host trust are not restored. Workspace save/edit UI,
-credential storage, auto-save, and file watching remain M8 work.
+credentials, keys, and host trust are not restored. Settings can explicitly
+save this metadata-only workspace to the selected configuration source; manual
+profile editing remains required. Credential storage, auto-save, and file
+watching remain M8 work.
 Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
@@ -128,7 +130,8 @@ custom-terminfo strategy.
 - Cross-platform `egui` front end with a GUI-independent terminal engine.
 - First-class local PTY and native in-process SSH session types.
 - Human-readable, versioned TOML configuration loaded at startup and explicitly
-  reloadable from Settings; no automatic file watching or writes.
+  reloadable or workspace-saved from Settings; profiles remain manually edited,
+  with no automatic file watching, writes, or credential storage.
 - Fast interactive behavior, ligature-capable rendering, and privacy-aware
   diagnostics.
 - Local-first operation with optional future metadata synchronization.

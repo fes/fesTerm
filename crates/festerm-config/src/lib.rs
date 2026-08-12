@@ -73,6 +73,15 @@ impl Configuration {
         Ok(configuration)
     }
 
+    /// Creates a validated workspace-enabled replacement that preserves all
+    /// reusable profile metadata from this document.
+    ///
+    /// This is intended for explicit workspace snapshots: callers cannot
+    /// accidentally discard profiles while enabling workspace persistence.
+    pub fn with_workspace(&self, workspace: WorkspaceConfiguration) -> Result<Self, ConfigError> {
+        Self::new_with_workspace(self.profiles.clone(), workspace)
+    }
+
     /// Returns an empty, valid configuration document.
     pub const fn empty() -> Self {
         Self {
@@ -1432,6 +1441,42 @@ id = "settings"
         let serialized = configuration.to_toml().unwrap();
         assert!(serialized.contains("workspace_enabled = true"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn workspace_replacement_preserves_profiles_and_validates_references() {
+        let configuration =
+            Configuration::new(vec![
+                Profile::local("development", "sh", Vec::new(), None).unwrap()
+            ])
+            .unwrap();
+        let workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::local_session("development-tab", "development").unwrap()],
+            Some("development-tab".to_owned()),
+        )
+        .unwrap();
+
+        let replacement = configuration.with_workspace(workspace).unwrap();
+
+        assert!(replacement.workspace_enabled());
+        assert_eq!(replacement.profiles(), configuration.profiles());
+        assert_eq!(
+            replacement.workspace().unwrap().focused_tab_id(),
+            Some("development-tab")
+        );
+
+        let invalid_workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::local_session("missing-tab", "missing").unwrap()],
+            Some("missing-tab".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            configuration
+                .with_workspace(invalid_workspace)
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::UnknownWorkspaceProfileReference
+        );
     }
 
     #[test]
