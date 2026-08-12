@@ -243,6 +243,7 @@ write_job() {
             guest_windows_powershell "$platform" "New-Item -ItemType Directory -Force -Path '$spool\\bundles' | Out-Null"
             guest_scp "$platform" "$bundle_path" "$spool\\bundles\\.$bundle_name.partial"
             guest_windows_powershell "$platform" "Move-Item -LiteralPath '$spool\\bundles\\.$bundle_name.partial' -Destination '$spool\\bundles\\$bundle_name'"
+            guest_windows_powershell "$platform" "icacls '$spool\\bundles\\$bundle_name' /grant 'Users:R' | Out-Null"
             guest_scp "$platform" "$job_path" "$temporary_path"
             guest_windows_powershell "$platform" "Move-Item -LiteralPath '$temporary_path' -Destination '$final_path'"
             guest_windows_powershell "$platform" "icacls '$final_path' /grant 'Users:R' | Out-Null"
