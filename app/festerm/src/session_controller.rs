@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, time::Duration};
+use std::collections::VecDeque;
+
+#[cfg(test)]
+use std::time::Duration;
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
@@ -13,9 +16,6 @@ use festerm_session::SessionMetrics;
 
 /// Maximum session events drained per frame before yielding for repaint.
 pub const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
-
-/// Bounded shutdown timeout for the local PTY session.
-pub const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Maximum bytes retained in the ordered pending-write buffer.
 pub const MAX_PENDING_COMMAND_BYTES: usize = DEFAULT_COMMAND_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
@@ -632,19 +632,23 @@ impl<S: Session> SessionController<S> {
         &self.resize_probe
     }
 
-    /// Bounded shutdown of the owned session. Called from `Drop` or explicit teardown.
+    /// Requests shutdown of the owned session without blocking the GUI thread.
+    ///
+    /// The session worker terminates the process tree and performs its bounded
+    /// reader cleanup in the background. This is called for both tab removal
+    /// and application teardown, where waiting would stall the native close
+    /// animation.
     pub fn shutdown(&self) {
         if let Some(session) = &self.session {
-            match session.shutdown(SESSION_SHUTDOWN_TIMEOUT) {
-                Ok(result) => tracing::info!(
+            match session.try_shutdown() {
+                Ok(()) => tracing::debug!(
                     target: "festerm::session",
-                    ?result,
-                    "local session shut down"
+                    "requested local session shutdown"
                 ),
                 Err(error) => tracing::error!(
                     target: "festerm::session",
                     %error,
-                    "local session did not finish bounded shutdown"
+                    "could not request local session shutdown"
                 ),
             }
         }
