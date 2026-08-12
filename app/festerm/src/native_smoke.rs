@@ -262,7 +262,9 @@ impl NativeWindowSmoke {
                     .copied()
                     .collect::<Vec<_>>();
                 let all_resizes_applied = requested_generations.len() == RESIZE_SEQUENCE.len()
-                    && requested_generations.iter().all(|generation| generation.applied);
+                    && requested_generations
+                        .iter()
+                        .all(|generation| generation.applied);
                 let visible_cells_remained = requested_generations
                     .iter()
                     .all(|generation| generation.visible_nonblank_cells > 0);
