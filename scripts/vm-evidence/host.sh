@@ -179,6 +179,9 @@ write_job() {
             final_path="$spool\\jobs\\$run_id.json"
             provider_exec_current_user "$(vm_name "$platform")" \
                 schtasks.exe /Delete /TN 'fesTerm VM Evidence Relay' /F >/dev/null 2>&1 || true
+            guest_windows_powershell "$platform" "New-Item -ItemType Directory -Force -Path '$spool\\bundles' | Out-Null"
+            guest_scp "$platform" "$bundle_path" "$spool\\bundles\\.$bundle_name.partial"
+            guest_windows_powershell "$platform" "Move-Item -LiteralPath '$spool\\bundles\\.$bundle_name.partial' -Destination '$spool\\bundles\\$bundle_name'"
             guest_scp "$platform" "$job_path" "$temporary_path"
             guest_windows_powershell "$platform" "Move-Item -LiteralPath '$temporary_path' -Destination '$final_path'"
             guest_windows_powershell "$platform" "icacls '$final_path' /grant 'Users:R' | Out-Null"

@@ -46,6 +46,8 @@ function Test-RelayJob {
     $Job.sha -match '^[0-9a-f]{40}$|^[0-9a-f]{64}$' -and
     $Job.run_id -is [string] -and
     $Job.run_id -match '^[A-Za-z0-9._-]{1,128}$' -and
+    $Job.source_bundle -is [string] -and
+    $Job.source_bundle -match '^[A-Za-z0-9._-]{1,128}\.bundle$' -and
     @('readiness-probe', 'native-smoke', 'optional-validation') -contains $Job.mode
 }
 
@@ -68,6 +70,7 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
     }
 
     $resultPath = Join-Path $resultsPath "$($job.run_id).json"
+    $bundlePath = Join-Path (Join-Path $Spool 'bundles') $job.source_bundle
     if (Test-Path $resultPath) {
         throw "Result already exists for run ID: $($job.run_id)"
     }
@@ -87,11 +90,15 @@ Get-ChildItem -Path $jobsPath -Filter '*.json' -File |
             Move-Item -Path $jobPath -Destination (Join-Path $jobsPath "processed-$($_.Name)")
             return
         }
+        if (-not (Test-Path -LiteralPath $bundlePath)) {
+            throw "Source bundle is missing: $($job.source_bundle)"
+        }
         Write-RelayResult $resultPath 'running' $job.run_id $job.sha $job.mode 'checking out requested revision' $null 'checkout'
         if (-not (Test-Path (Join-Path $Repository '.git'))) {
-            git clone $RepositoryUrl $Repository
+            git clone $bundlePath $Repository
+        } else {
+            git -C $Repository fetch $bundlePath $job.sha
         }
-        git -C $Repository fetch --no-tags $RepositoryUrl $job.sha
         git -C $Repository checkout --detach --force $job.sha
         $resolvedSha = (git -C $Repository rev-parse HEAD).Trim()
         if ($resolvedSha -ne $job.sha) {
