@@ -33,7 +33,7 @@ fn main() -> eframe::Result<()> {
     let default_height = DEFAULT_ROWS * APPROX_CELL_HEIGHT + CHROME_HEIGHT + STATUS_BAR_HEIGHT;
 
     let viewport = eframe::egui::ViewportBuilder::default()
-        .with_decorations(cfg!(not(target_os = "macos")))
+        .with_decorations(cfg!(target_os = "macos"))
         .with_fullsize_content_view(cfg!(target_os = "macos"))
         .with_title_shown(!cfg!(target_os = "macos"))
         .with_titlebar_shown(!cfg!(target_os = "macos"))
