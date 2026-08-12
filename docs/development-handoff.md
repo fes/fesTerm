@@ -13,7 +13,7 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, and early SSH transport foundation are
 separate crates.
 
-Not implemented: SSH tabs, persisted profiles/configuration, agents, key-file
+Not implemented: persisted profiles/configuration, agents, key-file
 references, additional SSH authentication paths and reconnect behavior,
 scrollback, user-visible ligatures, a custom GPU renderer, terminfo
 distribution, and reference-TUI compatibility sign-off. Encrypted-key
