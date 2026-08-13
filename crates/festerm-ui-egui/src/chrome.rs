@@ -194,6 +194,14 @@ pub enum ChromeAction {
         moved: ChipId,
         before: Option<ChipId>,
     },
+    /// Moves one chip exactly one place without activating it. These are
+    /// semantic context-menu gestures; the application owns tab-order policy.
+    MoveLeft(ChipId),
+    MoveRight(ChipId),
+    RenameStarted {
+        restore_focus: Option<Id>,
+    },
+    RenameFinished,
     /// Emitted when a rename edit is committed with a non-empty trimmed
     /// name. Only emitted for chips with `renamable: true`.
     Rename {
@@ -306,8 +314,15 @@ pub fn show(
                 (ui.available_width() - TRAILING_CONTROLS_RESERVED_WIDTH).max(0.0);
             ui.set_max_width(max_chip_row_width);
             let chip_row = |ui: &mut Ui| {
-                for chip in chips {
-                    show_chip(ui, chip, chip.id == active, &mut actions);
+                for (index, chip) in chips.iter().enumerate() {
+                    show_chip(
+                        ui,
+                        chip,
+                        chip.id == active,
+                        index > 0,
+                        index + 1 < chips.len(),
+                        &mut actions,
+                    );
                 }
                 paint_new_chip_button(ui, &mut actions);
                 // A small strip past the last chip lets a drag be released
@@ -630,7 +645,14 @@ fn rename_buffer_id(id: ChipId) -> Id {
     Id::new("chrome_chip_rename").with(id.0)
 }
 
-fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<ChromeAction>) {
+fn show_chip(
+    ui: &mut Ui,
+    chip: &ChipViewModel,
+    active: bool,
+    can_move_left: bool,
+    can_move_right: bool,
+    actions: &mut Vec<ChromeAction>,
+) {
     let chip_id = chip_widget_id(chip.id);
     let ctx = ui.ctx().clone();
     let cached_size = ctx
@@ -718,6 +740,72 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
         actions.push(ChromeAction::Activate(chip.id));
     }
 
+    // Use raw pointer geometry for the secondary click so the menu covers the
+    // complete chip, including label/status/close child widgets, without
+    // placing a final invisible response above those controls and stealing
+    // their ordinary primary-click behavior. Opening this menu deliberately
+    // does not activate the target chip.
+    let secondary_clicked = ui.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed: false,
+                    ..
+                } if bg_rect.contains(*pos)
+            )
+        })
+    });
+    let menu_restore_focus_id = chip_id.with("context_menu_restore_focus");
+    if secondary_clicked {
+        if let Some(focused) = ui.memory(|memory| memory.focused()) {
+            ui.data_mut(|data| data.insert_temp(menu_restore_focus_id, focused));
+        } else {
+            ui.data_mut(|data| data.remove::<Id>(menu_restore_focus_id));
+        }
+    }
+    Popup::context_menu(&bg_response)
+        .open_memory(secondary_clicked.then_some(egui::SetOpenCommand::Bool(true)))
+        .show(|ui| {
+            style_context_menu(ui);
+            if chip.renamable && ui.button("Rename session").clicked() {
+                ui.data_mut(|data| {
+                    data.insert_temp(rename_buffer_id(chip.id), chip.primary.clone())
+                });
+                actions.push(ChromeAction::RenameStarted {
+                    restore_focus: ui.data(|data| data.get_temp(menu_restore_focus_id)),
+                });
+                ui.close();
+            }
+            if can_move_left && ui.button("Move left").clicked() {
+                actions.push(ChromeAction::MoveLeft(chip.id));
+                ui.close();
+            }
+            if can_move_right && ui.button("Move right").clicked() {
+                actions.push(ChromeAction::MoveRight(chip.id));
+                ui.close();
+            }
+            if chip.closable {
+                if chip.renamable || can_move_left || can_move_right {
+                    ui.separator();
+                }
+                let label = if chip.renamable {
+                    "Close session"
+                } else {
+                    "Close"
+                };
+                if ui
+                    .button(RichText::new(label).color(theme::STATUS_ERROR))
+                    .clicked()
+                {
+                    actions.push(ChromeAction::Close(chip.id));
+                    ui.close();
+                }
+            }
+        });
+
     // Live reorder: while another chip is being dragged, settle the row's
     // order continuously as the pointer passes anywhere over this chip's
     // full footprint, rather than only on release. This uses raw pointer
@@ -735,6 +823,12 @@ fn show_chip(ui: &mut Ui, chip: &ChipViewModel, active: bool, actions: &mut Vec<
             }
         }
     }
+}
+
+fn style_context_menu(ui: &mut Ui) {
+    ui.set_min_width(176.0);
+    ui.spacing_mut().interact_size.y = 30.0;
+    ui.spacing_mut().item_spacing.y = 2.0;
 }
 
 /// Paints one chip's content (status dot, label/rename field, secondary
@@ -888,8 +982,9 @@ fn paint_chip_primary(
 ) {
     if let Some(mut buffer) = editing {
         let response = ui.add(TextEdit::singleline(&mut buffer).desired_width(f32::INFINITY));
-        let cancel = ui.input(|i| i.key_pressed(Key::Escape));
-        let commit = !cancel && response.lost_focus();
+        let cancel = ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape));
+        let confirm = ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Enter));
+        let commit = !cancel && (confirm || response.lost_focus());
         // Re-request focus only if we're staying in edit mode; doing this
         // unconditionally would immediately re-grab focus after
         // Enter/Escape surrendered it, masking the commit/cancel.
@@ -898,6 +993,7 @@ fn paint_chip_primary(
         }
         if cancel {
             ui.data_mut(|d| d.remove::<String>(rename_id));
+            actions.push(ChromeAction::RenameFinished);
         } else if commit {
             let trimmed = buffer.trim();
             if !trimmed.is_empty() {
@@ -907,6 +1003,7 @@ fn paint_chip_primary(
                 });
             }
             ui.data_mut(|d| d.remove::<String>(rename_id));
+            actions.push(ChromeAction::RenameFinished);
         } else {
             ui.data_mut(|d| d.insert_temp(rename_id, buffer));
         }
@@ -926,6 +1023,9 @@ fn paint_chip_primary(
         }
         if chip.renamable && label_response.double_clicked() {
             ui.data_mut(|d| d.insert_temp(rename_id, chip.primary.clone()));
+            actions.push(ChromeAction::RenameStarted {
+                restore_focus: None,
+            });
         }
     }
 }
@@ -1059,6 +1159,98 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::Activate(ChipId(2))));
+    }
+
+    #[test]
+    fn chip_context_menu_targets_inactive_chip_without_activating_it() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two"), chip(3, "three")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        harness.get_by_label("two chip").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Rename session").is_some());
+        assert!(harness.query_by_label("Move left").is_some());
+        assert!(harness.query_by_label("Move right").is_some());
+        assert!(harness.query_by_label("Close session").is_some());
+        assert!(!harness
+            .state()
+            .observed
+            .contains(&ChromeAction::Activate(ChipId(2))));
+
+        harness.get_by_label("Move right").click();
+        harness.run();
+        assert!(harness
+            .state()
+            .observed
+            .contains(&ChromeAction::MoveRight(ChipId(2))));
+        assert!(!harness
+            .state()
+            .observed
+            .contains(&ChromeAction::Activate(ChipId(2))));
+    }
+
+    #[test]
+    fn chip_context_menu_omits_moves_at_edges() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        harness.get_by_label("one chip").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Move left").is_none());
+        assert!(harness.query_by_label("Move right").is_some());
+    }
+
+    #[test]
+    fn chip_context_menu_escape_closes_without_emitting_an_action() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+        harness.get_by_label("two chip").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Rename session").is_some());
+
+        harness.key_press(Key::Escape);
+        harness.run();
+
+        assert!(harness.query_by_label("Rename session").is_none());
+        assert!(harness.state().observed.is_empty());
+    }
+
+    #[test]
+    fn chip_context_menu_item_is_keyboard_activatable() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+        harness.get_by_label("two chip").click_secondary();
+        harness.run();
+        harness.get_by_label("Move left").focus();
+        harness.run();
+
+        harness.key_press(Key::Enter);
+        harness.run();
+
+        assert!(harness
+            .state()
+            .observed
+            .contains(&ChromeAction::MoveLeft(ChipId(2))));
     }
 
     #[test]
@@ -1386,6 +1578,15 @@ mod tests {
             "observed actions: {:?}",
             harness.state().observed
         );
+        assert!(harness
+            .state()
+            .observed
+            .iter()
+            .any(|action| matches!(action, ChromeAction::RenameStarted { .. })));
+        assert!(harness
+            .state()
+            .observed
+            .contains(&ChromeAction::RenameFinished));
     }
 
     #[test]

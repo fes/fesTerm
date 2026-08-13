@@ -36,7 +36,7 @@ pub use input::{
 };
 pub use renderer::{resolve_color, FontSettings};
 pub use selection::{normalize_selection_position, selection_text, Selection};
-pub use view::{FrameDiagnostics, TerminalView};
+pub use view::{FrameDiagnostics, TerminalView, TerminalViewOptions};
 
 // --- Crate-internal re-exports (only needed by the test module) ---
 #[cfg(test)]
@@ -122,9 +122,9 @@ impl<'a> TerminalSnapshot<'a> {
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use egui_kittest::Harness;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     use egui_kittest::SnapshotResults;
+    use egui_kittest::{kittest::Queryable, Harness};
     use festerm_test_support::load_fixture;
 
     use super::*;
@@ -426,6 +426,227 @@ mod tests {
             vec![b"Q".to_vec()],
             "typed input should reach the terminal without ever clicking into it first"
         );
+    }
+
+    #[test]
+    fn terminal_context_menu_intercepts_local_right_click_without_pty_input() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Paste").is_some());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn shift_right_click_overrides_tui_mouse_reporting_without_leaking_bytes() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1000h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(!harness.state().sink.0.is_empty());
+        let reports_before_override = harness.state().sink.0.len();
+
+        harness
+            .get_by_label("Terminal viewport")
+            .click_button_modifiers(egui::PointerButton::Secondary, egui::Modifiers::SHIFT);
+        harness.run();
+
+        assert!(harness.query_by_label("Paste").is_some());
+        assert_eq!(harness.state().sink.0.len(), reports_before_override);
+    }
+
+    #[test]
+    fn secondary_gesture_ownership_is_latched_across_modifier_changes() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1000h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let center = harness.get_by_label("Terminal viewport").rect().center();
+
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_some());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(!harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn escape_closes_terminal_context_menu_and_returns_input_to_terminal() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![b"Q".to_vec()]);
+    }
+
+    #[test]
+    fn read_only_terminal_context_menu_omits_paste() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            paste_available: false,
+                        },
+                    );
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_exposes_copy_for_selection_without_clearing_it() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"copy me");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Copy").is_some());
+        assert!(harness.state().view.selection().range().is_some());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_uses_explicit_link_under_pointer_only() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("rendered grid");
+        let link_cell = grid.left_top() + egui::vec2(2.0, 2.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: link_cell,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+
+        assert!(harness.query_by_label("Open link").is_some());
+        assert!(harness.query_by_label("Copy link").is_some());
+        assert!(harness.state().sink.0.is_empty());
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]

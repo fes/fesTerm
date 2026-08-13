@@ -2079,19 +2079,18 @@ section is retained as design history, not as the current implementation plan.
 ## Current Implementation Priorities
 
 The command-label/palette alignment, Launcher lifecycle, responsive Session
-Inspector overlay, and first native macOS application-menu slices are
-implemented. Remaining approved target behavior should proceed in this order
-unless an active milestone or regression requires a different sequence:
+Inspector overlay, first native macOS application-menu slice, and truthful
+terminal/session-chip context menus are implemented. Remaining approved target
+behavior should proceed in this order unless an active milestone or regression
+requires a different sequence:
 
-1. Add terminal and chip context menus without duplicating lifecycle policy in
-   widgets; stable-name in-place rename already uses the shared rename command.
-2. Add bounded scrollback under the M9 design gate, then represent reconnect,
+1. Add bounded scrollback under the M9 design gate, then represent reconnect,
    relaunch, and reopen boundaries as non-terminal UI metadata within it.
-3. Implement destructive and paste-confirmation safety with exact
+2. Implement destructive and paste-confirmation safety with exact
    session-generation binding.
-4. Integrate semantic SVG icons and bundled Inter through owned asset layers,
+3. Integrate semantic SVG icons and bundled Inter through owned asset layers,
    retaining the documented accessibility and fallback contracts.
-5. Schedule the serial backend as a focused capability track with platform
+4. Schedule the serial backend as a focused capability track with platform
    discovery, permissions, exclusive ownership, and deterministic loopback
    evidence; its GUI contract is already defined here.
 

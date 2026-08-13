@@ -1,11 +1,14 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use egui::{Sense, Ui};
-use festerm_core::{InputEventOutcome, Terminal};
+use egui::{Popup, Sense, Ui};
+use festerm_core::{InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
-    geometry::{dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
+    geometry::{cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
         KeyboardOwnership, TerminalPointerState,
@@ -14,9 +17,26 @@ use crate::{
         measure_input_to_paint_submission, paint_grid, FontSettings, GlyphCache, GridLayout,
         GridPaint,
     },
+    selection::selection_text,
     selection::Selection,
     TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND,
 };
+
+/// Application-owned terminal capabilities that affect local viewport
+/// commands without exposing a session backend to the presentation crate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalViewOptions {
+    /// The current session can accept a paste through its ordered input path.
+    pub paste_available: bool,
+}
+
+impl Default for TerminalViewOptions {
+    fn default() -> Self {
+        Self {
+            paste_available: true,
+        }
+    }
+}
 
 /// Diagnostics captured by the UI path without recording terminal content.
 #[derive(Clone, Debug, Default)]
@@ -55,6 +75,18 @@ pub struct TerminalView {
     /// afterwards the user is free to click elsewhere (e.g. the launcher, a
     /// rename field) without this view stealing focus back every frame.
     has_requested_initial_focus: bool,
+    /// Explicit OSC 8 target captured under the pointer when the local menu
+    /// opens. It remains stable while the pointer moves through the popup.
+    context_link: Option<Arc<str>>,
+    secondary_gesture: SecondaryGestureOwnership,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+enum SecondaryGestureOwnership {
+    #[default]
+    None,
+    Local(egui::Pos2),
+    Terminal,
 }
 
 impl TerminalView {
@@ -90,6 +122,16 @@ impl TerminalView {
     /// [`TerminalView::diagnostics`] or format [`TerminalView::diagnostics_summary`]
     /// into their own chrome (e.g. the application status bar).
     pub fn show(&mut self, ui: &mut Ui, terminal: &mut Terminal, sink: &mut impl EncodedInputSink) {
+        self.show_with_options(ui, terminal, sink, TerminalViewOptions::default());
+    }
+
+    pub fn show_with_options(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+        options: TerminalViewOptions,
+    ) {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
@@ -107,7 +149,7 @@ impl TerminalView {
                     )),
             )
             .show(ui, |ui| {
-                self.show_in_ui(ui, terminal, sink);
+                self.show_in_ui_with_options(ui, terminal, sink, options);
             });
     }
 
@@ -117,6 +159,16 @@ impl TerminalView {
         ui: &mut Ui,
         terminal: &mut Terminal,
         sink: &mut impl EncodedInputSink,
+    ) {
+        self.show_in_ui_with_options(ui, terminal, sink, TerminalViewOptions::default());
+    }
+
+    pub fn show_in_ui_with_options(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+        options: TerminalViewOptions,
     ) {
         let frame_started = Instant::now();
         let glyph =
@@ -142,6 +194,9 @@ impl TerminalView {
         }
 
         let (viewport_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Terminal viewport")
+        });
         ui.painter()
             .rect_filled(viewport_rect, 0.0, DEFAULT_BACKGROUND);
         let vp_layout =
@@ -167,6 +222,91 @@ impl TerminalView {
             dimensions: vp_layout.dimensions,
             metrics,
         };
+
+        // A TUI with mouse tracking owns ordinary right-click. Shift is the
+        // stable local override; without mouse tracking, right-click is local
+        // by default. Remove both press and release before terminal routing so
+        // opening the menu can never emit half of a mouse protocol gesture.
+        let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
+        let mut local_context_release = None;
+        ui.input_mut(|input| {
+            input.events.retain(|event| {
+                let egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers,
+                } = event
+                else {
+                    return true;
+                };
+                if *pressed {
+                    if !viewport_rect.contains(*pos) {
+                        self.secondary_gesture = SecondaryGestureOwnership::None;
+                        return true;
+                    }
+                    if !mouse_reporting || modifiers.shift {
+                        self.secondary_gesture = SecondaryGestureOwnership::Local(*pos);
+                        return false;
+                    }
+                    self.secondary_gesture = SecondaryGestureOwnership::Terminal;
+                    return true;
+                }
+                match std::mem::take(&mut self.secondary_gesture) {
+                    SecondaryGestureOwnership::Local(press_position) => {
+                        local_context_release = Some(press_position);
+                        false
+                    }
+                    SecondaryGestureOwnership::Terminal | SecondaryGestureOwnership::None => true,
+                }
+            });
+        });
+
+        if let Some(position) = local_context_release {
+            self.context_link =
+                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
+                    .and_then(|cell| terminal.cell_ref(cell.column, cell.row))
+                    .and_then(|cell| cell.hyperlink_target());
+        }
+        let selected_text =
+            selection_text(TerminalSnapshot::from_terminal(terminal), &self.selection)
+                .filter(|text| !text.is_empty());
+        let menu_has_items =
+            self.context_link.is_some() || selected_text.is_some() || options.paste_available;
+        let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
+        let menu = Popup::context_menu(&response)
+            .open_memory(set_open)
+            .show(|ui| {
+                style_context_menu(ui);
+                if let Some(text) = selected_text.clone() {
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(text);
+                        ui.close();
+                    }
+                }
+                if options.paste_available && ui.button("Paste").clicked() {
+                    response.request_focus();
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    ui.close();
+                }
+                // Find in terminal belongs immediately above this separator
+                // once search exists. Do not render an inert placeholder.
+                if let Some(link) = self.context_link.clone() {
+                    if selected_text.is_some() || options.paste_available {
+                        ui.separator();
+                    }
+                    if ui.button("Open link").clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(link.as_ref()));
+                        ui.close();
+                    }
+                    if ui.button("Copy link").clicked() {
+                        ui.ctx().copy_text(link.to_string());
+                        ui.close();
+                    }
+                }
+            });
+        let context_menu_open = menu.is_some();
         let reports = route_egui_events(
             ui,
             &response,
@@ -178,6 +318,7 @@ impl TerminalView {
                 pointer: &mut self.pointer,
             },
             sink,
+            context_menu_open,
         );
         for report in reports.routes {
             self.diagnostics.last_input_outcome = Some(report.outcome);
@@ -261,4 +402,10 @@ impl TerminalView {
             self.diagnostics.input_queue_depth,
         )
     }
+}
+
+fn style_context_menu(ui: &mut Ui) {
+    ui.set_min_width(176.0);
+    ui.spacing_mut().interact_size.y = 30.0;
+    ui.spacing_mut().item_spacing.y = 2.0;
 }

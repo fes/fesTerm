@@ -109,6 +109,8 @@ pub struct FesTermApp {
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
+    rename_restore_focus: Option<egui::Id>,
+    rename_restore_tab: Option<TabId>,
     native_menu: festerm_macos_window::NativeMenu,
 }
 
@@ -163,6 +165,8 @@ impl FesTermApp {
             configuration_status,
             configuration_reloader: ConfigurationReloader::unavailable(),
             inspector_restore_focus: None,
+            rename_restore_focus: None,
+            rename_restore_tab: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
         }
     }
@@ -345,6 +349,29 @@ impl FesTermApp {
                     let before = before.and_then(|chip_id| self.tab_id_for_chip(chip_id));
                     self.state
                         .dispatch(AppCommand::ReorderTab { moved, before }, context);
+                }
+                ChromeAction::MoveLeft(chip_id) => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state.dispatch(AppCommand::MoveTabLeft(id), context);
+                    }
+                }
+                ChromeAction::MoveRight(chip_id) => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state.dispatch(AppCommand::MoveTabRight(id), context);
+                    }
+                }
+                ChromeAction::RenameStarted { restore_focus } => {
+                    self.rename_restore_focus = restore_focus;
+                    self.rename_restore_tab = Some(self.state.active());
+                }
+                ChromeAction::RenameFinished => {
+                    let restore_tab = self.rename_restore_tab.take();
+                    if let Some(tab) = restore_tab.and_then(|id| self.state.session_tab_mut(id)) {
+                        tab.view.request_focus_on_next_frame();
+                        self.rename_restore_focus = None;
+                    } else if let Some(target) = self.rename_restore_focus.take() {
+                        context.memory_mut(|memory| memory.request_focus(target));
+                    }
                 }
                 ChromeAction::Rename { id: chip_id, name } => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
@@ -848,9 +875,15 @@ impl FesTermApp {
                         screens::show_ssh_authentication_required(ui, active_tab_id, &tab.profile);
                 }
                 TabContent::Session(session) => {
-                    session
-                        .view
-                        .show(ui, &mut session.terminal, &mut session.controller);
+                    let options = festerm_ui_egui::TerminalViewOptions {
+                        paste_available: session.accepts_input(),
+                    };
+                    session.view.show_with_options(
+                        ui,
+                        &mut session.terminal,
+                        &mut session.controller,
+                        options,
+                    );
                     session
                         .controller
                         .observe_resize_probe_terminal_state(&session.terminal);
@@ -945,6 +978,8 @@ impl FesTermApp {
             configuration_status: ConfigurationStartupStatus::Missing,
             configuration_reloader: ConfigurationReloader::unavailable(),
             inspector_restore_focus: None,
+            rename_restore_focus: None,
+            rename_restore_tab: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
         }
     }
@@ -1027,6 +1062,85 @@ mod tests {
         harness.run();
         harness.snapshot_options(
             "festerm-session-inspector-actual",
+            &SnapshotOptions::default().output_path(output_path),
+        );
+    }
+
+    /// Captures the production terminal-local context menu with a real local
+    /// session and deterministic application-owned selection.
+    #[test]
+    #[ignore = "manual GUI mockup review capture"]
+    fn capture_terminal_context_menu_for_mockup_review() {
+        let output_path = std::env::temp_dir().join("festerm-gui-review");
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        if let TabContent::Session(session) =
+            &mut harness.state_mut().state.active_tab_mut().content
+        {
+            session.terminal.ingest(b"fesTerm context-menu review");
+        }
+        harness.run();
+        let grid = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session
+                .view
+                .diagnostics()
+                .grid_rect
+                .expect("session grid is rendered"),
+            _ => panic!("local launcher action must create a session"),
+        };
+        let start = grid.left_top() + egui::vec2(2.0, 2.0);
+        let end = start + egui::vec2(52.0, 0.0);
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerMoved(end));
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        harness.snapshot_options(
+            "festerm-terminal-context-menu-actual",
+            &SnapshotOptions::default().output_path(output_path),
+        );
+    }
+
+    /// Captures a session-chip menu targeted at an inactive chip; the active
+    /// Launcher remains visibly unchanged to prove context targeting does not
+    /// activate the session.
+    #[test]
+    #[ignore = "manual GUI mockup review capture"]
+    fn capture_session_chip_context_menu_for_mockup_review() {
+        let output_path = std::env::temp_dir().join("festerm-gui-review");
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let session_id = harness.state().state.active();
+        harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
+        harness.run();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenSettings, &egui::Context::default());
+        harness.state_mut().state.dispatch(
+            AppCommand::MoveTabRight(session_id),
+            &egui::Context::default(),
+        );
+        harness.run();
+        harness.get_by_label("Local Shell chip").click_secondary();
+        harness.run();
+        harness.snapshot_options(
+            "festerm-session-chip-context-menu-actual",
             &SnapshotOptions::default().output_path(output_path),
         );
     }
@@ -1437,5 +1551,50 @@ mod tests {
             harness.state().state.active_tab().content,
             TabContent::Launcher
         ));
+    }
+
+    #[test]
+    fn cancelling_chip_rename_restores_terminal_focus_without_leaking_escape() {
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        let before = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session
+                .view
+                .diagnostics()
+                .input_sink
+                .map_or(0, |diagnostics| diagnostics.byte_count),
+            _ => panic!("launcher action must start a session"),
+        };
+
+        harness.get_by_label("Local Shell chip").click_secondary();
+        harness.run();
+        harness.get_by_label("Rename session").click();
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+
+        let after_escape = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session
+                .view
+                .diagnostics()
+                .input_sink
+                .map_or(0, |diagnostics| diagnostics.byte_count),
+            _ => panic!("rename must not change the active session"),
+        };
+        assert_eq!(after_escape, before, "Escape must remain application-owned");
+
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        let after_text = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session
+                .view
+                .diagnostics()
+                .input_sink
+                .map_or(0, |diagnostics| diagnostics.byte_count),
+            _ => panic!("session must remain active"),
+        };
+        assert_eq!(after_text, before + 1);
     }
 }

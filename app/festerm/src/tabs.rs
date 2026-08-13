@@ -471,6 +471,12 @@ impl SessionTab {
         }
     }
 
+    /// Whether viewport-local Paste may enqueue input for this generation.
+    pub fn accepts_input(&self) -> bool {
+        self.controller.start_error().is_none()
+            && matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running))
+    }
+
     /// Content-free locality/transport text for the status bar.
     pub fn system_label(&self) -> &'static str {
         match self.controller.session() {
@@ -630,6 +636,9 @@ pub enum AppCommand {
         moved: TabId,
         before: Option<TabId>,
     },
+    /// Moves one tab exactly one position while preserving active identity.
+    MoveTabLeft(TabId),
+    MoveTabRight(TabId),
     /// Renames a session tab's stable primary identity (label). No-op for
     /// Launcher/Settings tabs, whose names are fixed.
     RenameTab(TabId, String),
@@ -904,6 +913,8 @@ impl AppState {
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
             AppCommand::CloseTab(id) => self.close(id),
             AppCommand::ReorderTab { moved, before } => self.reorder(moved, before),
+            AppCommand::MoveTabLeft(id) => self.move_tab(id, -1),
+            AppCommand::MoveTabRight(id) => self.move_tab(id, 1),
             AppCommand::RenameTab(id, name) => self.rename(id, name),
             AppCommand::ToggleSessionInspector => {
                 if matches!(self.active_tab().content, TabContent::Session(_)) {
@@ -1084,6 +1095,19 @@ impl AppState {
             None => self.tabs.len(),
         };
         self.tabs.insert(insert_at, tab);
+    }
+
+    /// Moves a tab one place without changing which tab is active. Invalid ids
+    /// and attempts to move beyond an edge are no-ops.
+    fn move_tab(&mut self, id: TabId, delta: i64) {
+        let Some(from) = self.tabs.iter().position(|tab| tab.id == id) else {
+            return;
+        };
+        let to = from as i64 + delta;
+        if !(0..self.tabs.len() as i64).contains(&to) {
+            return;
+        }
+        self.tabs.swap(from, to as usize);
     }
 
     /// Renames the session tab's stable primary identity (label). A no-op
@@ -1834,6 +1858,25 @@ mod tests {
             &context,
         );
         assert_eq!(state.tabs()[0].id, only);
+    }
+
+    #[test]
+    fn move_tab_commands_move_one_place_without_changing_active_identity() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher = state.active();
+        state.dispatch(AppCommand::OpenSettings, &context);
+        let settings = state.active();
+
+        state.dispatch(AppCommand::MoveTabLeft(settings), &context);
+        assert_eq!(state.active(), settings);
+        assert_eq!(state.tabs()[0].id, settings);
+        assert_eq!(state.tabs()[1].id, launcher);
+
+        state.dispatch(AppCommand::MoveTabLeft(launcher), &context);
+        assert_eq!(state.active(), settings);
+        assert_eq!(state.tabs()[0].id, launcher);
+        assert_eq!(state.tabs()[1].id, settings);
     }
 
     #[test]

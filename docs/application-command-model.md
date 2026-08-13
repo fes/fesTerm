@@ -89,10 +89,17 @@ Examples that are application commands include:
 - reconnect a transport;
 - open Settings;
 - toggle the session inspector;
+- reorder or rename a session chip;
 - restore a workspace; and
 - open the launcher.
 
 This distinction prevents the application command system from becoming a second terminal-input protocol.
+
+Terminal-local context actions—selection Copy, Paste contents, and explicit
+OSC 8 link actions—remain UI/input operations rather than application
+commands. In contrast, a chip context menu translates Rename, Move left/right,
+and Close into the same typed tab commands used by direct chrome gestures.
+Opening a chip menu targets its stable tab identifier without activating it.
 
 ## Command Palette Rule
 

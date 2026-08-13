@@ -224,6 +224,7 @@ pub(crate) fn route_egui_events(
     terminal: &mut Terminal,
     input: InputAdapterState<'_>,
     sink: &mut impl EncodedInputSink,
+    suppress_terminal_input: bool,
 ) -> InputRoutingReports {
     let InputAdapterState {
         selection,
@@ -237,6 +238,9 @@ pub(crate) fn route_egui_events(
     let mut terminal_key_routed = false;
 
     for event in events {
+        if suppress_terminal_input && !matches!(event, egui::Event::WindowFocused(_)) {
+            continue;
+        }
         match event {
             egui::Event::Copy if keyboard_focused => {
                 if let Some(text) =
