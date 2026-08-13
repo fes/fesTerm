@@ -105,9 +105,11 @@ production and controlled-test seam while remaining the single logical
 terminal writer. The first M9 slice now retains bounded logical primary-screen
 history with content-free accounting and explicit alternate-screen isolation,
 following [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md).
-Viewport projection/navigation, selection across history, resize reflow,
-renderer shaping, and full grapheme segmentation remain later work; native
-rendered-window validation remains an M6 gate.
+The UI now projects retained physical rows through a borrowed snapshot and
+stores follow/anchor state in each session-owned `TerminalView`, without
+changing PTY grid dimensions or workspace persistence. Selection across
+history, resize reflow, renderer shaping, and full grapheme segmentation remain
+later work; native rendered-window validation remains an M6 gate.
 
 ### `festerm-session`
 

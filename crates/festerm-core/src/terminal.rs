@@ -301,6 +301,17 @@ impl Terminal {
         self.scrollback.stats()
     }
 
+    /// Borrows one retained physical row by its oldest-first history index.
+    pub fn scrollback_physical_row(&self, mut row: usize) -> Option<&[Cell]> {
+        for line in self.scrollback.lines() {
+            if row < line.physical_rows() {
+                return line.physical_row(row);
+            }
+            row -= line.physical_rows();
+        }
+        None
+    }
+
     /// Clears retained primary-screen history without changing the visible grid.
     pub fn clear_scrollback(&mut self) {
         self.scrollback.clear();

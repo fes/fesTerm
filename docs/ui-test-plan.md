@@ -400,6 +400,13 @@ for wheel/trackpad feel, scrollbar discoverability, performance near the
 default 64 MiB budget, DPI/resize behavior, and exited/disconnected read-only
 history; those checks are registered in `manual-validation.md` and issue #43.
 
+The initial automated viewport slice now proves borrowed retained-row
+projection, cursor suppression outside the viewed region, ordinary local wheel
+ownership, anchored stability as output arrives, Ctrl+End resume, and the
+TUI-mouse contract in which ordinary wheel is forwarded but Shift-wheel remains
+local. Unseen-output presentation, eviction fallback, selection across history,
+scrollbar interaction, disconnected behavior, and reflow remain open.
+
 ## Reference Material
 
 - [xterm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)

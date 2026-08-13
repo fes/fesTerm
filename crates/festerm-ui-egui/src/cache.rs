@@ -30,6 +30,17 @@ impl RenderedCell {
         }
     }
 
+    pub(crate) fn blank() -> Self {
+        Self {
+            text: " ".to_owned(),
+            width: CellWidth::Single,
+            foreground: Color::Default,
+            background: Color::Default,
+            attributes: Attributes::NONE,
+            hyperlink: None,
+        }
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -78,6 +89,7 @@ pub struct RenderCacheUpdate {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TerminalRenderCache {
     dimensions: Option<Dimensions>,
+    viewport_offset_rows: usize,
     rows: Vec<CachedRow>,
 }
 
@@ -88,9 +100,11 @@ impl TerminalRenderCache {
         dirty_rows: &[usize],
     ) -> RenderCacheUpdate {
         let dimensions = snapshot.dimensions();
-        let full_refresh = self.dimensions != Some(dimensions);
+        let full_refresh = self.dimensions != Some(dimensions)
+            || self.viewport_offset_rows != snapshot.viewport_offset_rows();
         if full_refresh {
             self.dimensions = Some(dimensions);
+            self.viewport_offset_rows = snapshot.viewport_offset_rows();
             self.rows = vec![CachedRow::default(); dimensions.rows()];
         }
 
@@ -106,11 +120,9 @@ impl TerminalRenderCache {
         for row in &rows {
             self.rows[*row].cells = (0..dimensions.columns())
                 .map(|column| {
-                    RenderedCell::from_core(
-                        snapshot
-                            .cell(column, *row)
-                            .expect("terminal dimensions and screen must agree"),
-                    )
+                    snapshot
+                        .cell(column, *row)
+                        .map_or_else(RenderedCell::blank, RenderedCell::from_core)
                 })
                 .collect();
         }

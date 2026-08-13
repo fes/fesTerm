@@ -42,6 +42,7 @@ impl ScrollbackStats {
 pub struct LogicalLine {
     id: u64,
     cells: Vec<Cell>,
+    row_ends: Vec<usize>,
     physical_rows: usize,
     hard_break: bool,
     charged_bytes: usize,
@@ -56,6 +57,14 @@ impl LogicalLine {
     }
     pub const fn physical_rows(&self) -> usize {
         self.physical_rows
+    }
+    pub fn physical_row(&self, row: usize) -> Option<&[Cell]> {
+        let end = *self.row_ends.get(row)?;
+        let start = row
+            .checked_sub(1)
+            .and_then(|previous| self.row_ends.get(previous).copied())
+            .unwrap_or(0);
+        Some(&self.cells[start..end])
     }
     pub const fn has_hard_break(&self) -> bool {
         self.hard_break
@@ -107,6 +116,7 @@ impl Scrollback {
             self.lines.push_back(LogicalLine {
                 id,
                 cells: Vec::new(),
+                row_ends: Vec::new(),
                 physical_rows: 0,
                 hard_break: false,
                 charged_bytes: size_of::<LogicalLine>(),
@@ -117,10 +127,12 @@ impl Scrollback {
         let line = self.lines.back_mut().expect("open history line exists");
         let prior_charge = line.charged_bytes;
         line.cells.extend(row.cells);
+        line.row_ends.push(line.cells.len());
         line.physical_rows += 1;
         line.hard_break = ends_line;
         line.charged_bytes = size_of::<LogicalLine>()
-            .saturating_add(charged_cells(&line.cells, line.cells.capacity()));
+            .saturating_add(charged_cells(&line.cells, line.cells.capacity()))
+            .saturating_add(size_of::<usize>().saturating_mul(line.row_ends.capacity()));
         self.charged_bytes = self
             .charged_bytes
             .saturating_add(line.charged_bytes.saturating_sub(prior_charge));

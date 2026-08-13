@@ -382,9 +382,11 @@ fesTerm operates as a practical multi-session terminal application.
 
 ## Milestone 9 — Scrollback, Viewport Navigation, and Reflow
 
-**Status:** In progress — ADR 0017 and the bounded logical primary-history
-foundation are implemented; viewport projection/navigation, configuration,
-selection across history, and resize reflow remain.
+**Status:** In progress — ADR 0017, bounded logical primary history, borrowed
+viewport projection, per-session follow/anchor state, local wheel navigation,
+Shift+Page Up/Down, and Ctrl+End are implemented. Configuration, eviction
+notices, `Jump to latest`, selection across history, the overlay scrollbar,
+and resize reflow remain.
 
 ### Outcome
 

@@ -343,12 +343,14 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
     }
 
     if paint.snapshot.modes().cursor_visible() {
-        let cursor = paint.snapshot.cursor();
-        if cursor.column() < dimensions.columns() && cursor.row() < dimensions.rows() {
+        let cursor = paint.snapshot.cursor_in_viewport();
+        if let Some((cursor_column, cursor_row)) = cursor
+            .filter(|(column, row)| *column < dimensions.columns() && *row < dimensions.rows())
+        {
             let cell_rect = Rect::from_min_size(
                 Pos2::new(
-                    paint.layout.rect.left() + cursor.column() as f32 * paint.layout.metrics.width,
-                    paint.layout.rect.top() + cursor.row() as f32 * paint.layout.metrics.height,
+                    paint.layout.rect.left() + cursor_column as f32 * paint.layout.metrics.width,
+                    paint.layout.rect.top() + cursor_row as f32 * paint.layout.metrics.height,
                 ),
                 Vec2::new(paint.layout.metrics.width, paint.layout.metrics.height),
             );
@@ -377,10 +379,11 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 // underneath; redraw it inverted (background-colored) on
                 // top, matching every other terminal emulator's filled
                 // block-cursor convention.
-                if let Some(cell) = paint.cache.row(cursor.row()).and_then(|row| {
-                    row.get(cursor.column())
-                        .filter(|cell| !cell.text.is_empty())
-                }) {
+                if let Some(cell) = paint
+                    .cache
+                    .row(cursor_row)
+                    .and_then(|row| row.get(cursor_column).filter(|cell| !cell.text.is_empty()))
+                {
                     let galley = glyphs.layout(
                         &painter,
                         &cell.text,

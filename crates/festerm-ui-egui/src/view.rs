@@ -79,6 +79,38 @@ pub struct TerminalView {
     /// opens. It remains stable while the pointer moves through the popup.
     context_link: Option<Arc<str>>,
     secondary_gesture: SecondaryGestureOwnership,
+    history: HistoryViewport,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct HistoryViewport {
+    offset_rows: usize,
+    observed_history_rows: usize,
+}
+
+impl HistoryViewport {
+    fn sync(&mut self, terminal: &Terminal) {
+        let rows = terminal.scrollback_stats().physical_rows();
+        if self.offset_rows > 0 && rows > self.observed_history_rows {
+            self.offset_rows = self
+                .offset_rows
+                .saturating_add(rows - self.observed_history_rows);
+        }
+        self.offset_rows = self.offset_rows.min(rows);
+        self.observed_history_rows = rows;
+    }
+
+    fn scroll_up(&mut self, rows: usize) {
+        self.offset_rows = self.offset_rows.saturating_add(rows);
+    }
+
+    fn scroll_down(&mut self, rows: usize) {
+        self.offset_rows = self.offset_rows.saturating_sub(rows);
+    }
+
+    fn latest(&mut self) {
+        self.offset_rows = 0;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -101,6 +133,14 @@ impl TerminalView {
 
     pub fn selection(&self) -> &Selection {
         &self.selection
+    }
+
+    pub const fn history_offset_rows(&self) -> usize {
+        self.history.offset_rows
+    }
+
+    pub const fn follows_latest_output(&self) -> bool {
+        self.history.offset_rows == 0
     }
 
     /// Marks this view as needing keyboard focus again on its next frame.
@@ -222,12 +262,83 @@ impl TerminalView {
             dimensions: vp_layout.dimensions,
             metrics,
         };
+        let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
+
+        self.history.sync(terminal);
+        if !terminal.modes().alternate_screen() {
+            let page_rows = terminal.dimensions().rows().saturating_sub(1).max(1);
+            let terminal_focused = response.has_focus();
+            let terminal_hovered = response.hovered();
+            let mut history_changed = false;
+            ui.input_mut(|input| {
+                input.events.retain(|event| match event {
+                    egui::Event::MouseWheel {
+                        unit,
+                        delta,
+                        modifiers,
+                        ..
+                    } if terminal_hovered && (!mouse_reporting || modifiers.shift) => {
+                        let rows = match unit {
+                            egui::MouseWheelUnit::Point => {
+                                ((delta.y.abs() / metrics.height).ceil() as usize).max(1)
+                            }
+                            egui::MouseWheelUnit::Line => delta.y.abs().ceil() as usize,
+                            egui::MouseWheelUnit::Page => {
+                                (delta.y.abs().ceil() as usize).saturating_mul(page_rows)
+                            }
+                        };
+                        if delta.y > 0.0 {
+                            self.history.scroll_up(rows);
+                        } else if delta.y < 0.0 {
+                            self.history.scroll_down(rows);
+                        }
+                        history_changed = delta.y != 0.0;
+                        false
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::PageUp,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if terminal_focused && modifiers.shift => {
+                        self.history.scroll_up(page_rows);
+                        history_changed = true;
+                        false
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::PageDown,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if terminal_focused && modifiers.shift => {
+                        self.history.scroll_down(page_rows);
+                        history_changed = true;
+                        false
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::End,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if terminal_focused && modifiers.ctrl => {
+                        self.history.latest();
+                        history_changed = true;
+                        false
+                    }
+                    _ => true,
+                });
+            });
+            if history_changed {
+                self.history.sync(terminal);
+                self.selection.clear();
+                self.pointer = TerminalPointerState::default();
+            }
+        }
 
         // A TUI with mouse tracking owns ordinary right-click. Shift is the
         // stable local override; without mouse tracking, right-click is local
         // by default. Remove both press and release before terminal routing so
         // opening the menu can never emit half of a mouse protocol gesture.
-        let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
         let mut local_context_release = None;
         ui.input_mut(|input| {
             input.events.retain(|event| {
@@ -263,14 +374,18 @@ impl TerminalView {
         });
 
         if let Some(position) = local_context_release {
+            let snapshot =
+                TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
             self.context_link =
                 cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
-                    .and_then(|cell| terminal.cell_ref(cell.column, cell.row))
+                    .and_then(|cell| snapshot.cell(cell.column, cell.row))
                     .and_then(|cell| cell.hyperlink_target());
         }
-        let selected_text =
-            selection_text(TerminalSnapshot::from_terminal(terminal), &self.selection)
-                .filter(|text| !text.is_empty());
+        let selected_text = selection_text(
+            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
+            &self.selection,
+        )
+        .filter(|text| !text.is_empty());
         let menu_has_items =
             self.context_link.is_some() || selected_text.is_some() || options.paste_available;
         let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
@@ -326,7 +441,7 @@ impl TerminalView {
         }
 
         let dirty_rows = terminal.take_dirty_rows();
-        let snapshot = TerminalSnapshot::from_terminal(terminal);
+        let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
         let update = self.cache.update(snapshot, &dirty_rows);
         self.diagnostics.dirty_rows = update.updated_rows.len();
         let (_, input_to_paint_submission) =

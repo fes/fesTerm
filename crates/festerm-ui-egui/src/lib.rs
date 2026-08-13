@@ -5,7 +5,7 @@
 //! remain in `festerm-core`.
 
 use egui::Color32;
-use festerm_core::{Cell, Cursor, CursorStyle, Screen, Terminal, TerminalModes};
+use festerm_core::{Cell, Cursor, CursorStyle, Terminal, TerminalModes};
 
 mod cache;
 pub mod chrome;
@@ -69,7 +69,8 @@ pub(crate) use std::time::{Duration, Instant};
 /// cache; it does not clone a complete core grid per GUI frame.
 #[derive(Clone, Copy)]
 pub struct TerminalSnapshot<'a> {
-    screen: &'a Screen,
+    terminal: &'a Terminal,
+    viewport_offset_rows: usize,
     cursor: Cursor,
     cursor_style: CursorStyle,
     cursor_style_requested_by_program: bool,
@@ -79,7 +80,8 @@ pub struct TerminalSnapshot<'a> {
 impl<'a> TerminalSnapshot<'a> {
     pub fn from_terminal(terminal: &'a Terminal) -> Self {
         Self {
-            screen: terminal.screen(),
+            terminal,
+            viewport_offset_rows: 0,
             cursor: terminal.cursor(),
             cursor_style: terminal.cursor_style(),
             cursor_style_requested_by_program: terminal.cursor_style_requested_by_program(),
@@ -87,8 +89,18 @@ impl<'a> TerminalSnapshot<'a> {
         }
     }
 
-    pub const fn dimensions(self) -> festerm_core::Dimensions {
-        self.screen.dimensions()
+    pub fn from_terminal_viewport(terminal: &'a Terminal, offset_rows: usize) -> Self {
+        let mut snapshot = Self::from_terminal(terminal);
+        snapshot.viewport_offset_rows = if terminal.modes().alternate_screen() {
+            0
+        } else {
+            offset_rows.min(terminal.scrollback_stats().physical_rows())
+        };
+        snapshot
+    }
+
+    pub fn dimensions(self) -> festerm_core::Dimensions {
+        self.terminal.screen().dimensions()
     }
 
     pub const fn cursor(self) -> Cursor {
@@ -114,7 +126,39 @@ impl<'a> TerminalSnapshot<'a> {
 
     /// Returns a borrowed core cell, preserving width-two/continuation roles.
     pub fn cell(self, column: usize, row: usize) -> Option<&'a Cell> {
-        self.screen.cell_ref(column, row)
+        if column >= self.dimensions().columns() || row >= self.dimensions().rows() {
+            return None;
+        }
+        if self.viewport_offset_rows == 0 || self.modes.alternate_screen() {
+            return self.terminal.screen().cell_ref(column, row);
+        }
+        let history_rows = self.terminal.scrollback_stats().physical_rows();
+        let first = history_rows.saturating_sub(self.viewport_offset_rows);
+        let content_row = first + row;
+        if content_row < history_rows {
+            return self
+                .terminal
+                .scrollback_physical_row(content_row)
+                .and_then(|cells| cells.get(column));
+        }
+        self.terminal
+            .screen()
+            .cell_ref(column, content_row - history_rows)
+    }
+
+    pub const fn viewport_offset_rows(self) -> usize {
+        self.viewport_offset_rows
+    }
+
+    pub fn cursor_in_viewport(self) -> Option<(usize, usize)> {
+        if self.viewport_offset_rows == 0 || self.modes.alternate_screen() {
+            return Some((self.cursor.column(), self.cursor.row()));
+        }
+        let history_rows = self.terminal.scrollback_stats().physical_rows();
+        let first = history_rows.saturating_sub(self.viewport_offset_rows);
+        let content_row = history_rows + self.cursor.row();
+        let row = content_row.checked_sub(first)?;
+        (row < self.dimensions().rows()).then_some((self.cursor.column(), row))
     }
 }
 
@@ -401,6 +445,116 @@ mod tests {
             .diagnostics()
             .grid_rect
             .is_some_and(|grid| grid.is_finite()));
+    }
+
+    #[test]
+    fn history_snapshot_projects_retained_rows_without_moving_the_live_cursor() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"one\r\ntwo\r\ntri\r\n");
+
+        let one_row_back = TerminalSnapshot::from_terminal_viewport(&terminal, 1);
+        assert_eq!(
+            (0..4)
+                .filter_map(|column| one_row_back.cell(column, 0))
+                .map(Cell::character)
+                .collect::<String>(),
+            "two"
+        );
+        assert_eq!(one_row_back.cursor_in_viewport(), None);
+
+        let oldest = TerminalSnapshot::from_terminal_viewport(&terminal, 2);
+        assert_eq!(
+            (0..4)
+                .filter_map(|column| oldest.cell(column, 0))
+                .map(Cell::character)
+                .collect::<String>(),
+            "one"
+        );
+        assert_eq!(oldest.cursor_in_viewport(), None);
+    }
+
+    #[test]
+    fn local_wheel_anchors_history_and_ctrl_end_resumes_following() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(420.0, 240.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        let rows = harness.state().terminal.dimensions().rows();
+        for line in 0..rows + 8 {
+            harness
+                .state_mut()
+                .terminal
+                .ingest(format!("line {line}\r\n").as_bytes());
+        }
+        harness.run();
+        let center = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .center();
+        harness.event(egui::Event::PointerMoved(center));
+        harness.run();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 80.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let anchored = harness.state().view.history_offset_rows();
+        assert!(anchored > 0);
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.state_mut().terminal.ingest(b"new output\r\n");
+        harness.run();
+        assert!(harness.state().view.history_offset_rows() > anchored);
+
+        harness.event(egui::Event::Key {
+            key: egui::Key::End,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert!(harness.state().view.follows_latest_output());
+
+        harness.state_mut().terminal.ingest(b"\x1b[?1000h");
+        harness.event(egui::Event::PointerMoved(center));
+        harness.run();
+        let routed_before = harness.state().sink.0.len();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 2.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.state().view.follows_latest_output());
+        assert!(harness.state().sink.0.len() > routed_before);
+
+        let routed_before = harness.state().sink.0.len();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 2.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert!(harness.state().view.history_offset_rows() > 0);
+        assert_eq!(harness.state().sink.0.len(), routed_before);
     }
 
     #[test]
