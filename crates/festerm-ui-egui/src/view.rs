@@ -23,6 +23,11 @@ use crate::{
     TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND,
 };
 
+const DEFAULT_TERMINAL_FONT_SIZE: f32 = 14.0;
+const MIN_TERMINAL_FONT_SIZE: f32 = 8.0;
+const MAX_TERMINAL_FONT_SIZE: f32 = 32.0;
+const TERMINAL_ZOOM_STEP: f32 = 1.0;
+
 /// Application-owned terminal capabilities that affect local viewport
 /// commands without exposing a session backend to the presentation crate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +195,35 @@ enum SecondaryGestureOwnership {
 }
 
 impl TerminalView {
+    /// Current per-session terminal font size in logical points.
+    pub const fn font_size_points(&self) -> f32 {
+        self.fonts.size_points
+    }
+
+    /// Increases only this session's terminal presentation size.
+    pub fn zoom_in(&mut self) -> bool {
+        self.set_font_size_points(self.fonts.size_points + TERMINAL_ZOOM_STEP)
+    }
+
+    /// Decreases only this session's terminal presentation size.
+    pub fn zoom_out(&mut self) -> bool {
+        self.set_font_size_points(self.fonts.size_points - TERMINAL_ZOOM_STEP)
+    }
+
+    /// Restores only this session's terminal presentation size.
+    pub fn reset_zoom(&mut self) -> bool {
+        self.set_font_size_points(DEFAULT_TERMINAL_FONT_SIZE)
+    }
+
+    fn set_font_size_points(&mut self, requested: f32) -> bool {
+        let size = requested.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE);
+        if (size - self.fonts.size_points).abs() < f32::EPSILON {
+            return false;
+        }
+        self.fonts.size_points = size;
+        true
+    }
+
     #[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
     pub(crate) fn enable_cell_run_shaping_for_test(&mut self) {
         self.cell_run_shaping = true;

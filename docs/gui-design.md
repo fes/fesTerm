@@ -562,7 +562,7 @@ their hit-test area, offsets them to the chip row's centered baseline, and
 does not render duplicate right-side controls.
 Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
 
-- On Windows and Linux, the trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, search) is painted in the same row as the chips. Its current painter geometry is an implementation detail; [the first-party SVG sources](icon-system.md) are the canonical visual vocabulary for future asset integration. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
+- On Windows and Linux, the trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, command palette) is painted in the same row as the chips through the semantic first-party [`Icon`](icon-system.md) layer. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
 - The maximize/restore icon reads the viewport's real current state (`ui.input(|i| i.viewport().maximized)`) and paints a single square (maximize) or two overlapping squares (restore) accordingly, so the icon's own shape communicates state rather than a text label.
 - A background drag-to-move region is registered across the row's own compact content band (not the full remaining panel height, which - before any content is laid out - would otherwise swallow pointer events meant for the terminal view painted below) *before* the chips/icons are added, so those widgets' own click handling still takes priority over this catch-all background sense wherever they visually sit on top of it. Starting a primary-button drag on that background sends `ViewportCommand::StartDrag`; double-clicking it toggles `ViewportCommand::Maximized`.
 - `TRAILING_CONTROLS_RESERVED_WIDTH` accounts for platform-specific trailing icons so the chip row never overlaps them, extending the existing narrow-window overlap fix.
@@ -2158,9 +2158,25 @@ requires a different sequence:
    captured operation after revalidation. Native narrow-window, clipboard,
    threshold, wording, and focus usability remain in `manual-validation.md`;
    aggregate multi-session window quit remains staged.
-3. Integrate semantic SVG icons and bundled Inter through owned asset layers,
-   retaining the documented accessibility and fallback contracts.
-4. Schedule the serial backend as a focused capability track with platform
+3. **Initial Focus Mode and zoom slices implemented:** Focus Mode is an
+   explicit palette command that hides chrome/footer, preserves the active
+   terminal, leaves Escape to terminal content, and exposes its exit route in
+   a brief overlay. Runtime zoom uses the documented platform chords and
+   palette commands, is bounded and per-session, and never scales application
+   chrome. Native DPI, resize-coalescing, anchor, focus, and accessibility
+   evidence remains in `manual-validation.md`.
+4. **Initial About surface implemented:** the compact application-owned modal
+   exposes exact version/platform information, a bounded privacy-safe Copy
+   summary, the canonical source link, and repository/asset license notices;
+   it deliberately has no update control. Native link handoff, accessibility,
+   and visual evidence remain in `manual-validation.md`.
+5. **Semantic icon layer implemented:** `festerm-ui-egui::icon::Icon` owns the
+   complete first-party inventory and dependency-free canonical geometry;
+   Launcher session types and persistent chrome controls use it with semantic
+   colors and accessible control labels. Remaining one-off sites and native
+   cross-platform visual evidence are tracked separately. Bundle Inter through
+   the owned application-font layer next, retaining fallback contracts.
+6. Schedule the serial backend as a focused capability track with platform
    discovery, permissions, exclusive ownership, and deterministic loopback
    evidence; its GUI contract is already defined here.
 
@@ -2182,8 +2198,9 @@ discovered defect.
   thresholds, exact-preview comprehension at narrow sizes, keyboard focus and
   Enter safety, bracketed-paste explanation, and clear cancellation when the
   clipboard or target session changes.
-- Runtime SVG ingestion/raster-cache details and the incremental migration of
-  existing painter-drawn controls to the canonical first-party icon sources.
+- Incremental migration of remaining one-off painter-drawn presentation sites
+  through the semantic icon layer; revisit raster caching only if measured
+  performance or additional asset complexity justifies it.
 - Usability validation of the fixed `fesTerm` native title across multiple
   independent instances and OS task-switcher/window-overview workflows; any
   identity-bearing title remains an explicit future opt-in.

@@ -17,7 +17,7 @@ use egui::{
     RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
 };
 
-use crate::theme;
+use crate::{icon, icon::Icon, theme};
 
 /// Chip footprint bounds (`docs/gui-design.md` "Active and inactive tabs"):
 /// chips clip long secondary text with an ellipsis rather than growing
@@ -393,16 +393,7 @@ fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     } else {
         CHROME_ICON_COLOR
     };
-    let center = rect.center();
-    let half = size * 0.2;
-    ui.painter().line_segment(
-        [center - vec2(half, 0.0), center + vec2(half, 0.0)],
-        Stroke::new(1.5, color),
-    );
-    ui.painter().line_segment(
-        [center - vec2(0.0, half), center + vec2(0.0, half)],
-        Stroke::new(1.5, color),
-    );
+    icon::paint(ui.painter(), Icon::NewSession, rect.shrink(7.0), color);
     let response = response.on_hover_text("New tab");
     if response.clicked() {
         actions.push(ChromeAction::NewTab);
@@ -425,12 +416,7 @@ fn paint_minimize_icon(ui: &mut Ui) {
     } else {
         CHROME_ICON_COLOR
     };
-    let center = rect.center();
-    let half = size * 0.26;
-    ui.painter().line_segment(
-        [center - vec2(half, 0.0), center + vec2(half, 0.0)],
-        Stroke::new(1.5, color),
-    );
+    icon::paint(ui.painter(), Icon::Minimize, rect.shrink(3.0), color);
     let response = response.on_hover_text("Minimize");
     if response.clicked() {
         ui.ctx()
@@ -453,27 +439,16 @@ fn paint_maximize_icon(ui: &mut Ui, maximized: bool) {
     } else {
         CHROME_ICON_COLOR
     };
-    if maximized {
-        let back = rect.shrink(6.5).translate(vec2(-2.0, -2.0));
-        let front = rect.shrink(6.5).translate(vec2(2.0, 2.0));
-        ui.painter()
-            .rect_stroke(back, 1.0, Stroke::new(1.3, color), egui::StrokeKind::Inside);
-        ui.painter()
-            .rect_filled(front, 1.0, ui.visuals().panel_fill);
-        ui.painter().rect_stroke(
-            front,
-            1.0,
-            Stroke::new(1.3, color),
-            egui::StrokeKind::Inside,
-        );
-    } else {
-        ui.painter().rect_stroke(
-            rect.shrink(5.5),
-            1.0,
-            Stroke::new(1.5, color),
-            egui::StrokeKind::Inside,
-        );
-    }
+    icon::paint(
+        ui.painter(),
+        if maximized {
+            Icon::Restore
+        } else {
+            Icon::Maximize
+        },
+        rect.shrink(3.0),
+        color,
+    );
     let response = response.on_hover_text(label);
     if response.clicked() {
         ui.ctx()
@@ -493,16 +468,7 @@ fn paint_close_icon(ui: &mut Ui) {
     } else {
         CHROME_ICON_COLOR
     };
-    let center = rect.center();
-    let half = size * 0.26;
-    ui.painter().line_segment(
-        [center - vec2(half, half), center + vec2(half, half)],
-        Stroke::new(1.5, color),
-    );
-    ui.painter().line_segment(
-        [center - vec2(half, -half), center + vec2(half, -half)],
-        Stroke::new(1.5, color),
-    );
+    icon::paint(ui.painter(), Icon::Close, rect.shrink(3.0), color);
     let response = response.on_hover_text("Close");
     if response.clicked() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -530,14 +496,7 @@ fn paint_search_icon(ui: &mut Ui) -> bool {
     } else {
         CHROME_ICON_COLOR
     };
-    let center = rect.center() - vec2(1.0, 1.0);
-    let radius = size * 0.22;
-    ui.painter()
-        .circle_stroke(center, radius, Stroke::new(1.5, color));
-    let handle_start = center + vec2(radius * 0.7, radius * 0.7);
-    let handle_end = handle_start + vec2(size * 0.22, size * 0.22);
-    ui.painter()
-        .line_segment([handle_start, handle_end], Stroke::new(1.5, color));
+    icon::paint(ui.painter(), Icon::CommandPalette, rect.shrink(3.0), color);
     response.on_hover_text(accessible_label).clicked()
 }
 
@@ -555,27 +514,12 @@ fn paint_panel_icon(ui: &mut Ui, open: bool) -> bool {
     } else {
         CHROME_ICON_COLOR
     };
-    let outer = rect.shrink(3.0);
-    ui.painter().rect_stroke(
-        outer,
-        2.0,
-        Stroke::new(1.5, color),
-        egui::StrokeKind::Inside,
+    icon::paint(
+        ui.painter(),
+        Icon::SessionInspector,
+        rect.shrink(3.0),
+        color,
     );
-    let divider_x = outer.right() - outer.width() * 0.35;
-    ui.painter().line_segment(
-        [
-            egui::pos2(divider_x, outer.top()),
-            egui::pos2(divider_x, outer.bottom()),
-        ],
-        Stroke::new(1.5, color),
-    );
-    if open {
-        let panel_rect =
-            egui::Rect::from_min_max(egui::pos2(divider_x, outer.top()), outer.right_bottom());
-        ui.painter()
-            .rect_filled(panel_rect, 0.0, color.gamma_multiply(0.35));
-    }
     response.on_hover_text("Toggle session inspector").clicked()
 }
 
@@ -593,11 +537,7 @@ fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     } else {
         CHROME_ICON_COLOR
     };
-    let center = rect.center();
-    for offset in [-6.0, 0.0, 6.0] {
-        ui.painter()
-            .circle_filled(center + vec2(0.0, offset), 1.6, color);
-    }
+    icon::paint(ui.painter(), Icon::Overflow, rect.shrink(3.0), color);
     let response = response.on_hover_text("More actions");
 
     Popup::menu(&response).show(|ui| {

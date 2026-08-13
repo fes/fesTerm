@@ -124,12 +124,13 @@ distinct triangle/circle forms and accessible labels remain required.
 5. Run `scripts/validate-icons.py --check` in validation/CI to ensure the
    committed contact sheet matches the sources.
 
-Rust integration should introduce one semantic `Icon` enum and one renderer or
-asset lookup owned by `festerm-ui-egui`. Callers request `Icon::SshRemote`, not
-an SVG path. Rasterization/caching and painter-path conversion are presentation
-details. Existing painter-drawn chrome controls may migrate incrementally by
-matching these canonical sources; this asset change does not introduce a theme
-engine, alter command routing, or move application policy into widgets.
+Rust integration exposes one semantic `Icon` enum and one renderer owned by
+`festerm-ui-egui`. Callers request `Icon::SshRemote`, not an SVG path. The
+initial dependency-free renderer maps the canonical 24-unit source geometry to
+egui painter paths; Launcher session types and the persistent chrome controls
+now use it. Remaining one-off presentation sites migrate incrementally through
+the same API. This asset layer does not introduce a theme engine, alter command
+routing, or move application policy into widgets.
 
 ## Licensing
 

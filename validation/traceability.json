@@ -105,10 +105,10 @@
       "edges": ["WIN-*"],
       "requirements": ["docs/gui-design.md#window-chrome-integrated-title-bar-controls", "docs/gui-design.md#responsive-and-narrow-window-behavior"],
       "decisions": ["ADR-0007"],
-      "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window", "viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes"],
-      "manual_scenarios": ["NP-01", "NP-02"],
+      "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window", "viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes", "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface"],
+      "manual_scenarios": ["NP-01", "NP-02", "CP-09"],
       "status": "partial",
-      "prerequisites": ["About, update, fullscreen, and native DPI branches remain capability/platform dependent"]
+      "prerequisites": ["update, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent"]
     },
     {
       "id": "platform-menus",
@@ -305,10 +305,10 @@
       "edges": ["ZOOM-*"],
       "requirements": ["docs/gui-design.md#user-control"],
       "decisions": ["ADR-0012"],
-      "automated_tests": [],
-      "manual_scenarios": ["CP-05"],
-      "status": "deferred",
-      "prerequisites": ["Per-session terminal zoom"]
+      "automated_tests": ["terminal_zoom_is_session_local_bounded_and_resettable", "zoom_palette_commands_change_only_the_active_session_and_reset"],
+      "manual_scenarios": ["CP-07"],
+      "status": "partial",
+      "prerequisites": ["native DPI, anchor-preservation, and resize-coalescing evidence"]
     },
     {
       "id": "terminal-schemes",
@@ -335,10 +335,10 @@
       "edges": ["FOCUS-*"],
       "requirements": ["docs/gui-design.md#fullscreen-and-focus-mode"],
       "decisions": [],
-      "automated_tests": [],
-      "manual_scenarios": ["CP-05"],
-      "status": "deferred",
-      "prerequisites": ["Focus Mode implementation"]
+      "automated_tests": ["focus_mode_is_explicit_terminal_only_and_escape_does_not_exit"],
+      "manual_scenarios": ["CP-08"],
+      "status": "partial",
+      "prerequisites": ["native window-control, focus, accessibility, and overlay evidence"]
     },
     {
       "id": "session-close",
@@ -395,7 +395,7 @@
       "edges": ["VIS-*"],
       "requirements": ["docs/gui-design.md#visual-language"],
       "decisions": ["ADR-0007"],
-      "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window"],
+      "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window", "semantic_inventory_has_one_variant_per_canonical_source"],
       "manual_scenarios": ["NP-05"],
       "status": "partial",
       "prerequisites": ["native cross-platform visual evidence"]

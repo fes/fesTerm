@@ -13,7 +13,7 @@ use festerm_ssh::{
     HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
     SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
-use festerm_ui_egui::{chrome::ChipLayout, theme};
+use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
 use crate::configuration_startup::ConfigurationStartupStatus;
 use crate::tabs::{AppCommand, PasswordToStore, TabId};
@@ -74,39 +74,16 @@ fn show_launcher_choice(
             theme::TEXT_SECONDARY
         },
     );
-    if remote {
-        let host_rect = egui::Rect::from_min_size(icon_rect.min, vec2(14.0, 10.0));
-        ui.painter()
-            .rect_stroke(host_rect, 2.0, stroke, egui::StrokeKind::Inside);
-        ui.painter().line_segment(
-            [
-                host_rect.left_bottom() + vec2(3.0, 3.0),
-                host_rect.right_bottom() + vec2(-3.0, 3.0),
-            ],
-            stroke,
-        );
-        ui.painter()
-            .line_segment([host_rect.right_center(), icon_rect.right_center()], stroke);
-        ui.painter()
-            .circle_filled(icon_rect.right_center(), 1.75, stroke.color);
-    } else {
-        ui.painter()
-            .rect_stroke(icon_rect, 2.0, stroke, egui::StrokeKind::Inside);
-        ui.painter().line_segment(
-            [
-                icon_rect.left_top() + vec2(3.0, 4.0),
-                icon_rect.left_top() + vec2(6.0, 7.0),
-            ],
-            stroke,
-        );
-        ui.painter().line_segment(
-            [
-                icon_rect.left_top() + vec2(6.0, 7.0),
-                icon_rect.left_top() + vec2(3.0, 10.0),
-            ],
-            stroke,
-        );
-    }
+    icon::paint(
+        ui.painter(),
+        if remote {
+            Icon::SshRemote
+        } else {
+            Icon::LocalTerminal
+        },
+        icon_rect,
+        stroke.color,
+    );
 
     ui.painter().text(
         rect.left_top() + vec2(50.0, 10.0),

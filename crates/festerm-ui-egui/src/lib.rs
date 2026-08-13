@@ -10,6 +10,7 @@ use festerm_core::{Cell, Cursor, CursorStyle, Terminal, TerminalModes};
 mod cache;
 pub mod chrome;
 mod geometry;
+pub mod icon;
 mod input;
 pub mod overlay;
 pub mod palette;
@@ -230,6 +231,28 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn terminal_zoom_is_session_local_bounded_and_resettable() {
+        let mut first = TerminalView::default();
+        let second = TerminalView::default();
+
+        assert!(first.zoom_in());
+        assert_eq!(first.font_size_points(), 15.0);
+        assert_eq!(second.font_size_points(), 14.0);
+        for _ in 0..100 {
+            first.zoom_in();
+        }
+        assert_eq!(first.font_size_points(), 32.0);
+        assert!(!first.zoom_in());
+        for _ in 0..100 {
+            first.zoom_out();
+        }
+        assert_eq!(first.font_size_points(), 8.0);
+        assert!(first.reset_zoom());
+        assert_eq!(first.font_size_points(), 14.0);
+        assert!(!first.reset_zoom());
     }
 
     #[test]

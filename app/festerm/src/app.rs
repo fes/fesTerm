@@ -1,7 +1,7 @@
 use std::{
     sync::{mpsc, Arc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use eframe::egui;
@@ -39,6 +39,15 @@ enum ApplicationShortcut {
     NextSession,
     PreviousSession,
     Settings,
+    ZoomOut,
+    ZoomReset,
+}
+
+#[derive(Clone, Copy)]
+enum ZoomCommand {
+    In,
+    Out,
+    Reset,
 }
 
 impl ApplicationShortcut {
@@ -75,6 +84,8 @@ impl ApplicationShortcut {
                 Some((egui::Modifiers::COMMAND, egui::Key::Comma))
             }
             Self::Settings => None,
+            Self::ZoomOut => Some((egui::Modifiers::COMMAND, egui::Key::Minus)),
+            Self::ZoomReset => Some((egui::Modifiers::COMMAND, egui::Key::Num0)),
         }
     }
 
@@ -90,6 +101,10 @@ impl ApplicationShortcut {
             Self::PreviousSession => Some("Ctrl+Shift+Tab"),
             Self::Settings if cfg!(target_os = "macos") => Some("Cmd+,"),
             Self::Settings => None,
+            Self::ZoomOut if cfg!(target_os = "macos") => Some("Cmd+-"),
+            Self::ZoomOut => Some("Ctrl+-"),
+            Self::ZoomReset if cfg!(target_os = "macos") => Some("Cmd+0"),
+            Self::ZoomReset => Some("Ctrl+0"),
         }
     }
 
@@ -131,6 +146,10 @@ pub struct FesTermApp {
     pending_close: Option<PendingCloseConfirmation>,
     pending_paste: Option<PendingPasteConfirmation>,
     native_menu: festerm_macos_window::NativeMenu,
+    focus_mode: bool,
+    transient_notice: Option<(String, Instant)>,
+    about_open: bool,
+    about_licenses_open: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -277,6 +296,10 @@ impl FesTermApp {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
+        // fesTerm owns the standard zoom chords as per-session terminal
+        // commands. Letting egui also process them at end-of-frame would scale
+        // application chrome and violate the documented zoom boundary.
+        context.options_mut(|options| options.zoom_with_keyboard = false);
         let native_smoke = NativeWindowSmoke::from_environment();
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
@@ -310,6 +333,10 @@ impl FesTermApp {
             pending_close: None,
             pending_paste: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
+            focus_mode: false,
+            transient_notice: None,
+            about_open: false,
+            about_licenses_open: false,
         }
     }
 
@@ -322,7 +349,7 @@ impl FesTermApp {
     }
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
-        if self.pending_close.is_some() || self.pending_paste.is_some() {
+        if self.pending_close.is_some() || self.pending_paste.is_some() || self.about_open {
             return;
         }
         while let Some(command) = self.native_menu.try_recv() {
@@ -955,6 +982,11 @@ impl FesTermApp {
         const START_LOCAL_SESSION: u64 = 3;
         const TOGGLE_INSPECTOR: u64 = 4;
         const CLOSE_ACTIVE_TAB: u64 = 5;
+        const TOGGLE_FOCUS_MODE: u64 = 6;
+        const ZOOM_IN: u64 = 7;
+        const ZOOM_OUT: u64 = 8;
+        const RESET_ZOOM: u64 = 9;
+        const ABOUT: u64 = 10;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -975,6 +1007,11 @@ impl FesTermApp {
                 label: "Open Settings".to_owned(),
                 hint: ApplicationShortcut::Settings.label().map(str::to_owned),
             },
+            PaletteItem {
+                id: ABOUT,
+                label: "About fesTerm".to_owned(),
+                hint: None,
+            },
         ];
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
             items.push(PaletteItem {
@@ -986,6 +1023,36 @@ impl FesTermApp {
                 },
                 hint: None,
             });
+            items.extend([
+                PaletteItem {
+                    id: TOGGLE_FOCUS_MODE,
+                    label: if self.focus_mode {
+                        "Exit Focus Mode".to_owned()
+                    } else {
+                        "Enter Focus Mode".to_owned()
+                    },
+                    hint: None,
+                },
+                PaletteItem {
+                    id: ZOOM_IN,
+                    label: "Zoom In".to_owned(),
+                    hint: Some(if cfg!(target_os = "macos") {
+                        "Cmd++".to_owned()
+                    } else {
+                        "Ctrl++".to_owned()
+                    }),
+                },
+                PaletteItem {
+                    id: ZOOM_OUT,
+                    label: "Zoom Out".to_owned(),
+                    hint: ApplicationShortcut::ZoomOut.label().map(str::to_owned),
+                },
+                PaletteItem {
+                    id: RESET_ZOOM,
+                    label: "Reset Zoom".to_owned(),
+                    hint: ApplicationShortcut::ZoomReset.label().map(str::to_owned),
+                },
+            ]);
         }
         items.push(PaletteItem {
             id: CLOSE_ACTIVE_TAB,
@@ -1046,6 +1113,15 @@ impl FesTermApp {
                 let active = self.state.active();
                 self.request_close_tab(active, context);
             }
+            6 => self.toggle_focus_mode(context),
+            7 => self.zoom_active_session(ZoomCommand::In, context),
+            8 => self.zoom_active_session(ZoomCommand::Out, context),
+            9 => self.zoom_active_session(ZoomCommand::Reset, context),
+            10 => {
+                self.about_open = true;
+                self.about_licenses_open = false;
+                context.request_repaint();
+            }
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -1064,7 +1140,7 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.pending_close.is_some() || self.pending_paste.is_some() {
+        if self.pending_close.is_some() || self.pending_paste.is_some() || self.about_open {
             return;
         }
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
@@ -1081,6 +1157,15 @@ impl FesTermApp {
         let next_tab = ApplicationShortcut::NextSession.consume(ctx);
         let previous_tab = ApplicationShortcut::PreviousSession.consume(ctx);
         let settings = ApplicationShortcut::Settings.consume(ctx);
+        let zoom_in = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus)
+                    || input.consume_key(egui::Modifiers::COMMAND, egui::Key::Equals)
+            });
+        let zoom_out = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ApplicationShortcut::ZoomOut.consume(ctx);
+        let reset_zoom = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ApplicationShortcut::ZoomReset.consume(ctx);
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
@@ -1097,6 +1182,194 @@ impl FesTermApp {
         }
         if settings {
             self.state.dispatch(AppCommand::OpenSettings, ctx);
+        }
+        if zoom_in {
+            self.zoom_active_session(ZoomCommand::In, ctx);
+        }
+        if zoom_out {
+            self.zoom_active_session(ZoomCommand::Out, ctx);
+        }
+        if reset_zoom {
+            self.zoom_active_session(ZoomCommand::Reset, ctx);
+        }
+    }
+
+    fn zoom_active_session(&mut self, command: ZoomCommand, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        let changed = match command {
+            ZoomCommand::In => session.view.zoom_in(),
+            ZoomCommand::Out => session.view.zoom_out(),
+            ZoomCommand::Reset => session.view.reset_zoom(),
+        };
+        if changed {
+            self.transient_notice = Some((
+                format!("Terminal zoom: {:.0} pt", session.view.font_size_points()),
+                Instant::now() + Duration::from_millis(1_500),
+            ));
+            context.request_repaint();
+        }
+    }
+
+    fn toggle_focus_mode(&mut self, context: &egui::Context) {
+        if !matches!(self.state.active_tab().content, TabContent::Session(_)) {
+            return;
+        }
+        self.focus_mode = !self.focus_mode;
+        self.transient_notice = Some((
+            if self.focus_mode {
+                format!(
+                    "Focus Mode · {} → Exit Focus Mode",
+                    ApplicationShortcut::CommandPalette
+                        .label()
+                        .expect("command palette always has a platform binding")
+                )
+            } else {
+                "Focus Mode exited".to_owned()
+            },
+            Instant::now() + Duration::from_millis(1_500),
+        ));
+        let active = self.state.active();
+        if let Some(session) = self.state.session_tab_mut(active) {
+            session.view.request_focus_on_next_frame();
+        }
+        context.request_repaint();
+    }
+
+    fn show_transient_notice(&mut self, context: &egui::Context) {
+        let Some((text, deadline)) = self.transient_notice.as_ref() else {
+            return;
+        };
+        if Instant::now() >= *deadline {
+            self.transient_notice = None;
+            return;
+        }
+        let text = text.clone();
+        egui::Area::new(egui::Id::new("fesTerm transient mode notice"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 16.0))
+            .interactable(false)
+            .show(context, |ui| {
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(text).color(theme::TEXT_SECONDARY));
+                    });
+            });
+        context.request_repaint_after(Duration::from_millis(100));
+    }
+
+    fn version_information() -> String {
+        let mut information = format!(
+            "fesTerm {}\nOS: {}\nArchitecture: {}\nUI: egui/eframe 0.36",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        );
+        if let Some(commit) = option_env!("FESTERM_BUILD_COMMIT") {
+            information.push_str("\nBuild: ");
+            information.push_str(commit);
+        }
+        information
+    }
+
+    fn show_about(&mut self, context: &egui::Context, escape: bool) {
+        if !self.about_open {
+            return;
+        }
+        if escape {
+            self.about_open = false;
+            self.about_licenses_open = false;
+            self.restore_active_terminal_focus();
+            return;
+        }
+
+        let mut close = false;
+        let width = (context.content_rect().width() - 32.0).clamp(280.0, 420.0);
+        egui::Modal::new(egui::Id::new("fesTerm about dialog"))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
+            .show(context, |ui| {
+                ui.set_width(width);
+                ui.heading("About fesTerm");
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                    let stroke = egui::Stroke::new(2.0, theme::ACCENT_PRIMARY);
+                    let map = |x: f32, y: f32| {
+                        egui::pos2(
+                            rect.left() + x / 24.0 * rect.width(),
+                            rect.top() + y / 24.0 * rect.height(),
+                        )
+                    };
+                    let painter = ui.painter();
+                    painter.line_segment([map(4.0, 18.0), map(4.0, 6.0)], stroke);
+                    painter.line_segment([map(4.0, 6.0), map(11.0, 6.0)], stroke);
+                    painter.line_segment([map(4.0, 11.0), map(9.0, 11.0)], stroke);
+                    painter.line(
+                        vec![map(13.0, 8.0), map(16.0, 11.0), map(13.0, 14.0)],
+                        stroke,
+                    );
+                    painter.line_segment([map(17.5, 16.0), map(21.0, 16.0)], stroke);
+                    ui.vertical(|ui| {
+                        ui.heading("fesTerm");
+                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    });
+                });
+                ui.add_space(6.0);
+                ui.label("A compact local, SSH, and serial terminal.");
+                ui.hyperlink_to("github.com/fes/fesTerm", "https://github.com/fes/fesTerm");
+                ui.add_space(8.0);
+                if self.about_licenses_open {
+                    egui::ScrollArea::vertical()
+                        .id_salt("fesTerm license text")
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    "fesTerm\nMIT License\n\nThe workspace declares MIT licensing. The canonical source repository is linked above.",
+                                )
+                                    .monospace()
+                                    .small(),
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "Bundled asset notices are listed with their source assets. Inter is not yet bundled.",
+                                )
+                                .small()
+                                .color(theme::TEXT_MUTED),
+                            );
+                        });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Copy Version Information").clicked() {
+                        context.copy_text(Self::version_information());
+                    }
+                    if self.about_licenses_open {
+                        if ui.button("Hide Licenses").clicked() {
+                            self.about_licenses_open = false;
+                        }
+                    } else if ui.button("Licenses").clicked() {
+                        self.about_licenses_open = true;
+                    }
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if close {
+            self.about_open = false;
+            self.about_licenses_open = false;
+            self.restore_active_terminal_focus();
+        }
+    }
+
+    fn restore_active_terminal_focus(&mut self) {
+        let active = self.state.active();
+        if let Some(session) = self.state.session_tab_mut(active) {
+            session.view.request_focus_on_next_frame();
         }
     }
 
@@ -1340,6 +1613,9 @@ impl FesTermApp {
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         self.update_native_menu();
+        if self.focus_mode && !matches!(self.state.active_tab().content, TabContent::Session(_)) {
+            self.focus_mode = false;
+        }
 
         // A destructive confirmation owns Escape before the terminal input
         // adapter sees raw events. Backdrop clicks are intentionally ignored.
@@ -1347,24 +1623,26 @@ impl FesTermApp {
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let about_escape = self.about_open
+            && ui
+                .ctx()
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
-        let (chips, active_chip) = self.chip_view_models();
-        let inspector_open = self.state.inspector_open();
-        let inspector_available = matches!(self.state.active_tab().content, TabContent::Session(_));
-        let actions = chrome::show(
-            ui,
-            &chips,
-            active_chip,
-            inspector_open,
-            inspector_available,
-            self.state.chip_layout(),
-        );
-        // No explicit separator line here: the chrome band now paints its
-        // own lighter `CHROME_BACKGROUND` fill, and the natural color
-        // contrast between that band and the darker terminal content below
-        // it reads as the boundary (mockup: a near-invisible seam, not a
-        // bright rule).
-        self.dispatch_chrome_actions(actions, &ui.ctx().clone());
+        if !self.focus_mode {
+            let (chips, active_chip) = self.chip_view_models();
+            let inspector_open = self.state.inspector_open();
+            let inspector_available =
+                matches!(self.state.active_tab().content, TabContent::Session(_));
+            let actions = chrome::show(
+                ui,
+                &chips,
+                active_chip,
+                inspector_open,
+                inspector_available,
+                self.state.chip_layout(),
+            );
+            self.dispatch_chrome_actions(actions, &ui.ctx().clone());
+        }
         let inspector_open = self.state.inspector_open();
         // Consume Escape before `TerminalView::show` routes raw input so the
         // dismissal key can never leak into Vim, Emacs, or another TUI.
@@ -1373,7 +1651,7 @@ impl FesTermApp {
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
-        if self.state.status_bar_visible() {
+        if self.state.status_bar_visible() && !self.focus_mode {
             self.show_status_bar(ui);
         }
 
@@ -1454,7 +1732,8 @@ impl FesTermApp {
                     let options = festerm_ui_egui::TerminalViewOptions {
                         paste_available: session.accepts_input(),
                         terminal_input_enabled: self.pending_close.is_none()
-                            && self.pending_paste.is_none(),
+                            && self.pending_paste.is_none()
+                            && !self.about_open,
                         defer_paste_to_application: true,
                     };
                     session.view.show_with_options(
@@ -1567,6 +1846,10 @@ impl FesTermApp {
             self.show_paste_confirmation(ui.ctx(), confirmation_escape);
         }
 
+        self.show_about(ui.ctx(), about_escape);
+
+        self.show_transient_notice(ui.ctx());
+
         if self.native_smoke.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(10));
         }
@@ -1597,6 +1880,10 @@ impl FesTermApp {
             pending_close: None,
             pending_paste: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
+            focus_mode: false,
+            transient_notice: None,
+            about_open: false,
+            about_licenses_open: false,
         }
     }
 
@@ -1697,6 +1984,117 @@ mod tests {
             harness.state().state.active_tab().content,
             TabContent::Session(_)
         ));
+    }
+
+    #[test]
+    fn focus_mode_is_explicit_terminal_only_and_escape_does_not_exit() {
+        let context = egui::Context::default();
+        let (app, tab) = FesTermApp::for_test_with_live_session(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.state_mut().dispatch_palette_selection(6, &context);
+        harness.step();
+        assert!(harness.state().focus_mode);
+        assert_eq!(harness.state().state.active(), tab);
+        assert!(harness.query_by_label("Local Shell chip").is_none());
+        assert!(harness.query_by_label_contains("Focus Mode ·").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness.state().focus_mode, "Escape belongs to the terminal");
+
+        harness.state_mut().dispatch_palette_selection(6, &context);
+        harness.step();
+        assert!(!harness.state().focus_mode);
+        assert!(harness.query_by_label("Local Shell chip").is_some());
+
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenLauncher, &context);
+        harness.state_mut().focus_mode = true;
+        harness.step();
+        assert!(!harness.state().focus_mode);
+    }
+
+    #[test]
+    fn zoom_palette_commands_change_only_the_active_session_and_reset() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        let items = app.palette_items();
+        assert!(items.iter().any(|item| item.label == "Zoom In"));
+        assert!(items.iter().any(|item| item.label == "Zoom Out"));
+        assert!(items.iter().any(|item| item.label == "Reset Zoom"));
+
+        app.dispatch_palette_selection(7, &context);
+        assert_eq!(
+            app.state
+                .session_tab_mut(tab)
+                .expect("active terminal session")
+                .view
+                .font_size_points(),
+            15.0
+        );
+        app.dispatch_palette_selection(8, &context);
+        assert_eq!(
+            app.state
+                .session_tab_mut(tab)
+                .expect("active terminal session")
+                .view
+                .font_size_points(),
+            14.0
+        );
+        app.dispatch_palette_selection(7, &context);
+        app.dispatch_palette_selection(9, &context);
+        assert_eq!(
+            app.state
+                .session_tab_mut(tab)
+                .expect("active terminal session")
+                .view
+                .font_size_points(),
+            14.0
+        );
+    }
+
+    #[test]
+    fn about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface() {
+        let context = egui::Context::default();
+        let app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.state_mut().dispatch_palette_selection(10, &context);
+        harness.step();
+        assert!(harness.state().about_open);
+        harness.get_by_label("About fesTerm");
+        let version_label = format!("Version {}", env!("CARGO_PKG_VERSION"));
+        harness.get_by_label(&version_label);
+        harness.get_by_label("A compact local, SSH, and serial terminal.");
+        harness.get_by_label("Copy Version Information");
+        harness.get_by_label("Licenses");
+        harness.state_mut().about_licenses_open = true;
+        harness.step();
+        assert!(harness.state().about_licenses_open);
+        assert!(harness.query_by_label_contains("MIT License").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(!harness.state().about_open);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Launcher
+        ));
+
+        let version = FesTermApp::version_information();
+        assert!(version.contains(env!("CARGO_PKG_VERSION")));
+        assert!(version.contains(std::env::consts::OS));
+        assert!(version.contains(std::env::consts::ARCH));
+        assert!(!version.contains("HOME="));
     }
 
     fn harness() -> Harness<'static, FesTermApp> {
