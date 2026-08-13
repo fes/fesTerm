@@ -305,6 +305,10 @@ pub struct SessionController<S: Session> {
     pending_writes: PendingCommandBuffer,
     pending_resize: Option<TerminalSize>,
     last_lifecycle: Option<SessionLifecycle>,
+    /// Monotonic transport generation, advanced by the application before a
+    /// reconnect request. Lifecycle events may be observed out of order with
+    /// a backend's initial state and are therefore not a safe generation seam.
+    lifecycle_generation: u64,
     last_error: Option<String>,
     last_backpressure: Option<FlowDirection>,
     host_key_prompt: Option<HostKeyPrompt>,
@@ -333,6 +337,7 @@ impl<S: Session> SessionController<S> {
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             pending_resize: None,
             last_lifecycle: Some(lifecycle),
+            lifecycle_generation: 1,
             last_error: None,
             last_backpressure: None,
             host_key_prompt: None,
@@ -357,6 +362,7 @@ impl<S: Session> SessionController<S> {
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             pending_resize: None,
             last_lifecycle: None,
+            lifecycle_generation: 0,
             last_error: None,
             last_backpressure: None,
             host_key_prompt: None,
@@ -387,6 +393,14 @@ impl<S: Session> SessionController<S> {
     /// states"); it never exposes bytes or terminal text.
     pub fn lifecycle(&self) -> Option<SessionLifecycle> {
         self.last_lifecycle.clone()
+    }
+
+    pub const fn lifecycle_generation(&self) -> u64 {
+        self.lifecycle_generation
+    }
+
+    pub fn advance_lifecycle_generation(&mut self) {
+        self.lifecycle_generation = self.lifecycle_generation.saturating_add(1);
     }
 
     /// Returns the current remote host-key decision request, if any.
@@ -917,6 +931,18 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
+
+    #[test]
+    fn application_advances_lifecycle_generation_at_reconnect_boundary() {
+        let mut controller =
+            SessionController::<FakeSession>::with_named_startup_error("test".to_owned(), "test");
+        assert_eq!(controller.lifecycle_generation(), 0);
+
+        controller.advance_lifecycle_generation();
+        assert_eq!(controller.lifecycle_generation(), 1);
+        controller.advance_lifecycle_generation();
+        assert_eq!(controller.lifecycle_generation(), 2);
+    }
 
     #[test]
     fn resize_probe_recognizes_fragmented_cursor_queries_without_retaining_output() {

@@ -300,6 +300,53 @@ headless tests cannot. They are intentionally few, bounded, and artifact-rich:
 Do not rely on real user profiles, host SSH config, credential agents,
 clipboard contents, or a developer's terminal settings.
 
+### Multi-step native workflow regression
+
+The existing one-window smoke remains the fast foundation. Build the next VM
+automation layer as named, data-driven workflows using the stable scenario IDs
+in `manual-validation.md`. A workflow driver must act through the guest's
+native accessibility/input facilities while a separate repository-owned test
+channel observes content-free application, terminal-grid, and controlled-PTY
+state. Neither screenshots nor accessibility labels alone are sufficient.
+
+Initial automation packages, in order:
+
+1. `session-lifecycle`: AS-01, AS-02, AS-05, AS-06, and AS-07;
+2. `paste-safety`: PS-01 through PS-10 with a repository-owned clipboard
+   fixture and exact byte hash/count oracle;
+3. `inspector-context`: TI-06 and the implemented portions of TI-07;
+4. `history-navigation`: TI-04 and implemented portions of TI-05;
+5. `native-chrome`: NP-01 through NP-03, split by platform; and
+6. `accessibility-traversal`: NP-04 plus semantic checks from every preceding
+   package.
+
+Each workflow is an ordered sequence of steps. Every step records its stable
+ID, action, expected semantic/window/application state, timeout, and whether a
+screenshot is required. Fail immediately on the first unmet oracle; do not
+silently retry. Always run bounded cleanup and report cleanup failure
+separately from the product assertion.
+
+The portable driver contract should expose only semantic operations such as
+`activate(label)`, `press(keys)`, `set_clipboard(fixture_id)`, `resize(width,
+height)`, `move_window(display_id)`, and `wait_for(state)`. Platform adapters
+map those operations to UIA on Windows, Accessibility on macOS, and AT-SPI plus
+the compositor's supported window controls on Linux. Coordinate clicks are
+permitted only for explicitly geometric behaviors and must be derived from a
+fresh semantic/window rectangle.
+
+Every run emits a sanitized JSON result containing candidate SHA, platform
+metadata, workflow/step IDs, pass/fail/not-run, bounded timings, expected and
+observed content-free state, and artifact hashes. Clipboard fixture values,
+terminal text, credentials, paths, and connection identities never enter the
+manifest or logs. Record hashes, character/line counts, and PTY byte counts
+where an exact-content oracle is needed.
+
+Start these packages as advisory VM jobs. Promote an individual workflow to a
+release gate only after repeated clean runs on each required platform establish
+that its driver, timing, and oracle are stable. A reproducible product failure
+must be reduced into Tier 1–4 automation when possible; a reproducible driver
+failure is infrastructure work and must not be relabeled as a product pass.
+
 P4's portable first step is an opt-in production self-smoke: it creates a real
 eframe/winit viewport, observes native viewport metadata and focus, drives the
 issue #3 resize sequence, and verifies controlled PTY input/output before

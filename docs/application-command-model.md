@@ -53,6 +53,16 @@ These names are illustrative rather than a required Rust API. The implementation
 8. **Singleton application surfaces.** Commands that open Launcher or Settings
    focus the existing surface when present rather than creating duplicates.
 
+Destructive confirmation remains composition-owned even when the final effect
+is an `AppCommand`. Every close invocation first passes through the same
+application policy: non-live surfaces close immediately, while an owned
+starting/running transport produces a confirmation bound to its typed tab and
+lifecycle generation. Only a revalidated confirmation dispatches `CloseTab`.
+Likewise, clipboard delivery remains terminal input, but risky-paste policy is
+owned by the composition root so stable session identity/generation and UI
+focus can be enforced before one ordered paste is returned to the terminal
+encoder.
+
 ## Invocation Surfaces
 
 The following surfaces should reuse the command model:

@@ -61,10 +61,79 @@ session secrets in validation artifacts.
 | Icons | Windows, macOS, Linux at supported scale factors | 16/20 px legibility, alignment, state distinction, fallback behavior, and accessibility after runtime integration | Deferred until runtime integration in [#30](https://github.com/fes/fesTerm/issues/30) |
 | Application typography | Windows, macOS, Linux; supported DPI and representative fallback scripts | Inter legibility and metrics in compact chrome, non-Latin fallback, hierarchy, truncation, and stable layout | Deferred until bundled font integration; shaping/fallback contract remains [#22](https://github.com/fes/fesTerm/issues/22) |
 | Accessibility and discoverability | Windows UIA, macOS Accessibility, Linux AT-SPI where supported | Keyboard-only traversal, focus order/restoration, screen-reader names/states, icon-only control comprehension, tooltip coverage | Manual pending; tooltip wording [#31](https://github.com/fes/fesTerm/issues/31); platform findings get focused issues |
-| Paste confirmation and destructive actions | All supported platforms; bracketed and ordinary terminal modes | Threshold comprehension, exact preview at narrow widths, safe Enter behavior, cancellation after clipboard/session-generation changes, active-session close confirmation | Deferred until implementation; keep as a usability hypothesis in `gui-design.md` |
+| Paste confirmation and destructive actions | All supported platforms; bracketed and ordinary terminal modes | Threshold comprehension, exact preview at narrow widths, safe Enter behavior, cancellation after session/generation/state changes, active and inactive-session close confirmation | Implemented with portable policy coverage; native functional and usability evidence pending under scenarios PS-01–PS-10 below and [#43](https://github.com/fes/fesTerm/issues/43) |
 | SSH interaction workflows | All supported platforms with repository-owned fixture plus controlled native UI | Host-key comprehension, authentication focus and secrets, explicit saved-password/store-unavailable feedback, no automatic workspace connection, disconnect/history behavior, conditional reconnect, error recovery | Stored-password transport and headless UI paths automated; native secure-store/platform usability pass pending in umbrella [#42](https://github.com/fes/fesTerm/issues/42) |
 | Serial interaction workflows | Windows, macOS, Linux with representative adapters and permission states | Discovery, unavailable/busy devices, configuration clarity, exclusive ownership, disconnect/history/reconnect, permissions | Deferred until serial implementation |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
+
+## Executable workflow inventory
+
+Use these stable identifiers in issue comments, evidence manifests, and defect
+reports. A scenario is not complete until its required platform set has one
+result for the candidate commit. “Human” means the pass criterion is a
+judgment; the deterministic mechanics should still be automated where
+possible.
+
+### Application surfaces and session management
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| AS-01 | Launch with no workspace; Launcher is the sole root surface, initial row focus is visible, keyboard navigation and Enter start the selected transport. | Native functional + visual | Yes: accessibility driver plus screenshot |
+| AS-02 | Open Launcher and Settings repeatedly; each remains a singleton, replaces its own stale instance, and never changes a live session's terminal geometry. | Native functional | Yes: semantic tree and grid-dimension probe |
+| AS-03 | Create enough sessions to overflow chrome; scroll chips, activate first/middle/last, reorder by drag and menu, rename by double-click, and confirm stable active identity. | Functional + usability | Partly: semantic actions and screenshots; drag feel remains human |
+| AS-04 | Exercise every global shortcut from terminal, Vim, Emacs, palette, and application controls; application chords act once and ordinary terminal chords reach the TUI. | Native functional | Yes: controlled PTY byte oracle |
+| AS-05 | Close Launcher, Settings, exited, failed, and disconnected surfaces immediately; closing the final surface returns Launcher. | Functional | Yes |
+| AS-06 | Close a live local/SSH session from chip, context menu, shortcut, palette, native menu, and overlay; each opens the same confirmation bound to the intended session. | Native functional + usability | Yes; consequence wording remains human review |
+| AS-07 | With live-close confirmation open, initial Enter does not confirm, Escape cancels without PTY bytes, outside click does not dismiss, and deliberate focus + activation closes exactly the bound session. | Native functional | Yes: UI automation plus controlled PTY/lifecycle oracle |
+| AS-08 | Request application/window quit with multiple live sessions; aggregate consequence is accurate and cancellation leaves every session intact. | Deferred until aggregate quit confirmation | Later |
+
+### Terminal interaction, history, and overlays
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| TI-01 | Type/edit at a controlled prompt; selection, Copy, Paste, focus transitions, cursor, and resize remain coherent. | Native functional | Yes: existing native smoke expansion |
+| TI-02 | Run Vim/Neovim, Emacs, less, tmux, htop, Copilot CLI, and `vttest`; verify keyboard/mouse ownership and no application shortcut collisions. | Compatibility + usability | Partly: scripted launch/input/screenshots; interpretation remains human |
+| TI-03 | Right-click with mouse reporting off/on and use Shift override; exactly one owner receives the complete press/release gesture and popup keyboard focus restores correctly. | Native functional | Yes: input byte oracle + accessibility driver |
+| TI-04 | Generate bounded history, scroll by wheel/trackpad/keyboard/scrollbar, switch sessions, receive background output, and use Jump to Latest without losing the reading anchor. | Native functional + usability | Mostly; trackpad/scroll feel remains human |
+| TI-05 | Resize repeatedly while anchored in wrapped history, copy across wraps, approach eviction, then exit/disconnect; history remains scrollable/copyable and rejects input. | Functional + performance + usability | Partly after reflow/disconnected slices land |
+| TI-06 | Open Inspector over local and SSH sessions; terminal grid does not resize, facts/actions change with active session, outside first click is consumed, Escape restores focus, and diagnostics disclose safely. | Native functional + usability | Yes: semantic tree, grid probe, screenshot |
+| TI-07 | Trigger failure, host-key verification, authentication-required, disconnect, and reconnect surfaces; focus, wording, trust facts, secrets, and allowed actions remain state-accurate. | Native functional + usability | Partly: repository SSH fixture; secure-store prompts remain platform/manual |
+
+### Paste safety
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| PS-01 | In ordinary mode paste one line below the large threshold; it is sent once without a dialog. | Functional | Yes: controlled PTY bytes |
+| PS-02 | In ordinary mode paste multiline text; dialog title has exact line count and stable identity, warning explains execution, and preview preserves whitespace. | Functional + usability | Yes, with human wording review |
+| PS-03 | In bracketed mode paste ordinary multiline text; it is sent once with protocol markers and no dialog. | Functional | Yes: controlled PTY bytes |
+| PS-04 | In bracketed mode exceed either large-paste threshold; confirmation appears and accepted text is one ordered bracketed write. | Functional + usability | Yes |
+| PS-05 | Exercise tabs, spaces, CRLF/CR normalization, trailing newline, Unicode, and other control characters; exact counts and escaped preview remain truthful while submitted text is not trimmed or shell-rewritten. | Functional | Yes: fixture matrix |
+| PS-06 | At narrow and scaled sizes inspect the bounded preview and exact omitted-line/character counts; all actions remain visible and keyboard reachable. | Native visual + usability | Screenshot automation plus human review |
+| PS-07 | Press Enter immediately; Cancel owns initial focus and no paste is submitted. Move focus deliberately to Paste and activate it once. | Native functional | Yes |
+| PS-08 | Escape or Cancel dismisses without terminal bytes; clicking outside does not dismiss or interact with terminal. | Native functional | Yes |
+| PS-09 | While dialog is open switch/close/disconnect/reconnect or transition the bound session; pending paste cancels and never follows another chip or transport generation. | Functional | Yes |
+| PS-10 | Exercise OS clipboard delivery from menu, shortcut, context menu, and accessibility action; only captured repository-owned text enters the target and no clipboard content is retained in artifacts. | Native functional + privacy | Yes with sanitized byte hash/count oracle |
+
+### Native platform, appearance, and accessibility
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| NP-01 | Drag, double-click, minimize, maximize, restore, snap/tile, system-menu, and close custom chrome on each supported compositor. | Native functional | Partly; OS window-state APIs provide oracle |
+| NP-02 | Move through scale factors and monitors; chrome, menus, modals, icons, text, and terminal remain aligned without clipping or unintended resize. | Native visual + usability | Screenshot sequence plus window/grid metadata |
+| NP-03 | Verify macOS native menu dynamic labels/states, responder-chain Copy/Paste, Services/Hide/Quit, and absence of duplicated in-window native controls. | Native functional | Yes with Accessibility API; Services remains manual |
+| NP-04 | Traverse every surface keyboard-only and with UIA/Accessibility/AT-SPI; names, roles, states, focus order, restoration, and icon tooltips are accurate. | Accessibility | Partly automated semantic assertions; screen-reader comprehension human |
+| NP-05 | Review compact blue-graphite palette, active/inactive contrast, status semantics, icon legibility, and Inter/fallback typography at supported scales and high contrast. | Visual + usability | Screenshot/contact sheet automation; judgment human |
+| NP-06 | Use IME composition and representative non-Latin/fallback scripts; composition commits once to its owner and cancels on session/focus changes without leaking pre-edit text. | Native functional | Platform-specific driver possible; human confirmation retained |
+
+### Configuration, persistence, and future transports
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| CP-01 | Load valid, missing, and invalid configuration; reload reports truthfully while existing sessions remain alive. | Functional | Yes: isolated fixture files |
+| CP-02 | Save/restore workspace metadata; tab order/focus/profile identity restore, SSH requires authentication, and no runtime state, terminal content, or secret is persisted. | Functional + privacy | Yes: artifact inspection |
+| CP-03 | Exercise native secret store available/locked/unavailable/failure states; saved-password flows store only references and expose actionable non-secret feedback. | Native functional + usability | Partly: platform test stores in disposable accounts |
+| CP-04 | Configure/discover/open/close/reconnect Serial devices including missing, busy, and permission-denied adapters; history and exclusive ownership follow session rules. | Deferred until Serial implementation | Later with virtual loopback plus representative hardware |
+| CP-05 | Review profile editing, bundled font choice, appearance controls, About/update, Focus Mode, file-drop path insertion, and terminal search when each capability lands. | Deferred by capability | Add a focused scenario before implementation closes |
 
 ## Intake rule for new work
 

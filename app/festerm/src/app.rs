@@ -26,6 +26,10 @@ use crate::tabs::{
 };
 
 const APPLICATION_TITLE: &str = "fesTerm";
+const LARGE_PASTE_CHARACTER_THRESHOLD: usize = 4_096;
+const LARGE_PASTE_LINE_THRESHOLD: usize = 100;
+const PASTE_PREVIEW_CHARACTER_LIMIT: usize = 800;
+const PASTE_PREVIEW_LINE_LIMIT: usize = 8;
 
 #[derive(Clone, Copy)]
 enum ApplicationShortcut {
@@ -124,7 +128,49 @@ pub struct FesTermApp {
     inspector_restore_focus: Option<egui::Id>,
     rename_restore_focus: Option<egui::Id>,
     rename_restore_tab: Option<TabId>,
+    pending_close: Option<PendingCloseConfirmation>,
+    pending_paste: Option<PendingPasteConfirmation>,
     native_menu: festerm_macos_window::NativeMenu,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloseConsequence {
+    TerminateLocalProcess,
+    DisconnectSsh,
+}
+
+impl CloseConsequence {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::TerminateLocalProcess => {
+                "The local process will be terminated and its terminal history discarded."
+            }
+            Self::DisconnectSsh => {
+                "The SSH connection will be disconnected and its terminal history discarded."
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingCloseConfirmation {
+    tab: TabId,
+    identity: String,
+    consequence: CloseConsequence,
+    lifecycle_generation: u64,
+    restore_tab: TabId,
+    cancel_focus_requested: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PendingPasteConfirmation {
+    tab: TabId,
+    identity: String,
+    text: String,
+    transport_state: &'static str,
+    lifecycle_generation: u64,
+    bracketed_paste: bool,
+    cancel_focus_requested: bool,
 }
 
 struct PendingPasswordStore {
@@ -150,6 +196,45 @@ fn secret_store_message(error: SecretStoreError) -> &'static str {
             "Native secure storage could not use the requested saved SSH password."
         }
     }
+}
+
+fn normalize_paste_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn paste_line_count(text: &str) -> usize {
+    text.bytes().filter(|byte| *byte == b'\n').count() + 1
+}
+
+fn confirmation_width(viewport_width: f32, preferred: f32) -> f32 {
+    (viewport_width - 32.0).clamp(240.0, preferred)
+}
+
+fn bounded_paste_preview(text: &str) -> (String, usize, usize) {
+    let mut preview = String::new();
+    let mut shown_characters = 0;
+    let mut shown_lines = 1;
+    for character in text.chars() {
+        if shown_characters == PASTE_PREVIEW_CHARACTER_LIMIT {
+            break;
+        }
+        if character == '\n' && shown_lines == PASTE_PREVIEW_LINE_LIMIT {
+            break;
+        }
+        match character {
+            '\n' => {
+                preview.push('\n');
+                shown_lines += 1;
+            }
+            '\t' => preview.push('\t'),
+            control if control.is_control() => {
+                preview.push_str(&format!("\\u{{{:04x}}}", control as u32));
+            }
+            visible => preview.push(visible),
+        }
+        shown_characters += 1;
+    }
+    (preview, shown_lines, shown_characters)
 }
 
 impl FesTermApp {
@@ -222,6 +307,8 @@ impl FesTermApp {
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
+            pending_close: None,
+            pending_paste: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
         }
     }
@@ -235,6 +322,9 @@ impl FesTermApp {
     }
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
+        if self.pending_close.is_some() || self.pending_paste.is_some() {
+            return;
+        }
         while let Some(command) = self.native_menu.try_recv() {
             use festerm_macos_window::NativeMenuCommand;
             match command {
@@ -249,7 +339,7 @@ impl FesTermApp {
                 }
                 NativeMenuCommand::CloseActiveSurface => {
                     let active = self.state.active();
-                    self.state.dispatch(AppCommand::CloseTab(active), context);
+                    self.request_close_tab(active, context);
                 }
                 NativeMenuCommand::ToggleCommandPalette => self.palette.toggle(),
                 NativeMenuCommand::ToggleSessionInspector => {
@@ -270,6 +360,248 @@ impl FesTermApp {
             matches!(self.state.active_tab().content, TabContent::Session(_)),
             self.state.inspector_open(),
         );
+    }
+
+    /// Applies the one close policy shared by chrome, shortcuts, the command
+    /// palette, native menus, and session overlays. Non-live surfaces close
+    /// immediately; a live transport is bound to an explicit confirmation.
+    fn request_close_tab(&mut self, id: TabId, context: &egui::Context) {
+        let confirmation = self
+            .state
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| {
+                let TabContent::Session(session) = &tab.content else {
+                    return None;
+                };
+                session
+                    .close_requires_confirmation()
+                    .then(|| PendingCloseConfirmation {
+                        tab: id,
+                        identity: session.label.clone(),
+                        consequence: match session.inspector_transport {
+                            InspectorTransport::Local => CloseConsequence::TerminateLocalProcess,
+                            InspectorTransport::Ssh { .. } => CloseConsequence::DisconnectSsh,
+                        },
+                        lifecycle_generation: session.controller.lifecycle_generation(),
+                        restore_tab: self.state.active(),
+                        cancel_focus_requested: false,
+                    })
+            });
+        if let Some(confirmation) = confirmation {
+            self.palette.close();
+            self.pending_close = Some(confirmation);
+        } else {
+            self.state.dispatch(AppCommand::CloseTab(id), context);
+        }
+    }
+
+    fn handle_paste_request(&mut self, tab: TabId, text: String) {
+        let text = normalize_paste_line_endings(&text);
+        let Some(session) = self.state.session_tab_mut(tab) else {
+            return;
+        };
+        if !session.accepts_input() {
+            return;
+        }
+        let bracketed_paste = session.terminal.modes().bracketed_paste();
+        let line_count = paste_line_count(&text);
+        let character_count = text.chars().count();
+        let requires_confirmation = character_count >= LARGE_PASTE_CHARACTER_THRESHOLD
+            || line_count >= LARGE_PASTE_LINE_THRESHOLD
+            || (!bracketed_paste && line_count > 1);
+        if !requires_confirmation {
+            let _ = festerm_ui_egui::route_input(
+                &mut session.terminal,
+                festerm_core::InputEvent::Paste(text),
+                &mut session.controller,
+            );
+            return;
+        }
+        self.pending_paste = Some(PendingPasteConfirmation {
+            tab,
+            identity: session.label.clone(),
+            text,
+            transport_state: session.status_bar_label(),
+            lifecycle_generation: session.controller.lifecycle_generation(),
+            bracketed_paste,
+            cancel_focus_requested: false,
+        });
+    }
+
+    fn show_close_confirmation(&mut self, context: &egui::Context, escape: bool) {
+        let Some(pending) = self.pending_close.as_ref().cloned() else {
+            return;
+        };
+        let still_live = self
+            .state
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == pending.tab)
+            .is_some_and(|tab| {
+                matches!(&tab.content, TabContent::Session(session)
+                if session.close_requires_confirmation()
+                    && session.controller.lifecycle_generation() == pending.lifecycle_generation
+                    && matches!(
+                        (&session.inspector_transport, pending.consequence),
+                        (InspectorTransport::Local, CloseConsequence::TerminateLocalProcess)
+                            | (InspectorTransport::Ssh { .. }, CloseConsequence::DisconnectSsh)
+                    ))
+            });
+        if !still_live {
+            self.cancel_close_confirmation();
+            return;
+        }
+
+        let mut cancel = escape;
+        let mut confirm = false;
+        egui::Modal::new(egui::Id::new("close_session_confirmation"))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
+                ui.heading(format!("Close \u{201c}{}\u{201d}?", pending.identity));
+                ui.add_space(6.0);
+                ui.label(pending.consequence.message());
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    let cancel_button = ui.button("Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    if cancel_button.clicked() {
+                        cancel = true;
+                    }
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Close Session").color(theme::STATUS_ERROR),
+                        ))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                });
+            });
+        if let Some(current) = self.pending_close.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.cancel_close_confirmation();
+        } else if confirm {
+            self.pending_close = None;
+            self.state
+                .dispatch(AppCommand::CloseTab(pending.tab), context);
+        }
+    }
+
+    fn cancel_close_confirmation(&mut self) {
+        let Some(pending) = self.pending_close.take() else {
+            return;
+        };
+        // Popup/menu widget IDs can disappear in the frame that opens the
+        // dialog. Restore the active surface, not a stale invoker node.
+        if let Some(session) = self.state.session_tab_mut(pending.restore_tab) {
+            session.view.request_focus_on_next_frame();
+        }
+    }
+
+    fn cancel_paste_confirmation(&mut self) {
+        let Some(pending) = self.pending_paste.take() else {
+            return;
+        };
+        if let Some(session) = self.state.session_tab_mut(pending.tab) {
+            session.view.request_focus_on_next_frame();
+        }
+    }
+
+    fn show_paste_confirmation(&mut self, context: &egui::Context, escape: bool) {
+        let Some(pending) = self.pending_paste.as_ref().cloned() else {
+            return;
+        };
+        let valid_target = self.state.active() == pending.tab
+            && self
+                .state
+                .session_tab_mut(pending.tab)
+                .is_some_and(|session| {
+                    session.accepts_input()
+                        && session.controller.lifecycle_generation() == pending.lifecycle_generation
+                        && session.terminal.modes().bracketed_paste() == pending.bracketed_paste
+                        && session.status_bar_label() == pending.transport_state
+                });
+        if !valid_target {
+            self.cancel_paste_confirmation();
+            return;
+        }
+
+        let line_count = paste_line_count(&pending.text);
+        let character_count = pending.text.chars().count();
+        let (preview, shown_lines, shown_characters) = bounded_paste_preview(&pending.text);
+        let omitted_lines = line_count.saturating_sub(shown_lines);
+        let omitted_characters = character_count.saturating_sub(shown_characters);
+        let mut cancel = escape;
+        let mut paste = false;
+        egui::Modal::new(egui::Id::new("paste_confirmation"))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 440.0));
+                let unit = if line_count == 1 { "line" } else { "lines" };
+                ui.heading(format!(
+                    "Paste {line_count} {unit} into \u{201c}{}\u{201d}?",
+                    pending.identity
+                ));
+                if !pending.bracketed_paste {
+                    ui.label("Bracketed paste is not active; a line may execute immediately.");
+                } else {
+                    ui.label("This large paste will be sent as one bracketed input operation.");
+                }
+                ui.label(format!(
+                    "Target state: {} \u{00b7} {line_count} {unit} \u{00b7} {character_count} characters",
+                    pending.transport_state
+                ));
+                ui.add_space(6.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(preview).monospace())
+                                .selectable(true)
+                                .wrap(),
+                        );
+                    });
+                });
+                if omitted_lines > 0 || omitted_characters > 0 {
+                    ui.label(format!(
+                        "Preview omits {omitted_lines} lines and {omitted_characters} characters."
+                    ));
+                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let cancel_button = ui.button("Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    if cancel_button.clicked() {
+                        cancel = true;
+                    }
+                    if ui.button("Paste").clicked() {
+                        paste = true;
+                    }
+                });
+            });
+        if let Some(current) = self.pending_paste.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.cancel_paste_confirmation();
+        } else if paste {
+            self.pending_paste = None;
+            if let Some(session) = self.state.session_tab_mut(pending.tab) {
+                let _ = festerm_ui_egui::route_input(
+                    &mut session.terminal,
+                    festerm_core::InputEvent::Paste(pending.text),
+                    &mut session.controller,
+                );
+            }
+        }
     }
 
     /// Handles the only user-triggered configuration I/O. The reloader keeps
@@ -560,7 +892,7 @@ impl FesTermApp {
                 }
                 ChromeAction::Close(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
-                        self.state.dispatch(AppCommand::CloseTab(id), context);
+                        self.request_close_tab(id, context);
                     }
                 }
                 ChromeAction::Reorder { moved, before } => {
@@ -712,7 +1044,7 @@ impl FesTermApp {
             }
             5 => {
                 let active = self.state.active();
-                self.state.dispatch(AppCommand::CloseTab(active), context);
+                self.request_close_tab(active, context);
             }
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
@@ -732,6 +1064,9 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.pending_close.is_some() || self.pending_paste.is_some() {
+            return;
+        }
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
         if open_palette {
             self.palette.toggle();
@@ -752,7 +1087,7 @@ impl FesTermApp {
         }
         if close_tab {
             let active = self.state.active();
-            self.state.dispatch(AppCommand::CloseTab(active), ctx);
+            self.request_close_tab(active, ctx);
         }
         if next_tab {
             self.state.dispatch(AppCommand::ActivateNextTab, ctx);
@@ -1006,6 +1341,13 @@ impl FesTermApp {
         self.handle_shortcuts(ui.ctx());
         self.update_native_menu();
 
+        // A destructive confirmation owns Escape before the terminal input
+        // adapter sees raw events. Backdrop clicks are intentionally ignored.
+        let confirmation_escape = (self.pending_close.is_some() || self.pending_paste.is_some())
+            && ui
+                .ctx()
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
         let (chips, active_chip) = self.chip_view_models();
         let inspector_open = self.state.inspector_open();
         let inspector_available = matches!(self.state.active_tab().content, TabContent::Session(_));
@@ -1073,6 +1415,8 @@ impl FesTermApp {
         };
         let mut screen_command = None;
         let mut overlay_action = None;
+        let paste_was_pending = self.pending_paste.is_some();
+        let mut deferred_pastes = Vec::new();
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
@@ -1109,6 +1453,9 @@ impl FesTermApp {
                 TabContent::Session(session) => {
                     let options = festerm_ui_egui::TerminalViewOptions {
                         paste_available: session.accepts_input(),
+                        terminal_input_enabled: self.pending_close.is_none()
+                            && self.pending_paste.is_none(),
+                        defer_paste_to_application: true,
                     };
                     session.view.show_with_options(
                         ui,
@@ -1116,6 +1463,7 @@ impl FesTermApp {
                         &mut session.controller,
                         options,
                     );
+                    deferred_pastes = session.view.take_paste_requests();
                     session
                         .controller
                         .observe_resize_probe_terminal_state(&session.terminal);
@@ -1130,6 +1478,16 @@ impl FesTermApp {
                     overlay_action = overlay::show(ui.ctx(), session.chip_status());
                 }
             }
+        }
+        if paste_was_pending && !deferred_pastes.is_empty() {
+            // A later clipboard-delivery event invalidates the captured
+            // operation. Never replace an open dialog or route a second paste.
+            self.cancel_paste_confirmation();
+        } else if self.pending_close.is_none()
+            && self.pending_paste.is_none()
+            && deferred_pastes.len() == 1
+        {
+            self.handle_paste_request(active_tab_id, deferred_pastes.remove(0));
         }
         let inspector_action = inspector_open
             .then(|| {
@@ -1178,6 +1536,9 @@ impl FesTermApp {
                     options,
                     &ui.ctx().clone(),
                 ),
+                AppCommand::CloseTab(id) => {
+                    self.request_close_tab(id, &ui.ctx().clone());
+                }
                 command => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
@@ -1195,10 +1556,15 @@ impl FesTermApp {
                     }
                 }
                 OverlayAction::CloseTab => {
-                    self.state
-                        .dispatch(AppCommand::CloseTab(active_tab_id), &context);
+                    self.request_close_tab(active_tab_id, &context);
                 }
             }
+        }
+
+        if self.pending_close.is_some() {
+            self.show_close_confirmation(ui.ctx(), confirmation_escape);
+        } else {
+            self.show_paste_confirmation(ui.ctx(), confirmation_escape);
         }
 
         if self.native_smoke.is_some() {
@@ -1228,8 +1594,17 @@ impl FesTermApp {
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
+            pending_close: None,
+            pending_paste: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
         }
+    }
+
+    fn for_test_with_live_session(context: &egui::Context) -> (Self, TabId) {
+        let (state, tab) = AppState::with_primary_session(context, None, Configuration::empty());
+        let mut app = Self::for_test_with_configuration(Configuration::empty());
+        app.state = state;
+        (app, tab)
     }
 }
 
@@ -1239,6 +1614,90 @@ mod tests {
 
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness, SnapshotOptions};
+
+    #[test]
+    fn paste_policy_normalizes_endings_and_counts_trailing_lines_exactly() {
+        let normalized = normalize_paste_line_endings("first\r\nsecond\rthird\n");
+
+        assert_eq!(normalized, "first\nsecond\nthird\n");
+        assert_eq!(paste_line_count(&normalized), 4);
+        assert_eq!(normalized.chars().count(), 19);
+    }
+
+    #[test]
+    fn paste_preview_is_bounded_and_escapes_non_whitespace_controls() {
+        let text = format!("one\ttwo\u{0007}\n{}", "x".repeat(900));
+        let (preview, shown_lines, shown_characters) = bounded_paste_preview(&text);
+
+        assert!(preview.starts_with("one\ttwo\\u{0007}\n"));
+        assert_eq!(shown_lines, 2);
+        assert_eq!(shown_characters, PASTE_PREVIEW_CHARACTER_LIMIT);
+        assert!(shown_characters < text.chars().count());
+    }
+
+    #[test]
+    fn close_confirmation_states_transport_specific_consequence() {
+        assert!(CloseConsequence::TerminateLocalProcess
+            .message()
+            .contains("local process"));
+        assert!(CloseConsequence::DisconnectSsh
+            .message()
+            .contains("SSH connection"));
+    }
+
+    #[test]
+    fn confirmation_width_preserves_margins_at_minimum_window_size() {
+        assert_eq!(confirmation_width(360.0, 440.0), 328.0);
+        assert_eq!(confirmation_width(360.0, 360.0), 328.0);
+        assert_eq!(confirmation_width(900.0, 440.0), 440.0);
+    }
+
+    #[test]
+    fn live_close_confirmation_is_safe_by_default_and_confirmed_deliberately() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.request_close_tab(tab, &context);
+        assert!(app.pending_close.is_some());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Cancel").is_focused());
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert!(harness.state().pending_close.is_some());
+        assert_eq!(harness.state().state.active(), tab);
+
+        harness.get_by_label("Close Session").click();
+        harness.step();
+        assert!(harness.state().pending_close.is_none());
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Launcher
+        ));
+    }
+
+    #[test]
+    fn escape_cancels_live_close_without_closing_session() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.request_close_tab(tab, &context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness.state().pending_close.is_none());
+        assert_eq!(harness.state().state.active(), tab);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+    }
 
     fn harness() -> Harness<'static, FesTermApp> {
         harness_with_configuration(Configuration::empty())

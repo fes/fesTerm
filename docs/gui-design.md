@@ -2088,8 +2088,15 @@ requires a different sequence:
 
 1. Add bounded scrollback under the M9 design gate, then represent reconnect,
    relaunch, and reopen boundaries as non-terminal UI metadata within it.
-2. Implement destructive and paste-confirmation safety with exact
-   session-generation binding.
+2. **Initial slice implemented:** live-session close and risky-paste
+   confirmations use application-owned policy with stable tab identity and
+   transport-generation binding. Escape is consumed before terminal routing,
+   Cancel owns initial focus, backdrop clicks do not dismiss, and terminal
+   input is suppressed while a prompt is open. Paste normalizes only line
+   endings, shows exact bounded counts/preview, and submits one ordered
+   captured operation after revalidation. Native narrow-window, clipboard,
+   threshold, wording, and focus usability remain in `manual-validation.md`;
+   aggregate multi-session window quit remains staged.
 3. Integrate semantic SVG icons and bundled Inter through owned asset layers,
    retaining the documented accessibility and fallback contracts.
 4. Schedule the serial backend as a focused capability track with platform

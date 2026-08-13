@@ -767,6 +767,8 @@ mod tests {
                         &mut state.sink,
                         TerminalViewOptions {
                             paste_available: false,
+                            terminal_input_enabled: true,
+                            defer_paste_to_application: false,
                         },
                     );
                 },

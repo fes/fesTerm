@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -28,12 +29,22 @@ use crate::{
 pub struct TerminalViewOptions {
     /// The current session can accept a paste through its ordered input path.
     pub paste_available: bool,
+    /// Application-owned foreground UI permits terminal keyboard and pointer
+    /// input this frame. Confirmation dialogs set this false so input cannot
+    /// leak through their backdrop into a shell or full-screen TUI.
+    pub terminal_input_enabled: bool,
+    /// Clipboard text is returned to the application policy layer instead of
+    /// being encoded immediately. This lets the composition root apply paste
+    /// confirmation without exposing session identity to this crate.
+    pub defer_paste_to_application: bool,
 }
 
 impl Default for TerminalViewOptions {
     fn default() -> Self {
         Self {
             paste_available: true,
+            terminal_input_enabled: true,
+            defer_paste_to_application: false,
         }
     }
 }
@@ -81,6 +92,7 @@ pub struct TerminalView {
     secondary_gesture: SecondaryGestureOwnership,
     history: HistoryViewport,
     scrollbar_dragging: bool,
+    pending_paste_requests: VecDeque<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -212,6 +224,12 @@ impl TerminalView {
         self.has_requested_initial_focus = false;
     }
 
+    /// Takes every clipboard event deferred since the prior frame. Multiple
+    /// events are significant to paste safety and must not be collapsed.
+    pub fn take_paste_requests(&mut self) -> Vec<String> {
+        self.pending_paste_requests.drain(..).collect()
+    }
+
     /// Shows the terminal, filling all available space in `ui`. Detailed
     /// per-frame diagnostics are not rendered inline (`docs/gui-design.md`
     /// "Bottom status bar"); callers that want to surface them can read
@@ -298,7 +316,9 @@ impl TerminalView {
         let vp_layout =
             viewport_layout(viewport_rect.min, viewport, metrics, terminal.dimensions());
         self.diagnostics.grid_rect = Some(vp_layout.grid);
-        if response.clicked() || !self.has_requested_initial_focus {
+        if options.terminal_input_enabled
+            && (response.clicked() || !self.has_requested_initial_focus)
+        {
             response.request_focus();
             self.has_requested_initial_focus = true;
         }
@@ -319,6 +339,18 @@ impl TerminalView {
             metrics,
         };
         let mouse_reporting = !matches!(terminal.modes().mouse_tracking(), MouseTrackingMode::None);
+
+        if !options.terminal_input_enabled {
+            // The application owns a foreground modal. Preserve only focus
+            // state and clipboard-delivery events (the latter invalidates an
+            // already captured paste); history, selection, mouse reporting,
+            // and keyboard routing must all remain inert behind the backdrop.
+            ui.input_mut(|input| {
+                input.events.retain(|event| {
+                    matches!(event, egui::Event::WindowFocused(_) | egui::Event::Paste(_))
+                });
+            });
+        }
 
         self.history.sync(terminal);
         if !terminal.modes().alternate_screen() {
@@ -550,8 +582,8 @@ impl TerminalView {
             &self.selection,
         )
         .filter(|text| !text.is_empty());
-        let menu_has_items =
-            self.context_link.is_some() || selected_text.is_some() || options.paste_available;
+        let menu_has_items = options.terminal_input_enabled
+            && (self.context_link.is_some() || selected_text.is_some() || options.paste_available);
         let set_open = local_context_release.map(|_| egui::SetOpenCommand::Bool(menu_has_items));
         let menu = Popup::context_menu(&response)
             .open_memory(set_open)
@@ -586,6 +618,22 @@ impl TerminalView {
                 }
             });
         let context_menu_open = menu.is_some();
+        if options.defer_paste_to_application {
+            ui.input_mut(|input| {
+                input.events.retain(|event| {
+                    if let egui::Event::Paste(text) = event {
+                        if response.has_focus()
+                            || response.clicked()
+                            || !options.terminal_input_enabled
+                        {
+                            self.pending_paste_requests.push_back(text.clone());
+                            return false;
+                        }
+                    }
+                    true
+                });
+            });
+        }
         let reports = route_egui_events(
             ui,
             &response,
@@ -597,7 +645,7 @@ impl TerminalView {
                 pointer: &mut self.pointer,
             },
             sink,
-            context_menu_open,
+            context_menu_open || !options.terminal_input_enabled,
         );
         for report in reports.routes {
             self.diagnostics.last_input_outcome = Some(report.outcome);
@@ -765,5 +813,19 @@ mod history_overlay_tests {
         let geometry = scrollbar_geometry(viewport, 10, 10_000, 5_000).unwrap();
         assert_eq!(geometry.thumb.height(), 24.0);
         assert!(scrollbar_geometry(viewport, 10, 0, 0).is_none());
+    }
+
+    #[test]
+    fn deferred_paste_requests_preserve_multiplicity_for_application_policy() {
+        let mut view = TerminalView::default();
+        view.pending_paste_requests
+            .push_back("first\nsecond".into());
+        view.pending_paste_requests.push_back("later".into());
+
+        assert_eq!(
+            view.take_paste_requests(),
+            vec!["first\nsecond".to_owned(), "later".to_owned()]
+        );
+        assert!(view.take_paste_requests().is_empty());
     }
 }

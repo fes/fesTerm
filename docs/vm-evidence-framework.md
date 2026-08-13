@@ -41,6 +41,67 @@ This framework extends, rather than replaces, the current validation layers:
   optional-validation entry points.
 - `scripts/run-windows-os-input-smoke.ps1` is the current independently driven
   Windows desktop-input proof.
+- [`manual-validation.md`](manual-validation.md) supplies stable scenario IDs
+  for multi-step functional and usability evidence; the VM layer automates
+  deterministic mechanics but does not replace human usability judgment.
+
+## Workflow-automation extension
+
+The current relay allowlist accepts only `native-smoke`, `os-input-smoke`, and
+`optional-validation`. Do not overload those modes with long interaction
+scripts. Add a fourth `ui-workflow-smoke` mode only after the guest drivers and
+result schema below are implemented and reviewed on one platform.
+
+`ui-workflow-smoke` jobs add a required `workflow` value selected from a
+repository-owned allowlist. Candidate commits may choose an existing workflow
+but may not supply executable steps, shell fragments, clipboard values, host
+addresses, or file paths. The relay checks out the exact candidate SHA, reads
+the named workflow definition from that checkout, validates it against the
+host-supported schema version, and invokes the fixed platform adapter.
+
+The first allowlisted workflows are:
+
+```text
+session-lifecycle
+paste-safety
+inspector-context
+history-navigation
+native-chrome
+accessibility-traversal
+```
+
+The implementation should live under `scripts/vm-evidence/workflows/` with
+declarative definitions, a shared schema, platform adapters, and
+repository-owned sanitized fixtures. Definitions use semantic actions and
+content-free oracles; they never embed arbitrary commands. The host controller
+adds `workflow` to the signed/bundled job description and rejects it for every
+other mode.
+
+One run produces both the existing platform manifest and a bounded
+`workflow-result.json` containing:
+
+- schema version, candidate SHA, run/platform/workflow IDs;
+- ordered scenario and step IDs from `manual-validation.md`;
+- pass, fail, not-run, infrastructure-failed, and cleanup result;
+- bounded start/end/duration values and the first failing step;
+- expected/observed semantic state, window state, terminal dimensions,
+  lifecycle generation, byte counts, and fixture hashes where applicable;
+- screenshot hashes and relative artifact names; and
+- no terminal text, clipboard text, credentials, user paths, or endpoint data.
+
+The host never retries a failed step automatically. A timeout captures one
+host-side screenshot, requests sanitized guest diagnostics, performs bounded
+cleanup, and records the failure. Usability-only observations remain explicit
+manual fields attached after a qualifying automated run; automation must not
+infer that wording, compactness, motion, discoverability, or visual hierarchy
+is acceptable.
+
+Rollout is incremental: validate the schema and a no-op driver, implement
+`session-lifecycle` on one logged-in platform, repeat it until stable, then
+port the adapter and only afterward add paste/history/chrome workflows. Keep
+the existing native smoke as the prerequisite health check so a broken GPU,
+desktop login, or accessibility permission is classified as infrastructure
+rather than as a product regression.
 
 The VM lab should invoke these existing seams wherever possible. Do not copy
 their logic into a separate VM-only test implementation.

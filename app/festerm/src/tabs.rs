@@ -478,6 +478,16 @@ impl SessionTab {
             && matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running))
     }
 
+    /// Whether closing this tab still ends an owned transport attempt or live
+    /// transport and therefore requires explicit destructive confirmation.
+    pub fn close_requires_confirmation(&self) -> bool {
+        self.controller.start_error().is_none()
+            && matches!(
+                self.controller.lifecycle(),
+                Some(SessionLifecycle::Starting | SessionLifecycle::Running)
+            )
+    }
+
     /// Content-free locality/transport text for the status bar.
     pub fn system_label(&self) -> &'static str {
         match self.controller.session() {
@@ -546,10 +556,15 @@ impl SessionTab {
     /// Queues a reconnect without waiting for network activity on the GUI
     /// thread. Rejection becomes ordinary content-free session diagnostics.
     pub fn request_reconnect(&mut self) -> Result<(), SessionReconnectError> {
-        self.controller
+        let result = self
+            .controller
             .session()
             .ok_or(SessionReconnectError::NotSshSession)?
-            .try_reconnect()
+            .try_reconnect();
+        if result.is_ok() {
+            self.controller.advance_lifecycle_generation();
+        }
+        result
     }
 }
 
