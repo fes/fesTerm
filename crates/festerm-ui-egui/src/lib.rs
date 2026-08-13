@@ -514,6 +514,23 @@ mod tests {
         harness.state_mut().terminal.ingest(b"new output\r\n");
         harness.run();
         assert!(harness.state().view.history_offset_rows() > anchored);
+        assert!(harness.query_by_label("Jump to latest").is_some());
+        harness.get_by_label("Jump to latest").click();
+        harness.run();
+        assert!(harness.state().view.follows_latest_output());
+        assert!(harness.query_by_label("Jump to latest").is_none());
+
+        harness.event(egui::Event::PointerMoved(center));
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 2.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        harness.state_mut().terminal.ingest(b"another output\r\n");
+        harness.run();
+        assert!(harness.query_by_label("Jump to latest").is_some());
 
         harness.event(egui::Event::Key {
             key: egui::Key::End,
@@ -554,6 +571,37 @@ mod tests {
         });
         harness.run();
         assert!(harness.state().view.history_offset_rows() > 0);
+        assert_eq!(harness.state().sink.0.len(), routed_before);
+
+        let track_rect = harness.get_by_label("Terminal history scrollbar").rect();
+        let track = egui::pos2(track_rect.center().x, track_rect.top() + 2.0);
+        harness.event(egui::Event::PointerMoved(track));
+        harness.run();
+        let offset_before = harness.state().view.history_offset_rows();
+        let routed_before = harness.state().sink.0.len();
+        harness.event(egui::Event::PointerButton {
+            pos: track,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: track,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.state().view.history_offset_rows() > offset_before);
+        assert_eq!(harness.state().sink.0.len(), routed_before);
+
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
         assert_eq!(harness.state().sink.0.len(), routed_before);
     }
 

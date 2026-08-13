@@ -404,8 +404,12 @@ The initial automated viewport slice now proves borrowed retained-row
 projection, cursor suppression outside the viewed region, ordinary local wheel
 ownership, anchored stability as output arrives, Ctrl+End resume, and the
 TUI-mouse contract in which ordinary wheel is forwarded but Shift-wheel remains
-local. Unseen-output presentation, eviction fallback, selection across history,
-scrollbar interaction, disconnected behavior, and reflow remain open.
+local. It also proves that `Jump to latest` appears only after reliably observed
+retained output, restores following/focus without PTY input, and that the thin
+overlay scrollbar has bounded thumb geometry, track paging, and reserved input
+ownership under TUI mouse reporting. Native interaction feel, eviction
+fallback, selection across history, disconnected behavior, and reflow remain
+open.
 
 ## Reference Material
 

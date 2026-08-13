@@ -384,8 +384,9 @@ fesTerm operates as a practical multi-session terminal application.
 
 **Status:** In progress — ADR 0017, bounded logical primary history, borrowed
 viewport projection, per-session follow/anchor state, local wheel navigation,
-Shift+Page Up/Down, and Ctrl+End are implemented. Configuration, eviction
-notices, `Jump to latest`, selection across history, the overlay scrollbar,
+Shift+Page Up/Down, Ctrl+End, conditional `Jump to latest`, and the thin
+application-reserved overlay scrollbar are implemented. Configuration,
+eviction notices, selection across history, disconnected-history lifecycle,
 and resize reflow remain.
 
 ### Outcome

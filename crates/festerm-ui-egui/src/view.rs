@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use egui::{Popup, Sense, Ui};
+use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
 use festerm_core::{InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
@@ -80,12 +80,14 @@ pub struct TerminalView {
     context_link: Option<Arc<str>>,
     secondary_gesture: SecondaryGestureOwnership,
     history: HistoryViewport,
+    scrollbar_dragging: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct HistoryViewport {
     offset_rows: usize,
     observed_history_rows: usize,
+    unseen_output: bool,
 }
 
 impl HistoryViewport {
@@ -95,6 +97,7 @@ impl HistoryViewport {
             self.offset_rows = self
                 .offset_rows
                 .saturating_add(rows - self.observed_history_rows);
+            self.unseen_output = true;
         }
         self.offset_rows = self.offset_rows.min(rows);
         self.observed_history_rows = rows;
@@ -106,11 +109,64 @@ impl HistoryViewport {
 
     fn scroll_down(&mut self, rows: usize) {
         self.offset_rows = self.offset_rows.saturating_sub(rows);
+        if self.offset_rows == 0 {
+            self.unseen_output = false;
+        }
     }
 
     fn latest(&mut self) {
         self.offset_rows = 0;
+        self.unseen_output = false;
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScrollbarGeometry {
+    hit_track: Rect,
+    visual_track: Rect,
+    thumb: Rect,
+}
+
+fn scrollbar_geometry(
+    viewport: Rect,
+    visible_rows: usize,
+    history_rows: usize,
+    offset_rows: usize,
+) -> Option<ScrollbarGeometry> {
+    if history_rows == 0 || visible_rows == 0 || viewport.height() <= 0.0 {
+        return None;
+    }
+    let total_rows = history_rows.saturating_add(visible_rows);
+    let hit_track = Rect::from_min_max(
+        egui::pos2(viewport.right() - 6.0, viewport.top()),
+        viewport.right_bottom(),
+    );
+    let visual_track = Rect::from_min_max(
+        egui::pos2(viewport.right() - 3.0, viewport.top()),
+        viewport.right_bottom(),
+    );
+    let thumb_height = (viewport.height() * visible_rows as f32 / total_rows as f32)
+        .max(24.0)
+        .min(viewport.height());
+    let travel = (viewport.height() - thumb_height).max(0.0);
+    let top_content_row = history_rows.saturating_sub(offset_rows.min(history_rows));
+    let progress = top_content_row as f32 / history_rows as f32;
+    let thumb_top = viewport.top() + travel * progress;
+    Some(ScrollbarGeometry {
+        hit_track,
+        visual_track,
+        thumb: Rect::from_min_size(
+            egui::pos2(visual_track.left(), thumb_top),
+            egui::vec2(visual_track.width(), thumb_height),
+        ),
+    })
+}
+
+fn jump_to_latest_rect(viewport: Rect) -> Rect {
+    Rect::from_min_size(
+        egui::pos2(viewport.right() - 116.0, viewport.bottom() - 34.0),
+        egui::vec2(108.0, 26.0),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -269,6 +325,20 @@ impl TerminalView {
             let page_rows = terminal.dimensions().rows().saturating_sub(1).max(1);
             let terminal_focused = response.has_focus();
             let terminal_hovered = response.hovered();
+            let over_scrollbar = scrollbar_geometry(
+                vp_layout.viewport,
+                terminal.dimensions().rows(),
+                terminal.scrollback_stats().physical_rows(),
+                self.history.offset_rows,
+            )
+            .is_some_and(|geometry| {
+                ui.input(|input| {
+                    input
+                        .pointer
+                        .hover_pos()
+                        .is_some_and(|position| geometry.hit_track.contains(position))
+                })
+            });
             let mut history_changed = false;
             ui.input_mut(|input| {
                 input.events.retain(|event| match event {
@@ -277,7 +347,9 @@ impl TerminalView {
                         delta,
                         modifiers,
                         ..
-                    } if terminal_hovered && (!mouse_reporting || modifiers.shift) => {
+                    } if terminal_hovered
+                        && (!mouse_reporting || modifiers.shift || over_scrollbar) =>
+                    {
                         let rows = match unit {
                             egui::MouseWheelUnit::Point => {
                                 ((delta.y.abs() / metrics.height).ceil() as usize).max(1)
@@ -334,6 +406,98 @@ impl TerminalView {
                 self.pointer = TerminalPointerState::default();
             }
         }
+
+        let history_rows = terminal.scrollback_stats().physical_rows();
+        let scrollbar = scrollbar_geometry(
+            vp_layout.viewport,
+            terminal.dimensions().rows(),
+            history_rows,
+            self.history.offset_rows,
+        );
+        let scrollbar_response = scrollbar.map(|geometry| {
+            let response = ui.interact(
+                geometry.hit_track,
+                response.id.with("history_scrollbar"),
+                Sense::click_and_drag(),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Slider,
+                    true,
+                    "Terminal history scrollbar",
+                )
+            });
+            if response.drag_started()
+                && response
+                    .interact_pointer_pos()
+                    .is_some_and(|position| geometry.thumb.expand(3.0).contains(position))
+            {
+                self.scrollbar_dragging = true;
+            }
+            if self.scrollbar_dragging && response.dragged() {
+                if let Some(position) = response.interact_pointer_pos() {
+                    let travel = geometry.visual_track.height() - geometry.thumb.height();
+                    let progress = if travel <= 0.0 {
+                        1.0
+                    } else {
+                        ((position.y - geometry.visual_track.top() - geometry.thumb.height() / 2.0)
+                            / travel)
+                            .clamp(0.0, 1.0)
+                    };
+                    let top_content_row = (progress * history_rows as f32).round() as usize;
+                    self.history.offset_rows = history_rows.saturating_sub(top_content_row);
+                    self.history.unseen_output &= self.history.offset_rows > 0;
+                }
+            } else if response.clicked() {
+                if let Some(position) = response.interact_pointer_pos() {
+                    let page = terminal.dimensions().rows().saturating_sub(1).max(1);
+                    if position.y < geometry.thumb.top() {
+                        self.history.scroll_up(page);
+                    } else if position.y > geometry.thumb.bottom() {
+                        self.history.scroll_down(page);
+                    }
+                    self.history.sync(terminal);
+                }
+            }
+            if response.drag_stopped() {
+                self.scrollbar_dragging = false;
+            }
+            response
+        });
+        let jump_rect = (self.history.offset_rows > 0 && self.history.unseen_output)
+            .then(|| jump_to_latest_rect(vp_layout.viewport));
+        let jump_response = jump_rect.map(|rect| {
+            let response = ui.interact(rect, response.id.with("jump_to_latest"), Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Jump to latest")
+            });
+            if response.clicked() {
+                self.history.latest();
+                self.selection.clear();
+                self.pointer = TerminalPointerState::default();
+            }
+            response
+        });
+        if jump_response.as_ref().is_some_and(egui::Response::clicked) {
+            response.request_focus();
+        }
+
+        let scrollbar_hovered = scrollbar_response
+            .as_ref()
+            .is_some_and(egui::Response::hovered);
+        let reserved_pointer_rects = [scrollbar.map(|geometry| geometry.hit_track), jump_rect];
+        ui.input_mut(|input| {
+            input.events.retain(|event| {
+                !matches!(
+                    event,
+                    egui::Event::PointerButton { pos, .. } | egui::Event::PointerMoved(pos)
+                        if reserved_pointer_rects
+                            .iter()
+                            .flatten()
+                            .any(|rect| rect.contains(*pos))
+                )
+            });
+        });
 
         // A TUI with mouse tracking owns ordinary right-click. Shift is the
         // stable local override; without mouse tracking, right-click is local
@@ -460,6 +624,58 @@ impl TerminalView {
                     &mut self.glyphs,
                 );
             });
+        if let Some(geometry) = scrollbar {
+            let visible = self.history.offset_rows > 0
+                || scrollbar_hovered
+                || self.selection.is_active()
+                || self.scrollbar_dragging;
+            if visible {
+                let painter = ui.painter().with_clip_rect(vp_layout.viewport);
+                painter.rect_filled(
+                    geometry.visual_track,
+                    1.5,
+                    crate::theme::SURFACE_TAB_INACTIVE.gamma_multiply(0.65),
+                );
+                painter.rect_filled(
+                    scrollbar_geometry(
+                        vp_layout.viewport,
+                        terminal.dimensions().rows(),
+                        history_rows,
+                        self.history.offset_rows,
+                    )
+                    .expect("history rows still exist")
+                    .thumb,
+                    1.5,
+                    if scrollbar_hovered || self.scrollbar_dragging {
+                        crate::theme::BORDER_ACTIVE
+                    } else {
+                        crate::theme::TEXT_MUTED
+                    },
+                );
+            }
+        }
+        if let (Some(rect), Some(response)) = (jump_rect, jump_response) {
+            let visuals = if response.hovered() {
+                ui.visuals().widgets.hovered
+            } else {
+                ui.visuals().widgets.inactive
+            };
+            let painter = ui.painter().with_clip_rect(vp_layout.viewport);
+            painter.rect(
+                rect,
+                5.0,
+                visuals.weak_bg_fill,
+                Stroke::new(1.0, visuals.bg_stroke.color),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                "Jump to latest",
+                egui::FontId::proportional(12.0),
+                visuals.fg_stroke.color,
+            );
+        }
         self.diagnostics.input_to_paint_submission = input_to_paint_submission;
         self.diagnostics.input_sink = sink.input_diagnostics();
         self.diagnostics.frame_time = Some(frame_started.elapsed());
@@ -523,4 +739,31 @@ fn style_context_menu(ui: &mut Ui) {
     ui.set_min_width(176.0);
     ui.spacing_mut().interact_size.y = 30.0;
     ui.spacing_mut().item_spacing.y = 2.0;
+}
+
+#[cfg(test)]
+mod history_overlay_tests {
+    use super::*;
+
+    #[test]
+    fn scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width() {
+        let viewport = Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(400.0, 200.0));
+        let latest = scrollbar_geometry(viewport, 20, 80, 0).unwrap();
+        let oldest = scrollbar_geometry(viewport, 20, 80, 80).unwrap();
+
+        assert_eq!(latest.hit_track.right(), viewport.right());
+        assert_eq!(latest.hit_track.width(), 6.0);
+        assert_eq!(latest.visual_track.width(), 3.0);
+        assert_eq!(latest.thumb.bottom(), viewport.bottom());
+        assert_eq!(oldest.thumb.top(), viewport.top());
+        assert_eq!(latest.thumb.height(), 40.0);
+    }
+
+    #[test]
+    fn scrollbar_thumb_has_a_practical_minimum() {
+        let viewport = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 100.0));
+        let geometry = scrollbar_geometry(viewport, 10, 10_000, 5_000).unwrap();
+        assert_eq!(geometry.thumb.height(), 24.0);
+        assert!(scrollbar_geometry(viewport, 10, 0, 0).is_none());
+    }
 }
