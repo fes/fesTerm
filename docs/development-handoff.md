@@ -13,6 +13,7 @@ custom title-bar chrome, and a configurable status bar. The terminal core, UI,
 session lifecycle, PTY backend, implemented native SSH transport,
 configuration foundation, and GUI-independent native secret-store foundation
 are separate crates.
+M7 and M8 are implemented; M6 remains the open compatibility acceptance gate.
 
 At startup, the app loads `config.toml` from the native per-user project
 configuration location (`com.fes.fesTerm`) or the explicit
@@ -33,16 +34,16 @@ watched, edited, auto-saved, or written automatically. Settings can explicitly
 **Save workspace** metadata to the same selected source, preserving the
 manually authored profiles. It saves only ordered Launcher/Settings surfaces,
 restored SSH authentication-required profile surfaces, and configured-local
-profile tabs; default, ad-hoc, and live SSH sessions are omitted. There is no
-credential-reference persistence in the application yet. The
+profile tabs; default, ad-hoc, and live SSH sessions are omitted. Existing saved SSH
+profiles can explicitly store or use a password: TOML receives only an opaque
+reference, native storage is used only on a background worker, and password
+resolution occurs immediately before SSH authentication. The
 `festerm-secret-store` foundation uses macOS Keychain, Windows Credential
 Manager, and Linux Secret Service over the logged-in session D-Bus (including
 KWallet only through Secret Service integration). A locked or unavailable
-native store remains an actionable condition with no insecure fallback. A later
-application slice must persist only opaque references in TOML and resolve them
-just in time.
+native store remains an actionable condition with no insecure fallback.
 
-Not implemented: configuration profile editing and trust storage,
+Not implemented: configuration profile editing/import UI and persistent trust,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
 references, OpenSSH-config import UI, scrollback, user-visible ligatures, a
 custom GPU renderer, terminfo distribution, and reference-TUI compatibility

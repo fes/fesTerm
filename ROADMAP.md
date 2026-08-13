@@ -326,6 +326,8 @@ Users can create an SSH tab without invoking an external SSH executable.
 
 ## Milestone 8 — Tabs, Profiles, and Workspace Restoration
 
+**Status:** Implemented ([#41](https://github.com/fes/fesTerm/issues/41))
+
 **Note:** By explicit decision, GUI chrome (session chips/tabs, the
 Launcher/Settings surfaces, and a minimal session inspector described in
 [`docs/gui-design.md`](docs/gui-design.md)) is being built as a parallel
@@ -348,8 +350,9 @@ profiles can explicitly use a stored password, and their password form can
 explicitly replace it in platform secure storage before atomically persisting
 only its opaque reference. Resolution occurs on the SSH worker; restored
 workspace SSH surfaces still require explicit user action. Private keys,
-passphrases, agents, key files, trust persistence, profile editing, and the
-complete restoration experience remain incomplete.
+passphrases, agents, key files, persistent trust, profile editing/import UI,
+and richer restoration presentation are deliberately deferred capabilities;
+none is needed for the narrow M8 persistence acceptance criteria below.
 
 The GUI-independent `festerm-secret-store` foundation is implemented with
 opaque UUID-v4 references and native macOS Keychain, Windows Credential

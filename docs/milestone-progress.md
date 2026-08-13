@@ -64,11 +64,13 @@ confirmation, the Wayland investigation, or independently driven desktop
 
 Two narrow parallel tracks proceeded without changing that acceptance status:
 
-- The early M8 GUI vertical slice now supplies independent local-session chips,
-  Launcher and Settings surfaces, command routing, palette activation,
-  custom title-bar chrome, connection overlays, and a configurable status
-  bar. It is in a usability and platform-stabilization phase, not an excuse
-  to claim M8 persistence/profile completion.
+- M8 is implemented: its GUI vertical slice supplies independent local-session
+  chips, Launcher and Settings surfaces, command routing, palette activation,
+  custom title-bar chrome, connection overlays, and a configurable status bar.
+  Versioned TOML profiles, explicit transactional reload, metadata-only
+  workspace restoration, and opaque native SSH-password references now meet
+  its narrow persistence acceptance criteria. Profile editing/import UI,
+  persistent trust, and other credential types remain separate future work.
 - M7 selected `russh` with the portable `ring` backend and now provides a live
   SSH `Session`, strict host trust, password and in-memory OpenSSH key
   authentication, remote PTY/resize, bounded opt-in reconnect, and controlled
@@ -88,6 +90,5 @@ refresh milestone/issue truth so parallel work does not become coordination
 drift.
 
 The next sequencing is therefore deliberate: close M6 evidence loops while
-stabilizing the GUI, then advance M8 profiles/workspace restoration. Reserve
-scrollback and reflow for M9, and packaging/terminfo plus broader refinement
-for M10.
+stabilizing the GUI, then advance to M9 scrollback and reflow. Reserve
+packaging/terminfo plus broader refinement for M10.
