@@ -16,6 +16,8 @@ Read `README.md`, then use the document that matches the task:
 | GUI workflow, chrome, session chips, and visual hierarchy | `docs/gui-design.md` |
 | First-party icons, semantic names, accessibility, and asset pipeline | `docs/icon-system.md` |
 | UI, rendering, and platform test strategy | `docs/ui-test-plan.md` |
+| GUI exploration state/action graph and recovery paths | `docs/gui-action-graph.md` |
+| Requirement/ADR/scenario/test traceability | `validation/traceability.json`, `validation/README.md` |
 | Manual, native-platform, and usability validation inventory | `docs/manual-validation.md` |
 | Bootstrap and manual checks | `docs/development-handoff.md` |
 
@@ -94,6 +96,14 @@ Update `docs/manual-validation.md` in the same change when a slice adds,
 removes, or automates one of those checks. Open a focused issue only when the
 check has its own environment, setup, owner, acceptance boundary, or discovered
 defect; otherwise keep it in the umbrella validation tracker.
+
+Before changing behavior, resolve the affected stable IDs in
+`docs/gui-action-graph.md` and `validation/traceability.json`. Update design,
+graph edges, automated tests, manual scenarios, and ADR Validation impact in
+the same change whenever their relationship changes. Run
+`python scripts/check_validation_traceability.py` before handoff. Commits use a
+`Validation-Impact:` trailer naming affected `GUI:<edge>`/`ADR-<number>` IDs,
+or `none - <reason>` for a behavior-preserving change.
 
 ## Scope Classification
 

@@ -84,3 +84,39 @@ Agents should not opportunistically implement future roadmap items merely becaus
 A capability should not move from `Implemented` or `Validation pending` to `Accepted` based on code existence alone. Use the validation evidence defined by the roadmap and test plans, including platform evidence where required.
 
 Architecture stability and milestone acceptance are separate concerns: a change can preserve architecture and still fail validation, or pass functional tests while violating an architectural invariant.
+
+## Validation Traceability
+
+Normative requirements, architectural decisions, GUI exploration edges,
+automated tests, and manual evidence are connected through
+`validation/traceability.json`. `docs/gui-action-graph.md` owns stable workflow
+edge IDs; the registry maps them to source requirements, ADRs, concrete Rust
+test functions, manual scenarios, classifications, and prerequisites.
+
+Every behavior-bearing change must declare its validation impact before merge:
+
+- design changes add or update action edges and registry mappings;
+- code changes name affected edge or ADR IDs and add/update the smallest
+  deterministic tests practical;
+- ADR changes include the template's `## Validation impact` section;
+- test deletion or renaming rehomes every trace relationship in the same
+  change;
+- manual evidence becoming automated updates the classification and registry;
+  and
+- editorial or behavior-preserving changes use an explicit no-impact reason.
+
+Commits use `Validation-Impact: GUI:<edge>, ADR-<number>` trailers. A no-impact
+trailer uses `Validation-Impact: none - <meaningful reason>`. The trailer is a
+review declaration, not evidence and not an alternative to updating the
+registry.
+
+`scripts/check_validation_traceability.py` validates complete graph coverage,
+referential integrity, classification requirements, ADR validation-impact
+sections, and changed-file declarations. CI runs it on every supported
+platform. A capability cannot become Accepted while it has unclassified or
+broken trace entries, or while implemented behavior is represented only as
+deferred validation.
+
+Existing ADRs are baselined in a temporary legacy allowlist. Materially editing
+one requires adding its Validation impact section and removing it from the
+allowlist; new ADRs may never enter it.

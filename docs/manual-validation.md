@@ -134,6 +134,7 @@ possible.
 | CP-03 | Exercise native secret store available/locked/unavailable/failure states; saved-password flows store only references and expose actionable non-secret feedback. | Native functional + usability | Partly: platform test stores in disposable accounts |
 | CP-04 | Configure/discover/open/close/reconnect Serial devices including missing, busy, and permission-denied adapters; history and exclusive ownership follow session rules. | Deferred until Serial implementation | Later with virtual loopback plus representative hardware |
 | CP-05 | Review profile editing, bundled font choice, appearance controls, About/update, Focus Mode, file-drop path insertion, and terminal search when each capability lands. | Deferred by capability | Add a focused scenario before implementation closes |
+| CP-06 | After Local, SSH, and Serial plus their UI are complete, decide whether native Markdown viewing belongs in fesTerm; if accepted, validate the chosen readability/fidelity target, safe local/remote ownership, accessibility, resource isolation, bounds, and return-to-prior-surface behavior. | Deferred product/design review | No implementation or VM workflow until the prerequisite gate and scope decision are complete |
 
 ## Intake rule for new work
 
@@ -152,6 +153,8 @@ same change.
 
 ## Relationship to other validation documents
 
+- `gui-action-graph.md` defines the traversable actions, guards, oracles, and
+  cancel/undo/return paths that produce these evidence results.
 - `ui-test-plan.md` defines the automated and platform test architecture.
 - `m6-validation-gate.md` defines the current milestone acceptance gate.
 - `m6-compatibility-checklist.md` defines reference-application scenarios.

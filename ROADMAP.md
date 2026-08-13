@@ -472,6 +472,14 @@ The following tracks remain intentionally outside the initial critical path. Arc
   contract is already defined in `docs/gui-design.md`; backend implementation
   remains a focused post-core track and must add platform-specific discovery
   and permissions plus deterministic loopback/fixture coverage.
+- Native Markdown viewing is a post-transport product-design candidate because
+  Markdown is central to AI-assisted development and technical workflows. It
+  must not begin until Local, SSH, and Serial capabilities and their owned UI
+  flows are complete. The later review first decides whether fesTerm should
+  include it at all, then chooses readability-first viewing versus a more
+  visually faithful renderer and explicitly bounds syntax, resources,
+  security, accessibility, local/remote ownership, and update behavior. It is
+  not currently a committed renderer, editor, IDE, or milestone.
 - Optional metadata synchronization and account identity.
 - Advanced graphics protocols.
 - Persistent, explicitly enabled terminal history.

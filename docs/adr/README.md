@@ -30,3 +30,6 @@ Architecture decision records preserve decisions that affect the project across 
 - **Rejected:** considered and deliberately not adopted.
 
 New decisions should use the next sequential number and should link to any ADR they supersede.
+Start from [`TEMPLATE.md`](TEMPLATE.md). Every new or materially changed ADR
+must include `## Validation impact` and update the machine-readable trace
+registry when its requirement, scenario, or evidence relationships change.

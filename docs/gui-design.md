@@ -424,6 +424,61 @@ dismissible, and cannot block the Launcher or a terminal session. Because even
 a version check creates outbound network traffic, its behavior, endpoint, and
 data must be disclosed and configurable before it is enabled.
 
+### Deferred native Markdown viewing
+
+Native Markdown viewing is pinned for an explicit product-design discussion
+only after Local, SSH, and Serial capabilities and their UI components are
+complete. Markdown is unusually valuable in AI-assisted development and
+technical terminal workflows, but that motivation does not yet establish that
+fesTerm should own a document renderer. No viewer control, disabled menu item,
+file association, or implementation issue should be added before the gate.
+
+The review must first answer **whether** native viewing belongs in a restrained
+terminal workstation. If it does, it must then choose and name one primary
+quality target:
+
+- **Readability-first:** dependable structure, typography, code blocks,
+  tables, links, search, selection, and Copy without claiming browser- or
+  editor-identical layout.
+- **Visual-fidelity-oriented:** a broader, precisely specified Markdown and
+  styling model with deterministic rendering/reference evidence and the
+  additional complexity that entails.
+
+A vague promise to “render Markdown accurately” is not sufficient. The design
+review must bound at least:
+
+- Markdown dialect and extensions: CommonMark/GFM, tables, task lists,
+  footnotes, syntax highlighting, math, diagrams, embedded HTML, and any
+  unsupported construct treatment;
+- document ownership and entry routes: explicitly selected local files, files
+  referenced by local terminal output, and SSH-remote files. A remote path is
+  never treated as a local path, and Serial has no implied filesystem;
+- resource policy: scripts never execute, raw HTML is disabled or sanitized by
+  an explicit contract, and local files, remote images, network URLs, data
+  URLs, fonts, and includes do not load implicitly;
+- privacy and trust: opening a document cannot silently create network traffic,
+  expose a remote path locally, upload content, or place document data in
+  diagnostics, workspace metadata, or logs;
+- bounded behavior: file/line/image/resource limits, large-document
+  responsiveness, cancellation, error recovery, encoding, and binary-file
+  rejection;
+- navigation and accessibility: headings, landmarks, link destinations,
+  tables, code blocks, keyboard traversal, screen-reader semantics, text
+  selection, Copy, Find, source/rendered switching, and scroll restoration;
+- freshness and lifecycle: read-only versus editing, manual reload versus file
+  watching, conflict/deletion behavior, SSH disconnect handling, and whether a
+  viewer is a singleton task surface or one surface per document; and
+- product boundary: whether it remains a read-only companion surface rather
+  than expanding into an editor, preview server, web browser, notebook, or
+  general IDE.
+
+Any accepted viewer must follow the existing application-surface model: it
+cannot resize or take ownership of a live terminal session, terminal escape
+sequences cannot open it without an explicit user action, Escape/Close returns
+to a known prior surface, and closing the final viewer returns to Launcher.
+Workspace persistence, recent-document history, file watching, remote fetch,
+and external-resource loading remain absent unless separately designed.
+
 ### Contextual status region
 
 The bottom status region should normally be absent. It may appear for actionable or transitional states such as:
@@ -2004,6 +2059,12 @@ This is information architecture, not a pixel specification. The final implement
 
 ## Validation Strategy
 
+The complete traversable state/action model is maintained in
+[`gui-action-graph.md`](gui-action-graph.md). It assigns stable edge IDs to
+every workflow in this document, including cancellation, inverse, cleanup, and
+return-to-known-state paths. Test plans and VM drivers should reference those
+edges rather than inventing isolated sequences.
+
 GUI behavior should be validated in layers:
 
 1. Pure layout, geometry, state, and input tests.
@@ -2129,3 +2190,8 @@ discovered defect.
 - Backend capability and command semantics for a real Reconnect action; the UX
   contract is specified above, while the current overlay correctly omits an
   action it cannot perform.
+- Post-transport Markdown-viewing decision: whether it belongs in fesTerm at
+  all and, if accepted, whether the primary target is structural readability
+  or a deliberately bounded level of visual fidelity. The prerequisite and
+  design/security questions are recorded under Deferred native Markdown
+  viewing; no implementation is scheduled yet.

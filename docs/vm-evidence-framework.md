@@ -44,6 +44,9 @@ This framework extends, rather than replaces, the current validation layers:
 - [`manual-validation.md`](manual-validation.md) supplies stable scenario IDs
   for multi-step functional and usability evidence; the VM layer automates
   deterministic mechanics but does not replace human usability judgment.
+- [`gui-action-graph.md`](gui-action-graph.md) supplies the traversable
+  checkpoints, guarded edges, oracles, and mandatory return-to-known-state
+  paths used inside each workflow.
 
 ## Workflow-automation extension
 

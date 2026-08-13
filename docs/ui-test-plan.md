@@ -7,6 +7,9 @@ platform validation. This plan complements
 compatibility status of any feature. Manual/native and usability checks that
 remain after the automated layers are inventoried in
 [the manual validation registry](manual-validation.md).
+Ordered UI exploration and regression sequences use the stable checkpoints and
+edge IDs in [the GUI action graph](gui-action-graph.md); this plan defines how
+those edges are proven at each test tier.
 
 ## Goals
 
@@ -304,7 +307,8 @@ clipboard contents, or a developer's terminal settings.
 
 The existing one-window smoke remains the fast foundation. Build the next VM
 automation layer as named, data-driven workflows using the stable scenario IDs
-in `manual-validation.md`. A workflow driver must act through the guest's
+in `manual-validation.md` and transition IDs in `gui-action-graph.md`. A
+workflow driver must act through the guest's
 native accessibility/input facilities while a separate repository-owned test
 channel observes content-free application, terminal-grid, and controlled-PTY
 state. Neither screenshots nor accessibility labels alone are sufficient.

@@ -108,6 +108,10 @@ custom-terminfo strategy.
   profile document, secret boundary, and transactional reload behavior.
 - [GUI design](docs/gui-design.md) — authoritative interaction model, independent
   session-chip principles, visual hierarchy, and canonical wireframe.
+- [GUI exploration action graph](docs/gui-action-graph.md) — stable state and
+  transition IDs with assertions, cancellation, inverse, and checkpoint recovery paths.
+- [Validation traceability](validation/README.md) — machine-checked mappings
+  from requirements and ADRs through graph edges to automated/manual evidence.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
   names, accessibility rules, color/state policy, and validation pipeline.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
