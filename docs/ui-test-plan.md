@@ -383,6 +383,23 @@ overlapping checklist entry.
 - Extend session integration to controlled OpenSSH, reconnect, tabs, profiles,
   and restoration as those milestones implement them.
 
+### M9 scrollback and reflow verification
+
+ADR 0017 is the model oracle. Deterministic core tests must cover hard versus
+soft breaks, full-screen versus margin scrolling, exact byte accounting,
+whole-line eviction, oversize logical lines, clear/reset semantics,
+primary/alternate transitions, wide and combining cells, hyperlinks, and
+repeated grow/shrink reflow. Property tests must preserve logical text and cell
+ownership without exceeding the configured history budget.
+
+Headless UI tests must cover per-session anchored/following state, wheel and
+keyboard navigation, unseen-output behavior, `Jump to latest`, selection and
+Copy across reflowed history, eviction clamping, chip switches, and input-event
+ownership while a TUI reports mouse input. Native validation remains necessary
+for wheel/trackpad feel, scrollbar discoverability, performance near the
+default 64 MiB budget, DPI/resize behavior, and exited/disconnected read-only
+history; those checks are registered in `manual-validation.md` and issue #43.
+
 ## Reference Material
 
 - [xterm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)

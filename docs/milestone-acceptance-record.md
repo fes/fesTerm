@@ -83,8 +83,11 @@ GitHub Copilot CLI, `less`, `vim`/`nvim`, `htop`, `tmux`, `vttest`, and `tack`
 are **not run**. The initial Windows shell line-editor attempt on 2026-08-07
 failed because Tab and vertical arrows transferred focus from the terminal;
 the deterministic regression and native retest in `853534c` corrected that
-specific failure. The resized shell grid does not reflow existing text because
-fesTerm has no scrollback/reflow engine; this is not a PTY resize failure.
+specific failure. The resized shell grid did not reflow existing text in that
+M6 run because fesTerm then had no scrollback/reflow engine; this was not a PTY
+resize failure. The later bounded-history foundation does not retroactively
+supply viewport or reflow behavior, so the observed evidence remains accurately
+scoped.
 The full shell scenario remains incomplete because scrolling and right-click
 paste were reported unavailable. Record observer, date, platform, result, and
 a minimal deterministic regression for every reproducible failure in

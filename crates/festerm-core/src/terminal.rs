@@ -4,6 +4,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth, Color},
+    history::{LogicalLine, Scrollback, ScrollbackStats, DEFAULT_SCROLLBACK_LIMIT_BYTES},
     input::{
         encode_key, encode_legacy_mouse, encode_paste, encode_sgr_mouse, mouse_event_is_reported,
         paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome, MouseEvent,
@@ -181,10 +182,19 @@ pub struct Terminal {
     input_queue: Vec<u8>,
     reply_queue_overflowed: bool,
     input_queue_overflowed: bool,
+    scrollback: Scrollback,
 }
 
 impl Terminal {
     pub fn new(dimensions: Dimensions) -> Result<Self, TerminalError> {
+        Self::with_scrollback_limit(dimensions, DEFAULT_SCROLLBACK_LIMIT_BYTES)
+    }
+
+    /// Creates a terminal with an explicit retained primary-history byte limit.
+    pub fn with_scrollback_limit(
+        dimensions: Dimensions,
+        scrollback_limit_bytes: usize,
+    ) -> Result<Self, TerminalError> {
         Ok(Self {
             parser: Parser::new(),
             utf8: Utf8Decoder::new(),
@@ -204,6 +214,7 @@ impl Terminal {
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
             input_queue_overflowed: false,
+            scrollback: Scrollback::new(scrollback_limit_bytes),
         })
     }
 
@@ -278,6 +289,21 @@ impl Terminal {
 
     pub fn row_text(&self, row: usize) -> Option<String> {
         self.screen().row_text(row)
+    }
+
+    /// Borrows retained primary-screen logical lines from oldest to newest.
+    pub fn scrollback_lines(&self) -> impl ExactSizeIterator<Item = &LogicalLine> {
+        self.scrollback.lines()
+    }
+
+    /// Returns content-free retained-history accounting and eviction metrics.
+    pub fn scrollback_stats(&self) -> ScrollbackStats {
+        self.scrollback.stats()
+    }
+
+    /// Clears retained primary-screen history without changing the visible grid.
+    pub fn clear_scrollback(&mut self) {
+        self.scrollback.clear();
     }
 
     pub fn is_row_dirty(&self, row: usize) -> Option<bool> {
@@ -590,6 +616,7 @@ impl Terminal {
         }
         if self.active_buffer().pending_wrap && self.modes.auto_wrap {
             let buffer = self.active_buffer_mut();
+            buffer.screen.mark_soft_wrapped(buffer.cursor.row);
             buffer.cursor.column = 0;
             buffer.pending_wrap = false;
             self.index();
@@ -663,11 +690,17 @@ impl Terminal {
     fn index(&mut self) {
         let fill = self.erase_cell();
         let dimensions = self.dimensions();
+        let retain_history = self.active_screen == ActiveScreen::Primary
+            && self.primary.scroll_top == 0
+            && self.primary.scroll_bottom + 1 == dimensions.rows();
         let buffer = self.active_buffer_mut();
         if buffer.cursor.row == buffer.scroll_bottom {
-            buffer
+            let removed = buffer
                 .screen
                 .scroll_up(buffer.scroll_top, buffer.scroll_bottom, 1, fill);
+            if retain_history {
+                self.scrollback.push_rows(removed);
+            }
         } else if buffer.cursor.row + 1 < dimensions.rows() {
             buffer.cursor.row += 1;
         }
@@ -818,6 +851,12 @@ impl Terminal {
 
     fn erase_display(&mut self, parameters: CsiParameters) {
         let mode = Self::raw_parameter(parameters, 0, 0);
+        if mode == 3 {
+            if self.active_screen == ActiveScreen::Primary {
+                self.scrollback.clear();
+            }
+            return;
+        }
         let columns = self.dimensions().columns();
         let rows = self.dimensions().rows();
         let cell = self.erase_cell();
@@ -901,10 +940,17 @@ impl Terminal {
     fn scroll_up(&mut self, parameters: CsiParameters) {
         let count = Self::parameter_or(parameters, 0, 1);
         let cell = self.erase_cell();
+        let dimensions = self.dimensions();
+        let retain_history = self.active_screen == ActiveScreen::Primary
+            && self.primary.scroll_top == 0
+            && self.primary.scroll_bottom + 1 == dimensions.rows();
         let buffer = self.active_buffer_mut();
-        buffer
+        let removed = buffer
             .screen
             .scroll_up(buffer.scroll_top, buffer.scroll_bottom, count, cell);
+        if retain_history {
+            self.scrollback.push_rows(removed);
+        }
     }
 
     fn scroll_down(&mut self, parameters: CsiParameters) {

@@ -90,5 +90,6 @@ refresh milestone/issue truth so parallel work does not become coordination
 drift.
 
 The next sequencing is therefore deliberate: close M6 evidence loops while
-stabilizing the GUI, then advance to M9 scrollback and reflow. Reserve
-packaging/terminfo plus broader refinement for M10.
+stabilizing the GUI and advance the now-started M9 bounded-history foundation
+into viewport navigation and reflow. Reserve packaging/terminfo plus broader
+refinement for M10.

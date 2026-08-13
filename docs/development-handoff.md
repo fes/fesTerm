@@ -45,7 +45,8 @@ native store remains an actionable condition with no insecure fallback.
 
 Not implemented: configuration profile editing/import UI and persistent trust,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
-references, OpenSSH-config import UI, scrollback, user-visible ligatures, a
+references, OpenSSH-config import UI, scrollback viewport/reflow UI,
+user-visible ligatures, a
 custom GPU renderer, terminfo distribution, and reference-TUI compatibility
 sign-off. M7 supplies transient password and in-memory OpenSSH private-key
 authentication plus bounded opt-in reconnect; encrypted-key passphrases are

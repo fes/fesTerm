@@ -8,6 +8,7 @@
 use std::fmt;
 
 mod cell;
+mod history;
 mod input;
 mod modes;
 mod parser;
@@ -29,6 +30,7 @@ pub const MAX_STRING_BYTES: usize = 4096;
 /// A queued write is accepted atomically: if the entire write does not fit,
 /// none of its bytes are retained and the caller receives an overflow result.
 pub const TRANSPORT_QUEUE_HIGH_WATERMARK: usize = 64 * 1024;
+pub use history::{LogicalLine, ScrollbackStats, DEFAULT_SCROLLBACK_LIMIT_BYTES};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Dimensions {
@@ -729,5 +731,85 @@ mod tests {
         assert_eq!(terminal.row_text(0).as_deref(), Some("A "));
         assert_eq!(terminal.cell(1, 0).unwrap().text(), " ");
         assert_eq!(terminal.cell(1, 0).unwrap().width(), CellWidth::Single);
+    }
+
+    #[test]
+    fn primary_full_screen_scroll_retains_hard_and_soft_logical_lines() {
+        let mut primary = terminal(4, 2);
+        primary.ingest(b"one\r\ntwo\r\n");
+
+        let lines = primary.scrollback_lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0]
+                .cells()
+                .iter()
+                .map(|cell| cell.character())
+                .collect::<String>(),
+            "one"
+        );
+        assert!(lines[0].has_hard_break());
+        assert_eq!(lines[0].physical_rows(), 1);
+
+        let mut spaced = terminal(5, 2);
+        spaced.ingest(b"a  \r\nb\r\n");
+        let spaced_line = spaced.scrollback_lines().next().unwrap();
+        assert_eq!(
+            spaced_line
+                .cells()
+                .iter()
+                .map(|cell| cell.character())
+                .collect::<String>(),
+            "a  "
+        );
+
+        let mut wrapped = terminal(4, 2);
+        wrapped.ingest(b"abcdefghX\r\nz\r\n");
+        let lines = wrapped.scrollback_lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0]
+                .cells()
+                .iter()
+                .map(|cell| cell.character())
+                .collect::<String>(),
+            "abcdefghX"
+        );
+        assert!(lines[0].has_hard_break());
+        assert_eq!(lines[0].physical_rows(), 3);
+    }
+
+    #[test]
+    fn alternate_and_partial_margin_scrolling_never_enter_primary_history() {
+        let mut terminal = terminal(5, 3);
+        terminal.ingest(b"base\r\n");
+        terminal.ingest(b"\x1b[?1049halt\r\none\r\ntwo\r\nthree\x1b[?1049l");
+        assert_eq!(terminal.scrollback_stats().logical_lines(), 0);
+
+        terminal.ingest(b"\x1b[2;3r\x1b[3;1H\n\n");
+        assert_eq!(terminal.scrollback_stats().logical_lines(), 0);
+    }
+
+    #[test]
+    fn scrollback_is_strictly_bounded_and_clear_preserves_visible_cells() {
+        let dimensions = Dimensions::new(4, 2).unwrap();
+        let mut disabled = Terminal::with_scrollback_limit(dimensions, 0).unwrap();
+        disabled.ingest(b"one\r\ntwo\r\nthree\r\n");
+        assert_eq!(disabled.scrollback_stats().charged_bytes(), 0);
+        assert_eq!(disabled.scrollback_stats().logical_lines(), 0);
+
+        let mut bounded = Terminal::with_scrollback_limit(dimensions, 256).unwrap();
+        for _ in 0..32 {
+            bounded.ingest(b"abc\r\n");
+        }
+        let stats = bounded.scrollback_stats();
+        assert!(stats.charged_bytes() <= stats.limit_bytes());
+        assert!(stats.evicted_lines() > 0 || stats.oversize_lines() > 0);
+
+        let before = bounded.row_text(0);
+        bounded.ingest(b"\x1b[3J");
+        assert_eq!(bounded.scrollback_stats().charged_bytes(), 0);
+        assert_eq!(bounded.scrollback_stats().logical_lines(), 0);
+        assert_eq!(bounded.row_text(0), before);
     }
 }

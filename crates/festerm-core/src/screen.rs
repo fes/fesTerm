@@ -9,7 +9,16 @@ use crate::{
 pub struct Screen {
     dimensions: Dimensions,
     cells: Vec<Cell>,
+    occupied_cells: Vec<bool>,
     dirty_rows: Vec<bool>,
+    soft_wrapped_rows: Vec<bool>,
+    occupied_columns: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ScreenRow {
+    pub(crate) cells: Vec<Cell>,
+    pub(crate) soft_wrapped: bool,
 }
 
 impl Screen {
@@ -19,6 +28,7 @@ impl Screen {
             .try_reserve_exact(dimensions.cell_count())
             .map_err(|error| TerminalError::allocation("screen cells", error))?;
         cells.resize(dimensions.cell_count(), blank_cell());
+        let occupied_cells = vec![false; dimensions.cell_count()];
 
         let mut dirty_rows = Vec::new();
         dirty_rows
@@ -26,10 +36,20 @@ impl Screen {
             .map_err(|error| TerminalError::allocation("screen dirty rows", error))?;
         dirty_rows.resize(dimensions.rows(), true);
 
+        let mut soft_wrapped_rows = Vec::new();
+        soft_wrapped_rows
+            .try_reserve_exact(dimensions.rows())
+            .map_err(|error| TerminalError::allocation("screen wrap metadata", error))?;
+        soft_wrapped_rows.resize(dimensions.rows(), false);
+        let occupied_columns = vec![0; dimensions.rows()];
+
         Ok(Self {
             dimensions,
             cells,
+            occupied_cells,
             dirty_rows,
+            soft_wrapped_rows,
+            occupied_columns,
         })
     }
 
@@ -87,6 +107,11 @@ impl Screen {
             let new_start = row * dimensions.columns();
             resized.cells[new_start..new_start + preserved_columns]
                 .clone_from_slice(&self.cells[old_start..old_start + preserved_columns]);
+            resized.occupied_cells[new_start..new_start + preserved_columns]
+                .copy_from_slice(&self.occupied_cells[old_start..old_start + preserved_columns]);
+            resized.soft_wrapped_rows[row] =
+                self.soft_wrapped_rows[row] && preserved_columns == self.dimensions.columns();
+            resized.occupied_columns[row] = self.occupied_columns[row].min(preserved_columns);
         }
         resized.repair_wide_cells();
         Ok(resized)
@@ -97,6 +122,8 @@ impl Screen {
             .cell_index(column, row)
             .expect("terminal cursor must remain within screen dimensions");
         self.cells[index] = cell;
+        self.occupied_cells[index] = true;
+        self.recompute_occupied(row);
         self.mark_dirty(row);
     }
 
@@ -111,6 +138,7 @@ impl Screen {
         let attributes = cell.attributes;
         let hyperlink = cell.hyperlink.clone();
         self.cells[index] = cell;
+        self.occupied_cells[index] = true;
         if cluster_columns == 2 {
             let continuation = self
                 .cell_index(column + 1, row)
@@ -123,11 +151,13 @@ impl Screen {
                 attributes,
                 hyperlink,
             };
+            self.occupied_cells[continuation] = true;
         }
         self.mark_dirty(row);
         let fill = blank_cell();
         self.repair_neighborhood(row, column, &fill);
         self.repair_neighborhood(row, column + cluster_columns, &fill);
+        self.recompute_occupied(row);
     }
 
     pub(crate) fn fill_linear(&mut self, start: usize, end: usize, cell: Cell) {
@@ -140,14 +170,26 @@ impl Screen {
         let first_column = start % columns;
         let last_column = end - last_row * columns;
         self.cells[start..end].fill(cell.clone());
+        self.occupied_cells[start..end].fill(!is_structural_blank(&cell));
         self.mark_dirty_range(first_row, last_row);
         // A contiguous fill can split a pair only at either range boundary.
         self.repair_neighborhood(first_row, first_column, &cell);
         self.repair_neighborhood(last_row, last_column, &cell);
+        for row in first_row..=last_row {
+            self.recompute_occupied(row);
+        }
     }
 
     pub(crate) fn clear_all(&mut self, cell: Cell) {
+        let occupied = if is_structural_blank(&cell) {
+            0
+        } else {
+            self.dimensions.columns()
+        };
         self.cells.fill(cell);
+        self.occupied_cells.fill(occupied != 0);
+        self.soft_wrapped_rows.fill(false);
+        self.occupied_columns.fill(occupied);
         self.mark_all_dirty();
     }
 
@@ -165,10 +207,12 @@ impl Screen {
         let start = row_start + column;
         self.move_cells(start..row_end - count, start + count);
         self.cells[start..start + count].fill(cell.clone());
+        self.occupied_cells[start..start + count].fill(!is_structural_blank(&cell));
         self.mark_dirty(row);
         self.repair_neighborhood(row, column, &cell);
         self.repair_neighborhood(row, column + count, &cell);
         self.repair_neighborhood(row, columns, &cell);
+        self.recompute_occupied(row);
     }
 
     pub(crate) fn delete_characters(
@@ -185,9 +229,11 @@ impl Screen {
         let start = row_start + column;
         self.move_cells(start + count..row_end, start);
         self.cells[row_end - count..row_end].fill(cell.clone());
+        self.occupied_cells[row_end - count..row_end].fill(!is_structural_blank(&cell));
         self.mark_dirty(row);
         self.repair_neighborhood(row, column, &cell);
         self.repair_neighborhood(row, columns - count, &cell);
+        self.recompute_occupied(row);
     }
 
     pub(crate) fn insert_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
@@ -195,7 +241,12 @@ impl Screen {
         let count = count.min(bottom - row + 1);
         let source_end = (bottom + 1 - count) * columns;
         self.move_cells(row * columns..source_end, (row + count) * columns);
+        let occupied = !is_structural_blank(&cell);
         self.cells[row * columns..(row + count) * columns].fill(cell);
+        self.occupied_cells[row * columns..(row + count) * columns].fill(occupied);
+        self.move_row_metadata(row..bottom + 1 - count, row + count);
+        self.soft_wrapped_rows[row..row + count].fill(false);
+        self.occupied_columns[row..row + count].fill(row_extent(occupied, columns));
         self.mark_dirty_range(row, bottom);
     }
 
@@ -206,19 +257,45 @@ impl Screen {
             (row + count) * columns..(bottom + 1) * columns,
             row * columns,
         );
+        let occupied = !is_structural_blank(&cell);
         self.cells[(bottom + 1 - count) * columns..(bottom + 1) * columns].fill(cell);
+        self.occupied_cells[(bottom + 1 - count) * columns..(bottom + 1) * columns].fill(occupied);
+        self.move_row_metadata(row + count..bottom + 1, row);
+        self.soft_wrapped_rows[bottom + 1 - count..bottom + 1].fill(false);
+        self.occupied_columns[bottom + 1 - count..bottom + 1].fill(row_extent(occupied, columns));
         self.mark_dirty_range(row, bottom);
     }
 
-    pub(crate) fn scroll_up(&mut self, top: usize, bottom: usize, count: usize, cell: Cell) {
+    pub(crate) fn scroll_up(
+        &mut self,
+        top: usize,
+        bottom: usize,
+        count: usize,
+        cell: Cell,
+    ) -> Vec<ScreenRow> {
         let columns = self.dimensions.columns();
         let count = count.min(bottom - top + 1);
+        let removed = (top..top + count)
+            .map(|row| {
+                let start = row * columns;
+                ScreenRow {
+                    cells: self.cells[start..start + self.occupied_columns[row]].to_vec(),
+                    soft_wrapped: self.soft_wrapped_rows[row],
+                }
+            })
+            .collect();
         let region_start = top * columns;
         let region_end = (bottom + 1) * columns;
         let shifted_cells = count * columns;
         self.move_cells(region_start + shifted_cells..region_end, region_start);
+        let occupied = !is_structural_blank(&cell);
         self.cells[region_end - shifted_cells..region_end].fill(cell);
+        self.occupied_cells[region_end - shifted_cells..region_end].fill(occupied);
+        self.move_row_metadata(top + count..bottom + 1, top);
+        self.soft_wrapped_rows[bottom + 1 - count..bottom + 1].fill(false);
+        self.occupied_columns[bottom + 1 - count..bottom + 1].fill(row_extent(occupied, columns));
         self.mark_dirty_range(top, bottom);
+        removed
     }
 
     pub(crate) fn scroll_down(&mut self, top: usize, bottom: usize, count: usize, cell: Cell) {
@@ -231,8 +308,18 @@ impl Screen {
             region_start..region_end - shifted_cells,
             region_start + shifted_cells,
         );
+        let occupied = !is_structural_blank(&cell);
         self.cells[region_start..region_start + shifted_cells].fill(cell);
+        self.occupied_cells[region_start..region_start + shifted_cells].fill(occupied);
+        self.move_row_metadata(top..bottom + 1 - count, top + count);
+        self.soft_wrapped_rows[top..top + count].fill(false);
+        self.occupied_columns[top..top + count].fill(row_extent(occupied, columns));
         self.mark_dirty_range(top, bottom);
+    }
+
+    pub(crate) fn mark_soft_wrapped(&mut self, row: usize) {
+        self.soft_wrapped_rows[row] = true;
+        self.occupied_columns[row] = self.dimensions.columns();
     }
 
     fn cell_index(&self, column: usize, row: usize) -> Option<usize> {
@@ -245,10 +332,33 @@ impl Screen {
         if destination > source.start {
             for offset in (0..length).rev() {
                 self.cells[destination + offset] = self.cells[source.start + offset].clone();
+                self.occupied_cells[destination + offset] =
+                    self.occupied_cells[source.start + offset];
             }
         } else {
             for offset in 0..length {
                 self.cells[destination + offset] = self.cells[source.start + offset].clone();
+                self.occupied_cells[destination + offset] =
+                    self.occupied_cells[source.start + offset];
+            }
+        }
+    }
+
+    fn move_row_metadata(&mut self, source: std::ops::Range<usize>, destination: usize) {
+        let length = source.end - source.start;
+        if destination > source.start {
+            for offset in (0..length).rev() {
+                self.soft_wrapped_rows[destination + offset] =
+                    self.soft_wrapped_rows[source.start + offset];
+                self.occupied_columns[destination + offset] =
+                    self.occupied_columns[source.start + offset];
+            }
+        } else {
+            for offset in 0..length {
+                self.soft_wrapped_rows[destination + offset] =
+                    self.soft_wrapped_rows[source.start + offset];
+                self.occupied_columns[destination + offset] =
+                    self.occupied_columns[source.start + offset];
             }
         }
     }
@@ -276,6 +386,7 @@ impl Screen {
         for column in 0..self.dimensions.columns() {
             self.repair_cell(row, column, &fill);
         }
+        self.recompute_occupied(row);
     }
 
     fn repair_neighborhood(&mut self, row: usize, boundary: usize, fill: &Cell) {
@@ -304,6 +415,36 @@ impl Screen {
         };
         if invalid {
             self.cells[index] = fill.clone();
+            self.occupied_cells[index] = !is_structural_blank(fill);
         }
+    }
+
+    fn recompute_occupied(&mut self, row: usize) {
+        if self.soft_wrapped_rows[row] {
+            self.occupied_columns[row] = self.dimensions.columns();
+            return;
+        }
+        let start = row * self.dimensions.columns();
+        self.occupied_columns[row] = self.occupied_cells[start..start + self.dimensions.columns()]
+            .iter()
+            .rposition(|occupied| *occupied)
+            .map_or(0, |column| column + 1);
+    }
+}
+
+fn is_structural_blank(cell: &Cell) -> bool {
+    cell.text == " "
+        && cell.width == CellWidth::Single
+        && cell.foreground == crate::Color::Default
+        && cell.background == crate::Color::Default
+        && cell.attributes == crate::Attributes::NONE
+        && cell.hyperlink.is_none()
+}
+
+const fn row_extent(occupied: bool, columns: usize) -> usize {
+    if occupied {
+        columns
+    } else {
+        0
     }
 }

@@ -82,9 +82,11 @@ clears secret text on submit. Encrypted keys may use a transient parse
 passphrase; no key text or passphrase is persisted. When an active SSH tab
 needs host trust, it presents the canonical
 host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
-actions; trust persistence is intentionally deferred to M8. It does not provide configuration editing or automatic persistence, agent or
-key-file UI, OpenSSH-config import UI, scrollback, terminfo distribution, or
-user-visible ligature support. SSH reconnect is disabled by default; the
+actions; trust persistence is intentionally deferred to M8. The core now owns
+the first bounded logical-history slice, but the application does not yet
+provide history viewport navigation, resize reflow, configuration editing or
+automatic persistence, agent or key-file UI, OpenSSH-config import UI,
+terminfo distribution, or user-visible ligature support. SSH reconnect is disabled by default; the
 Launcher has a transient opt-in for a bounded fresh-shell reconnect that
 re-verifies the host key and does not restore remote process state. `TERM`
 remains `xterm-256color` as an

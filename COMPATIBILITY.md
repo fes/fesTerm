@@ -180,7 +180,9 @@ comma-separated list. `grid` retains one scalar per display cell, representing
 continuations as spaces. Typed input events remain focused Rust tests because
 constructing keys and pointer events in the small text fixture format would be
 less reviewable; those tests assert queue bytes and explicit input outcomes.
-There is still no scrollback, so fixtures do not claim one.
+The legacy fixture format does not yet expose the M9 logical-history inspection
+API, so scrollback is covered by focused Rust tests until the fixture extension
+lands.
 
 ## Renderer Compatibility Tests
 

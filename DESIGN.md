@@ -201,12 +201,12 @@ SSH testing will use three layers:
 
 ## Scrollback and Data Retention
 
-Milestone 9 owns bounded in-memory primary-screen scrollback, history
-viewport navigation, and primary-screen reflow. It requires an ADR before
-implementation to define logical-line retention, memory limits, viewport and
-selection anchors, cursor mapping, alternate-screen behavior, and clear
-semantics. Reflow must retain width-two cells, combining text, attributes, and
-hyperlinks without corrupting cell coordinates.
+Milestone 9 owns bounded in-memory primary-screen scrollback, history viewport
+navigation, and primary-screen reflow. ADR 0017 defines logical-line retention,
+the strict byte budget, viewport and selection anchors, cursor mapping,
+alternate-screen behavior, and clear semantics. Reflow must retain width-two
+cells, combining text, attributes, and hyperlinks without corrupting cell
+coordinates.
 
 The alternate screen will retain no scrollback and uses rectangular resize
 semantics; full-screen applications redraw after their PTY resize event. This

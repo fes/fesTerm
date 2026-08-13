@@ -382,6 +382,10 @@ fesTerm operates as a practical multi-session terminal application.
 
 ## Milestone 9 — Scrollback, Viewport Navigation, and Reflow
 
+**Status:** In progress — ADR 0017 and the bounded logical primary-history
+foundation are implemented; viewport projection/navigation, configuration,
+selection across history, and resize reflow remain.
+
 ### Outcome
 
 Users can review bounded in-memory primary-screen history, select it, and
@@ -411,6 +415,11 @@ memory-limit units and defaults, cursor/selection/viewport mapping rules,
 alternate-screen invariants, clear behavior, and response when an operation
 cannot preserve an anchor. Persistent or disk-backed history is explicitly
 out of scope.
+
+Satisfied by [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md):
+logical primary history uses a strict 64 MiB-on-demand default payload budget,
+stable logical anchors, whole-line eviction, primary-only reflow, and explicit
+clear and fallback behavior.
 
 ### Completion criteria
 

@@ -102,8 +102,12 @@ input, and dirty-row inspection. Cells retain leading text with attached
 common combining code points and a width role with explicit width-two
 continuation cells. The application-level `SessionController` is the
 production and controlled-test seam while remaining the single logical
-terminal writer. Scrollback, renderer shaping, and full grapheme segmentation
-remain later work; native rendered-window validation remains an M6 gate.
+terminal writer. The first M9 slice now retains bounded logical primary-screen
+history with content-free accounting and explicit alternate-screen isolation,
+following [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md).
+Viewport projection/navigation, selection across history, resize reflow,
+renderer shaping, and full grapheme segmentation remain later work; native
+rendered-window validation remains an M6 gate.
 
 ### `festerm-session`
 
@@ -416,9 +420,9 @@ Performance benchmarks should initially report trends rather than block every co
 
 - Exact async runtime and cancellation model.
 - Parser implementation strategy and whether to use any parsing crate.
-- Grid storage and scrollback data structures.
 - Unicode width and grapheme segmentation sources.
-- Resize reflow semantics.
+- M9 implementation follows [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md);
+  viewport projection and efficient reflow data structures remain to be proven.
 - Concrete rendering cache and shaping architecture.
 - Configuration migration policy before a stable release.
 - Platform serial-device discovery, permissions, and reconnect policy for the
