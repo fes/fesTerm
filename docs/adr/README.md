@@ -11,13 +11,14 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0005: Foundation-First Delivery with Capability Milestones](0005-foundation-first-capability-milestones.md)
 - [ADR 0006: Native SSH Backend with OpenSSH Interoperability](0006-native-ssh-with-openssh-interoperability.md)
 - [ADR 0007: `egui` Front End with a Pragmatic Renderer Boundary](0007-egui-front-end-pragmatic-renderer-boundary.md)
-- [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md)
+- [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md) — superseded by ADR 0015
 - [ADR 0009: Mutable Core State with Early Observability](0009-mutable-core-and-early-observability.md)
 - [ADR 0010: Preserve Future Extension Seams without Early Scope Expansion](0010-preserve-future-extension-seams.md)
 - [ADR 0011: Trusted Windows ConPTY Runtime Selection](0011-trusted-windows-conpty-runtime-selection.md)
 - [ADR 0012: Cell Geometry Owns Ligature and Fallback Mapping](0012-cell-geometry-owns-ligature-and-fallback-mapping.md)
 - [ADR 0013: `russh` for Native SSH Transport](0013-russh-native-ssh-transport.md)
 - [ADR 0014: Window, Workspace, Tab, and Session Ownership](0014-window-workspace-tab-session-ownership.md)
+- [ADR 0015: Explicit Transactional Configuration Reload](0015-explicit-transactional-configuration-reload.md)
 
 ## Status Values
 

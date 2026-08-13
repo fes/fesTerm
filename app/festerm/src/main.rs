@@ -1,6 +1,7 @@
 mod app;
 mod configuration_startup;
 mod diagnostics;
+mod inspector;
 mod native_smoke;
 mod screens;
 pub mod session_controller;
@@ -52,10 +53,12 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|creation_context| {
             align_macos_traffic_lights(creation_context);
-            Ok(Box::new(FesTermApp::with_startup_configuration(
+            let mut app = FesTermApp::with_startup_configuration(
                 &creation_context.egui_ctx,
                 startup_configuration,
-            )))
+            );
+            app.install_native_menu(&creation_context.egui_ctx);
+            Ok(Box::new(app))
         }),
     )
 }

@@ -1,10 +1,12 @@
 # UI and Platform Test Plan
 
-**Status:** Proposed test plan
+**Status:** Active test plan
 **Scope:** Terminal presentation, interaction, local-session integration, and
 platform validation. This plan complements
 [the compatibility plan](../COMPATIBILITY.md); it does not change the
-compatibility status of any feature.
+compatibility status of any feature. Manual/native and usability checks that
+remain after the automated layers are inventoried in
+[the manual validation registry](manual-validation.md).
 
 ## Goals
 
@@ -41,6 +43,17 @@ Tiers 1 through 4 must not need a network, a user desktop, credentials, a
 real SSH host, or a GPU. Tiers 5 and 6 should upload images, diffs, logs, and
 video only on failure, and must never upload terminal content from developer
 or production sessions.
+
+For the macOS application menu, portable tests assert the semantic shortcut
+chords and labels, including `Ctrl+Tab`/`Ctrl+Shift+Tab` for session switching
+on every platform. A logged-in native Tier 6 run must additionally verify that
+the menu installs without an in-window duplicate; New Session, Settings,
+Command Palette, and active-surface Close dispatch the shared application
+commands; Close and Session Inspector update with active-surface context; and
+AppKit responder-chain Copy/Paste operate on terminal selection/focus without
+leaking an intercepted keystroke into the PTY. About, Help, Find, Focus Mode,
+and application zoom entries must remain absent until those capabilities are
+implemented.
 
 ## Tier 1: Core Fixtures and Parser Tests
 
@@ -166,6 +179,14 @@ This supplements backend-only tests; it is the path that exposed Windows
 ConPTY cursor-position replies and resize rendering failures.
 
 ## Tier 4: Headless Egui Frames
+
+The headless application harness covers the Session Inspector's exact
+desktop/narrow geometry, unchanged terminal dimensions while open, Escape
+consumption, non-session lifecycle, accessible Close control, and first-click
+outside dismissal without terminal-selection mutation. Its ignored manual
+capture test renders production widgets for comparison with
+`docs/images/gui-mockups/session-inspector.png`; native OS/DPI evidence remains
+part of the platform validation pass.
 
 **Decision: adopted.** [egui_kittest](https://github.com/emilk/egui/tree/main/crates/egui_kittest)
 is a test-only dependency paired with the current released `egui` and
@@ -322,22 +343,24 @@ overlapping checklist entry.
 | P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. [#26](https://github.com/fes/fesTerm/issues/26) tracks native-desktop and `vttest` evidence; [#27](https://github.com/fes/fesTerm/issues/27) tracks `tack` after terminfo packaging. | Platform-specific; release candidate | Manual gate |
 | P6 | Initial ligature/fallback-safe renderer architecture | ADR 0012 defines cell geometry as the authority for glyph spans, cursor, selection, and hit testing. An opt-in renderer seam shapes only compatible single-width cell runs, with deterministic boundaries for wide cells, fallback emoji, selections, styles, and hyperlinks; its reviewed snapshot is run by the global optional-validation suite. [#22](https://github.com/fes/fesTerm/issues/22) tracks any future production font policy and user-visible ligature enablement. Do not use manual appearance as the only acceptance evidence. | Windows, Linux, macOS | Implemented; production ligatures remain disabled |
 
-### Immediate: close the current resize/render gap
+### Completed foundation
 
-- Implement P0 from the M6 automation backlog.
-- Preserve the issue recording as a diagnosis artifact, not a test baseline.
+- P0, P1, and P2 are implemented; preserve their originating issue records as
+  diagnosis artifacts rather than treating issue prose as the test baseline.
 
-### Next: broaden deterministic compatibility
+### Next: complete acceptance evidence and broaden deterministic compatibility
 
+- Complete P3 cross-platform visual evidence, P4 native-window evidence, and
+  P5 manual reference-application evidence.
 - Curate and port selected libvterm and WezTerm cases into fixtures.
 - Add parser split-write/cancellation cases and Unicode boundary fixtures.
 - Introduce property tests for grid dimensions, dirty-row bounds, transport
   bounds, and double/continuation integrity.
 
-### After adopting the headless harness
+### Visual regression growth
 
-- Add headless frame/layout tests before adding pixel snapshots.
-- Establish one stable Linux and one stable Windows visual baseline.
+- Keep structural headless frame/layout tests ahead of pixel snapshots.
+- Establish stable Linux evidence alongside the existing Windows baselines.
 
 ### M6 and beyond
 

@@ -30,6 +30,7 @@ Application commands represent product-level intent, for example:
 NewLauncher
 NewLocalSession(profile)
 NewSshSession(profile)
+NewSerialSession(profile)
 OpenSettings
 ToggleSessionInspector
 SwitchSession(session)
@@ -49,6 +50,8 @@ These names are illustrative rather than a required Rust API. The implementation
 5. **Observable results.** Failures and state transitions should become application state or structured outcomes that the UI can present consistently.
 6. **No terminal-protocol leakage.** Application commands may direct a session or terminal, but terminal protocol semantics remain in `festerm-core`.
 7. **No backend leakage into UI.** UI code should request operations such as reconnect or resize through application/session abstractions rather than reaching into PTY or SSH implementations.
+8. **Singleton application surfaces.** Commands that open Launcher or Settings
+   focus the existing surface when present rather than creating duplicates.
 
 ## Invocation Surfaces
 

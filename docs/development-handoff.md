@@ -10,8 +10,8 @@ Milestones 0 through 5 are implemented with native-window validation pending;
 M6 is the open compatibility acceptance gate. The application now has
 in-memory local-session tabs, Launcher and Settings surfaces, command palette,
 custom title-bar chrome, and a configurable status bar. The terminal core, UI,
-session lifecycle, PTY backend, and early SSH transport foundation are
-separate crates.
+session lifecycle, PTY backend, implemented native SSH transport, and
+configuration foundation are separate crates.
 
 At startup, the app loads `config.toml` from the native per-user project
 configuration location (`com.fes.fesTerm`) or the explicit
@@ -53,9 +53,10 @@ cargo build
 cargo run -p festerm
 ```
 
-Without an enabled workspace, the first run opens the platform default local
-shell in an application session tab. Launcher and Settings tabs are available
-through application chrome. With an enabled manually authored workspace, its
+Without an enabled workspace, the first run opens the singleton Launcher;
+selecting Local Shell replaces that chip in place with the platform default
+shell. Launcher and Settings remain available through application chrome. With
+an enabled manually authored workspace, its
 saved tab order/focus restores instead and users must authenticate again before
 an SSH destination connects. If local-shell creation fails, the UI shows the
 session error rather than substituting a demo shell.
@@ -254,7 +255,6 @@ Milestone 6 is the open acceptance gate. Use the
 application scenarios and the [M6 automation backlog](ui-test-plan.md#m6-automation-backlog)
 for implementation order. P0 through P2 are implemented; prioritize P3 visual
 evidence, P4 real-window validation, and P5 manual reference-application
-evidence. M7 may proceed only in narrow, issue-owned transport slices that do
-not displace those gates; see [#28](https://github.com/fes/fesTerm/issues/28)
-and [ADR 0013](adr/0013-russh-native-ssh-transport.md). Convert every
-corrected failure into a concrete regression before broadening scope.
+evidence. M7 is implemented; continue M8 only in focused slices that do not
+displace those gates. Convert every corrected failure into a concrete
+regression before broadening scope.

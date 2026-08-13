@@ -8,7 +8,6 @@ repository.workspace = true
 description = "A scratch, multi-platform SSH/terminal client."
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 directories = "6"
 eframe = "0"
 festerm-config = { path = "../../crates/festerm-config" }

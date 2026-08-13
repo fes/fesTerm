@@ -56,9 +56,14 @@ platform stabilization, not another chrome feature phase: settle shortcuts,
 chip layout, session-switcher behavior, semantic theming, and custom-title-bar
 validation through actual use and focused evidence.
 
-### 3. Continue toward native SSH
+### 3. Advance profiles, persistence, and interaction consistency
 
-Native SSH remains a defining capability and should follow the validated terminal/session foundation. It should use the same stable session identity, application command, diagnostics, and workspace concepts established by the GUI/session-management work rather than introducing parallel models.
+Native SSH is implemented through the same stable session identity, application
+command, diagnostics, and workspace concepts as local sessions. The next
+product track is to complete M8 profile management, secure credential/trust
+storage, and workspace behavior while bringing implemented GUI interactions
+into conformance with the approved detailed contracts. Serial's product and UI
+contract is defined now, but its backend remains a later focused track.
 
 ## Preemptive Seams Worth Establishing
 

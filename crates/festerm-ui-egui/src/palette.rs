@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn empty_query_matches_every_item() {
-        let items = vec![item(1, "New Launcher Tab"), item(2, "Open Settings")];
+        let items = vec![item(1, "New Session…"), item(2, "Open Settings")];
         assert_eq!(filtered(&items, "").len(), 2);
     }
 
@@ -242,7 +242,7 @@ mod tests {
         palette.open();
         let mut harness = harness(PaletteHarnessState {
             palette,
-            items: vec![item(1, "New Launcher Tab"), item(2, "Open Settings")],
+            items: vec![item(1, "New Session…"), item(2, "Open Settings")],
             decision: None,
         });
         harness.run();
@@ -261,7 +261,7 @@ mod tests {
         palette.open();
         let mut harness = harness(PaletteHarnessState {
             palette,
-            items: vec![item(1, "New Launcher Tab"), item(2, "Open Settings")],
+            items: vec![item(1, "New Session…"), item(2, "Open Settings")],
             decision: None,
         });
         harness.run();
@@ -282,7 +282,7 @@ mod tests {
         palette.open();
         let mut harness = harness(PaletteHarnessState {
             palette,
-            items: vec![item(1, "New Launcher Tab")],
+            items: vec![item(1, "New Session…")],
             decision: None,
         });
         harness.run();

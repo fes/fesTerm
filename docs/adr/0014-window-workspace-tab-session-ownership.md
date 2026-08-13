@@ -5,9 +5,9 @@
 
 ## Context
 
-fesTerm now has independent tabs and an active M7 SSH transport foundation.
-M7 reconnect and M8 persistence need stable ownership rules before they add
-connection state or saved workspace metadata. In particular, a terminal title,
+fesTerm now has independent tabs, an implemented M7 SSH transport, and an M8
+metadata-only workspace foundation. Reconnect and persistence require stable
+ownership rules. In particular, a terminal title,
 transport attempt, and remote process are transient; none can define the
 identity of a user-visible session.
 
@@ -40,19 +40,21 @@ Application
   order/focus. It recreates session definitions; it never serializes a local
   process, SSH channel, remote process memory, or terminal screen contents.
 - **Tab** has a stable application identity that outlives a particular
-  transport attempt. Launcher and Settings tabs are application surfaces with
-  no session. Session tabs retain their identity through reconnect and display
-  a stable user/profile label; terminal-provided titles remain secondary,
-  transient metadata.
-- **Session** is the user-visible local or SSH session represented by a session
-  tab. It owns the current `Terminal`, `SessionController`, and a single
-  transport attempt at a time.
+  transport attempt. Launcher and Settings are singleton application surfaces
+  with no session. Session tabs retain their identity through reconnect and
+  display a stable user/profile label; terminal-provided titles remain
+  secondary, transient metadata.
+- **Session** is a user-visible local, SSH, or future serial session represented
+  by a session tab. It owns the current `Terminal`, `SessionController`, and a
+  single transport attempt at a time.
 - **Transport attempt** owns byte I/O and lifecycle only. A failed or
   reconnected SSH attempt is replaced beneath the same session tab identity.
   Reconnect allocates a new remote PTY and does not claim to restore an
   ordinary remote shell process.
 
-Closing the final tab returns the window to a Launcher tab. Closing a window
+Each session tab owns exactly one terminal viewport; split-pane ownership and
+UI are not part of this model. Closing the final tab returns the window to a
+Launcher tab. Closing a window
 shuts down only the sessions in that window; it does not terminate sessions in
 other windows. Profile and workspace data contain stable identifiers and
 non-secret settings only. Secrets and host-key material remain in secure
@@ -60,8 +62,11 @@ storage/trust services, never ordinary workspace data.
 
 ## Consequences
 
-- M7 reconnect UI can preserve a tab/session identity while replacing only the
-  transport attempt and terminal state.
+- Reconnect, local relaunch, and serial reopen preserve tab/session identity
+  while replacing only the transport attempt and terminal state. Once M9
+  scrollback exists, completed generations may remain as bounded read-only
+  history separated by non-terminal UI metadata; this is not process-state
+  restoration and is not an implementation claim before M9.
 - M8 restoration persists tab descriptors, tab order, active-tab identity, and
   window presentation metadata, then creates fresh sessions from profiles or
   ad hoc non-secret launch descriptors.

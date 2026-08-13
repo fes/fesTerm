@@ -6,14 +6,14 @@
 //! and own no session or tab policy themselves; `AppState::dispatch` remains
 //! the single command-handling path.
 
-use eframe::egui::{self, TextEdit, Ui};
+use eframe::egui::{self, vec2, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{Profile, SshProfileConfiguration};
 use festerm_session::TerminalSize;
 use festerm_ssh::{
     HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
     SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
-use festerm_ui_egui::chrome::ChipLayout;
+use festerm_ui_egui::{chrome::ChipLayout, theme};
 
 use crate::configuration_startup::ConfigurationStartupStatus;
 use crate::tabs::{AppCommand, TabId};
@@ -21,6 +21,7 @@ use crate::tabs::{AppCommand, TabId};
 /// One selectable local launch option in the Launcher list.
 struct LauncherItem<'a> {
     label: String,
+    description: String,
     profile_id: Option<&'a str>,
 }
 
@@ -33,6 +34,98 @@ impl LauncherItem<'_> {
             None => AppCommand::StartLocalSession,
         }
     }
+}
+
+fn show_launcher_choice(
+    ui: &mut Ui,
+    primary: &str,
+    secondary: &str,
+    selected: bool,
+    remote: bool,
+) -> egui::Response {
+    let width = ui.available_width().clamp(220.0, 420.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 54.0), Sense::click());
+    let active = selected || response.hovered();
+    ui.painter().rect(
+        rect,
+        6.0,
+        if active {
+            theme::SURFACE_TAB_ACTIVE
+        } else {
+            theme::SURFACE_TAB_INACTIVE
+        },
+        Stroke::new(
+            if selected { 1.5 } else { 1.0 },
+            if selected {
+                theme::BORDER_ACTIVE
+            } else {
+                theme::BORDER_SUBTLE
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+
+    let icon_rect = egui::Rect::from_min_size(rect.left_top() + vec2(14.0, 18.0), vec2(18.0, 16.0));
+    let stroke = Stroke::new(
+        1.5,
+        if active {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
+    );
+    if remote {
+        let host_rect = egui::Rect::from_min_size(icon_rect.min, vec2(14.0, 10.0));
+        ui.painter()
+            .rect_stroke(host_rect, 2.0, stroke, egui::StrokeKind::Inside);
+        ui.painter().line_segment(
+            [
+                host_rect.left_bottom() + vec2(3.0, 3.0),
+                host_rect.right_bottom() + vec2(-3.0, 3.0),
+            ],
+            stroke,
+        );
+        ui.painter()
+            .line_segment([host_rect.right_center(), icon_rect.right_center()], stroke);
+        ui.painter()
+            .circle_filled(icon_rect.right_center(), 1.75, stroke.color);
+    } else {
+        ui.painter()
+            .rect_stroke(icon_rect, 2.0, stroke, egui::StrokeKind::Inside);
+        ui.painter().line_segment(
+            [
+                icon_rect.left_top() + vec2(3.0, 4.0),
+                icon_rect.left_top() + vec2(6.0, 7.0),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                icon_rect.left_top() + vec2(6.0, 7.0),
+                icon_rect.left_top() + vec2(3.0, 10.0),
+            ],
+            stroke,
+        );
+    }
+
+    ui.painter().text(
+        rect.left_top() + vec2(50.0, 10.0),
+        egui::Align2::LEFT_TOP,
+        primary,
+        egui::FontId::proportional(18.0),
+        theme::TEXT_PRIMARY,
+    );
+    ui.painter().text(
+        rect.left_top() + vec2(50.0, 34.0),
+        egui::Align2::LEFT_TOP,
+        secondary,
+        egui::FontId::proportional(11.0),
+        theme::TEXT_MUTED,
+    );
+    response.widget_info(|| {
+        WidgetInfo::labeled(WidgetType::Button, true, format!("{primary} — {secondary}"))
+    });
+    response
 }
 
 /// Authentication method selected for one transient SSH connection attempt.
@@ -157,6 +250,7 @@ impl SshLauncherForm {
 #[derive(Clone, Default)]
 struct LauncherState {
     selected: usize,
+    ssh_open: bool,
     ssh: SshLauncherForm,
     ssh_profile_prefilled: bool,
 }
@@ -360,14 +454,13 @@ fn show_saved_ssh_profiles(ui: &mut Ui, profiles: &[Profile]) {
 /// the transient form below is the only SSH launch path.
 ///
 /// The list is keyboard-navigable: Up/Down moves a highlighted selection
-/// (persisted per-tab via `tab_id`, so multiple open launcher tabs don't
-/// share selection state) and Enter launches the highlighted item, without
-/// requiring the mouse. `tab_id` identifies which launcher tab this is, since
-/// egui's per-frame widget memory is otherwise shared across all callers
-/// within the same panel.
+/// (persisted against the singleton Launcher's `tab_id`) and Enter launches the
+/// highlighted item without requiring the mouse. The id prevents this
+/// temporary state from colliding with other application-surface widgets.
 pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option<AppCommand> {
     let mut items = vec![LauncherItem {
-        label: "Local Shell (platform default)".to_owned(),
+        label: "Local Shell".to_owned(),
+        description: "Default shell on this computer".to_owned(),
         profile_id: None,
     }];
     items.extend(
@@ -375,47 +468,101 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
             .iter()
             .filter_map(Profile::as_local)
             .map(|profile| LauncherItem {
-                label: format!("{} (Local profile)", profile.identifier()),
+                label: profile.identifier().to_owned(),
+                description: "Saved local profile".to_owned(),
                 profile_id: Some(profile.identifier()),
             }),
     );
 
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
-    state.selected = state.selected.min(items.len() - 1);
+    state.selected = state.selected.min(items.len());
+
+    if state.ssh_open {
+        let mut command = None;
+        ui.vertical(|ui| {
+            ui.add_space(24.0);
+            ui.heading("Connect with SSH");
+            ui.label("Enter destination and transient authentication details.");
+            if ui.button("Back").clicked() {
+                state.ssh_open = false;
+            } else {
+                command = show_ssh_form(ui, tab_id, &mut state.ssh);
+            }
+        });
+        ui.data_mut(|data| data.insert_temp(state_id, state));
+        return command;
+    }
 
     let form_has_focus = ssh_form_has_focus(ui, tab_id);
     if !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-        state.selected = (state.selected + 1) % items.len();
+        state.selected = (state.selected + 1) % (items.len() + 1);
     }
     if !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-        state.selected = (state.selected + items.len() - 1) % items.len();
+        state.selected = (state.selected + items.len()) % (items.len() + 1);
     }
     let launch_via_keyboard = !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
     let mut command = None;
     ui.vertical(|ui| {
         ui.add_space(24.0);
-        ui.heading("Launcher");
-        ui.label(
-            "Start or connect to a session. Use \u{2191}/\u{2193} then Enter to launch the \
-             highlighted option.",
-        );
-        ui.add_space(12.0);
-        for (index, item) in items.iter().enumerate() {
-            let response = ui.add(egui::Button::new(&item.label).selected(index == state.selected));
-            if response.clicked() {
-                command = Some(item.command());
-            }
-        }
-        if command.is_none() {
-            show_saved_ssh_profiles(ui, profiles);
-            command = show_ssh_form(ui, tab_id, &mut state.ssh);
-        }
+        ui.horizontal(|ui| {
+            ui.add_space(34.0);
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("New Session")
+                        .size(24.0)
+                        .color(theme::TEXT_PRIMARY),
+                );
+                ui.label(
+                    egui::RichText::new("Choose a session type")
+                        .size(11.0)
+                        .color(theme::TEXT_SECONDARY),
+                );
+            });
+        });
+        ui.add_space(23.0);
+        ui.horizontal(|ui| {
+            ui.add_space(26.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (index, item) in items.iter().enumerate() {
+                    let response = show_launcher_choice(
+                        ui,
+                        &item.label,
+                        &item.description,
+                        index == state.selected,
+                        false,
+                    );
+                    if response.clicked() {
+                        command = Some(item.command());
+                    }
+                    ui.add_space(12.0);
+                }
+                if show_launcher_choice(
+                    ui,
+                    "SSH",
+                    "Connect to a remote host",
+                    state.selected == items.len(),
+                    true,
+                )
+                .clicked()
+                {
+                    state.ssh_open = true;
+                }
+                if command.is_none() && !state.ssh_open {
+                    show_saved_ssh_profiles(ui, profiles);
+                }
+            });
+        });
     });
 
     if command.is_none() && launch_via_keyboard {
-        command = Some(items[state.selected].command());
+        if state.selected == items.len() {
+            state.ssh_open = true;
+        } else {
+            command = Some(items[state.selected].command());
+        }
     }
 
     ui.data_mut(|data| data.insert_temp(state_id, state));
@@ -621,6 +768,13 @@ mod tests {
         harness.run();
     }
 
+    fn open_ssh_form(harness: &mut Harness<'static, LauncherHarnessState>) {
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+    }
+
     fn generated_openssh_private_key() -> String {
         let mut random = russh::keys::key::safe_rng();
         let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
@@ -651,6 +805,7 @@ mod tests {
     fn ssh_form_returns_a_typed_password_command_with_default_port() {
         let mut harness = harness();
         harness.run();
+        open_ssh_form(&mut harness);
         enter_text(&mut harness, "Host", "example.invalid");
         enter_text(&mut harness, "Username", "test-user");
         enter_text(&mut harness, "Password", "transient-test-password");
@@ -713,6 +868,7 @@ mod tests {
     fn ssh_form_shows_the_transient_reconnect_control_and_warning() {
         let mut harness = harness();
         harness.run();
+        open_ssh_form(&mut harness);
 
         assert!(harness
             .query_by_label("Reconnect after a disconnect (up to 3 attempts)")
@@ -737,7 +893,7 @@ mod tests {
         harness.run();
 
         assert!(harness
-            .query_by_label("development (Local profile)")
+            .query_by_label("development — Saved local profile")
             .is_some());
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
@@ -856,6 +1012,7 @@ mod tests {
     fn ssh_form_shows_the_masked_multiline_key_input_only_for_key_authentication() {
         let mut harness = harness();
         harness.run();
+        open_ssh_form(&mut harness);
 
         assert!(harness.query_by_label("OpenSSH private key").is_none());
 
@@ -879,6 +1036,7 @@ mod tests {
     fn ssh_form_shows_constructor_validation_feedback() {
         let mut harness = harness();
         harness.run();
+        open_ssh_form(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
 
         harness.get_by_label("Connect with password").click();

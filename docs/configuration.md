@@ -128,7 +128,7 @@ kinds and fields are rejected.
 ## Startup workspace restoration
 
 When `workspace_enabled = true`, startup restores `workspace.tabs` in saved
-order instead of adding the normal default local-shell tab. Every restored
+order instead of adding the normal startup Launcher. Every restored
 runtime tab receives a fresh process-local `TabId`; the saved tab `id` is
 metadata used only to preserve order and select focus. The saved
 `focused_tab_id` selects its fresh tab, or the first saved tab is selected

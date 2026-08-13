@@ -33,11 +33,11 @@ The implementation has advanced through the terminal core, graphical view, and l
 
 Open issue #3 documents intermittent blank and fragmented Windows rendering during resize. Existing core, pure-layout, and app/session tests provide important evidence, but they do not yet prove that a real egui frame or native window preserves terminal content and viewport coverage under the recorded sequence.
 
-No new major terminal feature should displace this gate. Narrow, independently
-owned M7 transport-enabler work may proceed in parallel when it preserves
+No new major terminal feature should displace this gate. M7 completed under the
+previously approved narrow parallel-work exception. Focused M8 configuration,
+workspace, and GUI-conformance work may continue when it preserves
 terminal/session boundaries and does not consume the platform or validation
-work required here; [#28](https://github.com/fes/fesTerm/issues/28) and
-[ADR 0013](adr/0013-russh-native-ssh-transport.md) define that exception.
+work required here; it does not constitute M6 acceptance.
 
 ## Status Vocabulary
 

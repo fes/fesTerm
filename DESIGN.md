@@ -96,7 +96,10 @@ SSH sessions should support remote PTY allocation, terminal resizing, host-key v
 
 Profiles describe how a session is created. Workspaces describe what was open and how it was arranged.
 
-A profile may describe a local shell command or an SSH destination and non-secret preferences. A workspace may contain tab order, session/profile references, focused tab, window size, and other restorable window state.
+A profile may describe a local shell command, an SSH destination, or a future
+serial-device configuration plus non-secret preferences. A workspace may
+contain tab order, session/profile references, focused tab, window size, and
+other restorable window state.
 
 Restoring a workspace recreates sessions. It does not serialize a local process or guarantee resurrection of a remote server-side process.
 
@@ -104,7 +107,11 @@ Restoring a workspace recreates sessions. It does not serialize a local process 
 
 Primary configuration will use versioned, human-readable TOML.
 
-Configuration should hot reload where safe. A candidate configuration must parse and validate completely before replacing the last valid configuration. Changes that require session recreation or application restart should be identified explicitly.
+Configuration loads at startup and reloads only through an explicit user
+action; fesTerm does not watch configuration files. A candidate configuration
+must parse and validate completely before replacing the last valid
+configuration. Changes apply prospectively unless a separately documented
+action recreates live state. See ADR 0015.
 
 TOML may contain references to secure-storage entries, but not secret values themselves.
 
@@ -241,35 +248,28 @@ Raw protocol traces can expose passwords, tokens, commands, and private output. 
 
 ## Current Priorities
 
-The Cargo workspace, GUI-independent `festerm-core`, test-support crate,
-`festerm-ui-egui` cell renderer, application composition shell, fixture
-harness, diagnostics scaffold, cross-platform CI, M2 ANSI/VT
-primary-and-alternate-screen core, and M3 interactive-input/initial-Unicode
-core are in place. M4 originally rendered a controlled no-session stream; M5
-now runs one bounded default local-shell session through its local-session
-boundary and one default local shell; its backend produces bytes/events while
-the application remains the only terminal-core writer. Current work proceeds
-from that foundation:
+The terminal core, local-session boundary, renderer, multi-tab GUI vertical
+slice, native `russh` SSH transport, strict configuration loader, and
+metadata-only workspace save/restore foundation are implemented. M6 remains
+the open native-window and compatibility acceptance gate; M8 remains incomplete
+until its profile-management, secure-storage, and restoration experience is
+finished. Current work proceeds from that foundation:
 
 1. Complete a full-screen TUI compatibility pass, including a safe
    ligature-capable rendering design.
-2. Add native SSH with OpenSSH interoperability and controlled integration
-   tests.
-3. Add tabs, profiles, reconnect behavior, TOML configuration, and workspace
-   persistence.
-4. Deliver bounded scrollback, viewport navigation, and primary-screen reflow
+2. Stabilize the approved GUI/session-management behavior and complete M8
+   profile, configuration, secret-storage, and workspace workflows.
+3. Deliver bounded scrollback, viewport navigation, and primary-screen reflow
    under the Milestone 9 design gate.
+4. Implement the already-defined first-class serial-session contract as a
+   focused later transport track, without coupling it to local shells.
 
 ## Deferred or Open Questions
 
-- Exact workspace and crate names after the first implementation spike.
 - Future parser extensions and supporting crates, if they become necessary.
-- SSH crate selection.
 - Async runtime, cancellation, and bounded-channel choices.
 - Unicode width table source and update policy.
 - Grapheme, complex-script, and font-fallback scope.
-- Host-key verification and authentication UX.
-- Reconnect backoff, limits, and user controls.
 - `TERM` value and terminfo distribution strategy.
 - Profile, workspace, and configuration migration policy before stability.
 - Account provider and synchronization protocol.

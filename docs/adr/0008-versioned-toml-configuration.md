@@ -1,6 +1,6 @@
 # ADR 0008: Versioned TOML Configuration with Safe Hot Reload
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0015](0015-explicit-transactional-configuration-reload.md)
 - **Date:** 2026-08-05
 
 ## Context
@@ -26,3 +26,9 @@ Secret values will not be stored in ordinary TOML. Configuration may contain opa
 - The parser must distinguish warnings, unsupported fields, and fatal errors.
 - Hot reload needs transactional validation and an application-level change model.
 - Sensitive values remain outside normal files and synchronization.
+
+## Supersession
+
+ADR 0015 retains the versioned TOML, whole-document validation, last-valid
+configuration, and secret-exclusion decisions. It replaces automatic hot
+reload with explicit startup loading and user-invoked transactional reload.

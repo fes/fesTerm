@@ -6,9 +6,10 @@ This document defines the proposed subsystem boundaries, dependency direction,
 runtime data flow, and Rust workspace structure for fesTerm. The repository
 contains `festerm-core`, `festerm-session`, `festerm-pty`,
 `festerm-test-support`, the `festerm-ui-egui` presentation crate, and the
-application composition shell. The first GUI-independent `festerm-config`
-profile-document foundation is implemented; application integration,
-workspace persistence, and credential storage remain target architecture.
+application composition shell. Native SSH, strict `festerm-config` loading,
+profile-backed local launch, and metadata-only workspace save/restore are
+integrated; profile editing, credential storage, and the complete M8 user
+experience remain target architecture.
 
 ## Architectural Goals
 
@@ -179,18 +180,21 @@ Owns versioned, human-readable configuration and persistence models:
 - TOML parsing and validation.
 - Schema versioning and migrations.
 - Profiles, preferences, keybindings, themes, and workspace definitions.
-- Hot reload where changes can be applied safely.
+- Explicit transactional reload from the selected source.
 - References to secrets without storing secret values in TOML.
 
 Operating-system credential storage belongs behind a separate interface and should not leak into configuration documents.
 
-The initial M8 slice parses and serializes schema-versioned, strict TOML
-local and SSH profile metadata. It validates a complete candidate before an
-in-memory reload state atomically replaces the active configuration, retaining
-the prior valid document and a content-free diagnostic on failure. It rejects
-unknown fields and password/private-key material. File watching, workspace
-persistence, credential references, and application integration remain later
-M8 work.
+The current M8 slice parses and serializes schema-versioned, strict TOML local
+and SSH profile metadata. It validates a complete candidate before atomically
+replacing active configuration, retaining the prior valid document and a
+content-free diagnostic on failure. The application loads at startup and
+reloads only on an explicit Settings action; it does not watch files. It can
+launch configured local profiles and explicitly save/restore a deliberately
+limited metadata-only workspace while preserving user-authored profiles. It
+rejects unknown fields and password/private-key material. Profile editing,
+credential references/storage, trust persistence, and full workspace policy
+remain later M8 work. ADR 0015 defines reload semantics.
 
 ### `festerm-ui-egui`
 
@@ -224,6 +228,16 @@ The boundary should be practical rather than doctrinaire. The core may expose ce
 `egui` is the selected initial front end, not an irreversible product dependency. Its rendering stack does not preclude GPU acceleration. If profiling later shows a need for a specialized terminal renderer, it should be possible to replace the cell-rendering path while retaining the application shell and terminal core.
 
 Ligatures are a committed later capability. Text shaping belongs in the rendering layer, which must preserve the mapping between shaped glyph runs and terminal cells so cursor placement, selection, and mouse coordinates remain correct.
+
+### `festerm-macos-window`
+
+Owns the narrow AppKit boundary that cannot be expressed truthfully through
+portable egui widgets: native traffic-light placement and the native macOS
+application menu. Menu items send semantic `NativeMenuCommand` values back to
+`festerm-app`; they do not mutate tabs, sessions, or settings directly. Dynamic
+labels and enabled state are supplied by the application command model, while
+standard Copy, Paste, window, and application actions remain on AppKit's
+responder chain.
 
 ### `festerm-test-support`
 
@@ -404,7 +418,7 @@ Performance benchmarks should initially report trends rather than block every co
 - Unicode width and grapheme segmentation sources.
 - Resize reflow semantics.
 - Concrete rendering cache and shaping architecture.
-- SSH crate selection and cryptographic backend policy.
-- Host-key verification and authentication UX.
 - Configuration migration policy before a stable release.
+- Platform serial-device discovery, permissions, and reconnect policy for the
+  later first-class serial transport.
 - Boundaries and trust model for future scripting or plugins.

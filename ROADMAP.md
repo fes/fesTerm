@@ -1,9 +1,9 @@
 # fesTerm Capability Roadmap
 
 **Status:** Milestones 0 through 5 are implemented with native-window
-validation pending; Milestone 6 is the open acceptance gate. An early M8 GUI
-vertical slice and the M7 SSH transport foundation advance in deliberately
-narrow parallel tracks. See [`docs/milestone-progress.md`](docs/milestone-progress.md).
+validation pending; Milestone 6 is the open acceptance gate. M7 is implemented,
+and an M8 GUI/configuration/workspace vertical slice advances in a deliberately
+narrow parallel track. See [`docs/milestone-progress.md`](docs/milestone-progress.md).
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -335,14 +335,16 @@ profiles and workspace restoration remain M8 work. This does not change M6/M8
 completion criteria. [ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md)
 defines the ownership model that M7 reconnect and M8 persistence follow.
 
-The first configuration vertical slice is also implemented in the
-GUI-independent `festerm-config` crate. It strictly parses and serializes
+The configuration vertical slice is implemented in `festerm-config` and the
+application. It strictly parses and serializes
 schema-versioned TOML local and SSH profile metadata, rejects unknown and
 secret-bearing fields or values, validates complete replacements before
 atomically accepting them, and retains the previous valid configuration with
-content-free diagnostics when reload fails. It intentionally does not yet
-watch files, integrate profile launching into the application, persist
-workspaces, or store/refer to credentials; M8 remains incomplete.
+content-free diagnostics when explicit reload fails. It does not watch files.
+Configured local profiles can launch, and Settings can explicitly save and
+restore the supported metadata-only workspace subset while preserving profiles.
+Profile editing, credential references/storage, trust persistence, and the
+complete restoration experience remain incomplete.
 
 ### Outcome
 
@@ -353,7 +355,7 @@ fesTerm operates as a practical multi-session terminal application.
 - Tabbed local and SSH sessions.
 - Connection and reconnect state indicators.
 - Versioned TOML profiles and application configuration.
-- Safe configuration hot reload.
+- Explicit transactional configuration reload; no file watching.
 - Workspace persistence for open tabs, order, focused tab, and window size.
 - OS secure-storage references for secrets.
 
@@ -439,13 +441,14 @@ The following tracks remain intentionally outside the initial critical path. Arc
 - Scripting and automation.
 - A stable plugin or extension API.
 - Detachable sessions and built-in multiplexing, especially where useful on Windows.
-- Serial connections, scheduled only after local-session, native SSH, and
-  tab/profile/workspace UI work is complete. Its design must define
-  platform-specific device discovery and permissions, explicit serial-port
-  settings, exclusive-access and reconnect behavior, persisted
-  non-secret profile metadata, and deterministic loopback/fixture coverage.
+- Serial connections. The first-class UI, profile, lifecycle, and ownership
+  contract is already defined in `docs/gui-design.md`; backend implementation
+  remains a focused post-core track and must add platform-specific discovery
+  and permissions plus deterministic loopback/fixture coverage.
 - Optional metadata synchronization and account identity.
 - Advanced graphics protocols.
 - Persistent, explicitly enabled terminal history.
 
-Each future track requires a separate design discussion, security model, and ADR before implementation.
+Each future track requires the remaining design/security review appropriate to
+its risk and an ADR for material architectural decisions. Serial does not need
+to reopen its already-approved product and GUI contract.

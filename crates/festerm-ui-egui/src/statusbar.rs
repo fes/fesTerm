@@ -1,16 +1,13 @@
 //! Bottom application status bar.
 //!
-//! `docs/gui-design.md` ("Contextual status region"): a quiet, always-dark
-//! footer that shows the active session's real state on the left and
-//! connection/clock information on the right. It is purely presentation —
+//! `docs/gui-design.md` ("Bottom status bar"): a quiet, always-dark footer
+//! that shows sourced dimensions/locality on the left and transport state on
+//! the right. It is purely presentation —
 //! this crate owns no session, tab, or terminal state, and every string it
 //! paints is supplied by the caller.
 //!
-//! Unlike the reference mockup (which shows fabricated shell
-//! version/encoding/line-ending fields fesTerm does not actually track),
-//! this bar only ever shows genuinely available data: the caller decides
-//! what `left` contains, and this module does not invent placeholder
-//! metadata to visually pad it out.
+//! Stable identity stays in the active chip. Client time/date and fabricated
+//! shell, encoding, line-ending, or command-timing fields are absent.
 
 use egui::{vec2, Align, Color32, Layout, RichText, Ui, UiBuilder};
 
@@ -23,7 +20,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.0;
 const STATUS_BAR_TEXT: Color32 = theme::TEXT_SECONDARY;
 const STATUS_BAR_TEXT_DIM: Color32 = theme::TEXT_MUTED;
 const STATUS_BAR_BORDER: Color32 = theme::BORDER_SUBTLE;
-/// Left inset before the first (`left`) segment - deliberately more
+/// Left inset before the first sourced segment - deliberately more
 /// generous than the `8.0` gap used between the bar's other segments
 /// (mockup: the status bar's leading text sits noticeably more indented
 /// than sibling chrome regions, a subtle intentional asymmetry rather than
@@ -41,9 +38,6 @@ const OPTICAL_VERTICAL_NUDGE: f32 = 1.0;
 /// supplied by the caller (this crate owns no session/tab state); `None`
 /// simply omits that segment rather than fabricating a placeholder.
 pub struct StatusBarContent<'a> {
-    /// Single-line summary of the active session (or a neutral application
-    /// label when no session is active).
-    pub left: &'a str,
     /// Grid dimensions of the active session's terminal (e.g. `"80×24"`),
     /// when one is active. This is the one piece of the old per-terminal
     /// diagnostics panel that was genuinely useful at a glance, so it now
@@ -60,10 +54,6 @@ pub struct StatusBarContent<'a> {
     /// the chip row's status dot.
     pub status: ChipStatus,
     pub status_label: &'a str,
-    /// Pre-formatted by the caller so this presentation-only crate never
-    /// needs a date/time dependency of its own.
-    pub clock: &'a str,
-    pub date: &'a str,
 }
 
 /// Renders the bottom status bar band.
@@ -88,24 +78,15 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.add_space(STATUS_BAR_LEFT_INSET);
-            ui.label(RichText::new(content.left).small().color(STATUS_BAR_TEXT));
             if let Some(dimensions) = content.dimensions {
-                ui.label(RichText::new(dimensions).small().color(STATUS_BAR_TEXT_DIM));
+                ui.label(RichText::new(dimensions).small().color(STATUS_BAR_TEXT));
             }
             if let Some(system) = content.system {
                 ui.label(RichText::new(system).small().color(STATUS_BAR_TEXT_DIM));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
-                ui.label(RichText::new(content.date).small().color(STATUS_BAR_TEXT));
-                ui.label(RichText::new(content.clock).small().color(STATUS_BAR_TEXT));
                 if !matches!(content.status, ChipStatus::Neutral) {
-                    // A deliberate vertical divider between the time
-                    // cluster (clock/date, just added) and the status
-                    // cluster (added next): the mockup treats these as two
-                    // distinct semantic groups sharing the bar's right
-                    // side, not one run-on string.
-                    paint_vertical_divider(ui);
                     ui.label(
                         RichText::new(content.status_label)
                             .small()
@@ -129,18 +110,6 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
     });
 }
 
-/// A thin vertical rule the same height as the surrounding small text,
-/// used to separate distinct semantic clusters in the status bar (mockup:
-/// "a vertical line separates time from status").
-fn paint_vertical_divider(ui: &mut Ui) {
-    let height = ui.text_style_height(&egui::TextStyle::Small);
-    let (rect, _response) = ui.allocate_exact_size(egui::vec2(1.0, height), egui::Sense::hover());
-    ui.painter().line_segment(
-        [rect.center_top(), rect.center_bottom()],
-        egui::Stroke::new(1.0, STATUS_BAR_BORDER),
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
@@ -155,23 +124,17 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
-                        left: "Local Shell — cmd.exe",
                         dimensions: Some("80×24"),
                         system: Some("Local · Windows"),
                         status: ChipStatus::Connected,
-                        status_label: "Connected",
-                        clock: "12:34:56",
-                        date: "2026-08-08",
+                        status_label: "Running",
                     },
                 );
             });
         harness.run();
-        assert!(harness.query_by_label("Local Shell — cmd.exe").is_some());
         assert!(harness.query_by_label("80×24").is_some());
         assert!(harness.query_by_label("Local · Windows").is_some());
-        assert!(harness.query_by_label("Connected").is_some());
-        assert!(harness.query_by_label("12:34:56").is_some());
-        assert!(harness.query_by_label("2026-08-08").is_some());
+        assert!(harness.query_by_label("Running").is_some());
     }
 
     #[test]
@@ -182,18 +145,15 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
-                        left: "fesTerm",
                         dimensions: None,
                         system: None,
                         status: ChipStatus::Neutral,
                         status_label: "",
-                        clock: "12:34:56",
-                        date: "2026-08-08",
                     },
                 );
             });
         harness.run();
-        assert!(harness.query_by_label("fesTerm").is_some());
-        assert!(harness.query_by_label("12:34:56").is_some());
+        assert!(harness.query_by_label("Running").is_none());
+        assert!(harness.query_by_label("80×24").is_none());
     }
 }

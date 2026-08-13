@@ -51,8 +51,9 @@ types plus a `festerm-pty` local backend. The backend uses `portable-pty` 0.9
 for Unix PTYs and Windows ConPTY, performs safe default-shell discovery, and
 uses bounded command/event queues and worker threads. Each queued session event
 wakes egui through its supported repaint request, so idle UI frames promptly
-drain PTY output without polling. The app starts one default local shell, makes
-the app the sole terminal-core writer, and preserves backpressured core
+drain PTY output without polling. Normal no-workspace startup opens the
+singleton Launcher; selecting Local Shell replaces it in place with a default
+local session. The app remains the sole terminal-core writer and preserves backpressured core
 input/replies in an ordered, bounded pending buffer. Unix shutdown signals the
 PTY session process group; Windows assigns the child to a kill-on-close Job
 Object. It displays lifecycle, queue-pressure, byte-count, error, and resize
@@ -101,6 +102,9 @@ custom-terminfo strategy.
   names, accessibility rules, color/state policy, and validation pipeline.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
   interaction, rendering, PTY, and platform validation strategy.
+- [Manual and usability validation registry](docs/manual-validation.md) — the
+  canonical inventory of native, visual, accessibility, and human-use checks
+  that cannot yet be treated as ordinary automated acceptance.
 - [Project design](DESIGN.md) — product direction, principles, experience,
   priorities, and open questions.
 - [System architecture](ARCHITECTURE.md) — proposed crates, dependency

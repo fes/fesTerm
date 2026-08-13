@@ -16,6 +16,7 @@ Read `README.md`, then use the document that matches the task:
 | GUI workflow, chrome, session chips, and visual hierarchy | `docs/gui-design.md` |
 | First-party icons, semantic names, accessibility, and asset pipeline | `docs/icon-system.md` |
 | UI, rendering, and platform test strategy | `docs/ui-test-plan.md` |
+| Manual, native-platform, and usability validation inventory | `docs/manual-validation.md` |
 | Bootstrap and manual checks | `docs/development-handoff.md` |
 
 ## Current Structure
@@ -31,6 +32,11 @@ Read `README.md`, then use the document that matches the task:
 - `crates/festerm-pty`: local shell backend using `portable-pty`.
 - `crates/festerm-pty-test-child`: deterministic repository-owned child used
   by controlled PTY and smoke tests.
+- `crates/festerm-ssh`: in-process `russh` transport, trust decisions,
+  transient authentication, OpenSSH metadata import, and bounded reconnect.
+- `crates/festerm-config`: strict versioned TOML profiles and metadata-only
+  workspace persistence with explicit transactional reload.
+- `crates/festerm-macos-window`: cfg-gated macOS custom-window integration.
 - `crates/festerm-windows-job`: cfg-gated safe wrapper around the Windows Job
   Object required for whole-ConPTY-tree shutdown.
 - `crates/festerm-windows-runtime`: cfg-gated trusted selection and loading of
@@ -82,6 +88,13 @@ under `scripts/run-optional-validation.sh` or
 optional suite in one command. Manual evidence remains required only where
 automation cannot prove the behavior.
 
+For every new GUI or platform slice, classify its remaining evidence as
+automated, manual/native, usability, or deferred behind a named prerequisite.
+Update `docs/manual-validation.md` in the same change when a slice adds,
+removes, or automates one of those checks. Open a focused issue only when the
+check has its own environment, setup, owner, acceptance boundary, or discovered
+defect; otherwise keep it in the umbrella validation tracker.
+
 ## Scope Classification
 
 Classify proposed work before expanding an implementation:
@@ -123,6 +136,10 @@ complete policy.
   alongside New Tab and compact global controls. Do not place them on a
   detached shelf below a separate title bar. Preserve stable identity and use
   compact status indicators instead of full-chip state colors.
+- Use the screen-specific PNGs in `docs/images/gui-mockups/` for native visual
+  comparison. Each image is governed by its adjacent `docs/gui-design.md`
+  section; prose and negotiated deviations take precedence over details a
+  static mockup cannot represent.
 - Treat `assets/icons/source` as the canonical first-party icon source and
   `docs/icon-system.md` as its naming/accessibility contract. Use semantic Icon
   names in Rust, keep color in UI state, and never add branded OS glyphs as a
@@ -134,5 +151,7 @@ complete policy.
   of truth instead.
 - Treat terminal output and protocol input as untrusted. Preserve parser,
   allocation, and queue bounds.
-- Do not add scripting, plugins, persistent history, cloud synchronization,
-  tabs, or SSH functionality ahead of their documented milestones.
+- Do not add scripting, plugins, persistent history, cloud synchronization, or
+  other deferred capabilities ahead of their documented milestones. Tabs and
+  native SSH are implemented. Serial's product/UI contract is approved, but
+  its backend remains a focused future capability track.

@@ -122,7 +122,7 @@ impl ChipStatus {
     /// Semantic `status.*` role color (`docs/gui-design.md` "Semantic color
     /// roles"). These are placeholder concrete values until a theme system
     /// exists; the accessible label, not color alone, carries the meaning.
-    pub(crate) const fn color(self) -> Color32 {
+    pub const fn color(self) -> Color32 {
         match self {
             Self::Connected => theme::STATUS_RUNNING,
             Self::Starting => theme::STATUS_STARTING,
@@ -223,6 +223,7 @@ pub fn show(
     chips: &[ChipViewModel],
     active: ChipId,
     inspector_open: bool,
+    inspector_available: bool,
     layout: ChipLayout,
 ) -> Vec<ChromeAction> {
     let mut actions = Vec::new();
@@ -334,7 +335,7 @@ pub fn show(
                 paint_minimize_icon(ui);
             }
             paint_overflow_menu(ui, &mut actions);
-            if paint_panel_icon(ui, inspector_open) {
+            if inspector_available && paint_panel_icon(ui, inspector_open) {
                 actions.push(ChromeAction::ToggleInspector);
             }
             if paint_search_icon(ui) {
@@ -494,14 +495,21 @@ fn paint_close_icon(ui: &mut Ui) {
 }
 
 /// Painter-drawn magnifying-glass icon toggling the command palette
-/// (mirrors the `Ctrl+Shift+P` shortcut precedent in
+/// (mirrors the platform shortcut precedent in
 /// `app.rs::handle_shortcuts`, which also just toggles the palette directly
 /// rather than going through `AppCommand`). Returns whether it was clicked
 /// this frame.
 fn paint_search_icon(ui: &mut Ui) -> bool {
+    let shortcut = if cfg!(target_os = "macos") {
+        "Cmd+Shift+P"
+    } else {
+        "Ctrl+Shift+P"
+    };
+    let accessible_label = format!("Command palette ({shortcut})");
     let size = 22.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Search (Ctrl+Shift+P)"));
+    response
+        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, accessible_label.clone()));
     let color = if response.hovered() {
         CHROME_ICON_COLOR_HOVERED
     } else {
@@ -515,7 +523,7 @@ fn paint_search_icon(ui: &mut Ui) -> bool {
     let handle_end = handle_start + vec2(size * 0.22, size * 0.22);
     ui.painter()
         .line_segment([handle_start, handle_end], Stroke::new(1.5, color));
-    response.on_hover_text("Search (Ctrl+Shift+P)").clicked()
+    response.on_hover_text(accessible_label).clicked()
 }
 
 /// Painter-drawn side-panel icon toggling the session inspector. Returns
@@ -1028,7 +1036,7 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, state.layout);
+                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
                     state.observed.extend(actions);
                 },
                 state,
@@ -1075,7 +1083,7 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, state.layout);
+                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
                     state.observed.extend(actions);
                     // Mirrors `app.rs`'s `ui_content`, which adds
                     // `ui.separator()` immediately after `chrome::show`.
@@ -1096,7 +1104,7 @@ mod tests {
             "expected the chip row to sit at the top of a tall panel, got {chip_rect:?}"
         );
 
-        let search_rect = harness.get_by_label("Search (Ctrl+Shift+P)").rect();
+        let search_rect = harness.get_by_label_contains("Command palette").rect();
         assert!(
             search_rect.bottom() < 100.0,
             "expected the trailing icon controls to stay within the compact chip-row band \
@@ -1121,7 +1129,7 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, state.layout);
+                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
                     state.observed.extend(actions);
                 },
                 ChromeHarnessState {
@@ -1138,7 +1146,7 @@ mod tests {
             );
         harness.run();
 
-        let search_rect = harness.get_by_label("Search (Ctrl+Shift+P)").rect();
+        let search_rect = harness.get_by_label_contains("Command palette").rect();
         for label in ["one chip", "two chip", "three chip", "four chip"] {
             let chip_rect = harness.get_by_label(label).rect();
             assert!(
@@ -1213,7 +1221,7 @@ mod tests {
             observed: Vec::new(),
         });
 
-        harness.get_by_label_contains("Search").click();
+        harness.get_by_label_contains("Command palette").click();
         harness.run();
 
         assert!(harness

@@ -189,7 +189,10 @@ An SSH session shall request and maintain a remote PTY suitable for interactive 
 
 ### REQ-SESS-006 — SSH reconnection
 
-SSH sessions shall support automatic reconnection. Backoff policy, limits, user feedback, cancellation, and interaction with authentication shall be specified before implementation.
+SSH sessions shall support explicitly enabled automatic reconnection with
+bounded backoff, visible attempt state, cancellation, and fresh trust and
+authentication handling. Reconnection creates a fresh remote transport and PTY;
+it shall not claim that an ordinary remote process survived.
 
 ### REQ-SESS-007 — OpenSSH interoperability
 
@@ -209,11 +212,22 @@ Terminal row and column changes shall propagate to local PTYs and remote SSH PTY
 
 Session I/O and terminal-update queues shall be bounded or otherwise protected from unbounded memory growth during sustained output.
 
+### REQ-SESS-011 — First-class serial sessions
+
+Serial shall be modeled as its own session transport rather than as a local
+shell option or branded operating-system identity. Its approved UI/profile
+contract includes explicit device and line settings, open/close lifecycle,
+selection and clipboard behavior, and non-secret restoration metadata. Backend
+implementation is deferred to a focused capability track with platform device,
+permission, exclusive-access, and loopback-test policy.
+
 ## Profiles and Workspaces
 
 ### REQ-PROF-001 — Reusable profiles
 
-fesTerm shall support reusable profiles describing how local and SSH sessions are created.
+fesTerm shall support reusable profiles describing how local, SSH, and future
+serial sessions are created. Serial profile fields become active only when the
+serial backend is implemented.
 
 ### REQ-PROF-002 — Profiles separate from workspaces
 
@@ -257,9 +271,14 @@ Configuration documents shall include an explicit schema version and support del
 
 A candidate configuration shall parse and validate completely before replacing the current valid configuration.
 
-### REQ-CONF-005 — Safe hot reload
+### REQ-CONF-005 — Explicit transactional reload
 
-Configuration shall hot reload where changes can be applied safely and understandably. Settings that require session recreation or application restart shall be identified explicitly.
+Configuration shall load at startup and reload only through an explicit user
+action. A candidate shall replace the active configuration only after complete
+validation; failure shall retain the last valid configuration and produce an
+actionable, content-free diagnostic. fesTerm shall not watch or poll the
+configuration file. Settings that affect only future sessions or require an
+explicit recreation/restart action shall be identified.
 
 ### REQ-CONF-006 — Local-first operation
 

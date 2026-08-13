@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Small AppKit integration for fesTerm window chrome."
+description = "Small AppKit integration for fesTerm window chrome and native menus."
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSButton", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry"] }
-
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSButton", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry", "NSObject", "NSString"] }

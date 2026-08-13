@@ -248,6 +248,20 @@ pub struct SessionTab {
     /// Default, ad-hoc, and SSH sessions deliberately leave this empty. It is
     /// metadata only; no runtime process or connection state is captured.
     pub profile_identifier: Option<String>,
+    /// Non-secret immutable launch facts exposed to application-owned
+    /// presentation such as the Session Inspector.
+    pub inspector_transport: InspectorTransport,
+}
+
+/// Narrow transport metadata safe for application chrome. Keeping this owned
+/// by the tab prevents egui code from reaching into PTY or SSH backends.
+pub enum InspectorTransport {
+    Local,
+    Ssh {
+        username: String,
+        host: String,
+        port: u16,
+    },
 }
 
 /// A restored SSH workspace surface that deliberately has no live session.
@@ -340,6 +354,11 @@ impl SessionTab {
             profile.identity().host(),
             profile.identity().port()
         ));
+        let inspector_transport = InspectorTransport::Ssh {
+            username: profile.username().to_owned(),
+            host: profile.identity().host().to_owned(),
+            port: profile.identity().port(),
+        };
         let result = SshSession::start_with_notifier_and_options(
             profile,
             authentication,
@@ -347,7 +366,13 @@ impl SessionTab {
             make_notifier(context),
         )
         .map(ApplicationSession::Ssh);
-        Self::from_ssh_session_result(result, dimensions, &label, launch_secondary)
+        Self::from_ssh_session_result(
+            result,
+            dimensions,
+            &label,
+            launch_secondary,
+            inspector_transport,
+        )
     }
 
     fn from_local_session_result(
@@ -364,6 +389,7 @@ impl SessionTab {
             launch_secondary,
             profile_identifier,
             "Local shell",
+            InspectorTransport::Local,
         )
     }
 
@@ -372,6 +398,7 @@ impl SessionTab {
         dimensions: Dimensions,
         label: &str,
         launch_secondary: Option<String>,
+        inspector_transport: InspectorTransport,
     ) -> Self {
         Self::from_session_result(
             result,
@@ -380,6 +407,7 @@ impl SessionTab {
             launch_secondary,
             None,
             "SSH session",
+            inspector_transport,
         )
     }
 
@@ -390,6 +418,7 @@ impl SessionTab {
         launch_secondary: Option<String>,
         profile_identifier: Option<String>,
         session_name: &'static str,
+        inspector_transport: InspectorTransport,
     ) -> Self {
         let mut terminal =
             Terminal::new(dimensions).expect("default terminal allocation should succeed");
@@ -422,6 +451,7 @@ impl SessionTab {
             label: label.to_owned(),
             launch_secondary,
             profile_identifier,
+            inspector_transport,
         }
     }
 
@@ -444,9 +474,27 @@ impl SessionTab {
     /// Content-free locality/transport text for the status bar.
     pub fn system_label(&self) -> &'static str {
         match self.controller.session() {
-            Some(ApplicationSession::Ssh(_)) => "Remote · SSH",
+            Some(ApplicationSession::Ssh(_)) => "Remote",
             Some(ApplicationSession::Local(_)) | None if cfg!(windows) => "Local · Windows",
-            Some(ApplicationSession::Local(_)) | None => "Local · Unix",
+            Some(ApplicationSession::Local(_)) | None if cfg!(target_os = "macos") => {
+                "Local · macOS"
+            }
+            Some(ApplicationSession::Local(_)) | None => "Local · Linux",
+        }
+    }
+
+    /// Transport-specific factual state for the persistent status bar.
+    pub fn status_bar_label(&self) -> &'static str {
+        match (self.controller.session(), self.chip_status()) {
+            (_, ChipStatus::Starting) => "Starting",
+            (_, ChipStatus::Reconnecting) => "Reconnecting",
+            (_, ChipStatus::Disconnected) => "Disconnected",
+            (_, ChipStatus::AuthRequired) => "Authentication required",
+            (_, ChipStatus::Failed) => "Failed",
+            (_, ChipStatus::Exited) => "Exited",
+            (Some(ApplicationSession::Local(_)) | None, ChipStatus::Connected) => "Running",
+            (Some(ApplicationSession::Ssh(_)), ChipStatus::Connected) => "Connected",
+            (_, ChipStatus::Neutral) => "",
         }
     }
 
@@ -531,7 +579,7 @@ pub struct Tab {
 pub enum AppCommand {
     /// "New Tab opens the session launcher" (`docs/gui-design.md`
     /// "Interaction Conventions").
-    NewLauncherTab,
+    OpenLauncher,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
     /// Explicitly asks the composition root to reload the configuration
@@ -606,6 +654,24 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Starts in the singleton Launcher when there is no workspace to restore.
+    /// This is the ordinary product startup path; native-window smoke may
+    /// still request a deterministic primary session explicitly.
+    pub fn with_launcher(configuration: Configuration) -> Self {
+        let id = TabId::next();
+        Self {
+            tabs: vec![Tab {
+                id,
+                content: TabContent::Launcher,
+            }],
+            active: id,
+            configuration,
+            inspector_open: false,
+            chip_layout: ChipLayout::SingleRowScroll,
+            status_bar_visible: true,
+        }
+    }
+
     /// Starts with one primary local shell tab, matching the M5 completion
     /// criterion that fesTerm opens a usable shell without extra steps. An
     /// optional native-window-smoke profile override replaces the default
@@ -627,7 +693,7 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
-            chip_layout: ChipLayout::Wrap,
+            chip_layout: ChipLayout::SingleRowScroll,
             status_bar_visible: true,
         };
         (state, id)
@@ -682,7 +748,7 @@ impl AppState {
             active,
             configuration,
             inspector_open: false,
-            chip_layout: ChipLayout::Wrap,
+            chip_layout: ChipLayout::SingleRowScroll,
             status_bar_visible: true,
         }
     }
@@ -815,7 +881,7 @@ impl AppState {
     /// independent tab/session policy.
     pub fn dispatch(&mut self, command: AppCommand, context: &egui::Context) {
         match command {
-            AppCommand::NewLauncherTab => self.open_launcher(),
+            AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             // The composition root owns the private selected file location;
             // it validates a candidate before calling `replace_configuration`.
@@ -839,7 +905,11 @@ impl AppState {
             AppCommand::CloseTab(id) => self.close(id),
             AppCommand::ReorderTab { moved, before } => self.reorder(moved, before),
             AppCommand::RenameTab(id, name) => self.rename(id, name),
-            AppCommand::ToggleSessionInspector => self.inspector_open = !self.inspector_open,
+            AppCommand::ToggleSessionInspector => {
+                if matches!(self.active_tab().content, TabContent::Session(_)) {
+                    self.inspector_open = !self.inspector_open;
+                }
+            }
             AppCommand::ToggleChipLayout => {
                 self.chip_layout = match self.chip_layout {
                     ChipLayout::Wrap => ChipLayout::SingleRowScroll,
@@ -850,12 +920,25 @@ impl AppState {
                 self.status_bar_visible = !self.status_bar_visible;
             }
         }
+        // The Inspector follows session chips, but it is not a global panel
+        // for Launcher, Settings, or authentication forms.
+        if !matches!(self.active_tab().content, TabContent::Session(_)) {
+            self.inspector_open = false;
+        }
     }
 
     fn open_launcher(&mut self) {
-        // A fresh launcher tab is pushed each time rather than deduplicated:
-        // launcher tabs are disposable, and "Users can keep a launcher tab
-        // open while other sessions run" (docs/gui-design.md).
+        // Launcher is a singleton task surface and the window's stable empty
+        // state. Every invocation path focuses the existing chip rather than
+        // manufacturing duplicate launch surfaces.
+        if let Some(existing) = self
+            .tabs
+            .iter()
+            .find(|tab| matches!(tab.content, TabContent::Launcher))
+        {
+            self.active = existing.id;
+            return;
+        }
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
@@ -1053,18 +1136,7 @@ impl AppState {
     }
 
     pub(crate) fn for_test_with_configuration(configuration: Configuration) -> Self {
-        let id = TabId::next();
-        Self {
-            tabs: vec![Tab {
-                id,
-                content: TabContent::Launcher,
-            }],
-            active: id,
-            configuration,
-            inspector_open: false,
-            chip_layout: ChipLayout::Wrap,
-            status_bar_visible: true,
-        }
+        Self::with_launcher(configuration)
     }
 }
 
@@ -1333,7 +1405,7 @@ mod tests {
         );
         state.dispatch(AppCommand::OpenSettings, &context);
         let settings = state.active();
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenLauncher, &context);
         state.dispatch(AppCommand::StartLocalSession, &context);
         let TabContent::Session(ad_hoc) = &mut state.active_tab_mut().content else {
             panic!("default launch creates a session");
@@ -1446,6 +1518,11 @@ mod tests {
             dimensions,
             "test-user@example.invalid",
             Some("SSH · example.invalid:22".to_owned()),
+            InspectorTransport::Ssh {
+                username: "test-user".to_owned(),
+                host: "example.invalid".to_owned(),
+                port: 22,
+            },
         );
 
         assert_eq!(
@@ -1489,7 +1566,7 @@ mod tests {
             panic!("SSH command must place a session tab");
         };
         assert_eq!(session.label, "test-user@192.0.2.1");
-        assert_eq!(session.system_label(), "Remote · SSH");
+        assert_eq!(session.system_label(), "Remote");
         assert!(matches!(
             session.controller.session(),
             Some(ApplicationSession::Ssh(_))
@@ -1512,20 +1589,16 @@ mod tests {
     }
 
     #[test]
-    fn new_launcher_tab_opens_and_activates_an_additional_tab() {
+    fn new_launcher_command_reactivates_the_singleton() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         let initial = state.active();
 
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenLauncher, &context);
 
-        assert_eq!(state.tabs().len(), 2);
-        assert_ne!(state.active(), initial, "new launcher tab becomes active");
-        assert_eq!(
-            launcher_ids(&state).len(),
-            2,
-            "launcher tabs are not deduplicated"
-        );
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), initial);
+        assert_eq!(launcher_ids(&state), vec![initial]);
     }
 
     #[test]
@@ -1555,7 +1628,7 @@ mod tests {
         let mut state = AppState::for_test();
         let initial = state.active();
 
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenSettings, &context);
         let unknown = TabId::next();
         state.dispatch(AppCommand::ActivateTab(unknown), &context);
 
@@ -1606,13 +1679,13 @@ mod tests {
     fn toggle_chip_layout_flips_between_wrap_and_single_row_scroll() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert_eq!(state.chip_layout(), ChipLayout::Wrap);
-
-        state.dispatch(AppCommand::ToggleChipLayout, &context);
         assert_eq!(state.chip_layout(), ChipLayout::SingleRowScroll);
 
         state.dispatch(AppCommand::ToggleChipLayout, &context);
         assert_eq!(state.chip_layout(), ChipLayout::Wrap);
+
+        state.dispatch(AppCommand::ToggleChipLayout, &context);
+        assert_eq!(state.chip_layout(), ChipLayout::SingleRowScroll);
     }
 
     #[test]
@@ -1635,10 +1708,22 @@ mod tests {
         assert!(!state.inspector_open());
 
         state.dispatch(AppCommand::ToggleSessionInspector, &context);
-        assert!(state.inspector_open());
+        assert!(!state.inspector_open(), "Launcher has no session inspector");
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
 
         state.dispatch(AppCommand::ToggleSessionInspector, &context);
+        assert!(state.inspector_open());
+
+        state.dispatch(AppCommand::OpenSettings, &context);
+        assert!(matches!(state.active_tab().content, TabContent::Settings));
         assert!(!state.inspector_open());
+
+        state.dispatch(AppCommand::ActivatePreviousTab, &context);
+        assert!(!state.inspector_open(), "the inspector must not resurrect");
+
+        state.dispatch(AppCommand::ToggleSessionInspector, &context);
+        assert!(state.inspector_open());
     }
 
     #[test]
@@ -1647,7 +1732,7 @@ mod tests {
         let mut state = AppState::for_test();
         let first = state.active();
 
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenSettings, &context);
         let second = state.active();
         assert_ne!(first, second);
 
@@ -1661,9 +1746,9 @@ mod tests {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         let first = state.active();
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenSettings, &context);
         let second = state.active();
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
         let third = state.active();
 
         state.dispatch(AppCommand::ActivateTab(first), &context);
@@ -1683,23 +1768,21 @@ mod tests {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         let first = state.active();
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenSettings, &context);
         let second = state.active();
-        state.dispatch(AppCommand::NewLauncherTab, &context);
-        let third = state.active();
         state.dispatch(AppCommand::ActivateTab(first), &context);
 
-        // Order is [first, second, third]; move third before first.
+        // Order is [first, second]; move second before first.
         state.dispatch(
             AppCommand::ReorderTab {
-                moved: third,
+                moved: second,
                 before: Some(first),
             },
             &context,
         );
 
         let order: Vec<TabId> = state.tabs().iter().map(|tab| tab.id).collect();
-        assert_eq!(order, vec![third, first, second]);
+        assert_eq!(order, vec![second, first]);
         assert_eq!(
             state.active(),
             first,
@@ -1712,7 +1795,7 @@ mod tests {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         let first = state.active();
-        state.dispatch(AppCommand::NewLauncherTab, &context);
+        state.dispatch(AppCommand::OpenSettings, &context);
         let second = state.active();
 
         state.dispatch(

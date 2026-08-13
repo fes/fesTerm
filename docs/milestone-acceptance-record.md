@@ -39,7 +39,7 @@ The current deterministic and platform evidence is summarized below. Test
 counts are intentionally not carried forward from the pre-merge record; record
 actual platform CI results with their run URLs after GitHub Actions recovers.
 [`milestone-progress.md`](milestone-progress.md) gives the concise narrative
-of how this gate, the parallel GUI vertical slice, and the M7 foundation relate.
+of how this gate, the parallel GUI/M8 vertical slice, and implemented M7 relate.
 
 | Backlog item | Status | Evidence and remaining condition |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ misread as M6 acceptance:
   [#24](https://github.com/fes/fesTerm/issues/24),
   [#25](https://github.com/fes/fesTerm/issues/25), and
   [#29](https://github.com/fes/fesTerm/issues/29).
-- **M7 SSH foundation:** `festerm-ssh` selects `russh` with the portable
+- **M7 SSH implementation:** `festerm-ssh` selects `russh` with the portable
   `ring` backend and defines host-trust/reconnect policy. The async
   `Session` transport, controlled OpenSSH interoperability, transient
   password/private-key authentication, remote PTY, reconnect evidence, and

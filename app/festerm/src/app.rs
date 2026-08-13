@@ -11,11 +11,83 @@ use festerm_ui_egui::theme;
 use crate::configuration_startup::{
     ConfigurationReloader, ConfigurationStartupStatus, StartupConfiguration,
 };
+use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
 use crate::native_smoke::NativeWindowSmoke;
 use crate::screens;
-use crate::tabs::{AppCommand, AppState, HostKeyTrustDecision, TabContent, TabId};
+use crate::tabs::{
+    AppCommand, AppState, HostKeyTrustDecision, InspectorTransport, TabContent, TabId,
+};
 
 const APPLICATION_TITLE: &str = "fesTerm";
+
+#[derive(Clone, Copy)]
+enum ApplicationShortcut {
+    CommandPalette,
+    NewSession,
+    CloseActiveSurface,
+    NextSession,
+    PreviousSession,
+    Settings,
+}
+
+impl ApplicationShortcut {
+    fn chord(self) -> Option<(egui::Modifiers, egui::Key)> {
+        match self {
+            Self::CommandPalette => Some((
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::P,
+            )),
+            Self::NewSession => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND
+                } else {
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                },
+                egui::Key::T,
+            )),
+            Self::CloseActiveSurface => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND
+                } else {
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                },
+                egui::Key::W,
+            )),
+            // Ctrl+Tab remains fesTerm session navigation on every platform;
+            // Cmd+Tab belongs to the macOS application switcher.
+            Self::NextSession => Some((egui::Modifiers::CTRL, egui::Key::Tab)),
+            Self::PreviousSession => Some((
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                egui::Key::Tab,
+            )),
+            Self::Settings if cfg!(target_os = "macos") => {
+                Some((egui::Modifiers::COMMAND, egui::Key::Comma))
+            }
+            Self::Settings => None,
+        }
+    }
+
+    const fn label(self) -> Option<&'static str> {
+        match self {
+            Self::CommandPalette if cfg!(target_os = "macos") => Some("Cmd+Shift+P"),
+            Self::CommandPalette => Some("Ctrl+Shift+P"),
+            Self::NewSession if cfg!(target_os = "macos") => Some("Cmd+T"),
+            Self::NewSession => Some("Ctrl+Shift+T"),
+            Self::CloseActiveSurface if cfg!(target_os = "macos") => Some("Cmd+W"),
+            Self::CloseActiveSurface => Some("Ctrl+Shift+W"),
+            Self::NextSession => Some("Ctrl+Tab"),
+            Self::PreviousSession => Some("Ctrl+Shift+Tab"),
+            Self::Settings if cfg!(target_os = "macos") => Some("Cmd+,"),
+            Self::Settings => None,
+        }
+    }
+
+    fn consume(self, context: &egui::Context) -> bool {
+        self.chord().is_some_and(|(modifiers, key)| {
+            context.input_mut(|input| input.consume_key(modifiers, key))
+        })
+    }
+}
 
 /// Composition root.
 ///
@@ -26,15 +98,18 @@ const APPLICATION_TITLE: &str = "fesTerm";
 /// driver.
 pub struct FesTermApp {
     state: AppState,
-    /// The default local tab created when startup has no restored workspace.
-    /// The native-window smoke driver (which predates tabs) uses it to address
-    /// the one session it drives.
+    /// The deterministic local tab created only for native-window smoke. The
+    /// ordinary no-workspace product path starts at Launcher instead.
     primary_tab: Option<TabId>,
     window_title: String,
     native_smoke: Option<NativeWindowSmoke>,
     palette: PaletteState,
     configuration_status: ConfigurationStartupStatus,
     configuration_reloader: ConfigurationReloader,
+    /// Widget that owned focus immediately before Inspector opened, when it
+    /// remains a meaningful restoration target.
+    inspector_restore_focus: Option<egui::Id>,
+    native_menu: festerm_macos_window::NativeMenu,
 }
 
 impl FesTermApp {
@@ -72,10 +147,12 @@ impl FesTermApp {
                 AppState::with_restored_workspace(context, configuration, &workspace),
                 None,
             )
-        } else {
+        } else if smoke_profile.is_some() {
             let (state, primary_tab) =
                 AppState::with_primary_session(context, smoke_profile, configuration);
             (state, Some(primary_tab))
+        } else {
+            (AppState::with_launcher(configuration), None)
         };
         Self {
             state,
@@ -85,7 +162,55 @@ impl FesTermApp {
             palette: PaletteState::default(),
             configuration_status,
             configuration_reloader: ConfigurationReloader::unavailable(),
+            inspector_restore_focus: None,
+            native_menu: festerm_macos_window::NativeMenu::unavailable(),
         }
+    }
+
+    pub(crate) fn install_native_menu(&mut self, context: &egui::Context) {
+        let context = context.clone();
+        self.native_menu =
+            festerm_macos_window::install_application_menu(std::sync::Arc::new(move || {
+                context.request_repaint()
+            }));
+    }
+
+    fn handle_native_menu_commands(&mut self, context: &egui::Context) {
+        while let Some(command) = self.native_menu.try_recv() {
+            use festerm_macos_window::NativeMenuCommand;
+            match command {
+                NativeMenuCommand::NewSession => {
+                    self.state.dispatch(AppCommand::OpenLauncher, context)
+                }
+                NativeMenuCommand::StartLocalShell => {
+                    self.state.dispatch(AppCommand::StartLocalSession, context)
+                }
+                NativeMenuCommand::OpenSettings => {
+                    self.state.dispatch(AppCommand::OpenSettings, context)
+                }
+                NativeMenuCommand::CloseActiveSurface => {
+                    let active = self.state.active();
+                    self.state.dispatch(AppCommand::CloseTab(active), context);
+                }
+                NativeMenuCommand::ToggleCommandPalette => self.palette.toggle(),
+                NativeMenuCommand::ToggleSessionInspector => {
+                    self.toggle_inspector_from_current_focus(context)
+                }
+            }
+        }
+    }
+
+    fn update_native_menu(&self) {
+        let close_label = match self.state.active_tab().content {
+            TabContent::Launcher => "Close Launcher",
+            TabContent::Settings => "Close Settings",
+            TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => "Close Session",
+        };
+        self.native_menu.update(
+            close_label,
+            matches!(self.state.active_tab().content, TabContent::Session(_)),
+            self.state.inspector_open(),
+        );
     }
 
     /// Handles the only user-triggered configuration I/O. The reloader keeps
@@ -121,24 +246,15 @@ impl FesTermApp {
     }
 
     fn update_window_title(&mut self, context: &egui::Context) {
-        let terminal_title = match &self.state.active_tab_mut().content {
-            TabContent::Session(session) => session.terminal.title().to_owned(),
-            TabContent::Launcher
-            | TabContent::Settings
-            | TabContent::SshAuthenticationRequired(_) => String::new(),
-        };
-        let title = Self::window_title(&terminal_title);
+        let title = Self::window_title();
         if self.window_title != title {
             context.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
         }
     }
 
-    fn window_title(terminal_title: &str) -> String {
-        match terminal_title {
-            "" => APPLICATION_TITLE.to_owned(),
-            terminal_title => format!("{terminal_title} - {APPLICATION_TITLE}"),
-        }
+    fn window_title() -> String {
+        APPLICATION_TITLE.to_owned()
     }
 
     /// Reduces a terminal-provided OSC title to just its final path
@@ -192,13 +308,11 @@ impl FesTermApp {
     fn dispatch_chrome_actions(&mut self, actions: Vec<ChromeAction>, context: &egui::Context) {
         for action in actions {
             match action {
-                ChromeAction::NewTab => self.state.dispatch(AppCommand::NewLauncherTab, context),
+                ChromeAction::NewTab => self.state.dispatch(AppCommand::OpenLauncher, context),
                 ChromeAction::OpenSettings => {
                     self.state.dispatch(AppCommand::OpenSettings, context)
                 }
-                ChromeAction::ToggleInspector => self
-                    .state
-                    .dispatch(AppCommand::ToggleSessionInspector, context),
+                ChromeAction::ToggleInspector => self.toggle_inspector_from_current_focus(context),
                 ChromeAction::TogglePalette => self.palette.toggle(),
                 ChromeAction::ToggleChipLayout => {
                     self.state.dispatch(AppCommand::ToggleChipLayout, context)
@@ -206,6 +320,9 @@ impl FesTermApp {
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
                         self.state.dispatch(AppCommand::ActivateTab(id), context);
+                        if self.state.inspector_open() {
+                            self.inspector_restore_focus = None;
+                        }
                         // Re-claim keyboard focus for the now-active
                         // session's terminal (`TerminalView::
                         // request_focus_on_next_frame`): selecting a chip
@@ -239,6 +356,14 @@ impl FesTermApp {
         }
     }
 
+    fn toggle_inspector_from_current_focus(&mut self, context: &egui::Context) {
+        if !self.state.inspector_open() {
+            self.inspector_restore_focus = context.memory(|memory| memory.focused());
+        }
+        self.state
+            .dispatch(AppCommand::ToggleSessionInspector, context);
+    }
+
     /// Builds the current frame's command-palette items: every dispatchable
     /// application action, plus one "Activate" entry per open tab so the
     /// palette also serves as the searchable session switcher required by
@@ -250,7 +375,6 @@ impl FesTermApp {
         const START_LOCAL_SESSION: u64 = 3;
         const TOGGLE_INSPECTOR: u64 = 4;
         const CLOSE_ACTIVE_TAB: u64 = 5;
-        const TOGGLE_CHIP_LAYOUT: u64 = 6;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -258,8 +382,8 @@ impl FesTermApp {
         let mut items = vec![
             PaletteItem {
                 id: NEW_LAUNCHER_TAB,
-                label: "New Launcher Tab".to_owned(),
-                hint: None,
+                label: "New Session…".to_owned(),
+                hint: ApplicationShortcut::NewSession.label().map(str::to_owned),
             },
             PaletteItem {
                 id: START_LOCAL_SESSION,
@@ -269,24 +393,31 @@ impl FesTermApp {
             PaletteItem {
                 id: OPEN_SETTINGS,
                 label: "Open Settings".to_owned(),
-                hint: None,
-            },
-            PaletteItem {
-                id: TOGGLE_INSPECTOR,
-                label: "Toggle Session Inspector".to_owned(),
-                hint: None,
-            },
-            PaletteItem {
-                id: CLOSE_ACTIVE_TAB,
-                label: "Close Active Tab".to_owned(),
-                hint: None,
-            },
-            PaletteItem {
-                id: TOGGLE_CHIP_LAYOUT,
-                label: "Toggle Chip Wrapping".to_owned(),
-                hint: None,
+                hint: ApplicationShortcut::Settings.label().map(str::to_owned),
             },
         ];
+        if matches!(self.state.active_tab().content, TabContent::Session(_)) {
+            items.push(PaletteItem {
+                id: TOGGLE_INSPECTOR,
+                label: if self.state.inspector_open() {
+                    "Hide Session Inspector".to_owned()
+                } else {
+                    "Show Session Inspector".to_owned()
+                },
+                hint: None,
+            });
+        }
+        items.push(PaletteItem {
+            id: CLOSE_ACTIVE_TAB,
+            label: match &self.state.active_tab().content {
+                TabContent::Launcher => "Close Launcher".to_owned(),
+                TabContent::Settings => "Close Settings".to_owned(),
+                TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => {
+                    "Close Session…".to_owned()
+                }
+            },
+            hint: None,
+        });
         for tab in self.state.tabs() {
             let (label, hint) = match &tab.content {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
@@ -321,17 +452,20 @@ impl FesTermApp {
     fn dispatch_palette_selection(&mut self, id: u64, context: &egui::Context) {
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
         match id {
-            1 => self.state.dispatch(AppCommand::NewLauncherTab, context),
+            1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             2 => self.state.dispatch(AppCommand::OpenSettings, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
-            4 => self
-                .state
-                .dispatch(AppCommand::ToggleSessionInspector, context),
+            4 => {
+                // The palette closes as its command is selected, so its text
+                // field is not a viable focus-restoration target.
+                self.inspector_restore_focus = None;
+                self.state
+                    .dispatch(AppCommand::ToggleSessionInspector, context);
+            }
             5 => {
                 let active = self.state.active();
                 self.state.dispatch(AppCommand::CloseTab(active), context);
             }
-            6 => self.state.dispatch(AppCommand::ToggleChipLayout, context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -350,12 +484,7 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let open_palette = ctx.input_mut(|input| {
-            input.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::P,
-            )
-        });
+        let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
         if open_palette {
             self.palette.toggle();
         }
@@ -364,26 +493,14 @@ impl FesTermApp {
         if self.palette.is_open() {
             return;
         }
-        let tab_management_modifiers = if cfg!(target_os = "macos") {
-            egui::Modifiers::COMMAND
-        } else {
-            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
-        };
-        let new_tab =
-            ctx.input_mut(|input| input.consume_key(tab_management_modifiers, egui::Key::T));
-        let close_tab =
-            ctx.input_mut(|input| input.consume_key(tab_management_modifiers, egui::Key::W));
-        let next_tab =
-            ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Tab));
-        let previous_tab = ctx.input_mut(|input| {
-            input.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::Tab,
-            )
-        });
+        let new_tab = ApplicationShortcut::NewSession.consume(ctx);
+        let close_tab = ApplicationShortcut::CloseActiveSurface.consume(ctx);
+        let next_tab = ApplicationShortcut::NextSession.consume(ctx);
+        let previous_tab = ApplicationShortcut::PreviousSession.consume(ctx);
+        let settings = ApplicationShortcut::Settings.consume(ctx);
 
         if new_tab {
-            self.state.dispatch(AppCommand::NewLauncherTab, ctx);
+            self.state.dispatch(AppCommand::OpenLauncher, ctx);
         }
         if close_tab {
             let active = self.state.active();
@@ -394,6 +511,9 @@ impl FesTermApp {
         }
         if previous_tab {
             self.state.dispatch(AppCommand::ActivatePreviousTab, ctx);
+        }
+        if settings {
+            self.state.dispatch(AppCommand::OpenSettings, ctx);
         }
     }
 
@@ -407,8 +527,16 @@ impl FesTermApp {
             .iter()
             .map(|tab| {
                 let (primary, secondary, status) = match &tab.content {
-                    TabContent::Launcher => ("Launcher".to_owned(), None, ChipStatus::Neutral),
-                    TabContent::Settings => ("Settings".to_owned(), None, ChipStatus::Neutral),
+                    TabContent::Launcher => (
+                        "New Session".to_owned(),
+                        Some("Launcher".to_owned()),
+                        ChipStatus::Neutral,
+                    ),
+                    TabContent::Settings => (
+                        "Settings".to_owned(),
+                        Some("Application".to_owned()),
+                        ChipStatus::Neutral,
+                    ),
                     TabContent::SshAuthenticationRequired(tab) => (
                         tab.profile.identifier().to_owned(),
                         Some(format!(
@@ -444,83 +572,95 @@ impl FesTermApp {
     /// and session context"): hidden by default, and shows only content-free
     /// connection state and diagnostics for the active session. It never
     /// hosts Settings.
-    fn show_session_inspector(&self, ui: &mut egui::Ui) -> Option<AppCommand> {
+    fn show_session_inspector(
+        &self,
+        context: &egui::Context,
+        content_rect: egui::Rect,
+        close_requested: bool,
+    ) -> Option<InspectorAction> {
         let TabContent::Session(session) = &self.state.active_tab().content else {
             return None;
         };
-        let reconnect_available = session.reconnect_available();
         let tab = self.state.active();
-        let status = session.controller.status_line();
         let diagnostics = session.controller.diagnostics_line();
+        let grid = session.view.dimensions_label();
+        let terminal_title =
+            (!session.terminal.title().is_empty()).then(|| session.terminal.title());
+        let status = session.status_bar_label();
         let chip_status = session.chip_status();
-        let mut reconnect = false;
-        egui::Panel::right("session_inspector")
-            .resizable(false)
-            .show(ui, |ui| {
-                ui.heading("Session Inspector");
-                ui.separator();
-                ui.label(egui::RichText::new(&session.label).strong());
-                ui.label(chip_status.accessible_label());
-                ui.add_space(4.0);
-                ui.label(status);
-                if reconnect_available {
-                    ui.add_space(8.0);
-                    if ui
-                        .button("Reconnect")
-                        .on_hover_text(
-                            "Start one fresh SSH connection. The remote shell is not restored.",
-                        )
-                        .clicked()
-                    {
-                        reconnect = true;
-                    }
+        let transport = match &session.inspector_transport {
+            InspectorTransport::Local => TransportFacts::Local,
+            InspectorTransport::Ssh {
+                username,
+                host,
+                port,
+            } => TransportFacts::Ssh {
+                username,
+                host,
+                port: *port,
+            },
+        };
+        let type_label = match session.inspector_transport {
+            InspectorTransport::Local => "Local shell",
+            InspectorTransport::Ssh { .. } => "SSH",
+        };
+        let state_message = match chip_status {
+            ChipStatus::Failed => Some(match session.inspector_transport {
+                InspectorTransport::Local => {
+                    "The local shell could not start. Review Diagnostics for the failure detail."
                 }
-                ui.add_space(8.0);
-                ui.label(egui::RichText::new(diagnostics).small().weak());
-            });
-        reconnect.then_some(AppCommand::ReconnectSession(tab))
+                InspectorTransport::Ssh { .. } => {
+                    "The SSH session could not start. Review Diagnostics for the failure detail."
+                }
+            }),
+            ChipStatus::Disconnected => Some("The connection has been lost."),
+            ChipStatus::Exited => Some("The session has exited."),
+            ChipStatus::Reconnecting => Some("Attempting to reconnect to the host."),
+            ChipStatus::AuthRequired => Some("Authentication is required to continue."),
+            ChipStatus::Starting | ChipStatus::Connected | ChipStatus::Neutral => None,
+        };
+        crate::inspector::show(
+            context,
+            content_rect,
+            InspectorContent {
+                subject_id: tab.chip_id(),
+                identity: &session.label,
+                type_label,
+                state: status,
+                state_message,
+                state_color: chip_status.color(),
+                grid: grid.as_deref(),
+                terminal_title,
+                profile: session.profile_identifier.as_deref(),
+                transport,
+                trust_fingerprint: session
+                    .host_key_prompt()
+                    .map(|prompt| prompt.sha256_fingerprint()),
+                diagnostics: &diagnostics,
+                reconnect_available: session.reconnect_available(),
+            },
+            close_requested,
+        )
     }
 
-    /// Bottom application status bar (`docs/gui-design.md` "Contextual
-    /// status region"): the left segment summarizes the active session using
-    /// only genuinely available data (never fabricated shell
-    /// version/encoding/line-ending metadata fesTerm doesn't track); the
-    /// right segment shows connection status plus a local clock/date. The
-    /// active session's grid dimensions are always shown alongside the
-    /// left segment (`docs/gui-design.md` "Bottom status bar").
+    /// Bottom application status bar. Session identity remains in the chip;
+    /// this footer shows only sourced grid/locality facts and transport state.
+    /// Application surfaces keep the same 24 px geometry with empty content.
     fn show_status_bar(&self, ui: &mut egui::Ui) {
-        let (left, dimensions, system, status, status_label) =
-            match &self.state.active_tab().content {
-                TabContent::Launcher
-                | TabContent::Settings
-                | TabContent::SshAuthenticationRequired(_) => (
-                    APPLICATION_TITLE.to_owned(),
-                    None,
-                    None,
-                    ChipStatus::Neutral,
-                    "",
-                ),
-                TabContent::Session(session) => {
-                    let secondary = (!session.terminal.title().is_empty())
-                        .then(|| Self::display_secondary(session.terminal.title()))
-                        .or_else(|| session.launch_secondary.clone());
-                    let left = match secondary {
-                        Some(secondary) => format!("{} — {}", session.label, secondary),
-                        None => session.label.clone(),
-                    };
-                    let status = session.chip_status();
-                    (
-                        left,
-                        session.view.dimensions_label(),
-                        Some(session.system_label()),
-                        status,
-                        status.accessible_label(),
-                    )
-                }
-            };
-        let now = chrono::Local::now();
-        let clock = now.format("%H:%M:%S").to_string();
-        let date = now.format("%Y-%m-%d").to_string();
+        let (dimensions, system, status, status_label) = match &self.state.active_tab().content {
+            TabContent::Launcher
+            | TabContent::Settings
+            | TabContent::SshAuthenticationRequired(_) => (None, None, ChipStatus::Neutral, ""),
+            TabContent::Session(session) => {
+                let status = session.chip_status();
+                (
+                    session.view.dimensions_label(),
+                    Some(session.system_label()),
+                    status,
+                    session.status_bar_label(),
+                )
+            }
+        };
         egui::Panel::bottom("status_bar")
             .resizable(false)
             .show_separator_line(false)
@@ -529,13 +669,10 @@ impl FesTermApp {
                 festerm_ui_egui::statusbar::show(
                     ui,
                     festerm_ui_egui::statusbar::StatusBarContent {
-                        left: &left,
                         dimensions: dimensions.as_deref(),
                         system,
                         status,
                         status_label,
-                        clock: &clock,
-                        date: &date,
                     },
                 );
             });
@@ -615,15 +752,19 @@ impl FesTermApp {
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
     fn ui_content(&mut self, ui: &mut egui::Ui) {
+        self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
+        self.update_native_menu();
 
         let (chips, active_chip) = self.chip_view_models();
         let inspector_open = self.state.inspector_open();
+        let inspector_available = matches!(self.state.active_tab().content, TabContent::Session(_));
         let actions = chrome::show(
             ui,
             &chips,
             active_chip,
             inspector_open,
+            inspector_available,
             self.state.chip_layout(),
         );
         // No explicit separator line here: the chrome band now paints its
@@ -632,6 +773,13 @@ impl FesTermApp {
         // it reads as the boundary (mockup: a near-invisible seam, not a
         // bright rule).
         self.dispatch_chrome_actions(actions, &ui.ctx().clone());
+        let inspector_open = self.state.inspector_open();
+        // Consume Escape before `TerminalView::show` routes raw input so the
+        // dismissal key can never leak into Vim, Emacs, or another TUI.
+        let inspector_escape = inspector_open
+            && ui
+                .ctx()
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
         if self.state.status_bar_visible() {
             self.show_status_bar(ui);
@@ -648,11 +796,31 @@ impl FesTermApp {
             }
         }
 
-        let inspector_command = inspector_open
-            .then(|| self.show_session_inspector(ui))
-            .flatten();
-
         let host_key_command = self.show_host_key_prompt(ui);
+        let content_rect = ui.available_rect_before_wrap();
+        // Intercept outside pointer-button events before TerminalView reads
+        // them. A foreground Area can paint above the terminal, but it cannot
+        // retroactively undo input already routed earlier in the frame.
+        let inspector_outside_click = if inspector_open {
+            let inspector_rect = crate::inspector::overlay_rect(content_rect);
+            ui.ctx().input_mut(|input| {
+                let mut outside_click = false;
+                input.events.retain(|event| {
+                    let egui::Event::PointerButton { pos, .. } = event else {
+                        return true;
+                    };
+                    if content_rect.contains(*pos) && !inspector_rect.contains(*pos) {
+                        outside_click = true;
+                        false
+                    } else {
+                        true
+                    }
+                });
+                outside_click
+            })
+        } else {
+            false
+        };
         let mut screen_command = None;
         let mut overlay_action = None;
         let chip_layout = self.state.chip_layout();
@@ -698,13 +866,35 @@ impl FesTermApp {
                 }
             }
         }
+        let inspector_action = inspector_open
+            .then(|| {
+                self.show_session_inspector(
+                    ui.ctx(),
+                    content_rect,
+                    inspector_escape || inspector_outside_click,
+                )
+            })
+            .flatten();
         if let Some(command) = host_key_command {
             let context = ui.ctx().clone();
             self.state.dispatch(command, &context);
         }
-        if let Some(command) = inspector_command {
+        if let Some(action) = inspector_action {
             let context = ui.ctx().clone();
-            self.state.dispatch(command, &context);
+            match action {
+                InspectorAction::Close => {
+                    if let Some(target) = self.inspector_restore_focus.take() {
+                        context.memory_mut(|memory| memory.request_focus(target));
+                    } else if let Some(session) = self.state.session_tab_mut(active_tab_id) {
+                        session.view.request_focus_on_next_frame();
+                    }
+                    self.state
+                        .dispatch(AppCommand::ToggleSessionInspector, &context);
+                }
+                InspectorAction::Reconnect => self
+                    .state
+                    .dispatch(AppCommand::ReconnectSession(active_tab_id), &context),
+            }
         }
         if let Some(command) = screen_command {
             match command {
@@ -720,8 +910,11 @@ impl FesTermApp {
             let context = ui.ctx().clone();
             match action {
                 OverlayAction::OpenDiagnostics => {
-                    self.state
-                        .dispatch(AppCommand::ToggleSessionInspector, &context);
+                    self.inspector_restore_focus = None;
+                    if !self.state.inspector_open() {
+                        self.state
+                            .dispatch(AppCommand::ToggleSessionInspector, &context);
+                    }
                 }
                 OverlayAction::CloseTab => {
                     self.state
@@ -743,15 +936,16 @@ impl FesTermApp {
     /// not depend on `eframe::Frame`, which has no public/test constructor.
     fn for_test_with_configuration(configuration: Configuration) -> Self {
         let state = AppState::for_test_with_configuration(configuration);
-        let primary_tab = Some(state.active());
         Self {
             state,
-            primary_tab,
+            primary_tab: None,
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke: None,
             palette: PaletteState::default(),
             configuration_status: ConfigurationStartupStatus::Missing,
             configuration_reloader: ConfigurationReloader::unavailable(),
+            inspector_restore_focus: None,
+            native_menu: festerm_macos_window::NativeMenu::unavailable(),
         }
     }
 }
@@ -761,7 +955,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{kittest::Queryable, Harness, SnapshotOptions};
 
     fn harness() -> Harness<'static, FesTermApp> {
         harness_with_configuration(Configuration::empty())
@@ -771,9 +965,140 @@ mod tests {
         Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
             .build_ui_state(
-                |ui, app: &mut FesTermApp| app.ui_content(ui),
+                |ui, app: &mut FesTermApp| {
+                    ui.ctx().set_visuals(theme::default_visuals());
+                    app.ui_content(ui);
+                },
                 FesTermApp::for_test_with_configuration(configuration),
             )
+    }
+
+    fn failed_local_profile_harness() -> Harness<'static, FesTermApp> {
+        let configuration = Configuration::new(vec![festerm_config::Profile::local(
+            "development",
+            "festerm-inspector-test-command-that-does-not-exist",
+            Vec::new(),
+            None,
+        )
+        .expect("test local profile is valid")])
+        .expect("test configuration is valid");
+        let mut harness = harness_with_configuration(configuration);
+        harness.run();
+        harness
+            .get_by_label("development — Saved local profile")
+            .click();
+        harness.step();
+        harness.run();
+        harness
+    }
+
+    /// Produces a production-widget Launcher capture for explicit visual
+    /// review without making it a platform-stable golden baseline.
+    #[test]
+    #[ignore = "manual GUI mockup review capture"]
+    fn capture_launcher_for_mockup_review() {
+        let output_path = std::env::temp_dir().join("festerm-gui-review");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 516.0))
+            .build_ui_state(
+                |ui, app: &mut FesTermApp| {
+                    ui.ctx().set_visuals(theme::default_visuals());
+                    app.ui_content(ui);
+                },
+                FesTermApp::for_test_with_configuration(Configuration::empty()),
+            );
+        harness.run();
+        harness.snapshot_options(
+            "festerm-launcher-actual",
+            &SnapshotOptions::default().output_path(output_path),
+        );
+    }
+
+    /// Produces the Session Inspector overlay with production widgets while
+    /// keeping the capture independent of a live process or network service.
+    #[test]
+    #[ignore = "manual GUI mockup review capture"]
+    fn capture_session_inspector_for_mockup_review() {
+        let output_path = std::env::temp_dir().join("festerm-gui-review");
+        let mut harness = failed_local_profile_harness();
+        harness
+            .get_by_label_contains("Toggle session inspector")
+            .click();
+        harness.run();
+        harness.snapshot_options(
+            "festerm-session-inspector-actual",
+            &SnapshotOptions::default().output_path(output_path),
+        );
+    }
+
+    #[test]
+    fn session_inspector_opens_without_resizing_and_escape_restores_terminal_mode() {
+        let mut harness = failed_local_profile_harness();
+        let before = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session.view.dimensions_label(),
+            _ => panic!("the configured profile must produce a session surface"),
+        };
+
+        harness
+            .get_by_label_contains("Toggle session inspector")
+            .click();
+        harness.run();
+
+        assert!(harness.state().state.inspector_open());
+        harness.get_by_label("Session Inspector");
+        harness.get_by_label("Close Session Inspector");
+        harness.get_by_label("PROCESS");
+        let after = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session.view.dimensions_label(),
+            _ => panic!("the session surface must remain active"),
+        };
+        assert_eq!(after, before, "the overlay must not resize the terminal");
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(!harness.state().state.inspector_open());
+    }
+
+    #[test]
+    fn inspector_consumes_the_first_uncovered_terminal_click() {
+        let mut harness = failed_local_profile_harness();
+        harness
+            .get_by_label_contains("Toggle session inspector")
+            .click();
+        harness.run();
+
+        // An interaction inside the foreground panel must not hit the
+        // click-catcher beneath it.
+        harness.get_by_label("Diagnostics").click();
+        harness.run();
+        assert!(harness.state().state.inspector_open());
+
+        let before = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session.view.selection().clone(),
+            _ => panic!("the configured profile must produce a session surface"),
+        };
+        let uncovered_terminal = egui::pos2(120.0, 300.0);
+        harness.event(egui::Event::PointerMoved(uncovered_terminal));
+        harness.event(egui::Event::PointerButton {
+            pos: uncovered_terminal,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: uncovered_terminal,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        harness.run();
+
+        assert!(!harness.state().state.inspector_open());
+        let after = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session.view.selection().clone(),
+            _ => panic!("the session surface must remain active"),
+        };
+        assert_eq!(after, before, "the dismissing click must not select text");
     }
 
     fn tab_management_modifiers() -> egui::Modifiers {
@@ -785,9 +1110,8 @@ mod tests {
     }
 
     #[test]
-    fn terminal_title_is_scoped_to_the_application_window() {
-        assert_eq!(FesTermApp::window_title(""), APPLICATION_TITLE);
-        assert_eq!(FesTermApp::window_title("editor"), "editor - fesTerm");
+    fn native_window_title_is_fixed_for_privacy() {
+        assert_eq!(FesTermApp::window_title(), APPLICATION_TITLE);
     }
 
     #[test]
@@ -841,15 +1165,15 @@ mod tests {
     }
 
     #[test]
-    fn default_configuration_keeps_the_primary_local_session_startup() {
-        let context = egui::Context::default();
-        let (mut state, primary_tab) =
-            AppState::with_primary_session(&context, None, Configuration::empty());
+    fn default_configuration_starts_at_the_launcher() {
+        let app = FesTermApp::with_configuration(&egui::Context::default(), Configuration::empty());
 
-        assert_eq!(state.tabs().len(), 1);
-        assert_eq!(state.active(), primary_tab);
-        assert!(matches!(state.active_tab().content, TabContent::Session(_)));
-        state.dispatch(AppCommand::CloseTab(primary_tab), &context);
+        assert!(app.primary_tab.is_none());
+        assert_eq!(app.state.tabs().len(), 1);
+        assert!(matches!(
+            app.state.active_tab().content,
+            TabContent::Launcher
+        ));
     }
 
     #[test]
@@ -914,7 +1238,7 @@ mod tests {
     }
 
     #[test]
-    fn platform_new_tab_shortcut_opens_a_new_launcher_tab_end_to_end() {
+    fn platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end() {
         let mut harness = harness();
         harness.run();
         let before = harness.state().state.tabs().len();
@@ -922,7 +1246,58 @@ mod tests {
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
 
-        assert_eq!(harness.state().state.tabs().len(), before + 1);
+        assert_eq!(harness.state().state.tabs().len(), before);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Launcher
+        ));
+    }
+
+    #[test]
+    fn control_tab_switches_surfaces_on_every_platform() {
+        let mut harness = harness();
+        harness.run();
+        let launcher = harness.state().state.active();
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenSettings, &context);
+        harness.run();
+        assert_ne!(harness.state().state.active(), launcher);
+
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Tab);
+        harness.run();
+        assert_eq!(harness.state().state.active(), launcher);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_settings_shortcut_and_presented_hints_match_the_contract() {
+        let mut harness = harness();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        harness.run();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+
+        let items = harness.state().palette_items();
+        assert_eq!(
+            items
+                .iter()
+                .find(|item| item.label == "New Session…")
+                .and_then(|item| item.hint.as_deref()),
+            Some("Cmd+T")
+        );
+        assert_eq!(
+            items
+                .iter()
+                .find(|item| item.label == "Open Settings")
+                .and_then(|item| item.hint.as_deref()),
+            Some("Cmd+,")
+        );
     }
 
     #[test]
@@ -943,6 +1318,8 @@ mod tests {
     fn platform_close_tab_shortcut_closes_the_active_tab_end_to_end() {
         let mut harness = harness();
         harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
         let before = harness.state().state.tabs().len();
@@ -989,7 +1366,9 @@ mod tests {
         let mut harness = harness_with_configuration(configuration);
         harness.run();
 
-        harness.get_by_label("development (Local profile)").click();
+        harness
+            .get_by_label("development — Saved local profile")
+            .click();
         harness.step();
 
         let TabContent::Session(session) = &harness.state().state.active_tab().content else {
@@ -1002,7 +1381,10 @@ mod tests {
     fn clicking_a_chip_close_button_closes_that_tab_end_to_end() {
         let mut harness = harness();
         harness.run();
-        // Open a second tab so there is one to close without emptying root.
+        // Replace the startup Launcher with a session, then open the singleton
+        // Launcher so closing it leaves the session behind.
+        harness.key_press(egui::Key::Enter);
+        harness.step();
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
         let before = harness.state().state.tabs().len();
@@ -1029,7 +1411,11 @@ mod tests {
         harness.run();
         assert!(harness.state().palette.is_open());
 
-        harness.get_by_label("Open Settings").click();
+        let settings_label = ApplicationShortcut::Settings.label().map_or_else(
+            || "Open Settings".to_owned(),
+            |hint| format!("Open Settings  \u{2014}  {hint}"),
+        );
+        harness.get_by_label(&settings_label).click();
         harness.run();
         assert!(!harness.state().palette.is_open());
         let settings_tab = harness.state().state.active();
