@@ -150,6 +150,7 @@ pub struct FesTermApp {
     transient_notice: Option<(String, Instant)>,
     about_open: bool,
     about_licenses_open: bool,
+    terminal_fonts_installed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -296,6 +297,7 @@ impl FesTermApp {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
+        festerm_ui_egui::install_terminal_fonts(context);
         // fesTerm owns the standard zoom chords as per-session terminal
         // commands. Letting egui also process them at end-of-frame would scale
         // application chrome and violate the documented zoom boundary.
@@ -337,6 +339,7 @@ impl FesTermApp {
             transient_notice: None,
             about_open: false,
             about_licenses_open: false,
+            terminal_fonts_installed: true,
         }
     }
 
@@ -1336,7 +1339,7 @@ impl FesTermApp {
                             );
                             ui.label(
                                 egui::RichText::new(
-                                    "Bundled asset notices are listed with their source assets. Inter is not yet bundled.",
+                                    "JetBrains Mono NL 2.304 is bundled under the SIL Open Font License 1.1. Its complete license and attribution are stored under assets/fonts/jetbrains-mono. Inter is not yet bundled.",
                                 )
                                 .small()
                                 .color(theme::TEXT_MUTED),
@@ -1609,6 +1612,16 @@ impl FesTermApp {
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
     fn ui_content(&mut self, ui: &mut egui::Ui) {
+        if !self.terminal_fonts_installed {
+            festerm_ui_egui::install_terminal_fonts(ui.ctx());
+            self.terminal_fonts_installed = true;
+            // `set_fonts` rebuilds egui's atlas after this pass. A test app
+            // can begin directly on a terminal surface (unlike production,
+            // which installs in its constructor), so do not request a named
+            // family until the following repaint.
+            ui.ctx().request_repaint();
+            return;
+        }
         self.process_pending_password_store(ui.ctx());
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
@@ -1884,6 +1897,7 @@ impl FesTermApp {
             transient_notice: None,
             about_open: false,
             about_licenses_open: false,
+            terminal_fonts_installed: false,
         }
     }
 

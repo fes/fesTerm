@@ -114,6 +114,8 @@ custom-terminfo strategy.
   from requirements and ADRs through graph edges to automated/manual evidence.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
   names, accessibility rules, color/state policy, and validation pipeline.
+- [Bundled terminal font](assets/fonts/jetbrains-mono/README.md) — pinned
+  JetBrains Mono NL provenance, licensing, verification, and reviewed update workflow.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
   interaction, rendering, PTY, and platform validation strategy.
 - [Manual and usability validation registry](docs/manual-validation.md) — the

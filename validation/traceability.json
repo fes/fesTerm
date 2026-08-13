@@ -295,10 +295,10 @@
       "edges": ["TYPE-*"],
       "requirements": ["docs/gui-design.md#terminal-typography", "docs/gui-design.md#typography-roles"],
       "decisions": ["ADR-0012"],
-      "automated_tests": ["wide_cells_use_one_two_column_paint_and_selection_span"],
+      "automated_tests": ["wide_cells_use_one_two_column_paint_and_selection_span", "bundled_terminal_faces_lead_independent_fallback_chains", "terminal_attributes_select_real_bundled_faces"],
       "manual_scenarios": ["NP-05"],
       "status": "partial",
-      "prerequisites": ["bundled application font and production fallback review"]
+      "prerequisites": ["native JetBrains Mono fallback/DPI review and bundled application font"]
     },
     {
       "id": "zoom",

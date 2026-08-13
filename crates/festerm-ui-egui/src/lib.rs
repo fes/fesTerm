@@ -9,6 +9,7 @@ use festerm_core::{Cell, Cursor, CursorStyle, Terminal, TerminalModes};
 
 mod cache;
 pub mod chrome;
+mod fonts;
 mod geometry;
 pub mod icon;
 mod input;
@@ -29,6 +30,7 @@ pub(crate) const GLYPH_CACHE_CAPACITY: usize = 4_096;
 pub use cache::{
     RenderCacheUpdate, RenderedCell, ResizeOutcome, ResizeTracker, TerminalRenderCache,
 };
+pub use fonts::install_terminal_fonts;
 pub use geometry::{
     cell_from_point, dimensions_from_points, CellMetrics, CellPosition, CellRange, ViewSize,
 };

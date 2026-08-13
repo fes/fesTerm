@@ -9,6 +9,7 @@ use festerm_core::{InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
+    fonts::terminal_fonts_installed,
     geometry::{cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
@@ -318,10 +319,20 @@ impl TerminalView {
         sink: &mut impl EncodedInputSink,
         options: TerminalViewOptions,
     ) {
+        if !terminal_fonts_installed(ui.ctx()) {
+            crate::install_terminal_fonts(ui.ctx());
+            // The named families become available after egui rebuilds its
+            // atlas at the pass boundary. Direct TerminalView users can
+            // bypass the application composition root, so yield safely.
+            ui.ctx().request_repaint();
+            return;
+        }
         let frame_started = Instant::now();
-        let glyph =
-            ui.painter()
-                .layout_no_wrap("M".to_owned(), self.fonts.font_id(), DEFAULT_FOREGROUND);
+        let glyph = ui.painter().layout_no_wrap(
+            "M".to_owned(),
+            self.fonts.regular_font_id(),
+            DEFAULT_FOREGROUND,
+        );
         let Some(metrics) = CellMetrics::new(glyph.size().x, glyph.size().y) else {
             return;
         };

@@ -1430,8 +1430,10 @@ At minimum, define:
 
 Terminal typography may use separate font and shaping rules from application chrome.
 
-The current terminal renderer defaults to the bundled monospace family at
-`14` pt. The approved application chrome will bundle **Inter** for consistent metrics
+The current terminal renderer defaults to bundled **JetBrains Mono NL 2.304**
+at `14` pt. The regular, bold, italic, and bold-italic static faces are owned
+assets; missing glyphs continue through a separate monospace fallback chain.
+The approved application chrome will bundle **Inter** for consistent metrics
 across Windows, Linux, and macOS. Inter is an application asset, not a terminal
 font default: it serves chips, launcher and Settings content, overlays, menus,
 status text, and diagnostics, while terminal shaping and user-selected terminal
@@ -1469,7 +1471,10 @@ without changing the semantic typography roles or terminal-font contract.
 
 Ligatures are a planned capability, but they must never alter terminal cell ownership, cursor placement, selection boundaries, or mouse coordinates.
 
-Ligature enabling should remain blocked until the M6 ligature and fallback validation requirements are satisfied.
+The bundled default deliberately uses JetBrains Mono's `NL` (no ligatures)
+faces. Ligature enabling should remain blocked until the M6 ligature and
+fallback validation requirements are satisfied; it will require selecting a
+ligature-capable face explicitly rather than silently changing this default.
 
 ### User control
 
@@ -2174,8 +2179,10 @@ requires a different sequence:
    complete first-party inventory and dependency-free canonical geometry;
    Launcher session types and persistent chrome controls use it with semantic
    colors and accessible control labels. Remaining one-off sites and native
-   cross-platform visual evidence are tracked separately. Bundle Inter through
-   the owned application-font layer next, retaining fallback contracts.
+   cross-platform visual evidence are tracked separately. The terminal now
+   bundles JetBrains Mono NL 2.304 with four real faces and an independent
+   fallback chain. Bundle Inter through the owned application-font layer next,
+   retaining fallback contracts.
 6. Schedule the serial backend as a focused capability track with platform
    discovery, permissions, exclusive ownership, and deterministic loopback
    evidence; its GUI contract is already defined here.

@@ -1,0 +1,45 @@
+name: Bundled font updates
+
+on:
+  schedule:
+    - cron: '17 14 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: bundled-font-updates
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Verify pinned assets
+        run: python scripts/manage_bundled_font.py
+      - name: Check official latest release
+        id: font
+        run: >-
+          python scripts/manage_bundled_font.py
+          --check-upstream
+          --github-output "$GITHUB_OUTPUT"
+          --report "$RUNNER_TEMP/jetbrains-mono-update.md"
+      - name: Open or update the review issue
+        if: steps.font.outputs.update_available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: JetBrains Mono update review
+          REPORT: ${{ runner.temp }}/jetbrains-mono-update.md
+        run: |
+          issue_number="$(gh issue list --state open --limit 100 --json number,title --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')"
+          if [ -n "$issue_number" ]; then
+            gh issue edit "$issue_number" --body-file "$REPORT"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$REPORT"
+          fi

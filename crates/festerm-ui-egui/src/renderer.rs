@@ -12,6 +12,7 @@ use festerm_core::{Attributes, Color, CursorStyle, Dimensions};
 
 use crate::{
     cache::{RenderedCell, TerminalRenderCache},
+    fonts::{BOLD_FAMILY, BOLD_ITALIC_FAMILY, ITALIC_FAMILY, REGULAR_FAMILY},
     geometry::{CellGeometry, CellPosition, CellRange},
     selection::Selection,
     TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, GLYPH_CACHE_CAPACITY,
@@ -31,8 +32,21 @@ impl Default for FontSettings {
 }
 
 impl FontSettings {
-    pub(crate) fn font_id(&self) -> FontId {
-        FontId::new(self.size_points, FontFamily::Monospace)
+    pub(crate) fn regular_font_id(&self) -> FontId {
+        FontId::new(self.size_points, FontFamily::Name(REGULAR_FAMILY.into()))
+    }
+
+    fn font_id(&self, attributes: Attributes) -> FontId {
+        let family = match (
+            attributes.contains(Attributes::BOLD),
+            attributes.contains(Attributes::ITALIC),
+        ) {
+            (true, true) => BOLD_ITALIC_FAMILY,
+            (true, false) => BOLD_FAMILY,
+            (false, true) => ITALIC_FAMILY,
+            (false, false) => REGULAR_FAMILY,
+        };
+        FontId::new(self.size_points, FontFamily::Name(family.into()))
     }
 }
 
@@ -83,9 +97,11 @@ impl GlyphCache {
             text,
             0.0,
             TextFormat {
-                font_id: font.font_id(),
+                font_id: font.font_id(attributes),
                 color: foreground,
-                italics: attributes.contains(Attributes::ITALIC),
+                // Italic terminal cells use the bundled italic face rather
+                // than synthetic skewing. This keeps metrics deterministic.
+                italics: false,
                 ..Default::default()
             },
         );
@@ -461,11 +477,6 @@ pub(crate) fn cell_colors(cell: &RenderedCell) -> (Color32, Color32) {
     if cell.attributes.contains(Attributes::FAINT) {
         foreground = foreground.gamma_multiply(0.6);
     }
-    // egui's bundled monospace font has no independent bold face. A modest
-    // brightness adjustment is the available, geometry-preserving fallback.
-    if cell.attributes.contains(Attributes::BOLD) {
-        foreground = foreground.gamma_multiply(1.15);
-    }
     (foreground, background)
 }
 
@@ -522,4 +533,25 @@ pub(crate) fn measure_input_to_paint_submission<T>(
 ) -> (T, Option<Duration>) {
     let submitted = submit();
     (submitted, input_observed.map(|started| started.elapsed()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_attributes_select_real_bundled_faces() {
+        let font = FontSettings::default();
+        for (attributes, expected) in [
+            (Attributes::from_bits(0), REGULAR_FAMILY),
+            (Attributes::BOLD, BOLD_FAMILY),
+            (Attributes::ITALIC, ITALIC_FAMILY),
+            (
+                Attributes::from_bits(Attributes::BOLD.bits() | Attributes::ITALIC.bits()),
+                BOLD_ITALIC_FAMILY,
+            ),
+        ] {
+            assert_eq!(font.font_id(attributes).family.to_string(), expected);
+        }
+    }
 }

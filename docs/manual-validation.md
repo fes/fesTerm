@@ -122,7 +122,7 @@ possible.
 | NP-02 | Move through scale factors and monitors; chrome, menus, modals, icons, text, and terminal remain aligned without clipping or unintended resize. | Native visual + usability | Screenshot sequence plus window/grid metadata |
 | NP-03 | Verify macOS native menu dynamic labels/states, responder-chain Copy/Paste, Services/Hide/Quit, and absence of duplicated in-window native controls. | Native functional | Yes with Accessibility API; Services remains manual |
 | NP-04 | Traverse every surface keyboard-only and with UIA/Accessibility/AT-SPI; names, roles, states, focus order, restoration, and icon tooltips are accurate. | Accessibility | Partly automated semantic assertions; screen-reader comprehension human |
-| NP-05 | Review compact blue-graphite palette, active/inactive contrast, status semantics, icon legibility, and Inter/fallback typography at supported scales and high contrast. | Visual + usability | Screenshot/contact sheet automation; judgment human |
+| NP-05 | Review compact blue-graphite palette, active/inactive contrast, status semantics, icon legibility, JetBrains Mono terminal faces/fallbacks, and Inter application typography at supported scales and high contrast. | Visual + usability | Screenshot/contact sheet automation; judgment human |
 | NP-06 | Use IME composition and representative non-Latin/fallback scripts; composition commits once to its owner and cancels on session/focus changes without leaking pre-edit text. | Native functional | Platform-specific driver possible; human confirmation retained |
 
 ### Configuration, persistence, and future transports
