@@ -30,6 +30,8 @@ pub(crate) enum ConfigurationStartupStatus {
     ReloadFailure(ConfigurationLoadFailure),
     WorkspaceSaved,
     WorkspaceSaveFailure(ConfigurationLoadFailure),
+    PasswordCredentialSaved,
+    PasswordCredentialSaveFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
@@ -86,13 +88,25 @@ impl ConfigurationStartupStatus {
             Self::WorkspaceSaveFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "Workspace metadata was not saved because its location is unavailable. The active configuration remains unchanged."
             }
+            Self::PasswordCredentialSaved => {
+                "The saved SSH password reference was updated. The password remains only in native secure storage."
+            }
+            Self::PasswordCredentialSaveFailure(ConfigurationLoadFailure::Invalid) => {
+                "The saved SSH password was not linked because the configuration is invalid. The prior credential remains active."
+            }
+            Self::PasswordCredentialSaveFailure(_) => {
+                "The saved SSH password was not linked because configuration could not be written. The prior credential remains active."
+            }
         }
     }
 
     pub(crate) const fn is_problem(self) -> bool {
         matches!(
             self,
-            Self::InitialFailure(_) | Self::ReloadFailure(_) | Self::WorkspaceSaveFailure(_)
+            Self::InitialFailure(_)
+                | Self::ReloadFailure(_)
+                | Self::WorkspaceSaveFailure(_)
+                | Self::PasswordCredentialSaveFailure(_)
         )
     }
 }
@@ -220,24 +234,33 @@ impl ConfigurationReloader {
         &self,
         configuration: &Configuration,
     ) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::WorkspaceSaved,
+            Err(failure) => ConfigurationStartupStatus::WorkspaceSaveFailure(failure),
+        }
+    }
+
+    /// Persists an already validated full replacement through the same private
+    /// source selected at startup. This is used by the password-reference
+    /// workflow after the native store has accepted a new secret.
+    pub(crate) fn save_configuration(
+        &self,
+        configuration: &Configuration,
+    ) -> Result<(), ConfigurationLoadFailure> {
         let selected = match &self.selected_path {
             Ok(selected) => selected,
             Err(failure) => {
-                return ConfigurationStartupStatus::WorkspaceSaveFailure(*failure);
+                return Err(*failure);
             }
         };
         if let Some(directory) = &selected.native_directory {
             if !directory.exists() && create_native_configuration_directory(directory).is_err() {
-                return ConfigurationStartupStatus::WorkspaceSaveFailure(
-                    ConfigurationLoadFailure::Unreadable,
-                );
+                return Err(ConfigurationLoadFailure::Unreadable);
             }
         }
         match configuration.save_to_path(&selected.path) {
-            Ok(()) => ConfigurationStartupStatus::WorkspaceSaved,
-            Err(error) => ConfigurationStartupStatus::WorkspaceSaveFailure(
-                failure_from_file_error(error.kind()),
-            ),
+            Ok(()) => Ok(()),
+            Err(error) => Err(failure_from_file_error(error.kind())),
         }
     }
 }

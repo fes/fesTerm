@@ -23,6 +23,7 @@ use festerm_config::{
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
+use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_session::{
     HostKeyPrompt, Session, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle,
     SessionMetrics, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
@@ -613,6 +614,19 @@ pub enum AppCommand {
         authentication: SshAuthentication,
         options: SshSessionOptions,
     },
+    /// Starts an existing configured SSH profile by resolving its native
+    /// stored password on the SSH worker. This command has no password value.
+    StartStoredPasswordSshProfile {
+        profile_id: String,
+    },
+    /// Requests that the composition root store a password for an existing
+    /// configured SSH profile before starting it. The value is redacted from
+    /// debug output and moved to the background store worker.
+    StoreSshPassword {
+        profile_id: String,
+        password: PasswordToStore,
+        options: SshSessionOptions,
+    },
     /// Resolves the displayed host-key request for one specific SSH tab.
     /// This command intentionally has no persistent-trust variant.
     ResolveHostKeyTrust {
@@ -650,6 +664,28 @@ pub enum AppCommand {
     /// "Contextual status region" / "the status bar should be configurable
     /// on/off").
     ToggleStatusBar,
+}
+
+/// A one-shot password value awaiting native-store insertion.
+///
+/// It has no public getter and redacts `Debug`, so application commands remain
+/// safe to inspect in UI tests and diagnostics.
+pub struct PasswordToStore(String);
+
+impl PasswordToStore {
+    pub(crate) fn new(password: String) -> Self {
+        Self(password)
+    }
+
+    pub(crate) fn into_secret_bytes(self) -> SecretBytes {
+        SecretBytes::from_secret_string(self.0)
+    }
+}
+
+impl std::fmt::Debug for PasswordToStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PasswordToStore([REDACTED])")
+    }
 }
 
 /// Owns the always-nonempty tab collection and the active-tab cursor.
@@ -904,6 +940,8 @@ impl AppState {
                 authentication,
                 options,
             } => self.execute_ssh_session(profile, authentication, options, context),
+            AppCommand::StartStoredPasswordSshProfile { .. }
+            | AppCommand::StoreSshPassword { .. } => {}
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
             }
@@ -1007,6 +1045,38 @@ impl AppState {
             options,
             context,
         ));
+    }
+
+    /// Resolves only profile metadata on the application path and hands the
+    /// opaque password source to `festerm-ssh`; secret retrieval remains in
+    /// that transport's worker immediately before authentication.
+    pub fn start_stored_password_ssh_profile(
+        &mut self,
+        profile_id: &str,
+        store: Arc<dyn SecretStore>,
+        options: SshSessionOptions,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+        else {
+            return false;
+        };
+        let Some(reference) = profile.credential_reference() else {
+            return false;
+        };
+        let Ok(connection_profile) = profile.to_connection_profile() else {
+            return false;
+        };
+        self.execute_ssh_session(
+            connection_profile,
+            SshAuthentication::stored_password(store, reference),
+            options,
+            context,
+        );
+        true
     }
 
     fn resolve_host_key_trust(&mut self, tab: TabId, decision: HostKeyTrustDecision) {

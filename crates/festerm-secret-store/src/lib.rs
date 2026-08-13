@@ -42,6 +42,16 @@ impl SecretReference {
         self.0.hyphenated().to_string()
     }
 
+    /// Creates an owned copy for a narrowly scoped transport operation.
+    ///
+    /// References are opaque identifiers rather than secret values. This
+    /// deliberately avoids implementing `Clone`, which would make copying
+    /// them too easy in ordinary application metadata.
+    #[must_use]
+    pub fn duplicate_for_transport(&self) -> Self {
+        Self(self.0)
+    }
+
     fn account_name(&self) -> String {
         self.0.hyphenated().to_string()
     }
@@ -55,6 +65,15 @@ impl SecretBytes {
     #[must_use]
     pub fn copy_from_slice(bytes: &[u8]) -> Self {
         Self(bytes.into())
+    }
+
+    /// Moves UTF-8 secret text into a zeroizing allocation and wipes the
+    /// source string before it is dropped.
+    #[must_use]
+    pub fn from_secret_string(mut secret: String) -> Self {
+        let bytes = Self::copy_from_slice(secret.as_bytes());
+        secret.zeroize();
+        bytes
     }
 
     /// Invokes a caller-supplied operation with a limited borrowed view.

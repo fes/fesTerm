@@ -171,13 +171,25 @@ credential values in this TOML. The parser rejects known secret-bearing field
 names, private-key material, and recognizable credential options throughout
 profiles and workspaces; unknown fields are also errors.
 
-An SSH profile may instead include one optional `credential_id`. It must be a
-canonical lowercase UUID-v4 opaque reference produced by
-`festerm-secret-store`; it identifies a native-store record but contains no
-credential value. The parser rejects malformed, noncanonical, or non-v4
+An SSH profile may instead include one optional `credential_id`. In this M8
+slice it is **only** a canonical lowercase UUID-v4 opaque reference to a
+native stored SSH password produced by `festerm-secret-store`; it does not
+identify a private key, passphrase, agent response, key file, trust record, or
+arbitrary credential. The parser rejects malformed, noncanonical, or non-v4
 references. No other credential field or metadata is allowed in profiles or
-workspaces. The application resolves an opaque reference only immediately
-before the operation needing the secret; it must never serialize secret values.
+workspaces. The SSH transport resolves the opaque reference on its background
+worker immediately before password authentication; UI event handling never
+retrieves the password.
+
+The Launcher exposes stored-password actions only for an existing saved SSH
+profile. A user may explicitly enter a password and select **Remember this
+password in native secure storage**; the password is written on a background
+worker, then the generated opaque reference is atomically saved into that
+profile. If configuration persistence fails, fesTerm removes the newly created
+native secret where possible and leaves the old profile reference unchanged.
+One-off SSH connections remain transient. Restored workspace SSH surfaces
+never auto-connect: users must explicitly choose the stored-password action
+or enter a fresh password.
 
 Native storage uses macOS Keychain, Windows Credential Manager, or a Linux
 Secret Service provider available through the logged-in session D-Bus. KWallet

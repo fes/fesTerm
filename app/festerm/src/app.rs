@@ -1,8 +1,15 @@
-use std::time::Duration;
+use std::{
+    sync::{mpsc, Arc},
+    thread,
+    time::Duration,
+};
 
 use eframe::egui;
 use festerm_config::Configuration;
 use festerm_pty::LocalProfile;
+#[cfg(test)]
+use festerm_secret_store::MemorySecretStore;
+use festerm_secret_store::{native_store, SecretReference, SecretStore, SecretStoreError};
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
@@ -106,12 +113,43 @@ pub struct FesTermApp {
     palette: PaletteState,
     configuration_status: ConfigurationStartupStatus,
     configuration_reloader: ConfigurationReloader,
+    /// Composition-owned native-store factory result. Failure is retained as a
+    /// content-free status so local sessions and the rest of the app stay
+    /// available.
+    secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
+    pending_password_store: Option<PendingPasswordStore>,
+    secure_storage_feedback: Option<&'static str>,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
     rename_restore_focus: Option<egui::Id>,
     rename_restore_tab: Option<TabId>,
     native_menu: festerm_macos_window::NativeMenu,
+}
+
+struct PendingPasswordStore {
+    receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
+    profile_id: String,
+    options: festerm_ssh::SshSessionOptions,
+    store: Arc<dyn SecretStore>,
+}
+
+fn native_secret_store() -> Result<Arc<dyn SecretStore>, SecretStoreError> {
+    native_store().map(Arc::<dyn SecretStore>::from)
+}
+
+fn secret_store_message(error: SecretStoreError) -> &'static str {
+    match error {
+        SecretStoreError::LockedOrUnavailable | SecretStoreError::Unsupported => {
+            "Native secure storage is unavailable or locked. Unlock or enable it to use saved SSH passwords."
+        }
+        SecretStoreError::BackendFailure => {
+            "Native secure storage failed. Saved SSH passwords are unavailable; try again after checking the platform service."
+        }
+        SecretStoreError::Missing | SecretStoreError::InvalidReference => {
+            "Native secure storage could not use the requested saved SSH password."
+        }
+    }
 }
 
 impl FesTermApp {
@@ -136,6 +174,20 @@ impl FesTermApp {
         context: &egui::Context,
         configuration: Configuration,
         configuration_status: ConfigurationStartupStatus,
+    ) -> Self {
+        Self::with_configuration_status_and_secret_store(
+            context,
+            configuration,
+            configuration_status,
+            native_secret_store(),
+        )
+    }
+
+    fn with_configuration_status_and_secret_store(
+        context: &egui::Context,
+        configuration: Configuration,
+        configuration_status: ConfigurationStartupStatus,
+        secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
     ) -> Self {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
@@ -164,6 +216,9 @@ impl FesTermApp {
             palette: PaletteState::default(),
             configuration_status,
             configuration_reloader: ConfigurationReloader::unavailable(),
+            secret_store,
+            pending_password_store: None,
+            secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -247,6 +302,172 @@ impl FesTermApp {
             self.state.replace_configuration(replacement);
         }
         self.configuration_status = status;
+    }
+
+    fn native_store_available(&self) -> bool {
+        self.secret_store.is_ok()
+    }
+
+    fn secure_storage_status_message(&self) -> Option<&'static str> {
+        self.secure_storage_feedback.or_else(|| {
+            self.secret_store
+                .as_ref()
+                .err()
+                .copied()
+                .map(secret_store_message)
+        })
+    }
+
+    fn start_stored_password_profile(&mut self, profile_id: String, context: &egui::Context) {
+        self.start_stored_password_profile_with_options(
+            profile_id,
+            festerm_ssh::SshSessionOptions::new(),
+            context,
+        );
+    }
+
+    fn start_stored_password_profile_with_options(
+        &mut self,
+        profile_id: String,
+        options: festerm_ssh::SshSessionOptions,
+        context: &egui::Context,
+    ) {
+        let Ok(store) = self.secret_store.as_ref() else {
+            self.secure_storage_feedback = self
+                .secret_store
+                .as_ref()
+                .err()
+                .copied()
+                .map(secret_store_message);
+            return;
+        };
+        if !self.state.start_stored_password_ssh_profile(
+            &profile_id,
+            Arc::clone(store),
+            options,
+            context,
+        ) {
+            self.secure_storage_feedback =
+                Some("This saved SSH profile has no stored password. Enter and remember a password first.");
+        }
+    }
+
+    fn store_password_for_profile(
+        &mut self,
+        profile_id: String,
+        password: crate::tabs::PasswordToStore,
+        options: festerm_ssh::SshSessionOptions,
+        context: &egui::Context,
+    ) {
+        let Ok(store) = self.secret_store.as_ref() else {
+            self.secure_storage_feedback = self
+                .secret_store
+                .as_ref()
+                .err()
+                .copied()
+                .map(secret_store_message);
+            return;
+        };
+        if self.pending_password_store.is_some() {
+            self.secure_storage_feedback =
+                Some("A saved SSH password update is already in progress. Please wait.");
+            return;
+        }
+        let store = Arc::clone(store);
+        let worker_store = Arc::clone(&store);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        match thread::Builder::new()
+            .name("festerm-store-ssh-password".to_owned())
+            .spawn(move || {
+                let secret = password.into_secret_bytes();
+                let _ = sender.send(worker_store.put(&secret));
+            }) {
+            Ok(_) => {
+                self.pending_password_store = Some(PendingPasswordStore {
+                    receiver,
+                    profile_id,
+                    options,
+                    store,
+                });
+                self.secure_storage_feedback =
+                    Some("Saving SSH password in native secure storage…");
+                context.request_repaint();
+            }
+            Err(_) => {
+                self.secure_storage_feedback = Some(
+                    "Native secure storage could not start a password-save worker. Try again.",
+                );
+            }
+        }
+    }
+
+    fn process_pending_password_store(&mut self, context: &egui::Context) {
+        let Some(pending) = self.pending_password_store.take() else {
+            return;
+        };
+        match pending.receiver.try_recv() {
+            Ok(Ok(reference)) => {
+                let previous_reference = self
+                    .state
+                    .configuration()
+                    .profile(&pending.profile_id)
+                    .and_then(festerm_config::Profile::credential_reference)
+                    .map(festerm_secret_store::SecretReference::duplicate_for_transport);
+                let replacement = self.state.configuration().with_ssh_password_credential(
+                    &pending.profile_id,
+                    reference.duplicate_for_transport(),
+                );
+                let saved = replacement.as_ref().ok().and_then(|configuration| {
+                    self.configuration_reloader
+                        .save_configuration(configuration)
+                        .ok()
+                        .map(|_| configuration.clone())
+                });
+                if let Some(configuration) = saved {
+                    self.state.replace_configuration(configuration);
+                    self.configuration_status = ConfigurationStartupStatus::PasswordCredentialSaved;
+                    self.secure_storage_feedback = match previous_reference {
+                        Some(previous) => match pending.store.delete(&previous) {
+                            Ok(_) => Some("SSH password saved in native secure storage."),
+                            Err(_) => Some(
+                                "SSH password saved, but the previous native password could not be removed.",
+                            ),
+                        },
+                        None => Some("SSH password saved in native secure storage."),
+                    };
+                    self.start_stored_password_profile_with_options(
+                        pending.profile_id,
+                        pending.options,
+                        context,
+                    );
+                } else {
+                    let cleanup = pending.store.delete(&reference);
+                    self.configuration_status =
+                        ConfigurationStartupStatus::PasswordCredentialSaveFailure(
+                            crate::configuration_startup::ConfigurationLoadFailure::Unreadable,
+                        );
+                    self.secure_storage_feedback = match cleanup {
+                        Ok(_) => Some(
+                            "SSH password was not linked because configuration could not be saved; the new native secret was removed.",
+                        ),
+                        Err(_) => Some(
+                            "SSH password was not linked because configuration could not be saved; native-secret cleanup also failed.",
+                        ),
+                    };
+                }
+            }
+            Ok(Err(error)) => {
+                self.secure_storage_feedback = Some(secret_store_message(error));
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.pending_password_store = Some(pending);
+                context.request_repaint_after(Duration::from_millis(20));
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.secure_storage_feedback =
+                    Some("Native secure storage did not complete the password save. Try again.");
+            }
+        }
     }
 
     fn update_window_title(&mut self, context: &egui::Context) {
@@ -757,6 +978,7 @@ impl FesTermApp {
 
 impl eframe::App for FesTermApp {
     fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        self.process_pending_password_store(context);
         self.pump_all_sessions(context);
         self.update_window_title(context);
         if let Some(smoke) = self.native_smoke.as_mut() {
@@ -779,6 +1001,7 @@ impl FesTermApp {
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
     fn ui_content(&mut self, ui: &mut egui::Ui) {
+        self.process_pending_password_store(ui.ctx());
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         self.update_native_menu();
@@ -851,6 +1074,8 @@ impl FesTermApp {
         let mut screen_command = None;
         let mut overlay_action = None;
         let chip_layout = self.state.chip_layout();
+        let native_store_available = self.native_store_available();
+        let secure_storage_status = self.secure_storage_status_message();
         let active_tab_id = self.state.active();
         {
             let tab = self.state.active_tab_mut();
@@ -860,6 +1085,8 @@ impl FesTermApp {
                         ui,
                         active_tab_id,
                         self.state.configuration().profiles(),
+                        native_store_available,
+                        secure_storage_status,
                     );
                 }
                 TabContent::Settings => {
@@ -868,11 +1095,16 @@ impl FesTermApp {
                         chip_layout,
                         self.state.status_bar_visible(),
                         self.configuration_status,
+                        secure_storage_status,
                     );
                 }
                 TabContent::SshAuthenticationRequired(tab) => {
-                    screen_command =
-                        screens::show_ssh_authentication_required(ui, active_tab_id, &tab.profile);
+                    screen_command = screens::show_ssh_authentication_required(
+                        ui,
+                        active_tab_id,
+                        &tab.profile,
+                        native_store_available,
+                    );
                 }
                 TabContent::Session(session) => {
                     let options = festerm_ui_egui::TerminalViewOptions {
@@ -933,6 +1165,19 @@ impl FesTermApp {
             match command {
                 AppCommand::ReloadConfiguration => self.reload_configuration(),
                 AppCommand::SaveWorkspace => self.save_workspace(),
+                AppCommand::StartStoredPasswordSshProfile { profile_id } => {
+                    self.start_stored_password_profile(profile_id, &ui.ctx().clone());
+                }
+                AppCommand::StoreSshPassword {
+                    profile_id,
+                    password,
+                    options,
+                } => self.store_password_for_profile(
+                    profile_id,
+                    password,
+                    options,
+                    &ui.ctx().clone(),
+                ),
                 command => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
@@ -977,6 +1222,9 @@ impl FesTermApp {
             palette: PaletteState::default(),
             configuration_status: ConfigurationStartupStatus::Missing,
             configuration_reloader: ConfigurationReloader::unavailable(),
+            secret_store: Ok(Arc::new(MemorySecretStore::new())),
+            pending_password_store: None,
+            secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -987,7 +1235,7 @@ impl FesTermApp {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, thread, time::Duration};
 
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness, SnapshotOptions};
@@ -1025,6 +1273,86 @@ mod tests {
         harness.step();
         harness.run();
         harness
+    }
+
+    #[test]
+    fn saved_password_launcher_path_uses_injected_memory_store_and_persists_only_reference() {
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")])
+        .expect("test configuration is valid");
+        let directory = std::env::current_dir()
+            .expect("test working directory is available")
+            .join(format!(
+                ".festerm-stored-password-test-{}",
+                std::process::id()
+            ));
+        fs::create_dir(&directory).expect("test directory can be created");
+        let path = directory.join("config.toml");
+        let mut harness = harness_with_configuration(configuration);
+        harness.state_mut().configuration_reloader =
+            ConfigurationReloader::from_path_for_test(path.clone());
+        harness.run();
+        harness
+            .get_by_label("Enter or replace password for production")
+            .click();
+        harness.step();
+        harness.run();
+        harness.get_by_label("Password").click();
+        harness
+            .get_by_label("Password")
+            .type_text("memory-only-password");
+        harness
+            .get_by_label("Remember this password in native secure storage")
+            .click();
+        harness.get_by_label("Connect with password").click();
+        harness.step();
+
+        for _ in 0..50 {
+            if harness
+                .state()
+                .state
+                .configuration()
+                .profile("production")
+                .and_then(festerm_config::Profile::credential_reference)
+                .is_some()
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+            harness.step();
+        }
+
+        let reference = harness
+            .state()
+            .state
+            .configuration()
+            .profile("production")
+            .and_then(festerm_config::Profile::credential_reference)
+            .expect("background worker must persist the opaque reference");
+        let store = harness
+            .state()
+            .secret_store
+            .as_ref()
+            .expect("tests inject a memory store");
+        assert_eq!(
+            store
+                .get(reference)
+                .expect("stored password is available to the transport")
+                .with_bytes(|bytes| bytes.to_vec()),
+            b"memory-only-password"
+        );
+        let saved = fs::read_to_string(&path).expect("configuration was saved");
+        assert!(saved.contains("credential_id"));
+        assert!(!saved.contains("memory-only-password"));
+        fs::remove_dir_all(directory).expect("test directory can be removed");
     }
 
     /// Produces a production-widget Launcher capture for explicit visual
@@ -1573,7 +1901,9 @@ mod tests {
         harness.get_by_label("Rename session").click();
         harness.run();
         harness.key_press(egui::Key::Escape);
-        harness.run();
+        // Text-selection visuals may request another frame after Escape; one
+        // frame is sufficient to assert the application-owned focus result.
+        harness.step();
 
         let after_escape = match &harness.state().state.active_tab().content {
             TabContent::Session(session) => session

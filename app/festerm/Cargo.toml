@@ -14,6 +14,7 @@ festerm-config = { path = "../../crates/festerm-config" }
 festerm-core = { path = "../../crates/festerm-core" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }
+festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 tracing = "0.1"

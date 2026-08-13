@@ -37,8 +37,8 @@ static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
 /// A validated configuration document.
 ///
 /// Profiles are reusable launch definitions. They intentionally do not encode
-/// workspace state or authentication material. SSH profiles may retain an
-/// opaque native-secret-store reference, never a secret value.
+/// workspace state or authentication material. An SSH profile may retain an
+/// opaque native-store reference to an SSH password, never a secret value.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Configuration {
     schema_version: u32,
@@ -85,6 +85,33 @@ impl Configuration {
     /// accidentally discard profiles while enabling workspace persistence.
     pub fn with_workspace(&self, workspace: WorkspaceConfiguration) -> Result<Self, ConfigError> {
         Self::new_with_workspace(self.profiles.clone(), workspace)
+    }
+
+    /// Returns a complete replacement with one SSH profile's native stored
+    /// password reference changed.
+    ///
+    /// `credential_id` is intentionally limited to the M8 SSH-password
+    /// credential slice. It must not name a private key, passphrase, agent,
+    /// key file, trust record, or arbitrary secret.
+    pub fn with_ssh_password_credential(
+        &self,
+        identifier: &str,
+        credential_reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        let profile = replacement
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.identifier() == identifier)
+            .ok_or_else(|| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
+        let Profile::Ssh(profile) = profile else {
+            return Err(ConfigError::new(
+                ConfigErrorKind::CredentialReferenceRequiresSshProfile,
+            ));
+        };
+        profile.credential_id = Some(CredentialReference::new(credential_reference));
+        replacement.validate()?;
+        Ok(replacement)
     }
 
     /// Returns an empty, valid configuration document.
@@ -602,7 +629,7 @@ impl Profile {
         Ok(profile)
     }
 
-    /// Associates an SSH profile with an opaque native-secret-store reference.
+    /// Associates an SSH profile with an opaque native-store SSH-password reference.
     ///
     /// This accepts only the validated reference type, so callers cannot put a
     /// raw identifier or a secret value into profile metadata.
@@ -644,7 +671,7 @@ impl Profile {
         }
     }
 
-    /// Returns this SSH profile's opaque native-secret-store reference, if set.
+    /// Returns this SSH profile's opaque native-store SSH-password reference, if set.
     pub fn credential_reference(&self) -> Option<&SecretReference> {
         self.as_ssh()
             .and_then(SshProfileConfiguration::credential_reference)
@@ -779,11 +806,11 @@ impl SshProfileConfiguration {
         (self.initial_columns, self.initial_rows)
     }
 
-    /// Returns the opaque native-secret-store reference, if this profile has one.
+    /// Returns the opaque native-store SSH-password reference, if this profile has one.
     ///
-    /// The reference identifies a native-store record but does not contain
-    /// authentication material. It is exposed only for composition immediately
-    /// before an operation that needs the secret.
+    /// The reference identifies a native-store SSH-password record but does
+    /// not contain authentication material. It is exposed only for
+    /// composition immediately before an operation that needs the password.
     pub fn credential_reference(&self) -> Option<&SecretReference> {
         self.credential_id
             .as_ref()
@@ -1578,6 +1605,36 @@ id = "settings"
         let serialized = configuration.to_toml().unwrap();
         assert!(serialized.contains(&format!("credential_id = \"{CREDENTIAL_REFERENCE}\"")));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn replaces_only_an_ssh_password_credential_reference() {
+        let original = Configuration::new(vec![Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")])
+        .expect("test configuration is valid");
+        let reference = SecretReference::parse(CREDENTIAL_REFERENCE).expect("reference is valid");
+
+        let replacement = original
+            .with_ssh_password_credential("production", reference)
+            .expect("SSH credential replacement is valid");
+
+        assert!(original
+            .profile("production")
+            .and_then(Profile::credential_reference)
+            .is_none());
+        assert!(replacement
+            .profile("production")
+            .and_then(Profile::credential_reference)
+            .is_some());
+        assert!(!format!("{replacement:?}").contains(CREDENTIAL_REFERENCE));
     }
 
     #[test]

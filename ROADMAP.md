@@ -343,14 +343,20 @@ atomically accepting them, and retains the previous valid configuration with
 content-free diagnostics when explicit reload fails. It does not watch files.
 Configured local profiles can launch, and Settings can explicitly save and
 restore the supported metadata-only workspace subset while preserving profiles.
-Profile editing, credential references/storage, trust persistence, and the
+Native stored SSH-password references are now wired end-to-end: existing saved
+profiles can explicitly use a stored password, and their password form can
+explicitly replace it in platform secure storage before atomically persisting
+only its opaque reference. Resolution occurs on the SSH worker; restored
+workspace SSH surfaces still require explicit user action. Private keys,
+passphrases, agents, key files, trust persistence, profile editing, and the
 complete restoration experience remain incomplete.
 
 The GUI-independent `festerm-secret-store` foundation is implemented with
 opaque UUID-v4 references and native macOS Keychain, Windows Credential
 Manager, and Linux Secret Service backends. It has no insecure fallback.
-Persisting those references in TOML and resolving them just in time remains a
-later M8 application/configuration slice.
+Issue [#42](https://github.com/fes/fesTerm/issues/42) now covers the remaining
+native secure-store usability/platform evidence; password-only reference
+persistence and just-in-time worker resolution are implemented.
 
 ### Outcome
 

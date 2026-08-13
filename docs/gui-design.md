@@ -879,8 +879,10 @@ For password authentication:
   destination entry;
 - an in-progress attempt exposes Cancel and does not accept duplicate submits;
 - failure remains on this surface with a concise correction prompt; and
-- remember-password and secret-storage controls remain absent until secure
-  storage actually exists.
+- an existing saved SSH profile may offer an explicit **Remember this password
+  in native secure storage** control and a separate **Use stored password**
+  action. One-off forms remain transient; private keys, passphrases, agents,
+  key files, and host trust are never included in this control.
 
 ### Profile editing
 

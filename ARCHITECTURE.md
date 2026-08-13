@@ -191,10 +191,12 @@ replacing active configuration, retaining the prior valid document and a
 content-free diagnostic on failure. The application loads at startup and
 reloads only on an explicit Settings action; it does not watch files. It can
 launch configured local profiles and explicitly save/restore a deliberately
-limited metadata-only workspace while preserving user-authored profiles. It
-rejects unknown fields and password/private-key material. Profile editing,
-credential references/storage, trust persistence, and full workspace policy
-remain later M8 work. ADR 0015 defines reload semantics.
+limited metadata-only workspace while preserving user-authored profiles. An
+SSH profile may contain only an opaque native stored-password reference; the
+transport resolves it on its worker immediately before password
+authentication. Profile editing, all other credential forms, trust
+persistence, and full workspace policy remain later M8 work. ADR 0015 defines
+reload semantics.
 
 ### `festerm-ui-egui`
 

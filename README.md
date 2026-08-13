@@ -26,12 +26,14 @@ an authentication-required surface with destination metadata pre-filled,
 never an auto-connected session. Runtime tab IDs, terminal output, processes,
 credentials, keys, and host trust are not restored. Settings can explicitly
 save this metadata-only workspace to the selected configuration source; manual
-profile editing remains required. Credential-reference persistence, auto-save,
-and file watching remain M8 work. The GUI-independent
+profile editing remains required. Automatic saving and file watching remain M8 work. The GUI-independent
 `festerm-secret-store` native foundation is now present: it uses macOS
 Keychain, Windows Credential Manager, or Linux Secret Service over session
-D-Bus, with no insecure fallback. A later app slice will persist only opaque
-references in TOML and resolve secrets just in time.
+D-Bus, with no insecure fallback. Existing saved SSH profiles can explicitly
+store and use a password through that service: TOML retains only an opaque
+reference and the SSH worker resolves it immediately before password
+authentication. Private keys, passphrases, agents, key files, and host trust
+are not persisted.
 Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
@@ -69,9 +71,10 @@ than a fake shell.
 
 The current application has in-memory local session tabs, explicitly injected
 secret-free reusable local-profile metadata, and a compact Launcher SSH
-authentication form. Saved SSH metadata is display-only except that a restored
-workspace SSH tab opens the same form with destination metadata pre-filled; it
-does not launch or retain credentials. The transient form validates a host,
+authentication form. Saved SSH profiles can explicitly use a stored native
+password or open their profile-backed password form; a restored workspace SSH
+tab opens the same form with destination metadata pre-filled and never
+auto-connects. The transient form validates a host,
 optional port (default
 22), and username into a secret-free profile, then sends a transient password
 or a parsed in-memory OpenSSH private key to the typed SSH-session command and
@@ -140,7 +143,8 @@ custom-terminfo strategy.
 - First-class local PTY and native in-process SSH session types.
 - Human-readable, versioned TOML configuration loaded at startup and explicitly
   reloadable or workspace-saved from Settings; profiles remain manually edited,
-  with no automatic file watching, writes, or credential storage.
+  with no automatic file watching or writes except an explicit native
+  SSH-password-reference update.
 - Fast interactive behavior, ligature-capable rendering, and privacy-aware
   diagnostics.
 - Local-first operation with optional future metadata synchronization.

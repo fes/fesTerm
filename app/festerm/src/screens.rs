@@ -16,7 +16,7 @@ use festerm_ssh::{
 use festerm_ui_egui::{chrome::ChipLayout, theme};
 
 use crate::configuration_startup::ConfigurationStartupStatus;
-use crate::tabs::{AppCommand, TabId};
+use crate::tabs::{AppCommand, PasswordToStore, TabId};
 
 /// One selectable local launch option in the Launcher list.
 struct LauncherItem<'a> {
@@ -150,6 +150,9 @@ struct SshLauncherForm {
     private_key: String,
     key_passphrase: String,
     reconnect_enabled: bool,
+    saved_profile_id: Option<String>,
+    saved_profile_has_credential: bool,
+    remember_password: bool,
     feedback: Option<String>,
 }
 
@@ -182,6 +185,12 @@ impl SshLauncherForm {
         self.username = profile.username().to_owned();
     }
 
+    fn prefill_saved_profile(&mut self, profile: &SshProfileConfiguration) {
+        self.prefill_from_profile(profile);
+        self.saved_profile_id = Some(profile.identifier().to_owned());
+        self.saved_profile_has_credential = profile.credential_reference().is_some();
+    }
+
     /// Converts the transient form into the application's typed SSH command.
     ///
     /// Taking every secret first ensures each submit attempt removes it from UI
@@ -190,12 +199,6 @@ impl SshLauncherForm {
         let password = std::mem::take(&mut self.password);
         let private_key = std::mem::take(&mut self.private_key);
         let key_passphrase = std::mem::take(&mut self.key_passphrase);
-        let authentication = match self.authentication_method {
-            SshAuthenticationMethod::Password => SshAuthentication::password(password),
-            SshAuthenticationMethod::PrivateKey => {
-                Self::parse_private_key(private_key, key_passphrase)?
-            }
-        };
         let port = if self.port.trim().is_empty() {
             Self::DEFAULT_PORT
         } else {
@@ -215,11 +218,32 @@ impl SshLauncherForm {
         )
         .map_err(|error| error.to_string())?;
 
-        Ok(AppCommand::StartSshSession {
-            profile,
-            authentication,
-            options: self.session_options(),
-        })
+        match self.authentication_method {
+            SshAuthenticationMethod::Password
+                if self.remember_password
+                    && self.saved_profile_id.is_some()
+                    && !password.is_empty() =>
+            {
+                Ok(AppCommand::StoreSshPassword {
+                    profile_id: self
+                        .saved_profile_id
+                        .clone()
+                        .expect("saved profile was checked above"),
+                    password: PasswordToStore::new(password),
+                    options: self.session_options(),
+                })
+            }
+            SshAuthenticationMethod::Password => Ok(AppCommand::StartSshSession {
+                profile,
+                authentication: SshAuthentication::password(password),
+                options: self.session_options(),
+            }),
+            SshAuthenticationMethod::PrivateKey => Ok(AppCommand::StartSshSession {
+                profile,
+                authentication: Self::parse_private_key(private_key, key_passphrase)?,
+                options: self.session_options(),
+            }),
+        }
     }
 
     /// Parses an in-memory key while retaining neither its text nor passphrase.
@@ -319,7 +343,12 @@ fn ssh_multiline_secret_text_edit(
     .inner
 }
 
-fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Option<AppCommand> {
+fn show_ssh_form(
+    ui: &mut Ui,
+    tab_id: TabId,
+    form: &mut SshLauncherForm,
+    native_store_available: bool,
+) -> Option<AppCommand> {
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
@@ -350,8 +379,46 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
     });
     let submit_with_enter = match form.authentication_method {
         SshAuthenticationMethod::Password => {
-            ssh_text_edit(ui, tab_id, "password", "Password", &mut form.password, true).lost_focus()
-                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            let submit =
+                ssh_text_edit(ui, tab_id, "password", "Password", &mut form.password, true)
+                    .lost_focus()
+                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if form.saved_profile_id.is_some() {
+                ui.checkbox(
+                    &mut form.remember_password,
+                    "Remember this password in native secure storage",
+                );
+                ui.label(
+                    "Only this saved SSH profile can use native password storage. \
+                     Private keys, passphrases, agents, key files, and host trust are never stored.",
+                );
+            } else {
+                ui.label(
+                    "Remembering a password requires an existing saved SSH profile; \
+                     this one-off connection remains transient.",
+                );
+            }
+            if form.saved_profile_has_credential {
+                if ui
+                    .add_enabled(
+                        native_store_available,
+                        egui::Button::new("Use stored password"),
+                    )
+                    .clicked()
+                {
+                    return form.saved_profile_id.as_ref().map(|profile_id| {
+                        AppCommand::StartStoredPasswordSshProfile {
+                            profile_id: profile_id.clone(),
+                        }
+                    });
+                }
+                if !native_store_available {
+                    ui.label(
+                        "Native secure storage is unavailable. Unlock or enable it, then try again.",
+                    );
+                }
+            }
+            submit
         }
         SshAuthenticationMethod::PrivateKey => {
             ssh_multiline_secret_text_edit(
@@ -410,16 +477,26 @@ fn show_ssh_form(ui: &mut Ui, tab_id: TabId, form: &mut SshLauncherForm) -> Opti
     None
 }
 
-fn show_saved_ssh_profiles(ui: &mut Ui, profiles: &[Profile]) {
+enum SavedSshProfileAction {
+    OpenPasswordForm(SshProfileConfiguration),
+    UseStoredPassword(String),
+}
+
+fn show_saved_ssh_profiles(
+    ui: &mut Ui,
+    profiles: &[Profile],
+    native_store_available: bool,
+) -> Option<SavedSshProfileAction> {
     let ssh_profiles: Vec<_> = profiles.iter().filter_map(Profile::as_ssh).collect();
     if ssh_profiles.is_empty() {
-        return;
+        return None;
     }
 
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Saved SSH profiles").strong());
+    let mut action = None;
     for profile in ssh_profiles {
         ui.group(|ui| {
             ui.label(
@@ -435,12 +512,33 @@ fn show_saved_ssh_profiles(ui: &mut Ui, profiles: &[Profile]) {
                 profile.initial_size().0,
                 profile.initial_size().1,
             ));
-            ui.label(
-                "This saved profile does not launch yet. Use the transient SSH \
-                 authentication form below; secure credential storage is planned for M8.",
-            );
+            if profile.credential_reference().is_some()
+                && ui
+                    .add_enabled(
+                        native_store_available,
+                        egui::Button::new(format!(
+                            "Use stored password for {}",
+                            profile.identifier()
+                        )),
+                    )
+                    .clicked()
+            {
+                action = Some(SavedSshProfileAction::UseStoredPassword(
+                    profile.identifier().to_owned(),
+                ));
+            }
+            if ui
+                .button(format!(
+                    "Enter or replace password for {}",
+                    profile.identifier()
+                ))
+                .clicked()
+            {
+                action = Some(SavedSshProfileAction::OpenPasswordForm(profile.clone()));
+            }
         });
     }
+    action
 }
 
 /// Renders the session launcher content and returns any dispatched command.
@@ -457,7 +555,13 @@ fn show_saved_ssh_profiles(ui: &mut Ui, profiles: &[Profile]) {
 /// (persisted against the singleton Launcher's `tab_id`) and Enter launches the
 /// highlighted item without requiring the mouse. The id prevents this
 /// temporary state from colliding with other application-surface widgets.
-pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option<AppCommand> {
+pub fn show_launcher(
+    ui: &mut Ui,
+    tab_id: TabId,
+    profiles: &[Profile],
+    native_store_available: bool,
+    secure_storage_status: Option<&str>,
+) -> Option<AppCommand> {
     let mut items = vec![LauncherItem {
         label: "Local Shell".to_owned(),
         description: "Default shell on this computer".to_owned(),
@@ -487,7 +591,7 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
             if ui.button("Back").clicked() {
                 state.ssh_open = false;
             } else {
-                command = show_ssh_form(ui, tab_id, &mut state.ssh);
+                command = show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available);
             }
         });
         ui.data_mut(|data| data.insert_temp(state_id, state));
@@ -504,6 +608,7 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
     let launch_via_keyboard = !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
     let mut command = None;
+    let mut saved_ssh_action = None;
     ui.vertical(|ui| {
         ui.add_space(24.0);
         ui.horizontal(|ui| {
@@ -551,10 +656,15 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
                     state.ssh_open = true;
                 }
                 if command.is_none() && !state.ssh_open {
-                    show_saved_ssh_profiles(ui, profiles);
+                    saved_ssh_action =
+                        show_saved_ssh_profiles(ui, profiles, native_store_available);
                 }
             });
         });
+        if let Some(status) = secure_storage_status {
+            ui.add_space(8.0);
+            ui.colored_label(egui::Color32::from_rgb(220, 150, 80), status);
+        }
     });
 
     if command.is_none() && launch_via_keyboard {
@@ -562,6 +672,18 @@ pub fn show_launcher(ui: &mut Ui, tab_id: TabId, profiles: &[Profile]) -> Option
             state.ssh_open = true;
         } else {
             command = Some(items[state.selected].command());
+        }
+    }
+    if let Some(action) = saved_ssh_action {
+        match action {
+            SavedSshProfileAction::OpenPasswordForm(profile) => {
+                state.ssh = SshLauncherForm::default();
+                state.ssh.prefill_saved_profile(&profile);
+                state.ssh_open = true;
+            }
+            SavedSshProfileAction::UseStoredPassword(profile_id) => {
+                command = Some(AppCommand::StartStoredPasswordSshProfile { profile_id });
+            }
         }
     }
 
@@ -578,11 +700,12 @@ pub fn show_ssh_authentication_required(
     ui: &mut Ui,
     tab_id: TabId,
     profile: &SshProfileConfiguration,
+    native_store_available: bool,
 ) -> Option<AppCommand> {
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
     if !state.ssh_profile_prefilled {
-        state.ssh.prefill_from_profile(profile);
+        state.ssh.prefill_saved_profile(profile);
         state.ssh_profile_prefilled = true;
     }
 
@@ -600,7 +723,7 @@ pub fn show_ssh_authentication_required(
                 "This workspace restored destination metadata only. Enter fresh authentication \
                  below to connect; no prior connection, credential, or host trust was restored.",
             );
-            show_ssh_form(ui, tab_id, &mut state.ssh)
+            show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available)
         })
         .inner;
 
@@ -620,6 +743,7 @@ pub fn show_settings(
     chip_layout: ChipLayout,
     status_bar_visible: bool,
     configuration_status: ConfigurationStartupStatus,
+    secure_storage_status: Option<&str>,
 ) -> Option<AppCommand> {
     let mut command = None;
     ui.vertical(|ui| {
@@ -637,6 +761,11 @@ pub fn show_settings(
         }
         if ui.button("Save workspace").clicked() {
             command = Some(AppCommand::SaveWorkspace);
+        }
+        if let Some(status) = secure_storage_status {
+            ui.add_space(8.0);
+            ui.label("Native secure storage");
+            ui.colored_label(egui::Color32::from_rgb(220, 150, 80), status);
         }
         ui.add_space(12.0);
         ui.separator();
@@ -683,7 +812,9 @@ mod tests {
             .with_size(egui::vec2(520.0, 560.0))
             .build_ui_state(
                 |ui, state: &mut LauncherHarnessState| {
-                    if let Some(command) = show_launcher(ui, state.tab_id, &state.profiles) {
+                    if let Some(command) =
+                        show_launcher(ui, state.tab_id, &state.profiles, true, None)
+                    {
                         state.command = Some(command);
                     }
                 },
@@ -711,6 +842,7 @@ mod tests {
                         ChipLayout::Wrap,
                         true,
                         ConfigurationStartupStatus::Loaded,
+                        None,
                     ) {
                         state.command = Some(command);
                     }
@@ -744,6 +876,7 @@ mod tests {
                         ChipLayout::Wrap,
                         true,
                         ConfigurationStartupStatus::Loaded,
+                        None,
                     ) {
                         state.command = Some(command);
                     }
@@ -908,7 +1041,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_ssh_profile_is_visible_but_not_a_launch_action() {
+    fn saved_ssh_profile_can_open_the_password_form_without_a_stored_credential() {
         let profiles = vec![Profile::ssh(
             "production",
             "ssh.example.test",
@@ -926,13 +1059,78 @@ mod tests {
             .query_by_label("Saved SSH profile: production")
             .is_some());
         assert!(harness
-            .query_by_label(
-                "This saved profile does not launch yet. Use the transient SSH \
-                 authentication form below; secure credential storage is planned for M8."
-            )
+            .query_by_label("Enter or replace password for production")
             .is_some());
-        assert!(harness.query_by_label("production (SSH profile)").is_none());
+        assert!(harness
+            .query_by_label("Use stored password for production")
+            .is_none());
         assert!(harness.state().command.is_none());
+    }
+
+    #[test]
+    fn saved_ssh_password_form_returns_a_redacted_store_command() {
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test profile is valid");
+        let mut harness = harness_with_profiles(vec![profile]);
+        harness.run();
+        harness
+            .get_by_label("Enter or replace password for production")
+            .click();
+        harness.step();
+        harness.run();
+        enter_text(&mut harness, "Password", "stored-test-password");
+        harness
+            .get_by_label("Remember this password in native secure storage")
+            .click();
+        harness.get_by_label("Connect with password").click();
+        harness.run();
+
+        let Some(AppCommand::StoreSshPassword {
+            profile_id,
+            password,
+            ..
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("saved form must create a typed storage command");
+        };
+        assert_eq!(profile_id, "production");
+        assert!(!format!("{password:?}").contains("stored-test-password"));
+    }
+
+    #[test]
+    fn saved_ssh_profile_exposes_stored_password_action_only_with_a_reference() {
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test profile is valid")
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .expect("SSH profile accepts an opaque reference");
+        let mut harness = harness_with_profiles(vec![profile]);
+        harness.run();
+        harness
+            .get_by_label("Use stored password for production")
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::StartStoredPasswordSshProfile { ref profile_id })
+                if profile_id == "production"
+        ));
     }
 
     #[test]
@@ -963,7 +1161,9 @@ mod tests {
                 |ui, state: &mut RestoredSshHarnessState| {
                     let tab_id = state.tab_id.expect("test tab id is set");
                     let profile = state.profile.as_ref().expect("test profile is set");
-                    if let Some(command) = show_ssh_authentication_required(ui, tab_id, profile) {
+                    if let Some(command) =
+                        show_ssh_authentication_required(ui, tab_id, profile, true)
+                    {
                         state.command = Some(command);
                     }
                 },

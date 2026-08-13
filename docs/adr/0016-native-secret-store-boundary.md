@@ -23,8 +23,10 @@ user-visible label are fixed, non-sensitive constants. It deliberately has no
 file, keyutils, plaintext, or in-memory production fallback. The deterministic
 memory implementation is injection-only for tests and future app composition.
 
-A later application/configuration slice will persist only validated opaque
-references in TOML and resolve secret bytes immediately before an operation.
+The M8 password-credential slice persists only validated opaque SSH-password
+references in TOML. `festerm-ssh` resolves the secret on its background worker
+immediately before password authentication. It does not add persistence for
+private keys, passphrases, agents, key files, or host trust.
 
 ## Consequences
 
@@ -32,5 +34,5 @@ references in TOML and resolve secret bytes immediately before an operation.
   of silently weakening confidentiality.
 - A logged-in desktop Secret Service provider and session D-Bus are required
   on Linux; KWallet is usable only through its Secret Service integration.
-- Existing TOML remains secret-free until the later reference-persistence
-  slice is implemented.
+- TOML remains secret-free: it can contain only an opaque reference for a
+  native stored SSH password.

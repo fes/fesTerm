@@ -1645,6 +1645,7 @@ dependencies = [
  "festerm-core",
  "festerm-macos-window",
  "festerm-pty",
+ "festerm-secret-store",
  "festerm-session",
  "festerm-ssh",
  "festerm-ui-egui",
@@ -1723,9 +1724,11 @@ version = "0.1.0"
 name = "festerm-ssh"
 version = "0.1.0"
 dependencies = [
+ "festerm-secret-store",
  "festerm-session",
  "russh",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
