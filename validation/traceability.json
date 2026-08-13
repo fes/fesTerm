@@ -96,7 +96,7 @@
       "requirements": ["docs/gui-design.md#independent-session-chips"],
       "decisions": ["ADR-0014"],
       "automated_tests": ["chip_context_menu_targets_inactive_chip_without_activating_it", "dragging_one_chip_onto_another_emits_a_reorder_action", "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape"],
-      "manual_scenarios": ["AS-03"],
+      "manual_scenarios": ["AS-03", "AS-09"],
       "status": "partial",
       "prerequisites": []
     },
@@ -236,7 +236,7 @@
       "requirements": ["docs/gui-design.md#contextual-status-region", "docs/gui-design.md#bottom-status-bar"],
       "decisions": [],
       "automated_tests": ["status_bar_renders_left_and_right_text", "status_bar_omits_status_label_and_dot_when_neutral"],
-      "manual_scenarios": ["NP-05"],
+      "manual_scenarios": ["NP-05", "AS-09"],
       "status": "partial",
       "prerequisites": []
     },
@@ -256,7 +256,7 @@
       "requirements": ["docs/gui-design.md#settings"],
       "decisions": ["ADR-0015"],
       "automated_tests": ["toggle_chip_layout_flips_between_wrap_and_single_row_scroll", "toggle_status_bar_flips_visibility_and_defaults_to_shown"],
-      "manual_scenarios": ["AS-02", "CP-01"],
+      "manual_scenarios": ["AS-02", "AS-09", "CP-01"],
       "status": "partial",
       "prerequisites": []
     },
@@ -396,7 +396,7 @@
       "requirements": ["docs/gui-design.md#visual-language"],
       "decisions": ["ADR-0007"],
       "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window", "semantic_inventory_has_one_variant_per_canonical_source"],
-      "manual_scenarios": ["NP-05"],
+      "manual_scenarios": ["NP-05", "AS-09"],
       "status": "partial",
       "prerequisites": ["native cross-platform visual evidence"]
     },

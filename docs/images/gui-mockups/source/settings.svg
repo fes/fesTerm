@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="752" height="516" viewBox="0 0 752 516">
+  <rect width="752" height="516" fill="#0e1319"/>
+  <rect width="752" height="42" fill="#11161e"/>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <g transform="translate(8 8)">
+      <rect width="168" height="34" rx="6" fill="#29333e" stroke="#91a7b8" stroke-width="1.5"/>
+      <g transform="translate(10 8)" fill="none" stroke="#e8edf2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M0 3h12M0 8h12M0 13h12"/><circle cx="4" cy="3" r="2" fill="#29333e"/><circle cx="9" cy="8" r="2" fill="#29333e"/><circle cx="3" cy="13" r="2" fill="#29333e"/>
+      </g>
+      <text x="34" y="15" fill="#e8edf2" font-size="12" font-weight="500">Settings</text>
+      <text x="34" y="28" fill="#a7b2bd" font-size="9">Application</text>
+      <path d="M153 14l6 6m0-6l-6 6" stroke="#a7b2bd" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(182 8)">
+      <rect width="166" height="34" rx="6" fill="#1a222c" stroke="#35414e"/>
+      <rect x="9" y="9" width="17" height="15" rx="3" fill="none" stroke="#a7b2bd" stroke-width="1.5"/>
+      <path d="M12 13l4 3-4 3m6 0h5" fill="none" stroke="#a7b2bd" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="25" cy="8" r="3.5" fill="#4fc17d" stroke="#11161e" stroke-width="1.5"/>
+      <text x="34" y="15" fill="#e8edf2" font-size="12" font-weight="500">dev-shell</text>
+      <text x="34" y="28" fill="#a7b2bd" font-size="9">zsh</text>
+    </g>
+    <g transform="translate(356 8)">
+      <rect width="34" height="34" rx="6" fill="#1a222c" stroke="#35414e"/>
+      <rect x="10" y="9" width="14" height="16" rx="2" fill="none" stroke="#a7b2bd" stroke-width="1.6"/>
+      <path d="M17 12v10m-5-5h10" stroke="#a7b2bd" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+    <g fill="none" stroke="#a7b2bd" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="606" cy="24" r="6"/><path d="M610 28l5 5"/>
+      <rect x="632" y="17" width="14" height="14" rx="1"/><path d="M639 17v14"/>
+      <circle cx="673" cy="24" r="1.5" fill="#a7b2bd"/><circle cx="680" cy="24" r="1.5" fill="#a7b2bd"/><circle cx="687" cy="24" r="1.5" fill="#a7b2bd"/>
+      <path d="M704 24h10M727 17h10v14h-10zM744 19l6 10m0-10l-6 10"/>
+    </g>
+
+    <text x="34" y="84" fill="#e8edf2" font-size="20" font-weight="500">Settings</text>
+    <text x="34" y="116" fill="#91a7b8" font-size="10" font-weight="500" letter-spacing=".4">INTERFACE</text>
+
+    <rect x="34" y="128" width="500" height="184" rx="6" fill="#1a222c" stroke="#35414e"/>
+    <path d="M34 196h500M34 254h500" stroke="#35414e"/>
+
+    <text x="52" y="151" fill="#e8edf2" font-size="12" font-weight="500">Session chip layout</text>
+    <text x="52" y="169" fill="#a7b2bd" font-size="10">Keep terminal height stable with one scrolling row.</text>
+    <rect x="340" y="140" width="102" height="32" rx="6" fill="#28516b" stroke="#42bfd0"/>
+    <text x="391" y="160" fill="#e8edf2" font-size="11" font-weight="500" text-anchor="middle">Single row</text>
+    <rect x="448" y="140" width="68" height="32" rx="6" fill="#1a222c" stroke="#35414e"/>
+    <text x="482" y="160" fill="#e8edf2" font-size="11" font-weight="500" text-anchor="middle">Wrap</text>
+
+    <text x="52" y="218" fill="#e8edf2" font-size="12" font-weight="500">Show session details in chips</text>
+    <text x="52" y="237" fill="#a7b2bd" font-size="10">Show the terminal title or launch context beneath the session name.</text>
+    <g transform="translate(478 209)"><rect width="38" height="22" rx="11" fill="#28516b" stroke="#42bfd0"/><circle cx="27" cy="11" r="7" fill="#e8edf2"/></g>
+
+    <text x="52" y="276" fill="#e8edf2" font-size="12" font-weight="500">Show status bar</text>
+    <text x="52" y="295" fill="#a7b2bd" font-size="10">Display sourced session state, terminal dimensions, and compact-mode detail.</text>
+    <g transform="translate(478 267)"><rect width="38" height="22" rx="11" fill="#28516b" stroke="#42bfd0"/><circle cx="27" cy="11" r="7" fill="#e8edf2"/></g>
+
+    <text x="34" y="342" fill="#91a7b8" font-size="10" font-weight="500" letter-spacing=".4">CONFIGURATION</text>
+    <rect x="34" y="354" width="500" height="94" rx="6" fill="#1a222c" stroke="#35414e"/>
+    <text x="52" y="379" fill="#e8edf2" font-size="12" font-weight="500">Valid configuration active</text>
+    <text x="52" y="398" fill="#a7b2bd" font-size="10">Changes affect future sessions.</text>
+    <rect x="348" y="365" width="168" height="30" rx="6" fill="#1a222c" stroke="#35414e"/>
+    <text x="432" y="384" fill="#e8edf2" font-size="11" font-weight="500" text-anchor="middle">Reload configuration</text>
+    <rect x="348" y="403" width="168" height="30" rx="6" fill="#1a222c" stroke="#35414e"/>
+    <text x="432" y="422" fill="#e8edf2" font-size="11" font-weight="500" text-anchor="middle">Save workspace</text>
+  </g>
+
+  <path d="M0 492h752" stroke="#35414e"/>
+</svg>

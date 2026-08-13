@@ -21,6 +21,11 @@ uses the `360 × 516` minimum-width case. Their stable filenames are intended
 for automated or agent-assisted comparisons against native Windows, macOS, and
 Linux captures.
 
+Editable SVG sources for mockups introduced or revised after this review live
+under `images/gui-mockups/source/`; the adjacent PNG remains the comparison
+artifact. Rasterization must preserve the baseline logical viewport and may
+not silently change prose-owned behavior.
+
 ## Product Posture
 
 fesTerm should feel like a restrained, native-feeling terminal workstation:
@@ -221,6 +226,8 @@ become user-bindable when shortcut customization exists.
 ## Primary Layout
 
 ![Active terminal and integrated chrome target](images/gui-mockups/terminal-active.png)
+
+![Optional compact single-line session chrome target](images/gui-mockups/compact-session-chrome.png)
 
 The default window has three conceptual zones:
 
@@ -504,7 +511,11 @@ strictly factual and nonduplicative:
 | 80×25   Local · Linux                                      ● Running |
 | 80×25   Remote · Linux                                   ● Connected |
 | 80×25   Serial · COM3                                         ● Open |
+| 80×25   Local · macOS   cargo test — fesTerm                ● Running |
 ```
+
+The fourth row is the compact-chip variant; the first three show the default
+two-line-chip mode.
 
 - The left side shows actual measured terminal grid dimensions and locality.
 - The platform is concrete when reliably known: `Windows`, `Linux`, or
@@ -515,7 +526,10 @@ strictly factual and nonduplicative:
   `Connected`, and serial sessions use `Open`; each term describes the fact
   the owning transport can establish without implying a responsive peer.
 - Stable session identity and terminal title remain in the active chip and are
-  not repeated in the bar.
+  not repeated in the bar while session details are shown in chips. When the
+  **Show session details in chips** preference is off, the active session's
+  same sanitized secondary display value moves into the status bar instead;
+  this is the only intentional identity/title exception.
 - Client clock/date, shell version, encoding, line-ending convention, command
   timing, and last-input/output timestamps are absent.
 
@@ -527,6 +541,21 @@ but leave its content empty. The stable footprint prevents vertical layout
 jumps when switching surface types; it does not justify invented `Ready`, app
 identity, time, or dimensions. The subtle top rule may remain. Disabling the
 status-bar preference removes the footer consistently on every surface.
+
+The relocated compact-mode detail sits after dimensions/locality and before
+the right-aligned state. It uses `text.muted`, never scrolls or animates, and
+ellipsizes before dimensions, session type, or lifecycle state are removed.
+Its complete sanitized value remains available to accessibility and hover
+presentation. It follows the same source precedence as chip secondary text:
+terminal-provided title first, then factual launch metadata. It is never named
+or inferred as the “current command,” “last command,” or “last response.” Only
+the active session contributes this value; Launcher and Settings continue to
+have empty footer content.
+
+If both session details and the status bar are disabled, fesTerm does not force
+either surface back on. The secondary value remains available through command
+palette session results, chip hover/accessibility, and Session Inspector. This
+is deliberate user-selected density, not loss of stable session identity.
 
 The terminal viewport itself (`crates/festerm-ui-egui/src/view.rs`) no longer draws its own inline "fesTerm / Diagnostics" header or expandable per-frame diagnostics footer — that duplicated chrome the application already owns and only its grid-dimensions field was in regular use, which now lives in the status bar instead. `TerminalView::show` fills all available space with just the terminal grid; `TerminalView::diagnostics()` remains available for tests and future tooling that need the raw per-frame `FrameDiagnostics`.
 
@@ -983,14 +1012,22 @@ navigation appears only once several real categories exist, and categories,
 controls, and one-option selectors with no implemented choice remain absent.
 
 The truthful initial preference surface contains one compact **Interface**
-section with two controls:
+section with three controls. Related controls are grouped as quiet rows inside
+one section surface, with subtle dividers; separate oversized cards would make
+this small settings surface feel heavier than the terminal chrome it controls.
 
 - **Session chip layout** is an exposed two-choice control: **Single scrolling
   row** (the default, with the explanation that it keeps terminal height
   stable) or **Wrap to multiple rows** (which exposes more sessions but may
   reduce terminal rows).
+- **Show session details in chips** is an on/off switch, on by default. It shows
+  the sanitized terminal title or factual launch context under stable session
+  identity. Turning it off makes every session, Launcher, and Settings chip a
+  compact single-line chip. When the status bar is visible, only the active
+  session's secondary value is shown there under the status-bar rules above.
 - **Show status bar** is an on/off switch, on by default, described factually as
-  displaying sourced session state and terminal dimensions.
+  displaying sourced session state, terminal dimensions, and the active
+  session detail when compact chips require that relocation.
 
 The two layout choices remain visible rather than hiding a binary decision in a
 selector. Reversible settings apply immediately and require no Apply or Save
@@ -1020,6 +1057,13 @@ disruptive changes require a clear consequence before application. Profile,
 credential, and trust-record edits use their own staged and security-aware
 flows. Closing Settings returns focus to the previously active session and
 never restarts sessions; Settings never lives in the session inspector.
+
+The detail and status-bar switches are independent. Changing detail visibility
+does not rewrite a session name, terminal title, profile, or workspace, and it
+does not change the chip width range. A live change produces one coherent
+terminal resize after the chrome height settles; it must not resize once per
+chip or over multiple intermediate frames. Wrapped rows use the selected chip
+height consistently across every row.
 
 ### Configuration recovery
 
@@ -1344,6 +1388,16 @@ monospace font; actual grid dimensions remain renderer-measured and must not
 be forced to those estimates. Chip wrapping and single-row scrolling may
 change the chrome's occupied height when explicitly selected, but neither may
 cover or fragment the terminal viewport.
+
+When **Show session details in chips** is off, the corresponding compact
+geometry is `36` px upper chrome (`8` top inset plus one `28` px chip row),
+`132..220 × 28` session/application chips, and a `28 × 28` New Session
+control. Chip widths deliberately stay in the default range so toggling detail
+does not cause a second horizontal reflow. The 16 px type icon/state badge and
+active close control remain, and every interactive target retains at least the
+icon system's 24 px target. Trailing controls remain vertically centered in the
+occupied band. On macOS the 76 px traffic-light reserve remains unchanged and
+must be reviewed optically against both heights.
 
 ### Semantic color roles
 
@@ -2018,7 +2072,8 @@ command.
 
 When horizontal space is constrained, remove or collapse information in this order:
 
-1. Secondary terminal-provided title.
+1. Secondary terminal-provided title in the chip; when compact detail has been
+   relocated to the status bar, that relocated value ellipsizes first.
 2. Chip width toward its minimum, then stable-identity ellipsis.
 3. Less-used global actions into overflow, starting with terminal Search and
    Session Inspector.
@@ -2183,7 +2238,13 @@ requires a different sequence:
    bundles JetBrains Mono NL 2.304 with four real faces and an independent
    fallback chain. Bundle Inter through the owned application-font layer next,
    retaining fallback contracts.
-6. Schedule the serial backend as a focused capability track with platform
+6. Implement **Show session details in chips** as the presentation-only live
+   preference defined above: grouped Settings row, `34→28` chip geometry,
+   `42→36` single-row chrome geometry, active-only status-bar relocation, and
+   one coalesced terminal resize. Cover `CHIP-11`, `STATUS-03`, `SET-02`, and
+   manual scenario `AS-09`; do not turn it into a general density or theming
+   system.
+7. Schedule the serial backend as a focused capability track with platform
    discovery, permissions, exclusive ownership, and deterministic loopback
    evidence; its GUI contract is already defined here.
 
