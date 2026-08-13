@@ -169,8 +169,19 @@ storage/trust data.
 Do not place passwords, passphrases, private keys, tokens, key-file paths, or
 credential values in this TOML. The parser rejects known secret-bearing field
 names, private-key material, and recognizable credential options throughout
-profiles and workspaces; unknown fields are also errors. Secure-storage
-references are not implemented yet.
+profiles and workspaces; unknown fields are also errors.
+
+`festerm-secret-store` now supplies the GUI-independent native storage
+foundation, but this schema does not yet persist its opaque references. A later
+application slice will add validated opaque reference fields and resolve them
+only immediately before the operation needing the secret. It must never
+serialize secret values.
+
+Native storage uses macOS Keychain, Windows Credential Manager, or a Linux
+Secret Service provider available through the logged-in session D-Bus. KWallet
+is supported only when its Secret Service integration is active. Locked or
+unavailable storage must produce an actionable error; fesTerm does not fall
+back to a file, keyutils, plaintext, or in-memory storage.
 
 `ConfigurationState::reload` parses and validates a complete replacement
 before changing active state. A rejected candidate leaves the previous valid

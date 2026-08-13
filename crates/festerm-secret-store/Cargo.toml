@@ -1,0 +1,29 @@
+[package]
+name = "festerm-secret-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "GUI-independent native secret-storage boundary for fesTerm."
+
+[dependencies]
+keyring-core = "1.0"
+uuid = { version = "1", features = ["v4"] }
+zeroize = "1"
+
+[dev-dependencies]
+serde = "1"
+static_assertions = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", default-features = false, features = ["keychain"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = "1.1"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+zbus-secret-service-keyring-store = { version = "1.0", default-features = false, features = ["crypto-rust"] }
+
+[lints]
+workspace = true

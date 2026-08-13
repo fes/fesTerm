@@ -10,8 +10,9 @@ Milestones 0 through 5 are implemented with native-window validation pending;
 M6 is the open compatibility acceptance gate. The application now has
 in-memory local-session tabs, Launcher and Settings surfaces, command palette,
 custom title-bar chrome, and a configurable status bar. The terminal core, UI,
-session lifecycle, PTY backend, implemented native SSH transport, and
-configuration foundation are separate crates.
+session lifecycle, PTY backend, implemented native SSH transport,
+configuration foundation, and GUI-independent native secret-store foundation
+are separate crates.
 
 At startup, the app loads `config.toml` from the native per-user project
 configuration location (`com.fes.fesTerm`) or the explicit
@@ -33,7 +34,13 @@ watched, edited, auto-saved, or written automatically. Settings can explicitly
 manually authored profiles. It saves only ordered Launcher/Settings surfaces,
 restored SSH authentication-required profile surfaces, and configured-local
 profile tabs; default, ad-hoc, and live SSH sessions are omitted. There is no
-credential storage.
+credential-reference persistence in the application yet. The
+`festerm-secret-store` foundation uses macOS Keychain, Windows Credential
+Manager, and Linux Secret Service over the logged-in session D-Bus (including
+KWallet only through Secret Service integration). A locked or unavailable
+native store remains an actionable condition with no insecure fallback. A later
+application slice must persist only opaque references in TOML and resolve them
+just in time.
 
 Not implemented: configuration profile editing and trust storage,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file

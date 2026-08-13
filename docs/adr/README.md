@@ -19,6 +19,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0013: `russh` for Native SSH Transport](0013-russh-native-ssh-transport.md)
 - [ADR 0014: Window, Workspace, Tab, and Session Ownership](0014-window-workspace-tab-session-ownership.md)
 - [ADR 0015: Explicit Transactional Configuration Reload](0015-explicit-transactional-configuration-reload.md)
+- [ADR 0016: Native Secret Store Boundary](0016-native-secret-store-boundary.md)
 
 ## Status Values
 

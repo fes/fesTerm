@@ -346,6 +346,12 @@ restore the supported metadata-only workspace subset while preserving profiles.
 Profile editing, credential references/storage, trust persistence, and the
 complete restoration experience remain incomplete.
 
+The GUI-independent `festerm-secret-store` foundation is implemented with
+opaque UUID-v4 references and native macOS Keychain, Windows Credential
+Manager, and Linux Secret Service backends. It has no insecure fallback.
+Persisting those references in TOML and resolving them just in time remains a
+later M8 application/configuration slice.
+
 ### Outcome
 
 fesTerm operates as a practical multi-session terminal application.

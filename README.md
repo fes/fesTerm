@@ -26,15 +26,20 @@ an authentication-required surface with destination metadata pre-filled,
 never an auto-connected session. Runtime tab IDs, terminal output, processes,
 credentials, keys, and host trust are not restored. Settings can explicitly
 save this metadata-only workspace to the selected configuration source; manual
-profile editing remains required. Credential storage, auto-save, and file
-watching remain M8 work.
+profile editing remains required. Credential-reference persistence, auto-save,
+and file watching remain M8 work. The GUI-independent
+`festerm-secret-store` native foundation is now present: it uses macOS
+Keychain, Windows Credential Manager, or Linux Secret Service over session
+D-Bus, with no insecure fallback. A later app slice will persist only opaque
+references in TOML and resolve secrets just in time.
 Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
 encrypted in-memory OpenSSH private keys; encrypted-key passphrases are
 transient parse inputs and are never persisted. Agents and key-file references
-remain incomplete; saved SSH profiles await credential storage. The fixture
+remain incomplete; saved SSH profiles await opaque-reference persistence. The
+fixture
 includes an ECDSA P-256-only server-host-key case whose SHA-256 trust prompt
 is checked before a shell exchange. The
 GUI-independent terminal core has
