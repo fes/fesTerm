@@ -5,9 +5,8 @@ in-memory transactional reload state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
 to the Launcher. Settings can explicitly save a fresh workspace snapshot while
-preserving the manually authored profiles. File watching, profile editing,
-credential-store references, and saved SSH autoconnect are intentionally not
-part of this slice.
+preserving the manually authored profiles. File watching, profile editing, and
+saved SSH autoconnect are intentionally not part of this slice.
 
 ## Startup discovery
 
@@ -61,6 +60,7 @@ username = "alice"
 terminal_type = "xterm-256color"
 initial_columns = 132
 initial_rows = 43
+credential_id = "550e8400-e29b-41d4-a716-446655440000"
 
 [workspace]
 focused_tab_id = "build-tab"
@@ -171,11 +171,13 @@ credential values in this TOML. The parser rejects known secret-bearing field
 names, private-key material, and recognizable credential options throughout
 profiles and workspaces; unknown fields are also errors.
 
-`festerm-secret-store` now supplies the GUI-independent native storage
-foundation, but this schema does not yet persist its opaque references. A later
-application slice will add validated opaque reference fields and resolve them
-only immediately before the operation needing the secret. It must never
-serialize secret values.
+An SSH profile may instead include one optional `credential_id`. It must be a
+canonical lowercase UUID-v4 opaque reference produced by
+`festerm-secret-store`; it identifies a native-store record but contains no
+credential value. The parser rejects malformed, noncanonical, or non-v4
+references. No other credential field or metadata is allowed in profiles or
+workspaces. The application resolves an opaque reference only immediately
+before the operation needing the secret; it must never serialize secret values.
 
 Native storage uses macOS Keychain, Windows Credential Manager, or a Linux
 Secret Service provider available through the logged-in session D-Bus. KWallet

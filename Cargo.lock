@@ -1659,6 +1659,7 @@ name = "festerm-config"
 version = "0.1.0"
 dependencies = [
  "festerm-pty",
+ "festerm-secret-store",
  "festerm-session",
  "festerm-ssh",
  "serde",

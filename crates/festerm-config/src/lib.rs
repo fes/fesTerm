@@ -12,10 +12,14 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use festerm_pty::LocalProfile;
+use festerm_secret_store::SecretReference;
 use festerm_session::TerminalSize;
 use festerm_ssh::{HostIdentity, SshConnectionProfile};
 use serde::{Deserialize, Serialize};
@@ -33,7 +37,8 @@ static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
 /// A validated configuration document.
 ///
 /// Profiles are reusable launch definitions. They intentionally do not encode
-/// workspace state, authentication material, or secret-store references.
+/// workspace state or authentication material. SSH profiles may retain an
+/// opaque native-secret-store reference, never a secret value.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Configuration {
     schema_version: u32,
@@ -503,6 +508,50 @@ fn validate_session_profile(
     }
 }
 
+/// A serializable configuration boundary around an opaque secret-store ID.
+///
+/// This type deliberately redacts debug output and exposes the inner value
+/// only to the narrow SSH composition API.
+#[derive(Clone, Eq, PartialEq)]
+struct CredentialReference(Arc<SecretReference>);
+
+impl CredentialReference {
+    fn new(reference: SecretReference) -> Self {
+        Self(Arc::new(reference))
+    }
+
+    fn as_secret_reference(&self) -> &SecretReference {
+        self.0.as_ref()
+    }
+}
+
+impl fmt::Debug for CredentialReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CredentialReference(REDACTED)")
+    }
+}
+
+impl Serialize for CredentialReference {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0.to_persisted_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for CredentialReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        SecretReference::parse(&value)
+            .map(Self::new)
+            .map_err(|_| serde::de::Error::custom("invalid opaque credential reference"))
+    }
+}
+
 /// A reusable local-shell or SSH profile.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -547,9 +596,28 @@ impl Profile {
             terminal_type: terminal_type.into(),
             initial_columns,
             initial_rows,
+            credential_id: None,
         });
         profile.validate()?;
         Ok(profile)
+    }
+
+    /// Associates an SSH profile with an opaque native-secret-store reference.
+    ///
+    /// This accepts only the validated reference type, so callers cannot put a
+    /// raw identifier or a secret value into profile metadata.
+    pub fn with_credential_reference(
+        mut self,
+        credential_reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let Self::Ssh(profile) = &mut self else {
+            return Err(ConfigError::new(
+                ConfigErrorKind::CredentialReferenceRequiresSshProfile,
+            ));
+        };
+        profile.credential_id = Some(CredentialReference::new(credential_reference));
+        self.validate()?;
+        Ok(self)
     }
 
     /// Returns this profile's stable reusable identifier.
@@ -574,6 +642,12 @@ impl Profile {
             Self::Local(_) => None,
             Self::Ssh(profile) => Some(profile),
         }
+    }
+
+    /// Returns this SSH profile's opaque native-secret-store reference, if set.
+    pub fn credential_reference(&self) -> Option<&SecretReference> {
+        self.as_ssh()
+            .and_then(SshProfileConfiguration::credential_reference)
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -670,6 +744,8 @@ pub struct SshProfileConfiguration {
     initial_columns: u16,
     #[serde(default = "default_rows")]
     initial_rows: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_id: Option<CredentialReference>,
 }
 
 impl SshProfileConfiguration {
@@ -701,6 +777,17 @@ impl SshProfileConfiguration {
     /// Returns the initial terminal cell dimensions.
     pub const fn initial_size(&self) -> (u16, u16) {
         (self.initial_columns, self.initial_rows)
+    }
+
+    /// Returns the opaque native-secret-store reference, if this profile has one.
+    ///
+    /// The reference identifies a native-store record but does not contain
+    /// authentication material. It is exposed only for composition immediately
+    /// before an operation that needs the secret.
+    pub fn credential_reference(&self) -> Option<&SecretReference> {
+        self.credential_id
+            .as_ref()
+            .map(CredentialReference::as_secret_reference)
     }
 
     /// Converts safe metadata into the SSH backend's connection profile.
@@ -765,31 +852,83 @@ fn contains_control_character(value: &str) -> bool {
 
 fn reject_secret_material(document: &str) -> Result<(), ConfigError> {
     let value: toml::Value = toml::from_str(document).map_err(parse_error)?;
-    inspect_value_for_secret_material(&value)
+    inspect_document_for_secret_material(&value)
 }
 
-fn inspect_value_for_secret_material(value: &toml::Value) -> Result<(), ConfigError> {
+fn inspect_document_for_secret_material(value: &toml::Value) -> Result<(), ConfigError> {
+    let toml::Value::Table(document) = value else {
+        return inspect_value_for_secret_material(value, false);
+    };
+
+    for (key, value) in document {
+        if is_secret_bearing_key(key) {
+            return Err(ConfigError::new(ConfigErrorKind::ForbiddenSecretField));
+        }
+        if key == "profiles" {
+            let toml::Value::Array(profiles) = value else {
+                inspect_value_for_secret_material(value, false)?;
+                continue;
+            };
+            for profile in profiles {
+                inspect_profile_for_secret_material(profile)?;
+            }
+        } else {
+            inspect_value_for_secret_material(value, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn inspect_profile_for_secret_material(value: &toml::Value) -> Result<(), ConfigError> {
+    let toml::Value::Table(profile) = value else {
+        return inspect_value_for_secret_material(value, false);
+    };
+    let is_ssh = matches!(profile.get("kind"), Some(toml::Value::String(kind)) if kind == "ssh");
+    inspect_table_for_secret_material(profile, is_ssh)
+}
+
+fn inspect_value_for_secret_material(
+    value: &toml::Value,
+    allow_credential_id: bool,
+) -> Result<(), ConfigError> {
     match value {
         toml::Value::String(value) if contains_secret_bearing_value(value) => {
             Err(ConfigError::new(ConfigErrorKind::ForbiddenSecretValue))
         }
         toml::Value::Array(values) => {
             for value in values {
-                inspect_value_for_secret_material(value)?;
+                inspect_value_for_secret_material(value, false)?;
             }
             Ok(())
         }
         toml::Value::Table(values) => {
-            for (key, value) in values {
-                if is_secret_bearing_key(key) {
-                    return Err(ConfigError::new(ConfigErrorKind::ForbiddenSecretField));
-                }
-                inspect_value_for_secret_material(value)?;
-            }
-            Ok(())
+            inspect_table_for_secret_material(values, allow_credential_id)
         }
         _ => Ok(()),
     }
+}
+
+fn inspect_table_for_secret_material(
+    values: &toml::map::Map<String, toml::Value>,
+    allow_credential_id: bool,
+) -> Result<(), ConfigError> {
+    for (key, value) in values {
+        if key == "credential_id" && allow_credential_id {
+            let toml::Value::String(reference) = value else {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::InvalidCredentialReference,
+                ));
+            };
+            SecretReference::parse(reference)
+                .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidCredentialReference))?;
+            continue;
+        }
+        if is_secret_bearing_key(key) {
+            return Err(ConfigError::new(ConfigErrorKind::ForbiddenSecretField));
+        }
+        inspect_value_for_secret_material(value, false)?;
+    }
+    Ok(())
 }
 
 fn is_secret_bearing_key(key: &str) -> bool {
@@ -799,18 +938,14 @@ fn is_secret_bearing_key(key: &str) -> bool {
         .map(char::from)
         .flat_map(char::to_lowercase)
         .collect();
-    matches!(
-        normalized.as_str(),
-        "password"
-            | "passphrase"
-            | "secret"
-            | "token"
-            | "privatekey"
-            | "credential"
-            | "credentials"
-            | "identityfile"
-            | "keyfile"
-    )
+    normalized.contains("password")
+        || normalized.contains("passphrase")
+        || normalized.contains("secret")
+        || normalized.contains("token")
+        || normalized.contains("privatekey")
+        || normalized.contains("credential")
+        || normalized == "identityfile"
+        || normalized == "keyfile"
 }
 
 fn contains_secret_bearing_value(value: &str) -> bool {
@@ -860,6 +995,8 @@ pub enum ConfigErrorKind {
     DuplicateProfileIdentifier,
     InvalidLocalProfile,
     InvalidSshProfile,
+    InvalidCredentialReference,
+    CredentialReferenceRequiresSshProfile,
     WorkspacePresentWhenDisabled,
     WorkspaceMissingWhenEnabled,
     EmptyWorkspace,
@@ -929,6 +1066,12 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
+            ),
+            ConfigErrorKind::InvalidCredentialReference => formatter.write_str(
+                "SSH credential_id must be a canonical opaque UUID-v4 reference",
+            ),
+            ConfigErrorKind::CredentialReferenceRequiresSshProfile => formatter.write_str(
+                "opaque credential references may be attached only to SSH profiles",
             ),
             ConfigErrorKind::WorkspacePresentWhenDisabled => formatter.write_str(
                 "workspace metadata requires workspace_enabled = true",
@@ -1317,6 +1460,8 @@ impl ConfigurationState {
 mod tests {
     use super::*;
 
+    const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
     const COMPLETE_CONFIGURATION: &str = r#"
 schema_version = 1
 workspace_enabled = true
@@ -1406,6 +1551,135 @@ id = "settings"
         let serialized = configuration.to_toml().unwrap();
         assert!(serialized.starts_with("schema_version = 1\n"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn persists_an_opaque_ssh_credential_reference_without_exposing_it_in_debug_output() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(SecretReference::parse(CREDENTIAL_REFERENCE).unwrap())
+        .unwrap();
+        let configuration = Configuration::new(vec![profile]).unwrap();
+
+        let ssh = configuration.profiles()[0].as_ssh().unwrap();
+        assert!(ssh.credential_reference().is_some());
+        assert!(configuration.profiles()[0].credential_reference().is_some());
+        assert!(!format!("{ssh:?}").contains(CREDENTIAL_REFERENCE));
+        assert!(!format!("{configuration:?}").contains(CREDENTIAL_REFERENCE));
+
+        let serialized = configuration.to_toml().unwrap();
+        assert!(serialized.contains(&format!("credential_id = \"{CREDENTIAL_REFERENCE}\"")));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn rejects_malformed_noncanonical_and_non_v4_credential_references() {
+        for reference in [
+            "not-a-reference",
+            "550E8400-E29B-41D4-A716-446655440000",
+            "550e8400-e29b-11d4-a716-446655440000",
+            "550e8400e29b41d4a716446655440000",
+        ] {
+            let error = Configuration::parse(&format!(
+                r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "remote"
+host = "example.test"
+username = "alice"
+credential_id = "{reference}"
+"#
+            ))
+            .unwrap_err();
+
+            assert_eq!(error.kind(), ConfigErrorKind::InvalidCredentialReference);
+            assert!(!error.to_string().contains(reference));
+            assert!(!format!("{error:?}").contains(reference));
+        }
+
+        let error = Configuration::parse(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "remote"
+host = "example.test"
+username = "alice"
+credential_id = 42
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), ConfigErrorKind::InvalidCredentialReference);
+    }
+
+    #[test]
+    fn only_ssh_profile_credential_id_is_permitted_by_secret_field_scanning() {
+        for document in [
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "remote"
+host = "example.test"
+username = "alice"
+credential = "anything"
+"#,
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "remote"
+host = "example.test"
+username = "alice"
+credential_metadata = "anything"
+"#,
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "local"
+id = "local"
+executable = "sh"
+credential_id = "550e8400-e29b-41d4-a716-446655440000"
+"#,
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+credential_id = "550e8400-e29b-41d4-a716-446655440000"
+"#,
+        ] {
+            assert_eq!(
+                Configuration::parse(document).unwrap_err().kind(),
+                ConfigErrorKind::ForbiddenSecretField
+            );
+        }
+    }
+
+    #[test]
+    fn credential_references_require_an_ssh_profile() {
+        let error = Profile::local("local", "sh", Vec::new(), None)
+            .unwrap()
+            .with_credential_reference(SecretReference::parse(CREDENTIAL_REFERENCE).unwrap())
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            ConfigErrorKind::CredentialReferenceRequiresSshProfile
+        );
     }
 
     #[test]
@@ -1890,6 +2164,33 @@ id = "launcher"
         configuration.save_to_path(&path).unwrap();
 
         assert_eq!(Configuration::load_from_path(&path).unwrap(), configuration);
+    }
+
+    #[test]
+    fn atomically_saves_and_loads_an_opaque_credential_reference() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("profiles.toml");
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(SecretReference::parse(CREDENTIAL_REFERENCE).unwrap())
+        .unwrap()])
+        .unwrap();
+
+        configuration.save_to_path(&path).unwrap();
+
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains(&format!("credential_id = \"{CREDENTIAL_REFERENCE}\"")));
+        let loaded = Configuration::load_from_path(&path).unwrap();
+        assert!(loaded.profiles()[0].credential_reference().is_some());
+        assert_eq!(loaded, configuration);
     }
 
     #[test]
