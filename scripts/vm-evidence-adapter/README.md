@@ -18,10 +18,7 @@ relay. It never accepts commands, arguments, paths, environment variables, or
 output destinations from a job.
 
 `vm-evidence-lab` owns the host controller, Parallels provider, guest relay,
-exact-source bundles, locks, result records, and manifests. The legacy
-`scripts/vm-evidence/` implementation remains only as a parity fallback until
-the documented clean-VM migration campaign succeeds; new evidence runs must
-use the shared lab.
+exact-source bundles, locks, result records, and manifests.
 
 Run the host-independent Unix adapter contract check with:
 

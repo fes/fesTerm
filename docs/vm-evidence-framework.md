@@ -371,29 +371,20 @@ A simpler first implementation may use an already-running interactive terminal
 or runner inside the guest, but it must not claim native input evidence if the
 actual UI-driving command executed outside the logged-in desktop session.
 
-## Proposed Repository Layout
+## Product Repository Layout
 
-Copilot should implement the framework using a narrow provider/guest interface.
-A suggested layout is:
+fesTerm supplies only its narrow product adapter; the shared repository owns
+the provider/guest interface:
 
 ```text
 scripts/
-  vm-evidence/
-    host.sh
-    config.example.json
-    providers/
-      parallels.sh
-      fusion.sh
-    guest/
-      common.sh
-      linux.sh
-      macos.sh
-      windows.ps1
-    relay/
-      README.md
-      linux-install.sh
-      macos-install.sh
-      windows-install.ps1
+  vm-evidence-adapter/
+    policy.json
+    linux.sh
+    macos.sh
+    windows.ps1
+    tests/
+      run.sh
   run-macos-os-input-smoke.sh
 .github/workflows/
   vm-evidence.yml
@@ -401,8 +392,7 @@ docs/
   vm-evidence-framework.md
 ```
 
-Exact names may change if the existing script conventions make another layout
-clearer, but preserve the separation between:
+The shared lab preserves the separation between:
 
 1. host orchestration;
 2. hypervisor-specific operations;
@@ -1106,15 +1096,15 @@ bundle for a selected candidate SHA.
 
 ## Implemented Automation Foundation
 
-The repository now contains the first bounded implementation at
-`scripts/vm-evidence/`:
+The shared `vm-evidence-lab` repository now contains the bounded controller,
+Parallels provider, and graphical-session relay:
 
-- `host.sh` validates a user-local configuration, resets/starts a Parallels VM,
-  waits for SSH only as a control plane, verifies the graphical relay through
-  a disposable readiness probe, submits an allowlisted relay job, captures the
-  display through `prlctl`, writes a JSON manifest, and cleanly stops the VM
-  on every terminal path. Its configuration template is `config.example.json`;
-  real VM names, addresses, keys, and artifact paths remain outside Git.
+- Its controller validates private host configuration, resets/starts a
+  Parallels VM, waits for SSH only as a control plane, installs the pinned
+  relay and fesTerm adapter, submits an allowlisted job, captures the display
+  through `prlctl`, writes a versioned manifest, and cleanly stops the VM on
+  every terminal path. VM names, addresses, keys, and artifact paths remain
+  outside Git.
 - The Unix relays run only in a graphical session. Linux qualifying execution
   requires Xorg explicitly; the macOS relay requires the console user's
   `gui/<uid>` launchd domain. The shared relay rejects arbitrary job fields;
@@ -1166,11 +1156,7 @@ vm-evidence-lab/host/controller.sh run macos request.json
 vm-evidence-lab/host/controller.sh run windows request.json
 ```
 
-No failed guest test is retried automatically. The former
-`scripts/vm-evidence/` controller and relay remain only as a parity fallback
-until clean-VM campaigns establish equivalent lifecycle, source, relay,
-screenshot, and classification evidence; no new automation should depend on
-them.
+No failed guest test is retried automatically.
 
 ### Watchdog and cleanup contract
 
