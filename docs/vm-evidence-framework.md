@@ -407,6 +407,17 @@ owns the installed product adapter in
 [`../scripts/vm-evidence-adapter/`](../scripts/vm-evidence-adapter/); it does
 not own a second controller, provider, relay, bundle, or manifest protocol.
 
+Bootstrap the reviewed shared checkout beside fesTerm:
+
+```sh
+./scripts/bootstrap-vm-evidence-lab.sh
+```
+
+[`../vm-evidence-lab.lock`](../vm-evidence-lab.lock) records the repository
+and full reviewed commit. The script verifies an existing checkout's `origin`
+before resetting it detached to that commit; use `--path` only for an explicit
+alternative checkout location.
+
 Create a private request that pins one candidate commit and carries no
 product-defined input:
 

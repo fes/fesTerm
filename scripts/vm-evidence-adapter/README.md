@@ -20,6 +20,12 @@ output destinations from a job.
 `vm-evidence-lab` owns the host controller, Parallels provider, guest relay,
 exact-source bundles, locks, result records, and manifests.
 
+From a fesTerm checkout, bootstrap its reviewed shared-lab dependency with:
+
+```sh
+./scripts/bootstrap-vm-evidence-lab.sh
+```
+
 Run the host-independent Unix adapter contract check with:
 
 ```sh
