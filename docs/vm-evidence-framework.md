@@ -50,10 +50,11 @@ This framework extends, rather than replaces, the current validation layers:
 
 ## Workflow-automation extension
 
-The current relay allowlist accepts only `native-smoke`, `os-input-smoke`, and
-`optional-validation`. Do not overload those modes with long interaction
-scripts. Add a fourth `ui-workflow-smoke` mode only after the guest drivers and
-result schema below are implemented and reviewed on one platform.
+The current fesTerm adapter accepts only `native-smoke`, `os-input-smoke`, and
+`optional-validation` with an empty payload. Do not overload those modes with
+long interaction scripts. Add a fourth `ui-workflow-smoke` adapter mode only
+after the guest drivers and result schema below are implemented and reviewed on
+one platform.
 
 `ui-workflow-smoke` jobs add a required `workflow` value selected from a
 repository-owned allowlist. Candidate commits may choose an existing workflow
@@ -73,12 +74,12 @@ native-chrome
 accessibility-traversal
 ```
 
-The implementation should live under `scripts/vm-evidence/workflows/` with
+The implementation should live under `scripts/vm-evidence-adapter/workflows/` with
 declarative definitions, a shared schema, platform adapters, and
 repository-owned sanitized fixtures. Definitions use semantic actions and
-content-free oracles; they never embed arbitrary commands. The host controller
-adds `workflow` to the signed/bundled job description and rejects it for every
-other mode.
+content-free oracles; they never embed arbitrary commands. A future adapter
+schema may add `workflow` only for that mode and must reject it for every other
+mode.
 
 One run produces both the existing platform manifest and a bounded
 `workflow-result.json` containing:
@@ -408,30 +409,40 @@ clearer, but preserve the separation between:
 3. guest build/test operations; and
 4. interactive desktop input operations.
 
-## Host CLI Contract
+## Shared-Lab Host CLI Contract
 
-The primary human/Copilot interface should be one bounded command.
+The primary human/Copilot interface is the pinned shared
+[`vm-evidence-lab`](https://github.com/fes/vm-evidence-lab) controller. fesTerm
+owns the installed product adapter in
+[`../scripts/vm-evidence-adapter/`](../scripts/vm-evidence-adapter/); it does
+not own a second controller, provider, relay, bundle, or manifest protocol.
 
-Suggested commands:
+Create a private request that pins one candidate commit and carries no
+product-defined input:
 
-```text
-scripts/vm-evidence/host.sh status
-scripts/vm-evidence/host.sh windows <sha>
-scripts/vm-evidence/host.sh linux <sha>
-scripts/vm-evidence/host.sh macos <sha>
-scripts/vm-evidence/host.sh all <sha>
-scripts/vm-evidence/host.sh reset windows
-scripts/vm-evidence/host.sh reset linux
-scripts/vm-evidence/host.sh reset macos
-scripts/vm-evidence/host.sh collect <run-id>
+```json
+{
+  "schema_version": 1,
+  "adapter_id": "festerm",
+  "adapter_schema_version": 1,
+  "mode": "native-smoke",
+  "sources": [{"id": "festerm", "sha": "<full-candidate-sha>"}],
+  "payload": {}
+}
 ```
 
-`all` must execute platform runs independently and preserve all three results.
-A failure on Windows must not prevent Linux/macOS evidence from being collected
-unless the host infrastructure itself is unusable.
+Run it through a separately pinned shared checkout:
 
-The command exits nonzero if any requested platform test fails or if the
-required evidence manifest is incomplete.
+```sh
+vm-evidence-lab/host/controller.sh run linux request.json
+vm-evidence-lab/host/controller.sh all request.json
+```
+
+`all` preserves individual platform failures and returns nonzero after all
+three attempts. The controller owns host locks, reset/start/stop, relay and
+adapter installation, exact Git bundles, screenshots, results, and manifests.
+The fesTerm adapter accepts only `native-smoke`, `os-input-smoke`, and
+`optional-validation`, with exactly one `festerm` source and an empty payload.
 
 ## Provider Interface
 
@@ -910,9 +921,7 @@ Suggested workflow inputs:
 ```text
 sha               # default: workflow ref SHA
 platform           # windows | linux | macos | all
-mode               # full | native-only
-provider           # default from host config; optional override
-preserve_on_failure # false by default
+mode               # native-smoke | os-input-smoke | optional-validation
 ```
 
 The job runs on:
@@ -924,10 +933,11 @@ The job runs on:
 The workflow should:
 
 1. resolve the full candidate SHA;
-2. invoke `scripts/vm-evidence/host.sh`;
-3. always upload the bounded evidence bundle;
-4. publish a concise job summary table;
-5. fail if any requested platform is `fail` or `infra-fail`; and
+2. create the strict shared-lab `host-request-v1` document;
+3. invoke the pinned `vm-evidence-lab/host/controller.sh`;
+4. always upload the bounded evidence bundle;
+5. publish a concise job summary table;
+6. fail if any requested platform is `fail` or `infra-fail`; and
 6. never rerun a failed guest test automatically.
 
 Use concurrency so only one workflow mutates a given VM inventory at a time.
@@ -1107,9 +1117,9 @@ The repository now contains the first bounded implementation at
   real VM names, addresses, keys, and artifact paths remain outside Git.
 - The Unix relays run only in a graphical session. Linux qualifying execution
   requires Xorg explicitly; the macOS relay requires the console user's
-  `gui/<uid>` launchd domain. Both reject arbitrary job fields and accept only
-  a Git SHA plus `readiness-probe`, `native-smoke`, or
-  `optional-validation`.
+  `gui/<uid>` launchd domain. The shared relay rejects arbitrary job fields;
+  the pinned fesTerm adapter additionally accepts only an exact fesTerm source,
+  empty payload, and its three fixed evidence modes.
 - The Windows relay is executed through Parallels as the active console user.
   It can automate ConPTY and CPU-rendered diagnostic evidence, but the
   Parallels Windows-on-ARM guest remains `diagnostic`: Parallels does not
@@ -1122,40 +1132,67 @@ checkout, build, launch, screenshots, and shutdown, then reported the
 expected diagnostic native-smoke failure; it remains ineligible for
 acceptance until reproduced on hardware-backed Windows.
 
-Install each relay using `scripts/vm-evidence/relay/README.md`, then place a
-real configuration at `~/.config/festerm-vm-lab/config.json`. A normal run is:
+Install the shared relay and configure the shared controller as described in
+[`vm-evidence-lab`'s Mac handoff](https://github.com/fes/vm-evidence-lab/blob/main/docs/MAC_HANDOFF.md).
+Its private `~/.config/vm-evidence-lab/config.json` must pin this repository,
+adapter path `scripts/vm-evidence-adapter`, the reviewed full `adapter_sha`,
+and the allowed source ID `festerm`. A normal run is:
 
-```sh
-scripts/vm-evidence/host.sh linux <full-candidate-sha>
-scripts/vm-evidence/host.sh macos <full-candidate-sha>
-scripts/vm-evidence/host.sh windows <full-candidate-sha>
+```json
+{
+  "adapters": {
+    "festerm": {
+      "schema_version": 1,
+      "adapter_sha": "<reviewed-full-festerm-adapter-commit>",
+      "adapter_repository": "/private/path/to/fesTerm",
+      "adapter_path": "scripts/vm-evidence-adapter",
+      "safe_modes": ["native-smoke", "os-input-smoke", "optional-validation"],
+      "sources": {
+        "festerm": {
+          "repository": "/private/path/to/fesTerm"
+        }
+      }
+    }
+  }
+}
 ```
 
-`all` preserves individual platform failures and returns nonzero after all
-three attempts. No failed guest test is retried automatically.
+This stanza augments the shared repository's private configuration example;
+it does not replace provider, VM, artifact-root, SSH, or watchdog settings.
+
+```sh
+vm-evidence-lab/host/controller.sh run linux request.json
+vm-evidence-lab/host/controller.sh run macos request.json
+vm-evidence-lab/host/controller.sh run windows request.json
+```
+
+No failed guest test is retried automatically. The former
+`scripts/vm-evidence/` controller and relay remain only as a parity fallback
+until clean-VM campaigns establish equivalent lifecycle, source, relay,
+screenshot, and classification evidence; no new automation should depend on
+them.
 
 ### Watchdog and cleanup contract
 
 Before submitting a product job, the controller restores the configured
-baseline, starts the VM, waits for SSH, captures a ready desktop, and requires
-the GUI relay to complete a `readiness-probe`. That probe verifies the relay's
-actual graphical context and the guest's `git`, `cargo`, and `rustc`
-prerequisites; it is not product evidence.
+baseline, starts the VM, waits for SSH, installs the pinned shared relay and
+adapter, captures a ready desktop, and validates the adapter policy. The
+shared relay then checks `git` and `jq`, stages the exact bundle, and runs the
+fixed fesTerm adapter entry point. Product prerequisites remain the adapter's
+responsibility and are not product evidence.
 
-The controller also derives a relay-source tree hash from the checked-in
-`scripts/vm-evidence/relay/` package. After each reset it compares that hash
-with the guest spool's relay marker and synchronizes the platform relay before
-publishing a job when they differ. Any unclaimed prior jobs are retained under
-an `infrastructure-failed-` name, so a reset cannot cause an interrupted
-validation to execute during a later run.
+The controller derives the shared relay tree hash and installs the product
+adapter from its separately pinned commit after each reset. Any unclaimed
+prior jobs are quarantined, so a reset cannot cause an interrupted validation
+to execute during a later run.
 
 Relays atomically update a structured running record while progressing through
-`queued`, `preflight`, `checkout`, `build`, and `app`. The controller enforces
-separate configurable deadlines for readiness, checkout, build, app execution,
-and the entire run. A deadline expiry preserves a controller-failure record,
-screenshots, and provider metadata, then stops the VM instead of waiting
-indefinitely. The next run restores its snapshot rather than trying to remove
-repository or build output from a guest.
+`queued`, `preflight`, `checkout`, `adapter`, and `complete`. The controller
+enforces its configured bounded run deadline only for modes explicitly marked
+watchdog-safe in private configuration. A deadline expiry preserves a
+controller-failure record, screenshots, and provider metadata, then stops the
+VM instead of waiting indefinitely. The next run restores its snapshot rather
+than trying to remove repository or build output from a guest.
 
 The local `watchdog` configuration may override these defaults:
 

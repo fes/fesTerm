@@ -1,0 +1,6 @@
+{
+  "adapter_id": "festerm",
+  "schema_version": 1,
+  "modes": ["native-smoke", "os-input-smoke", "optional-validation"],
+  "platforms": ["windows", "linux", "macos"]
+}
