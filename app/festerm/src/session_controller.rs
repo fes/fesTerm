@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
-
 #[cfg(test)]
 use std::time::Duration;
+use std::time::Instant;
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
@@ -9,7 +9,9 @@ use festerm_session::{
     SessionSendError, SessionTryReceiveError, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY,
     MAX_IO_CHUNK_BYTES,
 };
-use festerm_ui_egui::{EncodedInputSink, InputRoute, InputSinkDiagnostics};
+use festerm_ui_egui::{
+    EncodedInputSink, InputRoute, InputSinkDiagnostics, TERMINAL_RESIZE_DEBOUNCE,
+};
 
 #[cfg(test)]
 use festerm_session::SessionMetrics;
@@ -304,6 +306,10 @@ pub struct SessionController<S: Session> {
     diagnostics: InputSinkDiagnostics,
     pending_writes: PendingCommandBuffer,
     pending_resize: Option<TerminalSize>,
+    /// A requested resize awaiting debounce (see [`TERMINAL_RESIZE_DEBOUNCE`])
+    /// before it is forwarded to the PTY, paired with when it was last
+    /// (re)staged.
+    debounced_resize: Option<(TerminalSize, Instant)>,
     last_lifecycle: Option<SessionLifecycle>,
     /// Monotonic transport generation, advanced by the application before a
     /// reconnect request. Lifecycle events may be observed out of order with
@@ -336,6 +342,7 @@ impl<S: Session> SessionController<S> {
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             pending_resize: None,
+            debounced_resize: None,
             last_lifecycle: Some(lifecycle),
             lifecycle_generation: 1,
             last_error: None,
@@ -361,6 +368,7 @@ impl<S: Session> SessionController<S> {
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             pending_resize: None,
+            debounced_resize: None,
             last_lifecycle: None,
             lifecycle_generation: 0,
             last_error: None,
@@ -529,11 +537,29 @@ impl<S: Session> SessionController<S> {
         }
     }
 
+    /// Stages a requested resize for debounced delivery to the PTY, restarting
+    /// the debounce window whenever the requested size actually changes (a
+    /// resize repeated with the same size, e.g. re-observed across frames,
+    /// does not push out an already-staged deadline).
+    fn stage_resize(&mut self, size: TerminalSize) {
+        if self.debounced_resize.map(|(staged, _)| staged) != Some(size) {
+            self.debounced_resize = Some((size, Instant::now()));
+        }
+    }
+
+    /// Sends any resize whose debounce interval has elapsed, and retries a
+    /// previous resize that hit session backpressure. Called every frame
+    /// regardless of whether a resize is currently staged.
     pub fn flush_pending_resize(&mut self) {
-        let Some(size) = self.pending_resize.take() else {
-            return;
-        };
-        self.try_resize(size);
+        if let Some(size) = self.pending_resize.take() {
+            self.try_resize(size);
+        }
+        if let Some((size, staged_at)) = self.debounced_resize {
+            if staged_at.elapsed() >= TERMINAL_RESIZE_DEBOUNCE {
+                self.debounced_resize = None;
+                self.try_resize(size);
+            }
+        }
     }
 
     fn try_resize(&mut self, size: TerminalSize) {
@@ -729,7 +755,7 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
 
     fn record_terminal_resize(&mut self, dimensions: Dimensions) {
         match terminal_size(dimensions) {
-            Ok(size) => self.try_resize(size),
+            Ok(size) => self.stage_resize(size),
             Err(error) => {
                 self.last_error = Some(error);
             }
@@ -964,6 +990,8 @@ mod tests {
         let mut terminal =
             Terminal::new(Dimensions::new(73, 26).unwrap()).expect("terminal allocation");
         controller.record_terminal_resize(terminal.dimensions());
+        std::thread::sleep(TERMINAL_RESIZE_DEBOUNCE);
+        controller.flush_pending_resize();
         assert!(!controller.pump_events(&mut terminal));
         controller.observe_resize_probe_terminal_state(&terminal);
 
@@ -1179,6 +1207,7 @@ mod tests {
             controller.pump_events(terminal);
             controller.forward_terminal_replies(terminal);
             controller.flush_pending_writes();
+            controller.flush_pending_resize();
             if predicate(terminal) {
                 return;
             }
@@ -1214,6 +1243,13 @@ mod tests {
 
         terminal.resize(Dimensions::new(73, 26).unwrap()).unwrap();
         controller.record_terminal_resize(terminal.dimensions());
+        // Settle the debounced resize (see `TERMINAL_RESIZE_DEBOUNCE`) before
+        // the script below races ahead and exits; real interactive shells
+        // never exit within a resize's debounce window, but this script
+        // deliberately finishes fast, so waiting here mirrors realistic
+        // timing instead of the resize losing its race against process exit.
+        std::thread::sleep(TERMINAL_RESIZE_DEBOUNCE);
+        controller.flush_pending_resize();
         assert_eq!(
             terminal.handle_input(festerm_core::InputEvent::Focus(
                 festerm_core::FocusEvent::In,
@@ -1515,6 +1551,7 @@ mod tests {
             controller.pump_events(terminal);
             controller.forward_terminal_replies(terminal);
             controller.flush_pending_writes();
+            controller.flush_pending_resize();
             if predicate(terminal) {
                 return;
             }

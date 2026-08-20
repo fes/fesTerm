@@ -13,7 +13,7 @@ use crate::{
     geometry::{cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
-        KeyboardOwnership, TerminalPointerState,
+        KeyboardOwnership, TerminalPointerState, TERMINAL_RESIZE_DEBOUNCE,
     },
     renderer::{
         measure_input_to_paint_submission, paint_grid, FontSettings, GlyphCache, GridLayout,
@@ -377,6 +377,11 @@ impl TerminalView {
                 terminal.scrollback_stats().physical_rows(),
             );
             sink.record_terminal_resize(terminal.dimensions());
+            // Guarantees the sink's debounced resize (see
+            // `TERMINAL_RESIZE_DEBOUNCE`) actually gets flushed even if the
+            // window then sits idle and nothing else would otherwise
+            // schedule a later frame.
+            ui.ctx().request_repaint_after(TERMINAL_RESIZE_DEBOUNCE);
         }
 
         let (viewport_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());

@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use egui::{Pos2, Response, Ui};
 use festerm_core::{
@@ -12,6 +12,21 @@ use crate::{
     selection::{normalize_selection_position, selection_text, Selection},
     TerminalSnapshot,
 };
+
+/// How long a resize request should settle before an [`EncodedInputSink`]
+/// forwards it to a real backend (e.g. a PTY's `ioctl(TIOCSWINSZ)` +
+/// `SIGWINCH`).
+///
+/// The visible terminal grid reflows immediately, every frame, purely from
+/// the measured window size, so a live OS-level drag can request dozens of
+/// different sizes per second. An application-owned sink that debounces
+/// against this interval before forwarding to its backend avoids racing a
+/// child process's own resize-triggered redraw against a rapidly still-
+/// changing size. Kept here (rather than duplicated in each application) so
+/// the view can schedule a follow-up repaint at the same interval,
+/// guaranteeing the debounced resize actually gets delivered even once the
+/// window stops changing and no other frame would otherwise be scheduled.
+pub const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(120);
 
 /// The observable result of routing an event through the core.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,7 +62,8 @@ pub trait EncodedInputSink {
     ///
     /// The UI does not know about PTYs or sessions. An application can forward
     /// this cell-space size to its active backend without giving the backend
-    /// access to the terminal core.
+    /// access to the terminal core. Implementations should debounce against
+    /// [`TERMINAL_RESIZE_DEBOUNCE`] before forwarding to a real backend.
     fn record_terminal_resize(&mut self, _dimensions: Dimensions) {}
 
     /// Returns sink-owned, content-free diagnostics when available.

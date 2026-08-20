@@ -276,8 +276,15 @@ pub struct SshAuthenticationRequiredTab {
 }
 
 impl SessionTab {
-    fn start_default(context: &egui::Context) -> Self {
-        let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
+    /// Starts a fresh default local session. `window_dimensions`, when
+    /// supplied, is the currently rendered window's terminal grid size (see
+    /// `AppState::current_session_dimensions`); a new tab created from an
+    /// already-sized window should start at that size rather than the
+    /// application's baseline default, so it matches the window instead of
+    /// visibly snapping it back to 80x24 on the very next resize.
+    fn start_default(context: &egui::Context, window_dimensions: Option<Dimensions>) -> Self {
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
         let result = LocalPtySession::start_default_with_notifier(size, make_notifier(context));
         Self::from_local_session_result(
@@ -323,12 +330,16 @@ impl SessionTab {
     }
 
     /// Starts a local PTY from reusable, secret-free profile metadata.
+    /// `window_dimensions` behaves like it does for `start_default`: a new
+    /// tab opened against an already-sized window starts at that size.
     fn start_local_profile(
         profile: LocalProfile,
         profile_id: &str,
         context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
     ) -> Self {
-        let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
         let launch_secondary = local_profile_secondary(&profile);
         let result = LocalPtySession::start_with_notifier(profile, size, make_notifier(context));
@@ -812,6 +823,7 @@ impl AppState {
                         local.to_local_profile(),
                         local.identifier(),
                         context,
+                        None,
                     )))
                 }
                 WorkspaceTab::SshSession(tab) => {
@@ -958,6 +970,25 @@ impl AppState {
             })
     }
 
+    /// The terminal grid size a brand-new tab should start at, so opening a
+    /// session in an already-resized window doesn't visibly snap back to the
+    /// application's baseline default and get corrected only on the next
+    /// resize. Prefers the active session tab's current dimensions (the one
+    /// most recently rendered against the real window size); falls back to
+    /// any other live session tab, then `None` (baseline default) if no
+    /// session tab exists yet, e.g. a fresh Launcher-only window.
+    fn current_session_dimensions(&self) -> Option<Dimensions> {
+        if let TabContent::Session(active) = &self.active_tab().content {
+            return Some(active.terminal.dimensions());
+        }
+        self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::Session(session) => Some(session.terminal.dimensions()),
+            TabContent::Launcher
+            | TabContent::Settings
+            | TabContent::SshAuthenticationRequired(_) => None,
+        })
+    }
+
     /// Every running session tab, independent of which is active. Each open
     /// session remains a persistent object that must keep draining its
     /// bounded backend queues even while another tab is focused.
@@ -1071,7 +1102,8 @@ impl AppState {
     }
 
     fn start_local_session(&mut self, context: &egui::Context) {
-        self.place_session(SessionTab::start_default(context));
+        let dimensions = self.current_session_dimensions();
+        self.place_session(SessionTab::start_default(context, dimensions));
     }
 
     fn start_configured_local_profile(&mut self, profile_id: &str, context: &egui::Context) {
@@ -1081,10 +1113,12 @@ impl AppState {
         let Some(local) = profile.as_local() else {
             return;
         };
+        let dimensions = self.current_session_dimensions();
         self.place_session(SessionTab::start_local_profile(
             local.to_local_profile(),
             local.identifier(),
             context,
+            dimensions,
         ));
     }
 
@@ -1823,6 +1857,39 @@ mod tests {
             "Settings and Launcher tabs are left untouched; the new session tab is added"
         );
         assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+    }
+
+    #[test]
+    fn a_new_local_session_inherits_the_current_windows_terminal_dimensions() {
+        // Regression test: opening a new local session while another one is
+        // already running in an already-resized window must start the new
+        // session at that window's size, not visibly snap back to the
+        // application's baseline default until the next resize corrects it.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let TabContent::Session(first) = &mut state.active_tab_mut().content else {
+            panic!("expected a session tab");
+        };
+        let resized = Dimensions::new(140, 45).expect("valid dimensions");
+        assert_ne!(first.terminal.dimensions(), resized);
+        first
+            .terminal
+            .resize(resized)
+            .expect("terminal resize succeeds");
+
+        // Opening a second session from the same (non-launcher) active tab
+        // opens a new tab rather than replacing the first.
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        assert_eq!(state.tabs().len(), 2);
+        let TabContent::Session(second) = &state.active_tab().content else {
+            panic!("expected a session tab");
+        };
+        assert_eq!(
+            second.terminal.dimensions(),
+            resized,
+            "new session must start at the current window's terminal size"
+        );
     }
 
     #[test]
