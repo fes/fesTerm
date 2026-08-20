@@ -320,16 +320,28 @@ impl NativeMenu {
 #[cfg(target_os = "macos")]
 use std::ptr::NonNull;
 
-/// Moves macOS's standard traffic lights down into fesTerm's integrated
-/// chrome band. The view pointer originates from winit's AppKit window handle
-/// and is used only during native-window creation on the main thread.
+/// Vertically places macOS's standard traffic lights so their center sits
+/// `band_center_from_top` points below the window's top edge, matching
+/// fesTerm's integrated chrome band (`festerm_ui_egui::chrome::
+/// chrome_band_center_from_top`). The view pointer originates from winit's
+/// AppKit window handle.
+///
+/// This computes an absolute position from the window's own current height
+/// rather than nudging AppKit's default placement by a fixed empirical
+/// delta: an assumed default titlebar height can drift across macOS
+/// versions, and a fixed one-time delta would go stale the moment the chip
+/// row's height itself becomes runtime-configurable. Callers are expected
+/// to call this every frame (safe/idempotent; it only assigns the exact
+/// target position) so a future runtime chip-height change is picked up
+/// automatically with no further wiring.
 #[cfg(target_os = "macos")]
-pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, points: f64) {
+pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, band_center_from_top: f64) {
     use objc2_app_kit::{NSView, NSWindowButton};
     use objc2_foundation::NSPoint;
 
-    // SAFETY: winit supplies a live NSView pointer for the root window handle;
-    // this function runs while that window is being created on the main thread.
+    // SAFETY: winit supplies a live NSView pointer for the root window
+    // handle; this function runs on the main thread while that window is
+    // alive.
     let ns_view = unsafe { ns_view.cast::<NSView>().as_ref() };
     let Some(ns_window) = ns_view.window() else {
         return;
@@ -343,8 +355,22 @@ pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, points: f64) {
         let Some(button) = ns_window.standardWindowButton(button_kind) else {
             continue;
         };
+        // The button's frame is relative to its immediate superview (a
+        // small titlebar-container view living in the top-right corner of
+        // the window chrome), not the window's own frame, so the "distance
+        // from the top edge" must be computed against that superview's
+        // height, not `ns_window.frame().size.height`.
+        let Some(superview) = (unsafe { button.superview() }) else {
+            continue;
+        };
+        let superview_height = superview.bounds().size.height;
         let frame = button.frame();
-        button.setFrameOrigin(NSPoint::new(frame.origin.x, frame.origin.y - points));
+        // AppKit's window coordinate space has a bottom-left origin;
+        // convert the desired distance from the top edge into that space.
+        let target_origin_y = superview_height - band_center_from_top - frame.size.height / 2.0;
+        if (frame.origin.y - target_origin_y).abs() > f64::EPSILON {
+            button.setFrameOrigin(NSPoint::new(frame.origin.x, target_origin_y));
+        }
     }
 }
 

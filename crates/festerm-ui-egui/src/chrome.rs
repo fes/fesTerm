@@ -80,6 +80,27 @@ pub(crate) const CHROME_SIDE_INSET: f32 = 8.0;
 ///
 const CHROME_TOP_INSET: f32 = 8.0;
 
+/// The native macOS traffic lights occupy the left side of the transparent
+/// titlebar. Keep the first application control clear of that hit-test area.
+const MACOS_TRAFFIC_LIGHTS_RESERVED_WIDTH: f32 = 76.0;
+
+/// Vertical distance, in points, from the window's top edge to the center
+/// of the first chip row.
+///
+/// macOS uses this (`festerm_macos_window::offset_traffic_lights`) to keep
+/// the native traffic lights vertically centered against the chip row,
+/// re-applied every frame rather than assumed once from AppKit's default
+/// titlebar placement at window creation — a placement that can drift
+/// across macOS versions and would go stale the moment chip height itself
+/// becomes runtime-configurable (for example, a future narrower
+/// single-line chip preference). Keeping this a plain function of the
+/// current row geometry, called every frame, means that once such a
+/// preference exists, the traffic lights follow it automatically with no
+/// further wiring.
+pub const fn chrome_band_center_from_top() -> f32 {
+    CHROME_TOP_INSET + CHIP_HEIGHT / 2.0
+}
+
 /// Footprint reserved for the trailing icon controls. On macOS the native
 /// traffic lights replace the custom window buttons, leaving only overflow,
 /// panel-toggle, and search controls in this block.
@@ -92,10 +113,6 @@ const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = (if cfg!(target_os = "macos") { 3.
     * 22.0
     + (if cfg!(target_os = "macos") { 3.0 } else { 6.0 }) * 8.0
     + CHROME_SIDE_INSET;
-
-/// The native macOS traffic lights occupy the left side of the transparent
-/// titlebar. Keep the first application control clear of that hit-test area.
-const MACOS_TRAFFIC_LIGHTS_RESERVED_WIDTH: f32 = 76.0;
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.

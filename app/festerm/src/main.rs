@@ -52,7 +52,6 @@ fn main() -> eframe::Result<()> {
         APPLICATION_TITLE,
         options,
         Box::new(|creation_context| {
-            align_macos_traffic_lights(creation_context);
             let mut app = FesTermApp::with_startup_configuration(
                 &creation_context.egui_ctx,
                 startup_configuration,
@@ -62,19 +61,3 @@ fn main() -> eframe::Result<()> {
         }),
     )
 }
-
-#[cfg(target_os = "macos")]
-fn align_macos_traffic_lights(creation_context: &eframe::CreationContext<'_>) {
-    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
-
-    let Ok(window_handle) = creation_context.window_handle() else {
-        return;
-    };
-    let RawWindowHandle::AppKit(appkit_handle) = window_handle.as_raw() else {
-        return;
-    };
-    festerm_macos_window::offset_traffic_lights(appkit_handle.ns_view, 8.0);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn align_macos_traffic_lights(_creation_context: &eframe::CreationContext<'_>) {}

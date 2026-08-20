@@ -360,6 +360,30 @@ impl FesTermApp {
             }));
     }
 
+    /// Keeps the native macOS traffic lights vertically centered against the
+    /// chip row. Re-applied every frame from the current chrome geometry
+    /// (`festerm_ui_egui::chrome::chrome_band_center_from_top`) rather than
+    /// assumed once at window creation, so it stays correct across a future
+    /// runtime chip-height change with no further wiring.
+    #[cfg(target_os = "macos")]
+    fn sync_native_window_chrome(frame: &eframe::Frame) {
+        use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+
+        let Ok(window_handle) = frame.window_handle() else {
+            return;
+        };
+        let RawWindowHandle::AppKit(appkit_handle) = window_handle.as_raw() else {
+            return;
+        };
+        festerm_macos_window::offset_traffic_lights(
+            appkit_handle.ns_view,
+            f64::from(festerm_ui_egui::chrome::chrome_band_center_from_top()),
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn sync_native_window_chrome(_frame: &eframe::Frame) {}
+
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
         if self.pending_close.is_some()
             || self.pending_paste.is_some()
@@ -1700,7 +1724,8 @@ impl FesTermApp {
 }
 
 impl eframe::App for FesTermApp {
-    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        Self::sync_native_window_chrome(frame);
         self.process_pending_password_store(context);
         self.pump_all_sessions(context);
         self.update_window_title(context);
