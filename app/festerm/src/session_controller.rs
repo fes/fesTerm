@@ -562,6 +562,18 @@ impl<S: Session> SessionController<S> {
         }
     }
 
+    /// Sends a still-debounced resize immediately, bypassing the rest of
+    /// [`TERMINAL_RESIZE_DEBOUNCE`]. A live window drag cannot overlap with
+    /// typing (the mouse button is held down the whole time), so new
+    /// keystrokes imply any in-flight drag has already ended and the
+    /// settled size can be forwarded to the PTY right away instead of
+    /// waiting out an arbitrary timer.
+    fn force_flush_pending_resize(&mut self) {
+        if let Some((size, _)) = self.debounced_resize.take() {
+            self.try_resize(size);
+        }
+    }
+
     fn try_resize(&mut self, size: TerminalSize) {
         let Some(session) = &self.session else {
             return;
@@ -740,6 +752,7 @@ impl<S: Session> SessionController<S> {
 
 impl<S: Session> EncodedInputSink for SessionController<S> {
     fn record_encoded_input(&mut self, bytes: &[u8]) {
+        self.force_flush_pending_resize();
         self.diagnostics.byte_count = self
             .diagnostics
             .byte_count
@@ -1194,6 +1207,59 @@ mod tests {
         );
         assert!(error.to_string().contains("exceeded their 4-byte bound"));
         assert_eq!(pending.queued_bytes(), 4);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn grow_columns_and_rows_after_bottom_row_prompt_preserves_typed_command_output() {
+        use festerm_pty::default_local_profile;
+
+        fn joined_screen(terminal: &Terminal) -> String {
+            (0..terminal.dimensions().rows())
+                .map(|row| terminal.row_text(row).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+
+        let profile = default_local_profile().expect("default shell profile");
+        let session = LocalPtySession::start(profile, TerminalSize::new(20, 6).unwrap()).unwrap();
+        let mut controller = SessionController::with_session(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(20, 6).unwrap()).expect("terminal allocation");
+
+        // Push the prompt down toward the bottom row with filler output.
+        for marker in ["ls -l", "ls -l"] {
+            controller.record_encoded_input(marker.as_bytes());
+            controller.record_encoded_input(b"\n");
+            std::thread::sleep(Duration::from_millis(300));
+            controller.pump_events(&mut terminal);
+        }
+        for _ in 0..20 {
+            controller.pump_events(&mut terminal);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Grow BOTH columns and rows together, as a real corner-drag
+        // would, then give the shell time to process SIGWINCH before
+        // sending the command (mirrors a real human pausing after resize).
+        terminal
+            .resize(Dimensions::new(40, 16).unwrap())
+            .expect("local reflow");
+        controller.record_terminal_resize(terminal.dimensions());
+        std::thread::sleep(Duration::from_millis(500));
+        controller.pump_events(&mut terminal);
+        controller.flush_pending_resize();
+        controller.record_encoded_input(b"echo done123\n");
+        for _ in 0..100 {
+            controller.pump_events(&mut terminal);
+            controller.flush_pending_resize();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            joined_screen(&terminal).contains("done123"),
+            "command output should be visible, got:\n{}",
+            joined_screen(&terminal)
+        );
     }
 
     #[cfg(unix)]

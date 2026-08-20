@@ -71,6 +71,14 @@ impl BufferState {
     }
 
     fn resized(&self, dimensions: Dimensions) -> Result<Self, TerminalError> {
+        let old_rows = self.screen.dimensions().rows();
+        // A scroll region spanning the full old screen (the default when no
+        // app has set a custom DECSTBM margin) must keep spanning the full
+        // screen after growing taller; otherwise it stays pinned to the old,
+        // now-undersized row range and later output addressed below it can
+        // never trigger a scroll, silently overwriting rows in place instead
+        // of appending a new one.
+        let was_full_screen = self.scroll_top == 0 && self.scroll_bottom + 1 == old_rows;
         let mut resized = Self {
             screen: self.screen.resized(dimensions)?,
             cursor: Cursor {
@@ -86,7 +94,8 @@ impl BufferState {
             dec_saved: self.dec_saved,
             ansi_saved: self.ansi_saved,
         };
-        if resized.scroll_top >= resized.scroll_bottom && dimensions.rows() > 1 {
+        if was_full_screen || (resized.scroll_top >= resized.scroll_bottom && dimensions.rows() > 1)
+        {
             resized.scroll_top = 0;
             resized.scroll_bottom = dimensions.rows() - 1;
         }
@@ -165,9 +174,15 @@ impl BufferState {
             }
         }
 
+        // As in `resized`, a scroll region spanning the full old screen must
+        // keep spanning the full screen after reflow, or output addressed
+        // below the stale margin can never trigger a scroll and instead
+        // overwrites the last row in place (see `resized` for details).
+        let was_full_screen =
+            self.scroll_top == 0 && self.scroll_bottom + 1 == old_dimensions.rows();
         let mut scroll_top = self.scroll_top.min(dimensions.rows() - 1);
         let mut scroll_bottom = self.scroll_bottom.min(dimensions.rows() - 1);
-        if scroll_top >= scroll_bottom && dimensions.rows() > 1 {
+        if was_full_screen || (scroll_top >= scroll_bottom && dimensions.rows() > 1) {
             scroll_top = 0;
             scroll_bottom = dimensions.rows() - 1;
         }

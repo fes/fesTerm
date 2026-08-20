@@ -986,4 +986,146 @@ mod tests {
         assert_eq!(bounded.scrollback_stats().logical_lines(), 0);
         assert_eq!(bounded.row_text(0), before);
     }
+
+    #[test]
+    fn resize_growing_past_a_bottom_row_prompt_still_ingests_new_output() {
+        let mut terminal = terminal(20, 6);
+        // Fill the screen with 5 filler lines + a prompt, landing the
+        // cursor exactly on the last visible row (mirrors "prompt at the
+        // bottom row" after two `ls -l`s).
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nprompt$ ");
+        terminal.resize(Dimensions::new(20, 12).unwrap()).unwrap();
+        terminal.ingest(b"foo");
+        let found = (0..12)
+            .map(|row| terminal.row_text(row).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("")
+            .contains("foo");
+        assert!(found, "foo should appear somewhere on screen");
+    }
+
+    #[test]
+    fn scroll_region_spanning_full_screen_grows_with_the_screen_on_resize() {
+        // Regression test for a real bug: after growing the primary screen
+        // (e.g. dragging a window corner to make it both wider and taller),
+        // the scroll region's bottom margin stayed pinned to the *old*
+        // screen's last row instead of expanding to the new one. Since a
+        // shell never sets a custom DECSTBM margin, the region always
+        // spans the whole screen (`scroll_top == 0`,
+        // `scroll_bottom == rows - 1`) — but the old margin clamp logic
+        // only reset the margin when it was inverted, not when it was
+        // simply stale-but-still-valid for the smaller old height. That
+        // left the margin stuck at the old bottom row, so once the cursor
+        // (already past that stale row) received a newline, the terminal
+        // never scrolled and instead silently overwrote the last row in
+        // place on every subsequent line, discarding all of that output.
+        let mut terminal = terminal(20, 6);
+        // Build up plenty of prior scrollback (more lines than fit in the
+        // original 6-row screen) before landing the cursor on the last
+        // visible row, mirroring a bottom-row prompt after real output like
+        // `ls -l` that already scrolled several lines into history. This
+        // matters because after growing, the reflow anchor resolves the
+        // cursor to its logical position across *all* retained content, not
+        // just the old screen — with enough prior scrollback, that lands
+        // the cursor well below the old screen's last row, exactly where
+        // the stale scroll margin bug bites.
+        for line in 1..=20 {
+            terminal.ingest(format!("line{line}\r\n").as_bytes());
+        }
+        terminal.ingest(b"prompt$ ");
+        terminal
+            .resize(Dimensions::new(40, 16).unwrap())
+            .expect("grow both columns and rows");
+        // Typing a command and pressing enter must still scroll fresh lines
+        // into view rather than getting stuck overwriting the last row in
+        // place, which (in the buggy version) garbles the final prompt row
+        // with leftover fragments of the overwritten text instead of
+        // leaving it as a clean, fresh prompt.
+        terminal.ingest(b"echo done\r\ndone\r\nprompt$ ");
+        let last_row = terminal
+            .row_text(terminal.dimensions().rows() - 1)
+            .unwrap_or_default();
+        assert_eq!(
+            last_row.trim_end(),
+            "prompt$",
+            "the final prompt row should be clean, not overwritten in place"
+        );
+        let rendered = (0..terminal.dimensions().rows())
+            .map(|row| terminal.row_text(row).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            rendered.contains("echo done"),
+            "typed command should remain visible, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("done"),
+            "command output should remain visible, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn incremental_grow_matches_a_single_atomic_grow() {
+        // Simulate a real live drag: many rapid incremental resize steps
+        // (as the window edge moves pixel by pixel) instead of one atomic
+        // jump, and compare the final content to a single atomic resize.
+        let mut incremental = terminal(20, 6);
+        incremental.ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nprompt$ ");
+        for rows in 7..=12 {
+            incremental
+                .resize(Dimensions::new(20, rows).unwrap())
+                .unwrap();
+        }
+        incremental.ingest(b"foo");
+
+        let mut atomic = terminal(20, 6);
+        atomic.ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nprompt$ ");
+        atomic.resize(Dimensions::new(20, 12).unwrap()).unwrap();
+        atomic.ingest(b"foo");
+
+        let render = |terminal: &Terminal| {
+            (0..12)
+                .map(|row| terminal.row_text(row).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(render(&incremental), render(&atomic));
+    }
+
+    #[test]
+    fn jittery_diagonal_grow_preserves_content() {
+        // Real corner-drags change both columns and rows together, and
+        // mouse movement isn't perfectly monotonic (small jitter/overshoot
+        // is common), unlike a clean single-axis resize.
+        let mut terminal = terminal(20, 6);
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nprompt$ ");
+        let steps: &[(usize, usize)] = &[
+            (21, 7),
+            (19, 8),
+            (23, 7),
+            (25, 9),
+            (24, 11),
+            (28, 10),
+            (30, 12),
+        ];
+        for &(columns, rows) in steps {
+            terminal
+                .resize(Dimensions::new(columns, rows).unwrap())
+                .unwrap();
+        }
+        terminal.ingest(b"foo");
+        let rendered = (0..terminal.dimensions().rows())
+            .map(|row| terminal.row_text(row).unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("foo"), "foo should still be visible");
+        assert!(
+            rendered.contains("prompt$"),
+            "prompt should still be visible"
+        );
+        assert!(
+            rendered.contains("one"),
+            "oldest filler line should survive"
+        );
+    }
 }
