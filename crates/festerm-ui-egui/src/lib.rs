@@ -1784,6 +1784,40 @@ mod tests {
     }
 
     #[test]
+    fn output_ingested_after_resize_becomes_visible_in_the_cache() {
+        // Regression test: after a live resize reflows the primary screen,
+        // subsequent PTY output must still mark rows dirty normally so the
+        // cache (and therefore the renderer) picks it up.
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"$ ");
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+
+        let mut resize = ResizeTracker::default();
+        assert_eq!(
+            resize.apply(&mut terminal, Dimensions::new(100, 30).unwrap()),
+            ResizeOutcome::Resized(Dimensions::new(100, 30).unwrap())
+        );
+        let dirty_rows = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        terminal.ingest(b"echo hello\r\nhello\r\n$ ");
+        let dirty_rows = terminal.take_dirty_rows();
+        assert!(
+            !dirty_rows.is_empty(),
+            "new output after resize must mark rows dirty"
+        );
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+        assert!(!update.updated_rows.is_empty());
+        assert_eq!(cache.row(0).unwrap()[0].text(), "$");
+        assert_eq!(cache.row(1).unwrap()[0].text(), "h");
+    }
+
+    #[test]
     fn sustained_output_keeps_cache_input_and_resize_paths_usable() {
         let started = Instant::now();
         let mut terminal = terminal(120, 40);
@@ -1836,13 +1870,30 @@ mod tests {
         );
         let mut resize = ResizeTracker::default();
 
-        for dimensions in [
+        // Under reflow (ADR 0017), shrinking the row count can push older
+        // hard-broken lines into retained history rather than always
+        // keeping them clipped in place at the top; growing back to a
+        // taller size pulls them back onto the visible screen unchanged.
+        // Expected top-of-row text per step, verified against the
+        // equivalent festerm-core reflow test.
+        let expectations = [
+            ["W", "C", "C"],
+            ["C", "C", ">"],
+            ["C", "C", "s"],
+            ["C", "C", ">"],
+            ["W", "C", "C"],
+        ];
+
+        for (dimensions, expected) in [
             Dimensions::new(11, 4).unwrap(),
             Dimensions::new(12, 3).unwrap(),
             Dimensions::new(11, 3).unwrap(),
             Dimensions::new(12, 3).unwrap(),
             Dimensions::new(11, 4).unwrap(),
-        ] {
+        ]
+        .into_iter()
+        .zip(expectations)
+        {
             assert_eq!(
                 resize.apply(&mut terminal, dimensions),
                 ResizeOutcome::Resized(dimensions)
@@ -1851,9 +1902,9 @@ mod tests {
             let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
 
             assert!(update.full_refresh);
-            assert_eq!(cache.row(0).unwrap()[0].text(), "W");
-            assert_eq!(cache.row(1).unwrap()[0].text(), "C");
-            assert_eq!(cache.row(2).unwrap()[0].text(), "C");
+            assert_eq!(cache.row(0).unwrap()[0].text(), expected[0]);
+            assert_eq!(cache.row(1).unwrap()[0].text(), expected[1]);
+            assert_eq!(cache.row(2).unwrap()[0].text(), expected[2]);
         }
     }
 }

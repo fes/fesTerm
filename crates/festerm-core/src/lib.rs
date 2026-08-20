@@ -379,42 +379,82 @@ mod tests {
     }
 
     #[test]
-    fn resize_preserves_upper_left_cells_and_clamps_state() {
+    fn resize_reflows_visible_content_and_clamps_state() {
         let mut terminal = terminal(5, 3);
         terminal.ingest(b"abcdefghi\x1b[2;3r\x1b[?6h\x1b[3;5H");
         terminal.resize(Dimensions::new(3, 2).unwrap()).unwrap();
-        assert_eq!(terminal.row_text(0).as_deref(), Some("abc"));
-        assert_eq!(terminal.row_text(1).as_deref(), Some("fgh"));
+        // Reflow (ADR 0017): "abcdefghi" plus the still-blank row the
+        // cursor was addressed onto rewraps at width 3 into
+        // "abc"/"def"/"ghi"/"   "; with only 2 rows now visible, the
+        // first two rewrapped rows move into retained history.
+        assert_eq!(terminal.row_text(0).as_deref(), Some("ghi"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("   "));
+        let scrollback = terminal.scrollback_lines().next().unwrap();
+        assert_eq!(
+            scrollback
+                .cells()
+                .iter()
+                .map(|cell| cell.character())
+                .collect::<String>(),
+            "abcdef"
+        );
+        assert_eq!(scrollback.physical_rows(), 2);
+        // The cursor had been moved (via origin-mode CSI addressing) onto
+        // a blank row below all printed content; that row has no stable
+        // logical anchor of its own, so the cursor falls back to the
+        // bottom-left of the new screen.
         assert_eq!(
             (terminal.cursor().column(), terminal.cursor().row()),
-            (2, 1)
+            (0, 1)
         );
         assert_eq!(terminal.take_dirty_rows(), vec![0, 1]);
     }
 
     #[test]
-    fn repeated_resize_preserves_visible_banner_and_prompt_cells() {
+    fn repeated_resize_reflows_banner_and_prompt_cells_and_recovers_scrolled_off_lines() {
+        // Under reflow (ADR 0017), shrinking the row count can push older
+        // hard-broken lines into retained history rather than always
+        // keeping them clipped in place at the top; growing back to a
+        // taller size pulls them back onto the visible screen unchanged.
         let mut terminal = terminal(12, 4);
         terminal.ingest(b"Windows cmd\r\nCopyright\r\nC:\\Users\\fes>");
 
-        for dimensions in [
-            Dimensions::new(11, 4).unwrap(),
-            Dimensions::new(12, 3).unwrap(),
-            Dimensions::new(11, 3).unwrap(),
-            Dimensions::new(12, 3).unwrap(),
-            Dimensions::new(11, 4).unwrap(),
-        ] {
-            terminal.resize(dimensions).unwrap();
-            assert!(terminal
-                .row_text(0)
-                .is_some_and(|row| row.starts_with("Windows cmd")));
-            assert!(terminal
-                .row_text(1)
-                .is_some_and(|row| row.starts_with("Copyright")));
-            assert!(terminal
-                .row_text(2)
-                .is_some_and(|row| row.starts_with("C:\\Users\\")));
-        }
+        terminal.resize(Dimensions::new(11, 4).unwrap()).unwrap();
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Windows cmd"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("Copyright  "));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("C:\\Users\\fe"));
+        assert_eq!(terminal.row_text(3).as_deref(), Some("s>         "));
+
+        // Only 3 rows now fit; the wrapped prompt alone needs 2 of them, so
+        // "Windows cmd" scrolls into retained history.
+        terminal.resize(Dimensions::new(12, 3).unwrap()).unwrap();
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Copyright   "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("C:\\Users\\fes"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some(">           "));
+        assert!(terminal.scrollback_lines().next().is_some_and(|line| line
+            .cells()
+            .iter()
+            .map(|cell| cell.character())
+            .collect::<String>()
+            == "Windows cmd"));
+
+        terminal.resize(Dimensions::new(11, 3).unwrap()).unwrap();
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Copyright  "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("C:\\Users\\fe"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("s>         "));
+
+        terminal.resize(Dimensions::new(12, 3).unwrap()).unwrap();
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Copyright   "));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("C:\\Users\\fes"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some(">           "));
+
+        // Growing back to the original height recovers "Windows cmd" from
+        // history onto the visible screen, exactly as it was originally.
+        terminal.resize(Dimensions::new(11, 4).unwrap()).unwrap();
+        assert_eq!(terminal.row_text(0).as_deref(), Some("Windows cmd"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("Copyright  "));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("C:\\Users\\fe"));
+        assert_eq!(terminal.row_text(3).as_deref(), Some("s>         "));
     }
 
     #[test]
@@ -697,8 +737,15 @@ mod tests {
         let mut resized = terminal(5, 1);
         resized.ingest("A界".as_bytes());
         resized.resize(Dimensions::new(2, 1).unwrap()).unwrap();
-        assert_eq!(resized.row_text(0).as_deref(), Some("A "));
-        assert_eq!(resized.cell(1, 0).unwrap().width(), CellWidth::Single);
+        // Reflow (ADR 0017): "A" and "界" no longer fit together at width
+        // 2, so "A" moves into retained history and "界" (kept intact as
+        // one atomic double-width unit) becomes the sole visible row.
+        assert_eq!(resized.row_text(0).as_deref(), Some("界 "));
+        assert_eq!(resized.cell(0, 0).unwrap().width(), CellWidth::Double);
+        assert_eq!(
+            resized.scrollback_lines().next().unwrap().cells()[0].character(),
+            'A'
+        );
     }
 
     #[test]
@@ -728,9 +775,15 @@ mod tests {
         terminal.resize(Dimensions::new(2, 1).unwrap()).unwrap();
         terminal.ingest("\u{09bc}".as_bytes());
 
-        assert_eq!(terminal.row_text(0).as_deref(), Some("A "));
-        assert_eq!(terminal.cell(1, 0).unwrap().text(), " ");
-        assert_eq!(terminal.cell(1, 0).unwrap().width(), CellWidth::Single);
+        // Reflow (ADR 0017): "A" moves into retained history and the wide
+        // "界" cell (with its already-attached combining mark) becomes the
+        // sole visible row. The combining anchor itself does not survive a
+        // reflow (its position is not stable across a rewrap), so the
+        // extra combining mark ingested after resize has nothing to attach
+        // to and is dropped rather than appended anywhere.
+        assert_eq!(terminal.row_text(0).as_deref(), Some("界 "));
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), "界\u{09bc}");
+        assert_eq!(terminal.cell(0, 0).unwrap().width(), CellWidth::Double);
     }
 
     #[test]
@@ -828,9 +881,15 @@ mod tests {
             vec!["abc", "def", "ghX"]
         );
 
-        // Resizing rows only (columns unchanged) must not touch scrollback layout.
+        // Growing rows only (columns unchanged) pulls the previously
+        // scrolled-off content back onto the now-taller visible screen
+        // rather than leaving it stranded in history.
         terminal.resize(Dimensions::new(3, 5).unwrap()).unwrap();
-        assert_eq!(terminal.scrollback_stats().physical_rows(), 3);
+        assert_eq!(terminal.scrollback_stats().physical_rows(), 0);
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abc"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("def"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("ghX"));
+        assert_eq!(terminal.row_text(3).as_deref(), Some("z  "));
     }
 
     #[test]

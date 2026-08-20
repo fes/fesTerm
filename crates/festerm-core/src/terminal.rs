@@ -95,6 +95,101 @@ impl BufferState {
         Ok(resized)
     }
 
+    /// Resizes the primary buffer by unified logical reflow instead of the
+    /// rectangular clip/pad model: the current screen is folded into
+    /// `scrollback` exactly as a full-viewport scroll would, the combined
+    /// logical content is reflowed at the new width, and the trailing
+    /// `dimensions.rows()` physical rows become the new visible screen
+    /// while everything above stays retained history. `scrollback` is
+    /// updated in place. This matches ADR 0017's primary-resize model:
+    /// reconstruct physical rows from logical lines, then map the cursor
+    /// through a stable logical position (logical-line identity plus
+    /// cell-stream offset) rather than clamping raw coordinates.
+    fn reflowed(
+        &self,
+        dimensions: Dimensions,
+        scrollback: &mut Scrollback,
+    ) -> Result<Self, TerminalError> {
+        let old_dimensions = self.screen.dimensions();
+        let rows_before_screen = scrollback.total_physical_rows();
+        // Only fold rows up through the cursor's own row or the last row
+        // with any occupied content, whichever is greater. Wholly-blank
+        // trailing rows are not real logical content; folding them in
+        // would otherwise become phantom empty logical lines that inflate
+        // the combined row count and push real content further into
+        // history than it belongs (`Screen::from_rows` already leaves
+        // unfilled new-screen rows blank by default).
+        let content_rows = old_dimensions
+            .rows()
+            .min(self.screen.occupied_row_count().max(self.cursor.row + 1));
+        let mut fold_rows = self.screen.to_rows();
+        fold_rows.truncate(content_rows);
+
+        let mut combined = scrollback.clone();
+        combined.push_rows(fold_rows);
+
+        // Capture the cursor's stable logical anchor using the current
+        // (pre-reflow) row boundaries, which still mirror the screen's
+        // actual per-row breaks at this point.
+        let cursor_absolute_row = rows_before_screen + self.cursor.row.min(content_rows - 1);
+        let cursor_anchor = combined.line_and_offset_at(cursor_absolute_row, self.cursor.column);
+
+        if dimensions.columns() != old_dimensions.columns() {
+            combined.reflow(dimensions.columns());
+        }
+
+        // Resolve the anchor against the just-reflowed (but not yet
+        // split) layout while the line it names is still whole: once
+        // `split_off_tail` runs, a line straddling the split boundary is
+        // truncated to its kept prefix and reuses the same identity for
+        // that shorter remainder, so resolving after the split could
+        // silently relocate an anchor that belonged in the tail.
+        let resolved_anchor =
+            cursor_anchor.and_then(|(line_id, offset)| combined.resolve_anchor(line_id, offset));
+
+        let tail_rows = combined.split_off_tail(dimensions.rows());
+        let scrollback_rows_after = combined.total_physical_rows();
+        let screen = Screen::from_rows(dimensions, tail_rows)?;
+        *scrollback = combined;
+
+        let mut cursor = Cursor {
+            column: 0,
+            row: dimensions.rows() - 1,
+        };
+        if let Some((column, absolute_row)) = resolved_anchor {
+            if absolute_row >= scrollback_rows_after {
+                cursor = Cursor {
+                    column: column.min(dimensions.columns() - 1),
+                    row: (absolute_row - scrollback_rows_after).min(dimensions.rows() - 1),
+                };
+            }
+        }
+
+        let mut scroll_top = self.scroll_top.min(dimensions.rows() - 1);
+        let mut scroll_bottom = self.scroll_bottom.min(dimensions.rows() - 1);
+        if scroll_top >= scroll_bottom && dimensions.rows() > 1 {
+            scroll_top = 0;
+            scroll_bottom = dimensions.rows() - 1;
+        }
+
+        let mut resized = Self {
+            screen,
+            cursor,
+            scroll_top,
+            scroll_bottom,
+            pending_wrap: self.pending_wrap,
+            // A reflow can move cell content arbitrarily relative to a
+            // combining anchor's original row/column, so (like the
+            // rectangular resize path) it is not carried forward.
+            combining_anchor: None,
+            dec_saved: self.dec_saved,
+            ansi_saved: self.ansi_saved,
+        };
+        resized.pending_wrap &= resized.cursor.column + 1 == dimensions.columns();
+        resized.clamp_saved_states(dimensions);
+        Ok(resized)
+    }
+
     fn combining_anchor_survives_resize(&self, anchor: Cursor, dimensions: Dimensions) -> bool {
         if anchor.column >= dimensions.columns() || anchor.row >= dimensions.rows() {
             return false;
@@ -356,23 +451,21 @@ impl Terminal {
         self.apply_osc_action(action);
     }
 
-    /// Resizes grids without reflowing visible content, retaining the
-    /// upper-left intersection (see ADR 0017; the live primary/alternate
-    /// screens keep the existing no-reflow model). Retained primary
-    /// scrollback is reflowed at the new column width so its physical-row
-    /// projection matches the new terminal width; logical-line identity,
-    /// content, and hard breaks are unchanged. Alternate-screen resize has
-    /// no history to reflow.
+    /// Resizes the primary buffer by unified logical reflow across its
+    /// visible content and retained history together (see ADR 0017 and
+    /// [`BufferState::reflowed`]): shrinking rewraps content into more
+    /// physical rows and can push rows into history, growing can pull
+    /// previously scrolled-off rows back onto the visible screen, and the
+    /// cursor is relocated through a stable logical position rather than
+    /// clamped raw coordinates. The alternate screen has no history and
+    /// keeps the rectangular clip/pad model, relying on the application to
+    /// redraw after the PTY resize.
     pub fn resize(&mut self, dimensions: Dimensions) -> Result<(), TerminalError> {
-        let primary = self.primary.resized(dimensions)?;
+        let primary = self.primary.reflowed(dimensions, &mut self.scrollback)?;
         let alternate = match &self.alternate {
             Some(alternate) => Some(alternate.resized(dimensions)?),
             None => None,
         };
-
-        if dimensions.columns() != self.dimensions().columns() {
-            self.scrollback.reflow(dimensions.columns());
-        }
 
         self.primary = primary;
         self.alternate = alternate;

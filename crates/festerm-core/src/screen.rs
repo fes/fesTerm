@@ -98,6 +98,65 @@ impl Screen {
             .collect()
     }
 
+    /// One past the last row with any occupied content, or `0` if the
+    /// screen is entirely blank. Used to trim wholly-blank trailing rows
+    /// before folding the screen into a [`Scrollback`](crate::history) for
+    /// reflow, so they don't become phantom empty logical lines.
+    pub(crate) fn occupied_row_count(&self) -> usize {
+        self.occupied_columns
+            .iter()
+            .rposition(|&count| count > 0)
+            .map_or(0, |row| row + 1)
+    }
+
+    /// Extracts every row as content trimmed to its occupied extent (no
+    /// trailing padding), paired with whether it soft-wraps into the next
+    /// row. Mirrors the extraction `scroll_up` performs when a row leaves
+    /// the screen for retained history, so this screen's current content
+    /// can be folded into a [`Scrollback`](crate::history) for a unified
+    /// reflow across resize.
+    pub(crate) fn to_rows(&self) -> Vec<ScreenRow> {
+        let columns = self.dimensions.columns();
+        (0..self.dimensions.rows())
+            .map(|row| {
+                let start = row * columns;
+                ScreenRow {
+                    cells: self.cells[start..start + self.occupied_columns[row]].to_vec(),
+                    soft_wrapped: self.soft_wrapped_rows[row],
+                }
+            })
+            .collect()
+    }
+
+    /// Builds a screen of `dimensions` from previously reflowed rows (for
+    /// example, the tail of a [`Scrollback::split_off_tail`] call), one row
+    /// per entry from the top down. Rows are assumed to already fit within
+    /// `dimensions.columns()`; any shorter row is padded with blank cells
+    /// and any surplus rows beyond `dimensions.rows()` are ignored. Every
+    /// row is marked dirty for the next redraw.
+    pub(crate) fn from_rows(
+        dimensions: Dimensions,
+        rows: Vec<ScreenRow>,
+    ) -> Result<Self, TerminalError> {
+        let mut screen = Self::new(dimensions)?;
+        let columns = dimensions.columns();
+        for (row, screen_row) in rows.into_iter().take(dimensions.rows()).enumerate() {
+            let start = row * columns;
+            let len = screen_row.cells.len().min(columns);
+            screen.cells[start..start + len].clone_from_slice(&screen_row.cells[..len]);
+            screen.occupied_cells[start..start + len].fill(true);
+            screen.soft_wrapped_rows[row] = screen_row.soft_wrapped;
+            screen.occupied_columns[row] = if screen_row.soft_wrapped {
+                columns
+            } else {
+                len
+            };
+        }
+        screen.repair_wide_cells();
+        screen.mark_all_dirty();
+        Ok(screen)
+    }
+
     pub(crate) fn resized(&self, dimensions: Dimensions) -> Result<Self, TerminalError> {
         let mut resized = Self::new(dimensions)?;
         let preserved_rows = self.dimensions.rows().min(dimensions.rows());

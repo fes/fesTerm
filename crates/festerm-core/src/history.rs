@@ -70,6 +70,38 @@ impl LogicalLine {
         self.hard_break
     }
 
+    /// Converts a (physical row, column-within-row) position on this line
+    /// into an absolute cell-stream offset, clamping the column to that
+    /// row's actual content length. Used to capture a stable cursor anchor
+    /// before a reflow changes physical-row boundaries.
+    fn cell_offset_for_row(&self, row: usize, column: usize) -> usize {
+        let start = row
+            .checked_sub(1)
+            .and_then(|previous| self.row_ends.get(previous).copied())
+            .unwrap_or(0);
+        let end = self.row_ends.get(row).copied().unwrap_or(self.cells.len());
+        start + column.min(end.saturating_sub(start))
+    }
+
+    /// Converts an absolute cell-stream offset back into a (physical row,
+    /// column-within-row) position using this line's current physical-row
+    /// boundaries. Used after a reflow to relocate a cursor anchor captured
+    /// via [`cell_offset_for_row`](Self::cell_offset_for_row) at the old
+    /// boundaries.
+    fn locate_offset(&self, offset: usize) -> (usize, usize) {
+        let offset = offset.min(self.cells.len());
+        let row = self
+            .row_ends
+            .iter()
+            .position(|&end| offset < end)
+            .unwrap_or_else(|| self.row_ends.len().saturating_sub(1));
+        let start = row
+            .checked_sub(1)
+            .and_then(|previous| self.row_ends.get(previous).copied())
+            .unwrap_or(0);
+        (row, offset - start)
+    }
+
     /// Rebuilds physical-row boundaries for this logical line at `columns`,
     /// without changing its cell content, identity, or hard-break ending.
     ///
@@ -228,6 +260,109 @@ impl Scrollback {
 
     pub(crate) fn lines(&self) -> impl ExactSizeIterator<Item = &LogicalLine> {
         self.lines.iter()
+    }
+
+    /// Total physical rows across every retained logical line.
+    pub(crate) fn total_physical_rows(&self) -> usize {
+        self.lines.iter().map(|line| line.physical_rows).sum()
+    }
+
+    /// Captures a stable logical anchor (line identity plus cell-stream
+    /// offset) for a cursor sitting at `absolute_row` (0-indexed from the
+    /// oldest retained row) and `column` within it. Returns `None` if
+    /// `absolute_row` is out of range.
+    pub(crate) fn line_and_offset_at(
+        &self,
+        mut absolute_row: usize,
+        column: usize,
+    ) -> Option<(u64, usize)> {
+        for line in &self.lines {
+            if absolute_row < line.physical_rows {
+                return Some((line.id, line.cell_offset_for_row(absolute_row, column)));
+            }
+            absolute_row -= line.physical_rows;
+        }
+        None
+    }
+
+    /// Resolves a stable logical anchor back into a (column, absolute row)
+    /// position using the current (possibly just-reflowed) physical-row
+    /// boundaries of the line it names. Returns `None` if the line no
+    /// longer exists (for example, evicted during reflow).
+    pub(crate) fn resolve_anchor(&self, line_id: u64, offset: usize) -> Option<(usize, usize)> {
+        let mut absolute_row = 0;
+        for line in &self.lines {
+            if line.id == line_id {
+                let (row, column) = line.locate_offset(offset);
+                return Some((column, absolute_row + row));
+            }
+            absolute_row += line.physical_rows;
+        }
+        None
+    }
+
+    /// Removes and returns up to the trailing `rows` physical rows of
+    /// retained content as [`ScreenRow`]s, splitting a logical line if the
+    /// boundary falls inside one. The remaining lines (with the split
+    /// line's kept prefix, now open rather than hard-broken) stay as the
+    /// updated retained scrollback. Returns fewer than `rows` entries if
+    /// there isn't enough retained content.
+    ///
+    /// Used when reconstructing the visible screen from unified logical
+    /// content during resize; this can only reduce accounted bytes, so it
+    /// never triggers eviction.
+    pub(crate) fn split_off_tail(&mut self, rows: usize) -> Vec<ScreenRow> {
+        let mut remaining = rows;
+        let mut segments: Vec<Vec<ScreenRow>> = Vec::new();
+        while remaining > 0 {
+            let Some(mut line) = self.lines.pop_back() else {
+                break;
+            };
+            self.charged_bytes = self.charged_bytes.saturating_sub(line.charged_bytes);
+            if line.physical_rows <= remaining {
+                remaining -= line.physical_rows;
+                let physical_rows = line.physical_rows;
+                let hard_break = line.hard_break;
+                let segment = (0..physical_rows)
+                    .map(|row| {
+                        let cells = line.physical_row(row).expect("row exists").to_vec();
+                        let soft_wrapped = row + 1 != physical_rows || !hard_break;
+                        ScreenRow {
+                            cells,
+                            soft_wrapped,
+                        }
+                    })
+                    .collect();
+                segments.push(segment);
+            } else {
+                let keep_rows = line.physical_rows - remaining;
+                let segment = (keep_rows..line.physical_rows)
+                    .map(|row| {
+                        let cells = line.physical_row(row).expect("row exists").to_vec();
+                        let soft_wrapped = row + 1 != line.physical_rows || !line.hard_break;
+                        ScreenRow {
+                            cells,
+                            soft_wrapped,
+                        }
+                    })
+                    .collect();
+                segments.push(segment);
+
+                let keep_cell_end = line.row_ends[keep_rows - 1];
+                line.cells.truncate(keep_cell_end);
+                line.row_ends.truncate(keep_rows);
+                line.physical_rows = keep_rows;
+                line.hard_break = false;
+                line.charged_bytes = size_of::<LogicalLine>()
+                    .saturating_add(charged_cells(&line.cells, line.cells.capacity()))
+                    .saturating_add(size_of::<usize>().saturating_mul(line.row_ends.capacity()));
+                self.charged_bytes = self.charged_bytes.saturating_add(line.charged_bytes);
+                self.lines.push_back(line);
+                remaining = 0;
+            }
+        }
+        segments.reverse();
+        segments.into_iter().flatten().collect()
     }
 
     pub(crate) fn stats(&self) -> ScrollbackStats {

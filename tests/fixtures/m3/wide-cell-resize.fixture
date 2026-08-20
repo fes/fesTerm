@@ -1,10 +1,10 @@
-name: resize clears a cropped wide-cell half conservatively
+name: resize reflows a wide cell onto the new screen intact
 size: 5x1
 input: "A界"
 resize: 2x1
 grid:
-  - "A "
+  - "界 "
 cells:
-  - "1,0| |default|default|none|single"
+  - "1,0||default|default|none|continuation"
 cursor: 1,0
 replies: ""

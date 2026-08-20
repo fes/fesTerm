@@ -1,11 +1,11 @@
-name: resize retains upper left cells clamps cursor and dirties rows
+name: resize reflows visible content clamps cursor and dirties rows
 size: 5x3
 input: "abcdefghi\x1b[2;3r\x1b[?6h\x1b[3;5H"
 resize: 3x2
 grid:
-  - "abc"
-  - "fgh"
-cursor: 2,1
+  - "ghi"
+  - "   "
+cursor: 0,1
 modes: "auto_wrap=true,origin_mode=true,alternate_screen=false,cursor_visible=true"
 dirty: "0,1"
 replies: ""
