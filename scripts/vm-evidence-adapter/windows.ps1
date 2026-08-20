@@ -42,6 +42,23 @@ function Require-PassStatus {
     }
 }
 
+function Invoke-NativeCommand {
+    # Native tooling (cmd.exe/cargo/festerm.exe) routinely writes normal
+    # progress output to stderr. With $ErrorActionPreference = 'Stop',
+    # PowerShell promotes that stderr text into a script-terminating error.
+    # Relax the preference for the duration of the call and rely on
+    # $LASTEXITCODE (as callers already do) to detect real failures.
+    param([scriptblock] $Command)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 $job = Get-Content -Raw -LiteralPath $JobPath | ConvertFrom-Json
 $sourceMap = @(Get-Content -Raw -LiteralPath $SourceMapPath | ConvertFrom-Json)
 if (-not (Test-FesTermJob $job)) {
@@ -62,14 +79,14 @@ try {
                 throw 'Windows ARM64 Build Tools and Clang are required for evidence builds.'
             }
             $buildCommand = "call `"$vcvarsallPath`" arm64 >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && cargo build --workspace"
-            cmd.exe /d /c $buildCommand
+            Invoke-NativeCommand { cmd.exe /d /c $buildCommand }
             if ($LASTEXITCODE -ne 0) {
                 throw 'Workspace build failed.'
             }
             $nativePath = Join-Path $ArtifactDirectory 'native-smoke.txt'
             $env:FESTERM_NATIVE_WINDOW_SMOKE = '1'
             $env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativePath
-            & (Join-Path $sourcePath 'target\debug\festerm.exe')
+            Invoke-NativeCommand { & (Join-Path $sourcePath 'target\debug\festerm.exe') }
             if ($LASTEXITCODE -ne 0) {
                 throw 'Native-window validation failed.'
             }
@@ -77,7 +94,7 @@ try {
         }
         'os-input-smoke' {
             $resultPath = Join-Path $ArtifactDirectory 'os-input-smoke.txt'
-            & (Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1') $resultPath
+            Invoke-NativeCommand { & (Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1') $resultPath }
             if ($LASTEXITCODE -ne 0) {
                 throw 'OS-input validation failed.'
             }
@@ -87,7 +104,7 @@ try {
             $resultPath = Join-Path $ArtifactDirectory 'optional-validation.txt'
             $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
             $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH = $resultPath
-            & (Join-Path $sourcePath 'scripts\run-optional-validation.ps1')
+            Invoke-NativeCommand { & (Join-Path $sourcePath 'scripts\run-optional-validation.ps1') }
             if ($LASTEXITCODE -ne 0) {
                 throw 'Optional validation failed.'
             }
