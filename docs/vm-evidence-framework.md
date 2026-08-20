@@ -1,6 +1,10 @@
 # VM-Based Native Evidence Framework
 
-**Status:** Automation foundation implemented; first manual evidence run completed 2026-08-10 (see [Evidence Run Log](#evidence-run-log)). Guest baselines and relay installation remain environment provisioning work.
+**Status:** Automation foundation implemented via the shared
+[`vm-evidence-lab`](https://github.com/fes/vm-evidence-lab) controller;
+first manual evidence run completed 2026-08-10, and all three guest baselines
+(Linux, Windows, macOS) have since been provisioned and validated end-to-end
+on this host (see [Evidence Run Log](#evidence-run-log)).
 **Scope:** Deterministic Windows, Linux, and macOS desktop evidence executed as virtual machines on a macOS host  
 **Primary hypervisor:** Parallels Desktop  
 **Secondary hypervisor:** VMware Fusion where the requested guest is supported
@@ -1277,6 +1281,45 @@ correlation against real CI and/or real (non-VM) hardware before being treated
 as anything more than VM-lab environment evidence. Full logs and screenshots
 for this run are retained outside the repository per the no-sensitive-content
 policy below; see the linked issues for reproduction commands and detail.
+
+### First host bring-up on a fresh Apple Silicon Mac (shared `vm-evidence-lab` controller)
+
+**Candidate SHA:** `0c7c1b5` (`main`). **Adapter SHA:** `0c7c1b5`.
+**Operator:** Copilot CLI, driven interactively by the repository owner (VM
+GUI logins, guest Setup Assistant, and macOS Login Options performed by the
+human operator; all provisioning, builds, and evidence collection driven by
+the assistant over SSH/`prlctl` via `vm-evidence-lab`'s `host/controller.sh`).
+
+This was the first end-to-end run of all three platforms through the shared
+`vm-evidence-lab` abstraction (not the legacy `fesTerm/scripts/vm-evidence`
+controller) on a brand-new host, including building fresh Linux/Windows/macOS
+guests from archived templates and, for macOS, a from-scratch VM after the
+archived one proved unbootable on this hardware (see
+[`vm-evidence-lab`'s `PARALLELS_PLATFORM_NOTES.md`](https://github.com/fes/vm-evidence-lab/blob/main/docs/PARALLELS_PLATFORM_NOTES.md)
+for why: Apple Silicon macOS VM images are bound to the physical host that
+created them and cannot migrate, even to a newer chip generation).
+
+Two real code bugs were found and fixed during this run: a fesTerm
+`Cargo.toml` dependency mis-scoping that broke non-macOS builds (commit
+`52efa74`), and a PowerShell `$ErrorActionPreference` gotcha that treated
+routine `git`/`cargo` stderr output as a fatal error on Windows, fixed in both
+this repository's Windows adapter and in `vm-evidence-lab`'s
+`relay/windows.ps1` (commit `0c7c1b5`, pinning
+`vm-evidence-lab@f93d6b0`).
+
+| Platform | Pipeline (checkout/build) | `native-smoke` result | Notes |
+| --- | --- | --- | --- |
+| Linux | pass | `focus=false` | Environment limitation (no real window-manager focus in this guest's desktop session), not a regression. |
+| Windows | pass | `visible=false` | Environment limitation (no Vulkan-capable GPU driver in this guest), not a regression. |
+| macOS | pass | **pass** | Full pass including real Metal-backed rendering; required Xcode CLT + Rust bootstrapped by hand on the fresh guest, and Windows-style autologon was not required for macOS session persistence across a snapshot revert (unlike Windows), though GUI autologin was configured anyway for resilience across full reboots. |
+
+None of these findings are confirmed product regressions; the Linux and
+Windows results reflect known guest-environment limitations rather than
+fesTerm defects. See `vm-evidence-lab`'s `docs/PARALLELS_PLATFORM_NOTES.md`
+for the full set of host-provisioning gotchas encountered (macOS CLT/Rust
+bootstrap, `prlctl exec` argv-flattening on macOS guests, Windows autologon
+requirement, and the PowerShell native-stderr issue) so a future fresh-host
+bring-up does not have to rediscover them.
 
 ## Definition of Done for the VM Framework
 
