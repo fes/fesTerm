@@ -12,6 +12,7 @@ directories = "6"
 eframe = "0"
 festerm-config = { path = "../../crates/festerm-config" }
 festerm-core = { path = "../../crates/festerm-core" }
+festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
@@ -21,7 +22,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 raw-window-handle = "0.6"
 
 [dev-dependencies]
