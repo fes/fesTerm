@@ -32,6 +32,8 @@ pub(crate) enum ConfigurationStartupStatus {
     WorkspaceSaveFailure(ConfigurationLoadFailure),
     PasswordCredentialSaved,
     PasswordCredentialSaveFailure(ConfigurationLoadFailure),
+    InterfaceSettingsSaved,
+    InterfaceSettingsSaveFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
@@ -97,6 +99,12 @@ impl ConfigurationStartupStatus {
             Self::PasswordCredentialSaveFailure(_) => {
                 "The saved SSH password was not linked because configuration could not be written. The prior credential remains active."
             }
+            Self::InterfaceSettingsSaved => {
+                "Interface settings were saved and will be restored the next time fesTerm starts."
+            }
+            Self::InterfaceSettingsSaveFailure(_) => {
+                "Interface settings apply now but could not be saved, so they will not persist across restart."
+            }
         }
     }
 
@@ -107,6 +115,7 @@ impl ConfigurationStartupStatus {
                 | Self::ReloadFailure(_)
                 | Self::WorkspaceSaveFailure(_)
                 | Self::PasswordCredentialSaveFailure(_)
+                | Self::InterfaceSettingsSaveFailure(_)
         )
     }
 }
@@ -237,6 +246,21 @@ impl ConfigurationReloader {
         match self.save_configuration(configuration) {
             Ok(()) => ConfigurationStartupStatus::WorkspaceSaved,
             Err(failure) => ConfigurationStartupStatus::WorkspaceSaveFailure(failure),
+        }
+    }
+
+    /// Saves an already validated complete replacement immediately after a
+    /// Settings toggle or reset. Unlike [`Self::save_workspace`], this is
+    /// triggered automatically by the application rather than by an explicit
+    /// user save action, matching the "applies immediately" design of the
+    /// interface-preference toggles it supports.
+    pub(crate) fn save_interface_settings(
+        &self,
+        configuration: &Configuration,
+    ) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::InterfaceSettingsSaved,
+            Err(failure) => ConfigurationStartupStatus::InterfaceSettingsSaveFailure(failure),
         }
     }
 

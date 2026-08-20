@@ -5,7 +5,7 @@ use std::{
 };
 
 use eframe::egui;
-use festerm_config::Configuration;
+use festerm_config::{Configuration, InterfaceSettings};
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
@@ -145,6 +145,7 @@ pub struct FesTermApp {
     rename_restore_tab: Option<TabId>,
     pending_close: Option<PendingCloseConfirmation>,
     pending_paste: Option<PendingPasteConfirmation>,
+    pending_settings_reset: Option<PendingSettingsResetConfirmation>,
     native_menu: festerm_macos_window::NativeMenu,
     focus_mode: bool,
     transient_notice: Option<(String, Instant)>,
@@ -190,6 +191,13 @@ struct PendingPasteConfirmation {
     transport_state: &'static str,
     lifecycle_generation: u64,
     bracketed_paste: bool,
+    cancel_focus_requested: bool,
+}
+
+/// Confirmation shown only when resetting would actually discard a change
+/// from defaults (`docs/gui-action-graph.md` SET-02).
+#[derive(Clone, Debug)]
+struct PendingSettingsResetConfirmation {
     cancel_focus_requested: bool,
 }
 
@@ -334,6 +342,7 @@ impl FesTermApp {
             rename_restore_tab: None,
             pending_close: None,
             pending_paste: None,
+            pending_settings_reset: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             focus_mode: false,
             transient_notice: None,
@@ -352,7 +361,11 @@ impl FesTermApp {
     }
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
-        if self.pending_close.is_some() || self.pending_paste.is_some() || self.about_open {
+        if self.pending_close.is_some()
+            || self.pending_paste.is_some()
+            || self.pending_settings_reset.is_some()
+            || self.about_open
+        {
             return;
         }
         while let Some(command) = self.native_menu.try_recv() {
@@ -666,6 +679,100 @@ impl FesTermApp {
         self.configuration_status = status;
     }
 
+    /// Writes through the current chip-layout/status-bar preferences
+    /// immediately after a toggle or reset. The in-memory `AppState` change
+    /// applies regardless of whether the write succeeds
+    /// (`docs/gui-design.md` "apply immediately"); a failed write only means
+    /// the change will not survive a restart.
+    fn persist_interface_settings(&mut self) {
+        let replacement = match self
+            .state
+            .configuration()
+            .with_interface_settings(self.state.interface_settings())
+        {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status =
+                    ConfigurationStartupStatus::InterfaceSettingsSaveFailure(
+                        crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                    );
+                return;
+            }
+        };
+        let status = self
+            .configuration_reloader
+            .save_interface_settings(&replacement);
+        if matches!(status, ConfigurationStartupStatus::InterfaceSettingsSaved) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
+    /// Applies the reset-interface-settings policy shared by chrome, the
+    /// command palette, and shortcuts: nothing to confirm when settings
+    /// already equal defaults, otherwise a destructive-adjacent confirmation
+    /// (`docs/gui-action-graph.md` SET-02).
+    fn request_reset_interface_settings(&mut self, context: &egui::Context) {
+        if self.state.interface_settings() == InterfaceSettings::DEFAULT {
+            self.state
+                .dispatch(AppCommand::ResetInterfaceSettings, context);
+            return;
+        }
+        self.palette.close();
+        self.pending_settings_reset = Some(PendingSettingsResetConfirmation {
+            cancel_focus_requested: false,
+        });
+    }
+
+    fn show_settings_reset_confirmation(&mut self, context: &egui::Context, escape: bool) {
+        let Some(pending) = self.pending_settings_reset.as_ref().cloned() else {
+            return;
+        };
+        if self.state.interface_settings() == InterfaceSettings::DEFAULT {
+            self.cancel_settings_reset_confirmation();
+            return;
+        }
+
+        let mut cancel = escape;
+        let mut confirm = false;
+        egui::Modal::new(egui::Id::new("reset_interface_settings_confirmation"))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
+                ui.heading("Reset interface settings?");
+                ui.add_space(6.0);
+                ui.label("Chip layout and status bar visibility will return to their defaults.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    let cancel_button = ui.button("Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    if cancel_button.clicked() {
+                        cancel = true;
+                    }
+                    if ui.button("Reset").clicked() {
+                        confirm = true;
+                    }
+                });
+            });
+        if let Some(current) = self.pending_settings_reset.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.cancel_settings_reset_confirmation();
+        } else if confirm {
+            self.pending_settings_reset = None;
+            self.state
+                .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.persist_interface_settings();
+        }
+    }
+
+    fn cancel_settings_reset_confirmation(&mut self) {
+        self.pending_settings_reset = None;
+    }
+
     fn native_store_available(&self) -> bool {
         self.secret_store.is_ok()
     }
@@ -902,7 +1009,8 @@ impl FesTermApp {
                 ChromeAction::ToggleInspector => self.toggle_inspector_from_current_focus(context),
                 ChromeAction::TogglePalette => self.palette.toggle(),
                 ChromeAction::ToggleChipLayout => {
-                    self.state.dispatch(AppCommand::ToggleChipLayout, context)
+                    self.state.dispatch(AppCommand::ToggleChipLayout, context);
+                    self.persist_interface_settings();
                 }
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
@@ -1143,7 +1251,11 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.pending_close.is_some() || self.pending_paste.is_some() || self.about_open {
+        if self.pending_close.is_some()
+            || self.pending_paste.is_some()
+            || self.pending_settings_reset.is_some()
+            || self.about_open
+        {
             return;
         }
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
@@ -1632,7 +1744,9 @@ impl FesTermApp {
 
         // A destructive confirmation owns Escape before the terminal input
         // adapter sees raw events. Backdrop clicks are intentionally ignored.
-        let confirmation_escape = (self.pending_close.is_some() || self.pending_paste.is_some())
+        let confirmation_escape = (self.pending_close.is_some()
+            || self.pending_paste.is_some()
+            || self.pending_settings_reset.is_some())
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -1746,6 +1860,7 @@ impl FesTermApp {
                         paste_available: session.accepts_input(),
                         terminal_input_enabled: self.pending_close.is_none()
                             && self.pending_paste.is_none()
+                            && self.pending_settings_reset.is_none()
                             && !self.about_open,
                         defer_paste_to_application: true,
                     };
@@ -1777,6 +1892,7 @@ impl FesTermApp {
             self.cancel_paste_confirmation();
         } else if self.pending_close.is_none()
             && self.pending_paste.is_none()
+            && self.pending_settings_reset.is_none()
             && deferred_pastes.len() == 1
         {
             self.handle_paste_request(active_tab_id, deferred_pastes.remove(0));
@@ -1831,6 +1947,14 @@ impl FesTermApp {
                 AppCommand::CloseTab(id) => {
                     self.request_close_tab(id, &ui.ctx().clone());
                 }
+                command @ (AppCommand::ToggleChipLayout | AppCommand::ToggleStatusBar) => {
+                    let context = ui.ctx().clone();
+                    self.state.dispatch(command, &context);
+                    self.persist_interface_settings();
+                }
+                AppCommand::ResetInterfaceSettings => {
+                    self.request_reset_interface_settings(&ui.ctx().clone());
+                }
                 command => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
@@ -1855,6 +1979,8 @@ impl FesTermApp {
 
         if self.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
+        } else if self.pending_settings_reset.is_some() {
+            self.show_settings_reset_confirmation(ui.ctx(), confirmation_escape);
         } else {
             self.show_paste_confirmation(ui.ctx(), confirmation_escape);
         }
@@ -1892,6 +2018,7 @@ impl FesTermApp {
             rename_restore_tab: None,
             pending_close: None,
             pending_paste: None,
+            pending_settings_reset: None,
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             focus_mode: false,
             transient_notice: None,
@@ -1951,6 +2078,55 @@ mod tests {
         assert_eq!(confirmation_width(360.0, 440.0), 328.0);
         assert_eq!(confirmation_width(360.0, 360.0), 328.0);
         assert_eq!(confirmation_width(900.0, 440.0), 440.0);
+    }
+
+    #[test]
+    fn resetting_already_default_interface_settings_needs_no_confirmation() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.request_reset_interface_settings(&context);
+
+        assert!(app.pending_settings_reset.is_none());
+        assert_eq!(app.state.interface_settings(), InterfaceSettings::DEFAULT);
+    }
+
+    #[test]
+    fn resetting_changed_interface_settings_is_safe_by_default_and_confirmed_deliberately() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.dispatch(AppCommand::ToggleChipLayout, &context);
+        app.state.dispatch(AppCommand::ToggleStatusBar, &context);
+        assert_ne!(app.state.interface_settings(), InterfaceSettings::DEFAULT);
+
+        app.request_reset_interface_settings(&context);
+        assert!(app.pending_settings_reset.is_some());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 400.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Cancel").is_focused());
+
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        assert!(harness.state().pending_settings_reset.is_none());
+        assert_ne!(
+            harness.state().state.interface_settings(),
+            InterfaceSettings::DEFAULT
+        );
+
+        harness
+            .state_mut()
+            .request_reset_interface_settings(&context);
+        harness.step();
+        harness.get_by_label("Reset").click();
+        harness.step();
+        assert!(harness.state().pending_settings_reset.is_none());
+        assert_eq!(
+            harness.state().state.interface_settings(),
+            InterfaceSettings::DEFAULT
+        );
     }
 
     #[test]

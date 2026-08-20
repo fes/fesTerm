@@ -710,11 +710,13 @@ pub fn show_ssh_authentication_required(
 
 /// Renders the Settings application surface.
 ///
-/// `chip_layout` reflects the current chip wrapping mode
-/// (`docs/gui-design.md` "Wrapping must remain user-configurable"); this is
-/// the one persistent preference implemented so far. Returns commands for
-/// Settings actions; the application composition root owns configuration I/O
-/// and applies successful replacements to `AppState`.
+/// `chip_layout` and `status_bar_visible` reflect the current interface
+/// preferences (`docs/gui-design.md` "Wrapping must remain user-configurable").
+/// Unlike profiles/workspace metadata, these two preferences are saved
+/// automatically by the composition root as soon as they change; there is no
+/// separate explicit save step for them. Returns commands for Settings
+/// actions; the application composition root owns configuration I/O and
+/// applies successful replacements to `AppState`.
 pub fn show_settings(
     ui: &mut Ui,
     chip_layout: ChipLayout,
@@ -763,6 +765,10 @@ pub fn show_settings(
         };
         if ui.button(status_bar_label).clicked() {
             command = Some(AppCommand::ToggleStatusBar);
+        }
+        ui.label("Chip layout and status bar visibility are saved automatically.");
+        if ui.button("Reset interface settings to defaults").clicked() {
+            command = Some(AppCommand::ResetInterfaceSettings);
         }
     });
     command

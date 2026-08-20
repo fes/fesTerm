@@ -48,6 +48,8 @@ pub struct Configuration {
     workspace_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     workspace: Option<WorkspaceConfiguration>,
+    #[serde(default, skip_serializing_if = "InterfaceSettings::is_default")]
+    settings: InterfaceSettings,
 }
 
 impl Configuration {
@@ -58,6 +60,7 @@ impl Configuration {
             profiles,
             workspace_enabled: false,
             workspace: None,
+            settings: InterfaceSettings::DEFAULT,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -73,6 +76,7 @@ impl Configuration {
             profiles,
             workspace_enabled: true,
             workspace: Some(workspace),
+            settings: InterfaceSettings::DEFAULT,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -84,7 +88,10 @@ impl Configuration {
     /// This is intended for explicit workspace snapshots: callers cannot
     /// accidentally discard profiles while enabling workspace persistence.
     pub fn with_workspace(&self, workspace: WorkspaceConfiguration) -> Result<Self, ConfigError> {
-        Self::new_with_workspace(self.profiles.clone(), workspace)
+        let mut replacement = Self::new_with_workspace(self.profiles.clone(), workspace)?;
+        replacement.settings = self.settings;
+        replacement.validate()?;
+        Ok(replacement)
     }
 
     /// Returns a complete replacement with one SSH profile's native stored
@@ -114,6 +121,26 @@ impl Configuration {
         Ok(replacement)
     }
 
+    /// Returns a complete replacement with these interface settings applied.
+    ///
+    /// Unlike profiles/workspace metadata, these preferences are intended to
+    /// be saved automatically as the user changes them in Settings; there is
+    /// no separate explicit save step for this narrow slice.
+    pub fn with_interface_settings(
+        &self,
+        settings: InterfaceSettings,
+    ) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        replacement.settings = settings;
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns the current user-adjustable interface preferences.
+    pub const fn interface_settings(&self) -> InterfaceSettings {
+        self.settings
+    }
+
     /// Returns an empty, valid configuration document.
     pub const fn empty() -> Self {
         Self {
@@ -121,6 +148,7 @@ impl Configuration {
             profiles: Vec::new(),
             workspace_enabled: false,
             workspace: None,
+            settings: InterfaceSettings::DEFAULT,
         }
     }
 
@@ -133,6 +161,7 @@ impl Configuration {
             profiles: raw.profiles,
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
+            settings: raw.settings,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -247,6 +276,8 @@ struct RawConfiguration {
     #[serde(default)]
     workspace_enabled: bool,
     workspace: Option<WorkspaceConfiguration>,
+    #[serde(default)]
+    settings: InterfaceSettings,
 }
 
 impl<'de> Deserialize<'de> for Configuration {
@@ -260,6 +291,7 @@ impl<'de> Deserialize<'de> for Configuration {
             profiles: raw.profiles,
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
+            settings: raw.settings,
         };
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)
@@ -268,6 +300,74 @@ impl<'de> Deserialize<'de> for Configuration {
 
 const fn is_false(value: &bool) -> bool {
     !*value
+}
+
+/// User-adjustable interface preferences that apply immediately in the UI and
+/// are intended to be saved automatically as they change
+/// (`docs/gui-design.md` "Wrapping must remain user-configurable"). Unlike
+/// profiles and workspace metadata, there is deliberately no separate
+/// explicit save step for this slice: Settings applies each change live and
+/// the application persists the same replacement immediately afterward.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterfaceSettings {
+    #[serde(default)]
+    chip_layout: ChipLayoutPreference,
+    #[serde(default = "default_status_bar_visible")]
+    status_bar_visible: bool,
+}
+
+impl InterfaceSettings {
+    /// The same defaults fesTerm has always started with; also the target of
+    /// an explicit Settings reset.
+    pub const DEFAULT: Self = Self {
+        chip_layout: ChipLayoutPreference::SingleRowScroll,
+        status_bar_visible: true,
+    };
+
+    pub const fn new(chip_layout: ChipLayoutPreference, status_bar_visible: bool) -> Self {
+        Self {
+            chip_layout,
+            status_bar_visible,
+        }
+    }
+
+    pub const fn chip_layout(self) -> ChipLayoutPreference {
+        self.chip_layout
+    }
+
+    pub const fn status_bar_visible(self) -> bool {
+        self.status_bar_visible
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::DEFAULT
+    }
+}
+
+impl Default for InterfaceSettings {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+const fn default_status_bar_visible() -> bool {
+    true
+}
+
+/// The persisted chip-wrapping preference
+/// (`docs/gui-design.md` "Tab overflow and wrapping"). This mirrors
+/// `festerm_ui_egui::chrome::ChipLayout` without introducing a UI-crate
+/// dependency into this configuration crate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChipLayoutPreference {
+    /// Many chips wrap onto additional rows.
+    Wrap,
+    /// Chips stay on a single row; overflow scrolls horizontally instead of
+    /// wrapping.
+    #[default]
+    SingleRowScroll,
 }
 
 /// Metadata-only state used to restore one window's ordered tab surfaces.
@@ -2322,6 +2422,73 @@ schema_version = 99
         assert_eq!(
             parent_directory(Path::new("")).unwrap_err().kind(),
             ConfigurationFileErrorKind::InvalidTargetPath
+        );
+    }
+
+    #[test]
+    fn default_interface_settings_are_omitted_from_serialized_output() {
+        let configuration = Configuration::empty();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(!serialized.contains("[settings]"));
+        assert_eq!(
+            configuration.interface_settings(),
+            InterfaceSettings::DEFAULT
+        );
+    }
+
+    #[test]
+    fn non_default_interface_settings_round_trip_through_toml() {
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::new(ChipLayoutPreference::Wrap, false))
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("[settings]"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        assert_eq!(
+            configuration.interface_settings(),
+            InterfaceSettings::new(ChipLayoutPreference::Wrap, false)
+        );
+    }
+
+    #[test]
+    fn configuration_files_without_a_settings_table_parse_using_current_defaults() {
+        let document = "schema_version = 1\n";
+
+        let configuration = Configuration::parse(document).unwrap();
+
+        assert_eq!(
+            configuration.interface_settings(),
+            InterfaceSettings::DEFAULT
+        );
+    }
+
+    #[test]
+    fn settings_table_rejects_unknown_fields() {
+        let document = "schema_version = 1\n\n[settings]\ntheme = \"dark\"\n";
+
+        let error = Configuration::parse(document).unwrap_err();
+
+        assert_eq!(error.kind(), ConfigErrorKind::Parse);
+    }
+
+    #[test]
+    fn with_workspace_preserves_previously_saved_interface_settings() {
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::new(ChipLayoutPreference::Wrap, false))
+            .unwrap();
+        let workspace =
+            WorkspaceConfiguration::new(vec![WorkspaceTab::launcher("launcher").unwrap()], None)
+                .unwrap();
+
+        let replacement = configuration.with_workspace(workspace).unwrap();
+
+        assert_eq!(
+            replacement.interface_settings(),
+            InterfaceSettings::new(ChipLayoutPreference::Wrap, false)
         );
     }
 

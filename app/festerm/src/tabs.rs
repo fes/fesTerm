@@ -19,7 +19,8 @@ use std::sync::{
 
 use eframe::egui;
 use festerm_config::{
-    ConfigError, Configuration, SshProfileConfiguration, WorkspaceConfiguration, WorkspaceTab,
+    ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, SshProfileConfiguration,
+    WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
@@ -679,6 +680,10 @@ pub enum AppCommand {
     /// "Contextual status region" / "the status bar should be configurable
     /// on/off").
     ToggleStatusBar,
+    /// Resets chip layout and status-bar visibility to their defaults after
+    /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
+    /// user-configurable").
+    ResetInterfaceSettings,
 }
 
 /// A one-shot password value awaiting native-store insertion.
@@ -703,6 +708,24 @@ impl std::fmt::Debug for PasswordToStore {
     }
 }
 
+/// Converts the saved interface preference into the UI-crate layout enum
+/// used by rendering. This is the one place `AppState` bridges the
+/// config-crate and UI-crate chip layout types.
+const fn chip_layout_from_preference(preference: ChipLayoutPreference) -> ChipLayout {
+    match preference {
+        ChipLayoutPreference::Wrap => ChipLayout::Wrap,
+        ChipLayoutPreference::SingleRowScroll => ChipLayout::SingleRowScroll,
+    }
+}
+
+/// Converts a live UI chip layout back into the persisted preference.
+const fn chip_layout_to_preference(layout: ChipLayout) -> ChipLayoutPreference {
+    match layout {
+        ChipLayout::Wrap => ChipLayoutPreference::Wrap,
+        ChipLayout::SingleRowScroll => ChipLayoutPreference::SingleRowScroll,
+    }
+}
+
 /// Owns the always-nonempty tab collection and the active-tab cursor.
 pub struct AppState {
     tabs: Vec<Tab>,
@@ -719,6 +742,7 @@ impl AppState {
     /// still request a deterministic primary session explicitly.
     pub fn with_launcher(configuration: Configuration) -> Self {
         let id = TabId::next();
+        let settings = configuration.interface_settings();
         Self {
             tabs: vec![Tab {
                 id,
@@ -727,8 +751,8 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
-            chip_layout: ChipLayout::SingleRowScroll,
-            status_bar_visible: true,
+            chip_layout: chip_layout_from_preference(settings.chip_layout()),
+            status_bar_visible: settings.status_bar_visible(),
         }
     }
 
@@ -745,6 +769,7 @@ impl AppState {
     ) -> (Self, TabId) {
         let session = SessionTab::start_primary(context, smoke_profile);
         let id = TabId::next();
+        let settings = configuration.interface_settings();
         let state = Self {
             tabs: vec![Tab {
                 id,
@@ -753,8 +778,8 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
-            chip_layout: ChipLayout::SingleRowScroll,
-            status_bar_visible: true,
+            chip_layout: chip_layout_from_preference(settings.chip_layout()),
+            status_bar_visible: settings.status_bar_visible(),
         };
         (state, id)
     }
@@ -803,13 +828,14 @@ impl AppState {
         }
 
         let active = focused.unwrap_or_else(|| restored[0].id);
+        let settings = configuration.interface_settings();
         Self {
             tabs: restored,
             active,
             configuration,
             inspector_open: false,
-            chip_layout: ChipLayout::SingleRowScroll,
-            status_bar_visible: true,
+            chip_layout: chip_layout_from_preference(settings.chip_layout()),
+            status_bar_visible: settings.status_bar_visible(),
         }
     }
 
@@ -892,6 +918,16 @@ impl AppState {
 
     pub const fn status_bar_visible(&self) -> bool {
         self.status_bar_visible
+    }
+
+    /// Returns the current chip-layout and status-bar preferences as a
+    /// persistable value, for the composition root to write through after a
+    /// toggle or reset.
+    pub const fn interface_settings(&self) -> InterfaceSettings {
+        InterfaceSettings::new(
+            chip_layout_to_preference(self.chip_layout),
+            self.status_bar_visible,
+        )
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -982,6 +1018,11 @@ impl AppState {
             }
             AppCommand::ToggleStatusBar => {
                 self.status_bar_visible = !self.status_bar_visible;
+            }
+            AppCommand::ResetInterfaceSettings => {
+                self.chip_layout =
+                    chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
+                self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
             }
         }
         // The Inspector follows session chips, but it is not a global panel

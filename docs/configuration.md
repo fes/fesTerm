@@ -5,8 +5,10 @@ in-memory transactional reload state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
 to the Launcher. Settings can explicitly save a fresh workspace snapshot while
-preserving the manually authored profiles. File watching, profile editing, and
-saved SSH autoconnect are intentionally not part of this slice.
+preserving the manually authored profiles. It also saves the two Settings
+interface preferences (chip layout, status bar visibility) automatically as
+they change; see "Interface settings" below. File watching, profile editing,
+and saved SSH autoconnect are intentionally not part of this slice.
 
 ## Startup discovery
 
@@ -30,8 +32,10 @@ before applying it. A valid replacement affects only future Launcher choices;
 it does not stop or reconfigure existing sessions. A missing file replaces the
 active configuration with `Configuration::empty()`. An unreadable, invalid, or
 unavailable selected location retains the last known configuration and shows a
-content-free actionable diagnostic. There is no file watching, polling,
-configuration editing, or automatic persistence.
+content-free actionable diagnostic. There is no file watching, polling, or
+configuration editing, and no automatic persistence of profiles or workspace
+metadata. The two interface preferences described below are the sole,
+deliberately scoped exception: they are written through automatically.
 
 ## Schema version 1
 
@@ -82,6 +86,10 @@ profile_id = "build-host"
 [[workspace.tabs]]
 kind = "settings"
 id = "settings"
+
+[settings]
+chip_layout = "single-row-scroll"
+status_bar_visible = true
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
@@ -125,7 +133,32 @@ credentials. Ad-hoc sessions and mutable launch definitions have no schema
 representation yet: they are omitted rather than serialized. Unknown tab
 kinds and fields are rejected.
 
+## Interface settings
+
+The optional `[settings]` table holds two lightweight, non-destructive UI
+preferences: `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
+`"single-row-scroll"`) and `status_bar_visible` (default `true`). Both mirror
+the current Settings toggles for chip wrapping and the bottom status bar.
+
+Unlike profiles and workspace metadata, `[settings]` is a deliberate, narrowly
+scoped exception to the no-auto-save principle above: fesTerm writes the whole
+configuration document through immediately whenever either toggle changes (or
+after an explicit Settings **Reset interface settings to defaults** action),
+using the same selected startup location and atomic replacement path as
+**Save workspace**. The in-memory UI change always applies immediately
+regardless of whether the write succeeds; a failed write only means the
+change will not survive a restart, and Settings shows a content-free
+diagnostic in that case. This exception applies only to these two fields —
+profiles and workspace metadata remain fully manual.
+
+`[settings]` is omitted entirely from a saved document while both fields are
+at their defaults, so a configuration that has never customized these
+preferences serializes and reloads identically to one written before this
+table existed. A configuration file without a `[settings]` table parses using
+these same defaults.
+
 ## Startup workspace restoration
+
 
 When `workspace_enabled = true`, startup restores `workspace.tabs` in saved
 order instead of adding the normal startup Launcher. Every restored
