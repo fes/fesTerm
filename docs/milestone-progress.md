@@ -90,6 +90,9 @@ refresh milestone/issue truth so parallel work does not become coordination
 drift.
 
 The next sequencing is therefore deliberate: close M6 evidence loops while
-stabilizing the GUI and advance the now-started M9 bounded-history foundation
-into viewport navigation and reflow. Reserve packaging/terminfo plus broader
-refinement for M10.
+stabilizing the GUI and continue advancing M9. Bounded history, viewport
+navigation, and retained-scrollback resize reflow (`docs/ui-test-plan.md`'s
+"M9 scrollback and reflow verification") are implemented; selection/search
+position stability across reflow, eviction fallback, and disconnected
+read-only history remain open under issue #43. Reserve packaging/terminfo plus
+broader refinement for M10.

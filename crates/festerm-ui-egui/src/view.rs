@@ -121,6 +121,28 @@ impl HistoryViewport {
         self.observed_history_rows = rows;
     }
 
+    /// Rescales an anchored offset proportionally after a resize reflows
+    /// retained scrollback, so a history position stays roughly the same
+    /// relative place in the (now differently sized) retained history
+    /// instead of jumping to an unrelated raw row count. `previous_rows` and
+    /// `new_rows` are the physical-row totals observed immediately before
+    /// and after the resize that triggered reflow.
+    fn reflowed(&mut self, previous_rows: usize, new_rows: usize) {
+        if self.offset_rows > 0 && previous_rows > 0 {
+            let ratio = f64::from(u32::try_from(self.offset_rows).unwrap_or(u32::MAX))
+                / f64::from(u32::try_from(previous_rows).unwrap_or(u32::MAX).max(1));
+            let rescaled = (ratio * new_rows as f64).round();
+            self.offset_rows = if rescaled.is_finite() && rescaled >= 0.0 {
+                (rescaled as usize).min(new_rows)
+            } else {
+                new_rows
+            };
+        } else {
+            self.offset_rows = self.offset_rows.min(new_rows);
+        }
+        self.observed_history_rows = new_rows;
+    }
+
     fn scroll_up(&mut self, rows: usize) {
         self.offset_rows = self.offset_rows.saturating_add(rows);
     }
@@ -343,12 +365,17 @@ impl TerminalView {
         };
         let calculated = dimensions_from_viewport(viewport, metrics);
         self.diagnostics.calculated_dimensions = calculated;
+        let history_rows_before_resize = terminal.scrollback_stats().physical_rows();
         if matches!(
             self.resize.apply_viewport(terminal, viewport, metrics),
             ResizeOutcome::Resized(_)
         ) {
             self.selection.clear();
             self.pointer = TerminalPointerState::default();
+            self.history.reflowed(
+                history_rows_before_resize,
+                terminal.scrollback_stats().physical_rows(),
+            );
             sink.record_terminal_resize(terminal.dimensions());
         }
 

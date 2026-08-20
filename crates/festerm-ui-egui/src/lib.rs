@@ -499,6 +499,68 @@ mod tests {
     }
 
     #[test]
+    fn resizing_the_view_rescales_an_anchored_history_offset_instead_of_resetting_it() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(420.0, 240.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        let rows = harness.state().terminal.dimensions().rows();
+        for line in 0..rows + 40 {
+            // A line far longer than any tested viewport width guarantees it
+            // soft-wraps into multiple physical rows at the narrow size and
+            // then reflows into fewer physical rows once widened.
+            harness
+                .state_mut()
+                .terminal
+                .ingest(format!("line {line} {}\r\n", "x".repeat(300)).as_bytes());
+        }
+        harness.run();
+        let center = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .center();
+        harness.event(egui::Event::PointerMoved(center));
+        harness.run();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let history_before = harness.state().terminal.scrollback_stats().physical_rows();
+        let offset_before = harness.state().view.history_offset_rows();
+        assert!(offset_before > 0);
+
+        // Widen the view: retained scrollback reflows into fewer physical
+        // rows, so the anchored offset must shrink proportionally rather
+        // than being clamped to an unrelated raw row count or reset to 0.
+        harness.set_size(Vec2::new(900.0, 240.0));
+        harness.run();
+        let history_after = harness.state().terminal.scrollback_stats().physical_rows();
+        assert!(history_after < history_before);
+        let offset_after = harness.state().view.history_offset_rows();
+        assert!(offset_after > 0, "resize must not reset an anchored view");
+        assert!(offset_after <= history_after);
+        // The rescaled offset preserves roughly the same relative position
+        // in the (now smaller) retained history rather than jumping.
+        let ratio_before = offset_before as f64 / history_before as f64;
+        let ratio_after = offset_after as f64 / history_after as f64;
+        assert!(
+            (ratio_before - ratio_after).abs() < 0.15,
+            "expected proportional offset, before={offset_before}/{history_before} \
+             after={offset_after}/{history_after}"
+        );
+    }
+
+    #[test]
     fn local_wheel_anchors_history_and_ctrl_end_resumes_following() {
         let mut harness = Harness::builder()
             .with_size(Vec2::new(420.0, 240.0))

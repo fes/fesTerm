@@ -60,12 +60,15 @@ validation through actual use and focused evidence.
 
 Native SSH is implemented through the same stable session identity, application
 command, diagnostics, and workspace concepts as local sessions. The next
-product track is to validate M6 and advance M9 scrollback/reflow while bringing
-implemented GUI interactions into conformance with the approved detailed
-contracts. M8's narrow profile/workspace and native SSH-password persistence
-scope is implemented; profile editing/import UI, persistent trust, and
-additional credential types remain future capabilities. Serial's product and
-UI contract is defined now, but its backend remains a later focused track.
+product track is to validate M6 and advance the remaining M9 scope (selection
+and search position stability across reflow, eviction fallback, and
+disconnected read-only history; resize reflow of retained scrollback is
+implemented) while bringing implemented GUI interactions into conformance with
+the approved detailed contracts. M8's narrow profile/workspace and native
+SSH-password persistence scope is implemented; profile editing/import UI,
+persistent trust, and additional credential types remain future capabilities.
+Serial's product and UI contract is defined now, but its backend remains a
+later focused track.
 
 ## Preemptive Seams Worth Establishing
 

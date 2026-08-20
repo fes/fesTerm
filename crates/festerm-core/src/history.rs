@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, mem::size_of};
 
-use crate::{screen::ScreenRow, Cell};
+use crate::{cell::CellWidth, screen::ScreenRow, Cell};
 
 /// Default retained primary-screen payload budget: 64 MiB per terminal.
 pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 64 * 1024 * 1024;
@@ -68,6 +68,50 @@ impl LogicalLine {
     }
     pub const fn has_hard_break(&self) -> bool {
         self.hard_break
+    }
+
+    /// Rebuilds physical-row boundaries for this logical line at `columns`,
+    /// without changing its cell content, identity, or hard-break ending.
+    ///
+    /// A leading [`CellWidth::Double`] cell and its trailing
+    /// [`CellWidth::Continuation`] cell are treated as one atomic two-column
+    /// unit that never splits across a row boundary, mirroring the live
+    /// auto-wrap print path.
+    fn reflow(&mut self, columns: usize) {
+        let columns = columns.max(1);
+        let cell_count = self.cells.len();
+        let mut row_ends = Vec::new();
+        if cell_count == 0 {
+            row_ends.push(0);
+        } else {
+            let mut index = 0;
+            let mut used_columns = 0;
+            while index < cell_count {
+                let unit_cells = if self.cells[index].width() == CellWidth::Double
+                    && self
+                        .cells
+                        .get(index + 1)
+                        .is_some_and(|cell| cell.width() == CellWidth::Continuation)
+                {
+                    2
+                } else {
+                    1
+                };
+                let unit_columns = unit_cells;
+                if used_columns > 0 && used_columns + unit_columns > columns {
+                    row_ends.push(index);
+                    used_columns = 0;
+                }
+                index += unit_cells;
+                used_columns += unit_columns;
+            }
+            row_ends.push(cell_count);
+        }
+        self.physical_rows = row_ends.len();
+        self.row_ends = row_ends;
+        self.charged_bytes = size_of::<Self>()
+            .saturating_add(charged_cells(&self.cells, self.cells.capacity()))
+            .saturating_add(size_of::<usize>().saturating_mul(self.row_ends.capacity()));
     }
 }
 
@@ -163,6 +207,23 @@ impl Scrollback {
         self.lines.clear();
         self.charged_bytes = 0;
         self.dropping_oversize_line = false;
+    }
+
+    /// Rewraps every retained logical line's physical-row boundaries at the
+    /// new primary width. Logical-line identity, cell content, ordering, and
+    /// hard-break endings are unchanged; only physical row splits and the
+    /// accounted row-index storage move. This never evicts lines: reflow
+    /// does not add cell content, so charged bytes cannot exceed the
+    /// existing budget as a result of calling it.
+    pub(crate) fn reflow(&mut self, columns: usize) {
+        for line in &mut self.lines {
+            let prior_charge = line.charged_bytes;
+            line.reflow(columns);
+            self.charged_bytes = self
+                .charged_bytes
+                .saturating_sub(prior_charge)
+                .saturating_add(line.charged_bytes);
+        }
     }
 
     pub(crate) fn lines(&self) -> impl ExactSizeIterator<Item = &LogicalLine> {

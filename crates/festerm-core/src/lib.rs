@@ -780,6 +780,121 @@ mod tests {
     }
 
     #[test]
+    fn resize_reflows_retained_scrollback_to_the_new_width() {
+        // "abcdefghX" wraps to 3 physical rows at width 4 ("abcd","efgh","X").
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"abcdefghX\r\nz\r\n");
+        assert_eq!(terminal.scrollback_stats().physical_rows(), 3);
+
+        // Widen: the same logical content now fits in fewer physical rows.
+        terminal.resize(Dimensions::new(9, 2).unwrap()).unwrap();
+        let lines = terminal.scrollback_lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0]
+                .cells()
+                .iter()
+                .map(|cell| cell.character())
+                .collect::<String>(),
+            "abcdefghX"
+        );
+        assert!(lines[0].has_hard_break());
+        assert_eq!(lines[0].physical_rows(), 1);
+        assert_eq!(terminal.scrollback_stats().physical_rows(), 1);
+        assert_eq!(
+            terminal
+                .scrollback_physical_row(0)
+                .unwrap()
+                .iter()
+                .map(|cell| cell.character())
+                .collect::<String>(),
+            "abcdefghX"
+        );
+
+        // Shrink further: the same content now needs more physical rows.
+        terminal.resize(Dimensions::new(3, 2).unwrap()).unwrap();
+        let lines = terminal.scrollback_lines().collect::<Vec<_>>();
+        assert_eq!(lines[0].physical_rows(), 3);
+        assert_eq!(terminal.scrollback_stats().physical_rows(), 3);
+        assert_eq!(
+            (0..3)
+                .map(|row| terminal
+                    .scrollback_physical_row(row)
+                    .unwrap()
+                    .iter()
+                    .map(|cell| cell.character())
+                    .collect::<String>())
+                .collect::<Vec<_>>(),
+            vec!["abc", "def", "ghX"]
+        );
+
+        // Resizing rows only (columns unchanged) must not touch scrollback layout.
+        terminal.resize(Dimensions::new(3, 5).unwrap()).unwrap();
+        assert_eq!(terminal.scrollback_stats().physical_rows(), 3);
+    }
+
+    #[test]
+    fn reflow_keeps_a_double_width_cell_and_its_continuation_together() {
+        let mut terminal = terminal(6, 2);
+        // "A" + wide "界" + "B" + wide "界" -> 6 columns at width 6, one row.
+        terminal.ingest("A界B界\r\nz\r\n".as_bytes());
+        let before = terminal.scrollback_lines().next().unwrap();
+        assert_eq!(before.physical_rows(), 1);
+
+        // Shrink to width 3: "A界" (3 cols: A + double) must stay on one row
+        // rather than splitting the double cell from its continuation.
+        terminal.resize(Dimensions::new(3, 2).unwrap()).unwrap();
+        let lines = terminal.scrollback_lines().collect::<Vec<_>>();
+        let line = &lines[0];
+        assert_eq!(line.physical_rows(), 2);
+        let row0 = line.physical_row(0).unwrap();
+        let row1 = line.physical_row(1).unwrap();
+        assert_eq!(row0.len(), 3, "A + double-width cell + its continuation");
+        assert_eq!(row0[0].character(), 'A');
+        assert_eq!(row0[1].character(), '界');
+        assert!(row0[2].is_continuation());
+        assert_eq!(row1[0].character(), 'B');
+        assert_eq!(row1[1].character(), '界');
+        assert!(row1[2].is_continuation());
+    }
+
+    #[test]
+    fn repeated_grow_and_shrink_reflow_preserves_content_and_stays_within_budget() {
+        let dimensions = Dimensions::new(10, 3).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 4096).unwrap();
+        for line in 0..40 {
+            terminal.ingest(format!("line-{line:03}-abcdefghijklmnop\r\n").as_bytes());
+        }
+        let stats_before = terminal.scrollback_stats();
+        assert!(stats_before.logical_lines() > 0);
+
+        for columns in [40, 5, 25, 3, 80, 10] {
+            terminal
+                .resize(Dimensions::new(columns, 3).unwrap())
+                .unwrap();
+            let stats = terminal.scrollback_stats();
+            assert!(stats.charged_bytes() <= stats.limit_bytes());
+            let total_physical_rows: usize = terminal
+                .scrollback_lines()
+                .map(|line| line.physical_rows())
+                .sum();
+            assert_eq!(total_physical_rows, stats.physical_rows());
+            for line in terminal.scrollback_lines() {
+                let reconstructed = (0..line.physical_rows())
+                    .flat_map(|row| line.physical_row(row).unwrap().iter())
+                    .map(|cell| cell.character())
+                    .collect::<String>();
+                let expected = line
+                    .cells()
+                    .iter()
+                    .map(|cell| cell.character())
+                    .collect::<String>();
+                assert_eq!(reconstructed, expected);
+            }
+        }
+    }
+
+    #[test]
     fn alternate_and_partial_margin_scrolling_never_enter_primary_history() {
         let mut terminal = terminal(5, 3);
         terminal.ingest(b"base\r\n");

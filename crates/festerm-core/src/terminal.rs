@@ -356,13 +356,23 @@ impl Terminal {
         self.apply_osc_action(action);
     }
 
-    /// Resizes grids without reflow, retaining the upper-left intersection.
+    /// Resizes grids without reflowing visible content, retaining the
+    /// upper-left intersection (see ADR 0017; the live primary/alternate
+    /// screens keep the existing no-reflow model). Retained primary
+    /// scrollback is reflowed at the new column width so its physical-row
+    /// projection matches the new terminal width; logical-line identity,
+    /// content, and hard breaks are unchanged. Alternate-screen resize has
+    /// no history to reflow.
     pub fn resize(&mut self, dimensions: Dimensions) -> Result<(), TerminalError> {
         let primary = self.primary.resized(dimensions)?;
         let alternate = match &self.alternate {
             Some(alternate) => Some(alternate.resized(dimensions)?),
             None => None,
         };
+
+        if dimensions.columns() != self.dimensions().columns() {
+            self.scrollback.reflow(dimensions.columns());
+        }
 
         self.primary = primary;
         self.alternate = alternate;

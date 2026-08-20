@@ -459,8 +459,26 @@ local. It also proves that `Jump to latest` appears only after reliably observed
 retained output, restores following/focus without PTY input, and that the thin
 overlay scrollbar has bounded thumb geometry, track paging, and reserved input
 ownership under TUI mouse reporting. Native interaction feel, eviction
-fallback, selection across history, disconnected behavior, and reflow remain
-open.
+fallback, selection across history, and disconnected behavior remain open.
+
+Retained-scrollback resize reflow is implemented per ADR 0017: `Scrollback`
+rewraps every retained logical line's physical-row boundaries at the new
+primary column width on `Terminal::resize`, preserving logical-line identity,
+cell content, and hard-break endings; a leading double-width cell and its
+continuation cell are kept atomic across a new row boundary rather than
+splitting. Core tests cover grow and shrink reflow, wide-cell atomicity across
+a new boundary, and repeated grow/shrink cycles that stay within the
+configured byte budget and round-trip cell content through the rebuilt
+physical rows. This deliberately does not change the live visible-grid resize
+model (P0's "retain the upper-left intersection, no reflow" remains correct
+for the primary/alternate screen contents themselves; only retained history
+reflows). The headless UI anchored-viewport offset is rescaled proportionally
+across a reflow-triggering resize instead of clamping to an unrelated raw row
+count, covered by a headless kittest case that widens a view anchored deep in
+wrapped history and checks the relative position is preserved. Selection and
+search-match position stability across reflow (ADR 0017's stable logical
+position for those anchors) remain open, tracked alongside eviction fallback
+and disconnected read-only history in issue #43.
 
 ## Reference Material
 
