@@ -1,6 +1,6 @@
 FROM alpine:3.22
 
-RUN apk add --no-cache openssh \
+RUN apk add --no-cache openssh tmux screen \
     && adduser -D -s /bin/ash festerm
 
 COPY sshd_config /etc/ssh/sshd_config

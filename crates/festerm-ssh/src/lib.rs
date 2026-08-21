@@ -3406,7 +3406,14 @@ async fn probe_persistence_provider(
                     };
                 }
                 Some(russh::ChannelMsg::ExitSignal { .. }) => return ProviderProbeOutcome::ProbeFailed,
-                Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
+                // `Eof` alone must not end the probe: servers are not
+                // required to send the exit-status channel request before
+                // eof, and for a near-instant command like a capability
+                // probe it is common to observe eof arrive first. Only a
+                // fully closed channel that never delivered an exit status
+                // is a genuine probe failure.
+                Some(russh::ChannelMsg::Eof) => {}
+                Some(russh::ChannelMsg::Close) | None => {
                     return ProviderProbeOutcome::ProbeFailed;
                 }
                 // The probe's own stdout/stderr is deliberately discarded:

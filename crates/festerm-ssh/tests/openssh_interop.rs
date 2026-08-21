@@ -10,7 +10,8 @@ use festerm_session::{
     SessionTryReceiveError, ShutdownResult, TerminalSize,
 };
 use festerm_ssh::{
-    HostIdentity, HostTrustDecision, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
+    HostIdentity, HostTrustDecision, PersistenceProvider, PersistentSessionName, ReconnectPolicy,
+    RecoveryPolicy, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
     SshLivenessCheckError, SshPrivateKey, SshSession, SshSessionOptions,
 };
 
@@ -394,6 +395,42 @@ impl DockerFixture {
         docker_status(&["kill", &self.container_name], "kill the OpenSSH fixture");
     }
 
+    /// Severs only the client's active SSH connection by killing its
+    /// per-connection `sshd` handler process inside the fixture container,
+    /// leaving the container (and, crucially, any durable `tmux`/`screen`
+    /// session it hosts) running. This is what actually distinguishes a
+    /// durable-session interop test from [`Self::kill`]: killing the whole
+    /// container would also kill the persistence provider's daemon, which
+    /// would defeat the point of testing that a durable session survives an
+    /// unintentional transport loss (ADR 0018).
+    ///
+    /// This container is reused across every test in this file, so a stale
+    /// `sshd-session: festerm@...` process from an *earlier* test can
+    /// briefly still be reaping in the background when this one starts.
+    /// Selecting the numerically highest PID (i.e. the most recently forked
+    /// matching process, since PIDs increase monotonically within a
+    /// container) rather than the first line of `ps` output ensures this
+    /// only ever targets the connection this test itself just established.
+    fn sever_active_ssh_connection(&self) {
+        let output = Command::new("docker")
+            .args([
+                "exec",
+                &self.container_name,
+                "sh",
+                "-c",
+                "pid=$(ps aux | grep 'sshd-session: festerm@' | grep -v grep \
+                 | awk '{print $1}' | sort -rn | head -1); [ -n \"$pid\" ] && kill -9 \"$pid\"",
+            ])
+            .output()
+            .unwrap_or_else(|_| {
+                panic!("could not invoke Docker to sever the active SSH connection")
+            });
+        assert!(
+            output.status.success(),
+            "Docker could not sever the active SSH connection inside the OpenSSH fixture"
+        );
+    }
+
     fn start_and_wait(&self, expected_port: u16) {
         docker_status(
             &["start", &self.container_name],
@@ -754,5 +791,297 @@ fn controlled_openssh_liveness_probe_succeeds_without_disrupting_a_healthy_sessi
     match session.shutdown(SHUTDOWN_TIMEOUT) {
         Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
         Err(_) => panic!("SSH session did not shut down within the test timeout"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_tmux_persistent_session_reattaches_after_manual_reconnect() {
+    const SET_MARKER: &[u8] = b"__FESTERM_TMUX_SET_OK__";
+    const PROOF_MARKER: &[u8] = b"__FESTERM_TMUX_PROOF_persisted-value__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let strategy = SessionStrategy::Persistent {
+        provider: PersistenceProvider::Tmux,
+        session_name: PersistentSessionName::new("festerm-interop-tmux")
+            .expect("durable session name is valid"),
+    };
+    let session = SshSession::start_with_options(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+        SshSessionOptions::manual_recovery(strategy),
+    )
+    .expect("could not start the OpenSSH session");
+    let resolver = session.host_key_decision_resolver();
+
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut running = false;
+    let mut proof_set = false;
+    let mut output_tail = Vec::new();
+    while Instant::now() < deadline && !(running && proof_set) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => resolver
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .expect("could not accept the test server host key"),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(
+                        b"export FESTERM_PROOF=persisted-value; printf '%s\\n' '__FESTERM_TMUX_SET_OK__'\n",
+                    )
+                    .expect("could not set the durable-session proof variable");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                proof_set |= marker_seen(&mut output_tail, &bytes, SET_MARKER);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error before the durable-session proof was set",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before the durable-session proof was set");
+            }
+        }
+    }
+    assert!(
+        running,
+        "SSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        proof_set,
+        "could not set the durable-session proof variable inside the tmux session"
+    );
+
+    // Sever only the transport, not the container: the durable tmux session
+    // (and the proof variable set inside it) must survive, unlike
+    // `controlled_openssh_manual_reconnect_interoperability`'s whole-container
+    // kill, which would also kill the persistence provider's daemon.
+    fixture.sever_active_ssh_connection();
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        !matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting))
+        ),
+        "manual-only recovery must never auto-reconnect after an unintentional transport loss"
+    );
+    session
+        .try_reconnect()
+        .expect("an explicit reconnect must always be available for a running persistent session");
+
+    let deadline = Instant::now() + RECONNECT_EVENT_TIMEOUT;
+    let mut fresh_prompt_seen = false;
+    let mut reconnected_running = false;
+    let mut proof_confirmed = false;
+    output_tail.clear();
+    while Instant::now() < deadline && !(reconnected_running && proof_confirmed) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) if !fresh_prompt_seen => {
+                resolver
+                    .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                    .expect("could not accept the fresh test server host key");
+                fresh_prompt_seen = true;
+            }
+            Ok(SessionEvent::HostKeyVerification(_)) => {
+                panic!("reattached OpenSSH session emitted more than one host-key prompt")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if fresh_prompt_seen => {
+                reconnected_running = true;
+                session
+                    .try_send_input(b"printf '__FESTERM_TMUX_PROOF_%s__\\n' \"$FESTERM_PROOF\"\n")
+                    .expect("could not read back the durable-session proof variable");
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => {
+                panic!("reattached OpenSSH session reached Running without fresh host trust")
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                if reconnected_running {
+                    proof_confirmed |= marker_seen(&mut output_tail, &bytes, PROOF_MARKER);
+                }
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error while reattaching to the durable session",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed while reattaching to the durable session");
+            }
+        }
+    }
+    assert!(
+        fresh_prompt_seen,
+        "reattached OpenSSH session did not request fresh host-key verification"
+    );
+    assert!(
+        reconnected_running,
+        "reattached OpenSSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        proof_confirmed,
+        "reattached tmux session did not retain the proof variable set before the transport was \
+         severed; this means the client created a new session instead of reattaching to the \
+         durable one"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("reattached SSH session did not shut down within the test timeout"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_screen_persistent_session_reattaches_after_automatic_recovery() {
+    const SET_MARKER: &[u8] = b"__FESTERM_SCREEN_SET_OK__";
+    const PROOF_MARKER: &[u8] = b"__FESTERM_SCREEN_PROOF_persisted-value__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let strategy = SessionStrategy::Persistent {
+        provider: PersistenceProvider::Screen,
+        session_name: PersistentSessionName::new("festerm-interop-screen")
+            .expect("durable session name is valid"),
+    };
+    let session = SshSession::start_with_options(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+        SshSessionOptions::with_recovery_policy(
+            strategy,
+            RecoveryPolicy::Automatic(ReconnectPolicy::default_automatic()),
+        )
+        .expect("automatic recovery is valid for a persistent strategy"),
+    )
+    .expect("could not start the OpenSSH session");
+    let resolver = session.host_key_decision_resolver();
+
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut running = false;
+    let mut proof_set = false;
+    let mut output_tail = Vec::new();
+    while Instant::now() < deadline && !(running && proof_set) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => resolver
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .expect("could not accept the test server host key"),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(
+                        b"export FESTERM_PROOF=persisted-value; printf '%s\\n' '__FESTERM_SCREEN_SET_OK__'\n",
+                    )
+                    .expect("could not set the durable-session proof variable");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                proof_set |= marker_seen(&mut output_tail, &bytes, SET_MARKER);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error before the durable-session proof was set",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before the durable-session proof was set");
+            }
+        }
+    }
+    assert!(
+        running,
+        "SSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        proof_set,
+        "could not set the durable-session proof variable inside the screen session"
+    );
+
+    // Sever only the transport, not the container: an opted-in automatic
+    // recovery policy must reconnect on its own, without any explicit
+    // `try_reconnect()` call, and reattach to the same durable screen
+    // session rather than creating a fresh one.
+    fixture.sever_active_ssh_connection();
+
+    let deadline = Instant::now() + RECONNECT_EVENT_TIMEOUT;
+    let mut auto_reconnecting = false;
+    let mut fresh_prompt_seen = false;
+    let mut reconnected_running = false;
+    let mut proof_confirmed = false;
+    output_tail.clear();
+    while Instant::now() < deadline && !(reconnected_running && proof_confirmed) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting)) => {
+                auto_reconnecting = true;
+            }
+            Ok(SessionEvent::HostKeyVerification(prompt)) if !fresh_prompt_seen => {
+                resolver
+                    .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                    .expect("could not accept the fresh test server host key");
+                fresh_prompt_seen = true;
+            }
+            Ok(SessionEvent::HostKeyVerification(_)) => {
+                panic!("reattached OpenSSH session emitted more than one host-key prompt")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if fresh_prompt_seen => {
+                reconnected_running = true;
+                session
+                    .try_send_input(b"printf '__FESTERM_SCREEN_PROOF_%s__\\n' \"$FESTERM_PROOF\"\n")
+                    .expect("could not read back the durable-session proof variable");
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => {
+                panic!("reattached OpenSSH session reached Running without fresh host trust")
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                if reconnected_running {
+                    proof_confirmed |= marker_seen(&mut output_tail, &bytes, PROOF_MARKER);
+                }
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error while automatically reattaching to the \
+                     durable session",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!(
+                    "SSH session event stream closed while automatically reattaching to the \
+                     durable session"
+                );
+            }
+        }
+    }
+    assert!(
+        auto_reconnecting,
+        "an automatic-recovery-enabled durable session must reconnect on its own after an \
+         unintentional transport loss, without any explicit try_reconnect() call"
+    );
+    assert!(
+        fresh_prompt_seen,
+        "automatically reattached OpenSSH session did not request fresh host-key verification"
+    );
+    assert!(
+        reconnected_running,
+        "automatically reattached OpenSSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        proof_confirmed,
+        "automatically reattached screen session did not retain the proof variable set before \
+         the transport was severed; this means the client created a new session instead of \
+         reattaching to the durable one"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => {
+            panic!("automatically reattached SSH session did not shut down within the test timeout")
+        }
     }
 }
