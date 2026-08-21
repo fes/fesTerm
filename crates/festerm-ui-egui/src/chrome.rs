@@ -375,6 +375,18 @@ pub fn show(
             }
         });
     });
+    // Egui input events are global to the frame. The terminal view is painted
+    // after this band and must not encode mouse gestures already claimed by
+    // chrome controls or the window-drag region.
+    ui.input_mut(|input| {
+        input.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::PointerButton { pos, .. } | egui::Event::PointerMoved(pos)
+                    if band_rect.contains(*pos)
+            )
+        });
+    });
     actions
 }
 
@@ -702,18 +714,25 @@ fn show_chip(
     // placing a final invisible response above those controls and stealing
     // their ordinary primary-click behavior. Opening this menu deliberately
     // does not activate the target chip.
-    let secondary_clicked = ui.input(|input| {
-        input.events.iter().any(|event| {
-            matches!(
-                event,
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Secondary,
-                    pressed: false,
-                    ..
-                } if bg_rect.contains(*pos)
-            )
-        })
+    let secondary_clicked = ui.input_mut(|input| {
+        let mut released = false;
+        input.events.retain(|event| {
+            let egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                ..
+            } = event
+            else {
+                return true;
+            };
+            if !bg_rect.contains(*pos) {
+                return true;
+            }
+            released |= !pressed;
+            false
+        });
+        released
     });
     let menu_restore_focus_id = chip_id.with("context_menu_restore_focus");
     if secondary_clicked {

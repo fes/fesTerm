@@ -21,7 +21,7 @@ into a single, timestamped, content-free evidence directory:
 | Suite | Gate item(s) | What it proves |
 | --- | --- | --- |
 | `cargo fmt --all -- --check` | — | Formatting baseline |
-| `cargo clippy --workspace --all-targets -- -D warnings` | — | Lint baseline |
+| `cargo clippy --workspace --all-targets -- -D warnings` | — | Lint baseline; on Windows, the collector uses the installed `clippy-driver` as Cargo's workspace wrapper when Application Control blocks unsigned `cargo-clippy.exe` |
 | `cargo test --workspace` | P0–P2, P6, and (on Windows/Linux with a usable WGPU adapter) P3 | Core/session/UI unit and integration tests, the issue #3 headless resize replay, and the reviewed visual-snapshot comparisons in `crates/festerm-ui-egui` |
 | `scripts/run-optional-validation.{sh,ps1}` | P4, P5, P6, plus OpenSSH interop | Real local PTY/ConPTY native-window smoke, the optional `less`/`nvim`/`htop`/`tmux` PTY probes, the P6 renderer/shaping validation, and the controlled OpenSSH interop suite (skipped with a recorded reason when Docker is unavailable) |
 | Platform OS-input smoke (`run-linux-os-input-smoke.sh`, `run-macos-os-input-smoke.sh`; on Windows, folded into `run-optional-validation.ps1`) | P4 | Independently driven OS-level focus, resize, and keystroke delivery through a real desktop session |

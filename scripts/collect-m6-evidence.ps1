@@ -74,10 +74,44 @@ try {
         }
     }
 
+    function Invoke-WorkspaceClippy {
+        if ($env:OS -ne 'Windows_NT') {
+            cargo clippy --workspace --all-targets -- -D warnings
+            return
+        }
+
+        # Some Windows Application Control policies block cargo-clippy.exe
+        # because Rust distributes it unsigned. The installed clippy-driver
+        # is equivalent when Cargo invokes it as the workspace compiler
+        # wrapper, while leaving the host policy intact.
+        $driver = (& rustup which clippy-driver).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $driver)) {
+            throw 'The installed Rust toolchain does not provide clippy-driver.'
+        }
+        $previousWrapper = $env:RUSTC_WORKSPACE_WRAPPER
+        $previousFlags = $env:RUSTFLAGS
+        try {
+            $env:RUSTC_WORKSPACE_WRAPPER = $driver
+            $env:RUSTFLAGS = '-Dwarnings -Wclippy::all'
+            cargo check --workspace --all-targets
+        } finally {
+            if ($null -eq $previousWrapper) {
+                Remove-Item Env:RUSTC_WORKSPACE_WRAPPER -ErrorAction Ignore
+            } else {
+                $env:RUSTC_WORKSPACE_WRAPPER = $previousWrapper
+            }
+            if ($null -eq $previousFlags) {
+                Remove-Item Env:RUSTFLAGS -ErrorAction Ignore
+            } else {
+                $env:RUSTFLAGS = $previousFlags
+            }
+        }
+    }
+
     Write-Host "Collecting M6 evidence into: $OutputDir"
 
     Invoke-Logged -Name 'fmt-check' -ScriptBlock { cargo fmt --all -- --check }
-    Invoke-Logged -Name 'clippy' -ScriptBlock { cargo clippy --workspace --all-targets -- -D warnings }
+    Invoke-Logged -Name 'clippy' -ScriptBlock { Invoke-WorkspaceClippy }
     Invoke-Logged -Name 'workspace-tests' -ScriptBlock { cargo test --workspace -- --test-threads=1 }
 
     $optionalValidationResultPath = Join-Path $OutputDir 'optional-validation-result.txt'

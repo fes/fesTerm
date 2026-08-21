@@ -2612,7 +2612,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness.key_press(egui::Key::Enter);
-        harness.run();
+        harness.step();
         if let TabContent::Session(session) =
             &mut harness.state_mut().state.active_tab_mut().content
         {
@@ -2972,7 +2972,7 @@ mod tests {
         harness.key_press(egui::Key::Enter);
         harness.step();
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
-        harness.run();
+        harness.step();
         let before = harness.state().state.tabs().len();
 
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::W);
@@ -3045,7 +3045,7 @@ mod tests {
             .next()
             .expect("at least one closable chip")
             .click();
-        harness.run();
+        harness.step();
 
         assert_eq!(harness.state().state.tabs().len(), before - 1);
     }
@@ -3095,20 +3095,20 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness.key_press(egui::Key::Enter);
-        harness.run();
-        let before = match &harness.state().state.active_tab().content {
+        harness.step();
+
+        harness.get_by_label("Local Shell chip").click_secondary();
+        harness.step();
+        harness.get_by_label("Rename session").click();
+        harness.step();
+        let before_escape = match &harness.state().state.active_tab().content {
             TabContent::Session(session) => session
                 .view
                 .diagnostics()
                 .input_sink
                 .map_or(0, |diagnostics| diagnostics.byte_count),
-            _ => panic!("launcher action must start a session"),
+            _ => panic!("rename must not change the active session"),
         };
-
-        harness.get_by_label("Local Shell chip").click_secondary();
-        harness.run();
-        harness.get_by_label("Rename session").click();
-        harness.run();
         harness.key_press(egui::Key::Escape);
         // Text-selection visuals may request another frame after Escape; one
         // frame is sufficient to assert the application-owned focus result.
@@ -3122,10 +3122,14 @@ mod tests {
                 .map_or(0, |diagnostics| diagnostics.byte_count),
             _ => panic!("rename must not change the active session"),
         };
-        assert_eq!(after_escape, before, "Escape must remain application-owned");
+        assert_eq!(
+            after_escape,
+            before_escape + b"\x1b[I".len() as u64,
+            "only the restored terminal-focus sequence may reach the session"
+        );
 
         harness.event(egui::Event::Text("Q".to_owned()));
-        harness.run();
+        harness.step();
         let after_text = match &harness.state().state.active_tab().content {
             TabContent::Session(session) => session
                 .view
@@ -3134,6 +3138,6 @@ mod tests {
                 .map_or(0, |diagnostics| diagnostics.byte_count),
             _ => panic!("session must remain active"),
         };
-        assert_eq!(after_text, before + 1);
+        assert_eq!(after_text, before_escape + b"\x1b[I".len() as u64 + 1);
     }
 }

@@ -1787,6 +1787,7 @@ mod tests {
                 controller.observe_resize_probe_terminal_state(&terminal);
                 controller.forward_terminal_replies(&mut terminal);
                 controller.flush_pending_writes();
+                controller.flush_pending_resize();
                 std::thread::sleep(Duration::from_millis(5));
             }
             assert_eq!(
@@ -1923,6 +1924,7 @@ mod tests {
                 controller.pump_events(&mut terminal);
                 controller.forward_terminal_replies(&mut terminal);
                 controller.flush_pending_writes();
+                controller.flush_pending_resize();
                 std::thread::sleep(Duration::from_millis(5));
             }
             assert_eq!(terminal.dimensions().columns(), cols as usize);
@@ -2054,6 +2056,7 @@ mod tests {
                 .resize(dimensions)
                 .expect("terminal resize succeeds");
             controller.record_terminal_resize(dimensions);
+            controller.force_flush_pending_resize();
             pump_content_free_until(
                 &mut controller,
                 &mut terminal,

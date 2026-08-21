@@ -31,11 +31,20 @@ $status = 'pass'
 Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
 
 if ($env:OS -eq 'Windows_NT') {
-    & "$PSScriptRoot\stage-conpty.ps1" -RunSmoke
+    try {
+        & "$PSScriptRoot\stage-conpty.ps1" -RunSmoke
+        if ($LASTEXITCODE -ne 0) {
+            throw "Windows ConPTY staging failed with exit code $LASTEXITCODE."
+        }
+        Add-Content -Path $ResultPath -Value "`nsuite=conpty status=pass"
+    } catch {
+        Add-Content -Path $ResultPath -Value "`nsuite=conpty status=fail"
+        $status = 'fail'
+    }
 } else {
     cargo build --workspace
+    if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed.' }
 }
-if ($LASTEXITCODE -ne 0) { throw 'Workspace build or Windows ConPTY staging failed.' }
 
 & "$PSScriptRoot\run-p5-reference.ps1" -ResultPath $p5ResultPath
 if ($LASTEXITCODE -eq 0) {

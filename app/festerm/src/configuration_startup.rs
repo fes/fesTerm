@@ -306,7 +306,7 @@ fn create_native_configuration_directory(directory: &std::path::Path) -> std::io
 fn create_native_configuration_directory(directory: &std::path::Path) -> std::io::Result<()> {
     match fs::create_dir(directory) {
         Ok(()) => Ok(()),
-        Err(error) if directory.is_dir() => Ok(()),
+        Err(_error) if directory.is_dir() => Ok(()),
         Err(error) => Err(error),
     }
 }

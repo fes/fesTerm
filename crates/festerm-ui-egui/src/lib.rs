@@ -987,7 +987,12 @@ mod tests {
         snapshots: &mut SnapshotResults,
     ) {
         assert_snapshot_invariants(harness);
-        snapshots.add(harness.try_snapshot(name));
+        let platform_name = if cfg!(target_os = "windows") {
+            format!("{name}-windows")
+        } else {
+            name.to_owned()
+        };
+        snapshots.add(harness.try_snapshot(&platform_name));
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]

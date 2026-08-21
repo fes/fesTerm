@@ -190,6 +190,7 @@ impl Configuration {
     /// target's parent directory before the target is renamed into place.
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), ConfigurationFileError> {
         let path = path.as_ref();
+        validate_target_file(path)?;
         let document = self
             .to_toml()
             .map_err(ConfigurationFileError::serialization)?;
@@ -1373,6 +1374,19 @@ fn parent_directory(path: &Path) -> Result<&Path, ConfigurationFileError> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new(".")))
+}
+
+fn validate_target_file(path: &Path) -> Result<(), ConfigurationFileError> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(()),
+        Ok(_) => Err(ConfigurationFileError::new(
+            ConfigurationFileErrorKind::InvalidTargetPath,
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ConfigurationFileError::new(
+            ConfigurationFileErrorKind::Read,
+        )),
+    }
 }
 
 struct TemporaryFile {
