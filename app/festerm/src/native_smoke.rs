@@ -18,9 +18,12 @@ use crate::session_controller::SessionController;
 
 const SMOKE_ENV: &str = "FESTERM_NATIVE_WINDOW_SMOKE";
 const OS_INPUT_SMOKE_ENV: &str = "FESTERM_NATIVE_OS_INPUT_SMOKE";
+const LIVE_RESIZE_SMOKE_ENV: &str = "FESTERM_NATIVE_LIVE_RESIZE_SMOKE";
 const RESULT_PATH_ENV: &str = "FESTERM_NATIVE_SMOKE_RESULT_PATH";
+const LIVE_RESIZE_DRIVER_RESULT_PATH_ENV: &str = "FESTERM_NATIVE_LIVE_RESIZE_DRIVER_RESULT_PATH";
 const ALLOW_UNFOCUSED_ENV: &str = "FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED";
 const TIMEOUT: Duration = Duration::from_secs(20);
+const LIVE_RESIZE_FRAME_COUNT: usize = 120;
 const RESIZE_SEQUENCE: [(f32, f32); 4] = [
     (420.0, 260.0),
     (860.0, 540.0),
@@ -42,6 +45,7 @@ enum Phase {
 enum SmokeKind {
     NativeWindow,
     OsInput,
+    LiveResize,
 }
 
 pub struct NativeWindowSmoke {
@@ -57,6 +61,7 @@ pub struct NativeWindowSmoke {
     first_resize_generation: Option<u64>,
     allow_unfocused: bool,
     kind: SmokeKind,
+    live_resize_driver_result_path: Option<PathBuf>,
 }
 
 impl NativeWindowSmoke {
@@ -64,12 +69,16 @@ impl NativeWindowSmoke {
         let kind = match (
             std::env::var_os(SMOKE_ENV).is_some(),
             std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
+            std::env::var_os(LIVE_RESIZE_SMOKE_ENV).is_some(),
         ) {
-            (false, false) => return None,
-            (true, false) => SmokeKind::NativeWindow,
-            (false, true) => SmokeKind::OsInput,
-            (true, true) => {
-                panic!("{SMOKE_ENV} and {OS_INPUT_SMOKE_ENV} cannot be enabled together")
+            (false, false, false) => return None,
+            (true, false, false) => SmokeKind::NativeWindow,
+            (false, true, false) => SmokeKind::OsInput,
+            (false, false, true) => SmokeKind::LiveResize,
+            _ => {
+                panic!(
+                    "only one of {SMOKE_ENV}, {OS_INPUT_SMOKE_ENV}, and {LIVE_RESIZE_SMOKE_ENV} may be enabled"
+                )
             }
         };
 
@@ -82,6 +91,16 @@ impl NativeWindowSmoke {
             "native smoke test child is missing at {test_child_path:?}; build the workspace first"
         );
         Self::write_result(&result_path, "running", "");
+        let live_resize_driver_result_path = match kind {
+            SmokeKind::LiveResize => Some(
+                std::env::var_os(LIVE_RESIZE_DRIVER_RESULT_PATH_ENV)
+                    .map(PathBuf::from)
+                    .expect(
+                        "FESTERM_NATIVE_LIVE_RESIZE_DRIVER_RESULT_PATH is required in live resize smoke mode",
+                    ),
+            ),
+            SmokeKind::NativeWindow | SmokeKind::OsInput => None,
+        };
 
         Some(Self {
             result_path,
@@ -97,6 +116,7 @@ impl NativeWindowSmoke {
             allow_unfocused: cfg!(target_os = "linux")
                 && std::env::var_os(ALLOW_UNFOCUSED_ENV).is_some(),
             kind,
+            live_resize_driver_result_path,
         })
     }
 
@@ -120,6 +140,11 @@ impl NativeWindowSmoke {
             // child cannot emit its post-read line until those real window
             // events make it through the UI and PTY input path.
             SmokeKind::OsInput => &["emit:READY", "read-line", "echo:OS-INPUT", "spin"],
+            // The macOS driver performs a real, rapid corner drag while this
+            // child emits for three seconds. Keeping the source independent
+            // from the UI driver makes any lost frame observable in terminal
+            // history instead of relying on a timing-sensitive visual check.
+            SmokeKind::LiveResize => &["emit-frames:120:25", "spin"],
         }
     }
 
@@ -164,6 +189,39 @@ impl NativeWindowSmoke {
         }
 
         match (self.kind, self.phase) {
+            (SmokeKind::LiveResize, Phase::AwaitInitialOutput)
+                if controller.resize_probe().observed_output_bytes() > 0 =>
+            {
+                self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
+                self.phase = Phase::AwaitPostOutput;
+            }
+            (SmokeKind::LiveResize, Phase::AwaitPostOutput) => {
+                let driver_completed =
+                    self.live_resize_driver_result_path
+                        .as_deref()
+                        .is_some_and(|path| {
+                            std::fs::read_to_string(path).ok().as_deref() == Some("status=pass\n")
+                        });
+                let terminal_text = terminal_text_including_scrollback(terminal);
+                let all_frames_survived = (0..LIVE_RESIZE_FRAME_COUNT)
+                    .all(|index| terminal_text.contains(&format!("FRAME:{index:02}")));
+                let applied_resize = controller
+                    .resize_probe()
+                    .generations()
+                    .iter()
+                    .any(|generation| generation.applied);
+                if driver_completed && all_frames_survived && applied_resize {
+                    self.finish(
+                        context,
+                        "pass",
+                        &format!(
+                            "physical corner drag completed; all {LIVE_RESIZE_FRAME_COUNT} PTY frames survived; \
+                             resize generations {}",
+                            controller.resize_probe().generations().len()
+                        ),
+                    );
+                }
+            }
             (SmokeKind::OsInput, Phase::AwaitInitialOutput)
                 if controller.resize_probe().observed_output_bytes() > 0 =>
             {
@@ -334,7 +392,8 @@ impl NativeWindowSmoke {
             | (_, Phase::AwaitPreOutput)
             | (_, Phase::AwaitInput)
             | (_, Phase::AwaitPostOutput)
-            | (SmokeKind::OsInput, Phase::AwaitResize(_)) => {}
+            | (SmokeKind::OsInput, Phase::AwaitResize(_))
+            | (SmokeKind::LiveResize, Phase::AwaitResize(_)) => {}
         }
     }
 
@@ -375,6 +434,18 @@ impl NativeWindowSmoke {
     }
 }
 
+fn terminal_text_including_scrollback(terminal: &Terminal) -> String {
+    let history = terminal
+        .scrollback_lines()
+        .flat_map(|line| line.cells())
+        .map(|cell| cell.character())
+        .collect::<String>();
+    let visible = (0..terminal.dimensions().rows())
+        .filter_map(|row| terminal.row_text(row))
+        .collect::<String>();
+    format!("{history}{visible}")
+}
+
 fn test_child_path() -> PathBuf {
     let mut path = std::env::current_exe().expect("application executable path is known");
     path.pop();
@@ -394,6 +465,7 @@ mod tests {
     fn smoke_mode_requires_an_explicit_environment_variable() {
         assert_eq!(SMOKE_ENV, "FESTERM_NATIVE_WINDOW_SMOKE");
         assert_eq!(OS_INPUT_SMOKE_ENV, "FESTERM_NATIVE_OS_INPUT_SMOKE");
+        assert_eq!(LIVE_RESIZE_SMOKE_ENV, "FESTERM_NATIVE_LIVE_RESIZE_SMOKE");
         assert_eq!(RESULT_PATH_ENV, "FESTERM_NATIVE_SMOKE_RESULT_PATH");
     }
 }

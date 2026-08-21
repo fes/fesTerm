@@ -25,6 +25,7 @@ into a single, timestamped, content-free evidence directory:
 | `cargo test --workspace` | P0–P2, P6, and (on Windows/Linux with a usable WGPU adapter) P3 | Core/session/UI unit and integration tests, the issue #3 headless resize replay, and the reviewed visual-snapshot comparisons in `crates/festerm-ui-egui` |
 | `scripts/run-optional-validation.{sh,ps1}` | P4, P5, P6, plus OpenSSH interop | Real local PTY/ConPTY native-window smoke, the optional `less`/`nvim`/`htop`/`tmux` PTY probes, the P6 renderer/shaping validation, and the controlled OpenSSH interop suite (skipped with a recorded reason when Docker is unavailable) |
 | Platform OS-input smoke (`run-linux-os-input-smoke.sh`, `run-macos-os-input-smoke.sh`; on Windows, folded into `run-optional-validation.ps1`) | P4 | Independently driven OS-level focus, resize, and keystroke delivery through a real desktop session |
+| macOS rapid live-resize smoke | #45 | Physical lower-right-corner drag events while a controlled PTY emits 120 numbered frames; requires the native drag to change window size and every frame to survive in terminal history |
 
 Every suite writes its own log into the evidence directory, and a single
 `summary.txt` records `suite=<name> status=pass|fail|skipped` lines plus an
@@ -92,6 +93,20 @@ record a run as gate evidence:
 
 1. Confirm `overall_status=pass` (or explain and link an issue for every
    `fail`/`skipped` line).
+
+   On macOS, the collector additionally invokes:
+
+   ```sh
+   scripts/run-macos-os-input-smoke.sh --rapid-live-resize
+   ```
+
+   This is intentionally separate from the ordinary OS-input smoke. It uses
+   Accessibility only to locate the native window; the resize itself is a
+   64-step WindowServer mouse down/drag/up sequence at the lower-right resize
+   handle. The app-side oracle requires all 120 numbered PTY frames and an
+   applied terminal resize, while the driver independently requires the native
+   window size to change. A missing Accessibility grant is recorded as
+   `skipped`, never as a pass.
 2. Copy the `manifest.txt` commit SHA, OS version, and toolchain versions
    into the relevant row of
    [`milestone-acceptance-record.md`](milestone-acceptance-record.md).

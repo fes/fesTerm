@@ -13,9 +13,10 @@ Usage: collect-m6-evidence.sh [--output-dir <path>] [--skip-os-input-smoke]
 Runs cargo fmt/clippy/test, the repository-owned optional-validation suite
 (P4 native-window smoke, P5 reference-app PTY probes, P6 renderer
 validation, OpenSSH interop), and, when the desktop prerequisites are
-present, an independently driven OS-input smoke. Bundles every result into
---output-dir (default: m6-evidence/<platform>-<utc-timestamp>-<short-sha>
-under the repository root).
+present, an independently driven OS-input smoke. On macOS it also performs
+a physical rapid corner-drag while a controlled PTY emits output. Bundles
+every result into --output-dir (default:
+m6-evidence/<platform>-<utc-timestamp>-<short-sha> under the repository root).
 EOF
     exit 2
 }
@@ -166,6 +167,20 @@ else
         record os-input-smoke pass
     else
         record os-input-smoke fail "see os-input-smoke.log"
+    fi
+fi
+
+if [ "$platform_id" = macos ]; then
+    if [ "$skip_os_input_smoke" -eq 1 ]; then
+        record rapid-live-resize-smoke skipped 'reason=requested via --skip-os-input-smoke'
+    elif [ -n "$os_input_smoke_prereq_missing" ]; then
+        record rapid-live-resize-smoke skipped "reason=$os_input_smoke_prereq_missing"
+    elif scripts/run-macos-os-input-smoke.sh --rapid-live-resize \
+        "$output_dir/rapid-live-resize-smoke-result.txt" \
+        >"$output_dir/rapid-live-resize-smoke.log" 2>&1; then
+        record rapid-live-resize-smoke pass
+    else
+        record rapid-live-resize-smoke fail 'see rapid-live-resize-smoke.log'
     fi
 fi
 

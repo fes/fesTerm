@@ -12,6 +12,7 @@
 //! | Command | Action |
 //! |---------|--------|
 //! | `emit:TEXT` | Write `TEXT\n` to stdout. |
+//! | `emit-frames:COUNT:MILLIS` | Write `FRAME:00` through `FRAME:COUNT-1`, pausing `MILLIS` between lines. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
@@ -40,6 +41,21 @@ fn main() {
                 .expect("emit: stdout write succeeds");
             out.write_all(b"\n").expect("emit: stdout newline succeeds");
             out.flush().expect("emit: stdout flush succeeds");
+        } else if let Some(specification) = arg.strip_prefix("emit-frames:") {
+            let (count, interval_millis) = specification
+                .split_once(':')
+                .and_then(|(count, interval)| {
+                    Some((count.parse::<usize>().ok()?, interval.parse::<u64>().ok()?))
+                })
+                .unwrap_or_else(|| {
+                    panic!("emit-frames argument must be emit-frames:COUNT:MILLIS, got {arg:?}")
+                });
+            let mut out = stdout.lock();
+            for index in 0..count {
+                writeln!(out, "FRAME:{index:02}").expect("emit-frames: stdout write succeeds");
+                out.flush().expect("emit-frames: stdout flush succeeds");
+                thread::sleep(Duration::from_millis(interval_millis));
+            }
         } else if arg == "read-line" {
             last_line.clear();
             stdin

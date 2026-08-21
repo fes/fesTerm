@@ -11,6 +11,11 @@ Only run this protocol after that script reports `overall_status=pass` (or
 every `fail`/`skipped` line is explained), so the manual pass is judging a
 build that already cleared the deterministic bar.
 
+On macOS, that deterministic bar includes a physical rapid corner-drag while
+a real PTY emits 120 numbered frames. Its evidence proves the output/history
+continuity and native resize event path, but it does not replace the visual
+compositor judgment below.
+
 Record every result using the evidence-record schema in
 [`manual-validation.md`](manual-validation.md#evidence-record): commit SHA,
 OS/version/architecture, desktop environment/compositor/display protocol,
