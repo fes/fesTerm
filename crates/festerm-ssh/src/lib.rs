@@ -520,19 +520,144 @@ impl ReconnectPolicy {
     }
 }
 
+/// A remote durable-session provider fesTerm can attach to or create for a
+/// [`SessionStrategy::Persistent`] session (ADR 0018).
+///
+/// A provider's contract is deliberately small: report a user-displayable
+/// name, provide the command used to lazily and explicitly probe for its
+/// remote executable, and construct the command that attaches to (or
+/// creates, if absent) the durable session in place of an interactive login
+/// shell. There is no public plugin system; this enum is the whole boundary
+/// until multiple real implementations justify more abstraction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PersistenceProvider {
+    Tmux,
+    Screen,
+}
+
+impl PersistenceProvider {
+    /// A short, user-displayable name for this provider.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tmux => "tmux",
+            Self::Screen => "GNU Screen",
+        }
+    }
+
+    /// The remote command used to lazily and explicitly probe for this
+    /// provider's executable. fesTerm never runs this speculatively or in
+    /// the background; it only runs when a user opts a profile into
+    /// persistence (ADR 0018).
+    pub const fn capability_probe_command(self) -> &'static str {
+        match self {
+            Self::Tmux => "command -v tmux",
+            Self::Screen => "command -v screen",
+        }
+    }
+
+    /// The remote command fesTerm execs, in place of an interactive login
+    /// shell, to attach to the durable session named by `session_name`, or
+    /// create it if it does not yet exist.
+    ///
+    /// Both commands are idempotent/re-entrant: running them again after an
+    /// unintentional transport loss reattaches to the same durable session
+    /// rather than creating a second one, which is what makes this strategy
+    /// safe to pair with [`RecoveryPolicy::Automatic`].
+    fn attach_or_create_command(self, session_name: &PersistentSessionName) -> String {
+        match self {
+            Self::Tmux => format!("exec tmux new-session -A -s {}", session_name.as_str()),
+            Self::Screen => format!("exec screen -xRR {}", session_name.as_str()),
+        }
+    }
+}
+
+/// A validated remote durable-session name for a [`PersistenceProvider`].
+///
+/// This is deliberately restricted to a conservative, shell-metacharacter-free
+/// character set: the name is interpolated directly into a remote command
+/// string (see [`PersistenceProvider::attach_or_create_command`]), and
+/// fesTerm has no reliable, portable way to shell-quote a value for whatever
+/// login shell the remote host happens to run. Restricting the input
+/// character set by construction is simpler and safer than trying to escape
+/// it after the fact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersistentSessionName(String);
+
+impl PersistentSessionName {
+    const MAXIMUM_BYTES: usize = 64;
+
+    /// Validates and wraps a candidate durable-session name.
+    pub fn new(name: impl Into<String>) -> Result<Self, PersistentSessionNameError> {
+        let name = name.into();
+        if name.is_empty() {
+            return Err(PersistentSessionNameError::Empty);
+        }
+        if name.len() > Self::MAXIMUM_BYTES {
+            return Err(PersistentSessionNameError::TooLong {
+                maximum: Self::MAXIMUM_BYTES,
+                actual: name.len(),
+            });
+        }
+        if !name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        }) {
+            return Err(PersistentSessionNameError::InvalidCharacter);
+        }
+        Ok(Self(name))
+    }
+
+    /// Returns the validated name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A rejected candidate [`PersistentSessionName`].
+///
+/// This error intentionally contains no part of the rejected name itself, so
+/// applications can present it safely even though the name may have come
+/// from untrusted input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PersistentSessionNameError {
+    Empty,
+    TooLong { maximum: usize, actual: usize },
+    InvalidCharacter,
+}
+
+impl fmt::Display for PersistentSessionNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("a persistent session name must not be empty"),
+            Self::TooLong { maximum, actual } => write!(
+                formatter,
+                "a persistent session name must be at most {maximum} bytes, got {actual}"
+            ),
+            Self::InvalidCharacter => formatter.write_str(
+                "a persistent session name may only contain ASCII letters, digits, '-', '_', or '.'",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PersistentSessionNameError {}
+
 /// The kind of remote session fesTerm creates or attaches to for a live SSH
 /// connection (ADR 0018).
-///
-/// Only [`Self::PlainShell`] exists today. This enum's future growth is
-/// reserved for durable remote-session providers such as `tmux` or `screen`;
-/// those variants are not implemented yet.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum SessionStrategy {
     /// An ordinary remote shell with no durable-session provider attached.
     /// Losing the transport always loses that shell, so there is nothing to
     /// safely recover without an explicit user action.
     #[default]
     PlainShell,
+    /// A durable remote session created by, or attached to via, `provider`
+    /// and identified by `session_name`. Losing the transport does not lose
+    /// this remote session: reattaching (manually, or, once explicitly
+    /// opted in, automatically) recovers it (ADR 0018).
+    Persistent {
+        provider: PersistenceProvider,
+        session_name: PersistentSessionName,
+    },
 }
 
 impl SessionStrategy {
@@ -542,10 +667,12 @@ impl SessionStrategy {
     ///
     /// A plain shell cannot: it is not attached to anything but the dead
     /// transport, so an automatic reconnect could only create a new,
-    /// unrelated shell rather than recover the old one.
-    pub const fn supports_automatic_recovery(self) -> bool {
+    /// unrelated shell rather than recover the old one. A persistent
+    /// strategy's whole point is that reattaching is safe and idempotent.
+    pub const fn supports_automatic_recovery(&self) -> bool {
         match self {
             Self::PlainShell => false,
+            Self::Persistent { .. } => true,
         }
     }
 }
@@ -590,7 +717,7 @@ impl std::error::Error for RecoveryPolicyError {}
 /// may enable it. Every reconnect, manual or automatic, is a new SSH
 /// transport, channel, PTY, and shell; remote process state and unsent or
 /// in-flight input are never restored.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SshSessionOptions {
     strategy: SessionStrategy,
     recovery: RecoveryPolicy,
@@ -598,7 +725,8 @@ pub struct SshSessionOptions {
 
 impl SshSessionOptions {
     /// Creates options for an ordinary plain-shell session with manual-only
-    /// recovery — the only combination valid today.
+    /// recovery — the only combination valid before ADR 0018's persistent
+    /// strategies existed, and still the default today.
     pub const fn new() -> Self {
         Self {
             strategy: SessionStrategy::PlainShell,
@@ -608,7 +736,7 @@ impl SshSessionOptions {
 
     /// Builds options from an explicit strategy/recovery pair, rejecting an
     /// automatic policy the strategy cannot safely support (ADR 0018).
-    pub const fn with_recovery_policy(
+    pub fn with_recovery_policy(
         strategy: SessionStrategy,
         recovery: RecoveryPolicy,
     ) -> Result<Self, RecoveryPolicyError> {
@@ -621,13 +749,13 @@ impl SshSessionOptions {
     }
 
     /// Returns the session strategy in effect.
-    pub const fn strategy(self) -> SessionStrategy {
-        self.strategy
+    pub fn strategy(&self) -> SessionStrategy {
+        self.strategy.clone()
     }
 
     /// Returns the selected automatic reconnect policy, if automatic
     /// recovery is on. `None` means every reconnect is manual/explicit.
-    pub const fn reconnect_policy(self) -> Option<ReconnectPolicy> {
+    pub const fn reconnect_policy(&self) -> Option<ReconnectPolicy> {
         match self.recovery {
             RecoveryPolicy::Automatic(policy) => Some(policy),
             RecoveryPolicy::Manual => None,
@@ -2339,6 +2467,7 @@ impl SshSession {
                         runtime.block_on(ssh_worker(
                             profile,
                             authentication,
+                            options.strategy(),
                             options.reconnect_policy(),
                             shared,
                             command_receiver,
@@ -2529,6 +2658,7 @@ impl russh::client::Handler for SshClientHandler {
 async fn ssh_worker(
     profile: SshConnectionProfile,
     authentication: SshAuthentication,
+    strategy: SessionStrategy,
     reconnect_policy: Option<ReconnectPolicy>,
     shared: Arc<WorkerShared>,
     command_receiver: WorkerCommandReceiver,
@@ -2553,6 +2683,7 @@ async fn ssh_worker(
         match establish_connection(
             &profile,
             &authentication,
+            &strategy,
             &shared,
             &command_receiver,
             &host_key_gate,
@@ -2828,6 +2959,7 @@ async fn wait_for_reconnect_delay(
 async fn establish_connection(
     profile: &SshConnectionProfile,
     authentication: &WorkerAuthentication,
+    strategy: &SessionStrategy,
     shared: &Arc<WorkerShared>,
     command_receiver: &WorkerCommandReceiver,
     host_key_gate: &Arc<HostKeyDecisionGate>,
@@ -3030,14 +3162,30 @@ async fn establish_connection(
         }
     }
 
-    match wait_for_ssh_operation(
-        channel.request_shell(true),
-        command_receiver,
-        shared,
-        host_key_gate,
-    )
-    .await
-    {
+    let shell_launch_result = match strategy {
+        SessionStrategy::PlainShell => {
+            wait_for_ssh_operation(
+                channel.request_shell(true),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+        SessionStrategy::Persistent {
+            provider,
+            session_name,
+        } => {
+            wait_for_ssh_operation(
+                channel.exec(true, provider.attach_or_create_command(session_name)),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+    };
+    match shell_launch_result {
         WorkerWait::Completed(Ok(())) => {}
         WorkerWait::Completed(Err(_)) => {
             return ConnectionAttempt::Permanent(
@@ -3748,6 +3896,96 @@ mod tests {
             .reconnect_policy(),
             None
         );
+    }
+
+    #[test]
+    fn persistent_session_name_accepts_a_conservative_character_set() {
+        assert_eq!(
+            PersistentSessionName::new("main-session_1.local")
+                .unwrap()
+                .as_str(),
+            "main-session_1.local"
+        );
+    }
+
+    #[test]
+    fn persistent_session_name_rejects_empty_names() {
+        assert_eq!(
+            PersistentSessionName::new(""),
+            Err(PersistentSessionNameError::Empty)
+        );
+    }
+
+    #[test]
+    fn persistent_session_name_rejects_names_over_the_byte_limit() {
+        let too_long = "a".repeat(65);
+        assert_eq!(
+            PersistentSessionName::new(too_long),
+            Err(PersistentSessionNameError::TooLong {
+                maximum: 64,
+                actual: 65
+            })
+        );
+    }
+
+    #[test]
+    fn persistent_session_name_rejects_shell_metacharacters() {
+        for candidate in ["a b", "a;b", "a$b", "a`b`", "a&&b", "../etc", "a\"b"] {
+            assert_eq!(
+                PersistentSessionName::new(candidate),
+                Err(PersistentSessionNameError::InvalidCharacter),
+                "expected {candidate:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn persistence_provider_commands_embed_the_session_name_and_stay_re_entrant() {
+        let name = PersistentSessionName::new("work").unwrap();
+
+        assert_eq!(
+            PersistenceProvider::Tmux.attach_or_create_command(&name),
+            "exec tmux new-session -A -s work"
+        );
+        assert_eq!(
+            PersistenceProvider::Screen.attach_or_create_command(&name),
+            "exec screen -xRR work"
+        );
+        assert_eq!(
+            PersistenceProvider::Tmux.capability_probe_command(),
+            "command -v tmux"
+        );
+        assert_eq!(
+            PersistenceProvider::Screen.capability_probe_command(),
+            "command -v screen"
+        );
+    }
+
+    #[test]
+    fn only_persistent_strategies_support_automatic_recovery() {
+        let persistent = SessionStrategy::Persistent {
+            provider: PersistenceProvider::Tmux,
+            session_name: PersistentSessionName::new("work").unwrap(),
+        };
+
+        assert!(!SessionStrategy::PlainShell.supports_automatic_recovery());
+        assert!(persistent.supports_automatic_recovery());
+    }
+
+    #[test]
+    fn automatic_recovery_is_valid_for_a_persistent_strategy() {
+        let policy =
+            ReconnectPolicy::new(2, Duration::from_millis(10), Duration::from_millis(20)).unwrap();
+        let persistent = SessionStrategy::Persistent {
+            provider: PersistenceProvider::Screen,
+            session_name: PersistentSessionName::new("work").unwrap(),
+        };
+
+        let options =
+            SshSessionOptions::with_recovery_policy(persistent, RecoveryPolicy::Automatic(policy))
+                .expect("a persistent strategy can safely support automatic recovery (ADR 0018)");
+
+        assert_eq!(options.reconnect_policy(), Some(policy));
     }
 
     #[test]

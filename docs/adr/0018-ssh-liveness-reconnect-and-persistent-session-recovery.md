@@ -304,17 +304,47 @@ providers demonstrate the need.
 The `SessionStrategy`/`RecoveryPolicy` split, the removal of the automatic-
 reconnect checkbox from the plain SSH connect form, and the decoupling of
 manual (user-initiated) reconnect from automatic policy are implemented in
-`festerm-ssh` and `app/festerm`. Only `SessionStrategy::PlainShell` with
-`RecoveryPolicy::Manual` is constructible today; `RecoveryPolicy::Automatic`
-is rejected for it at the API boundary, matching the strict reading of this
-ADR's decision that automatic recovery is not merely off by default but not
-valid for a strategy that cannot safely recover durable remote state.
+`festerm-ssh` and `app/festerm`. `SessionStrategy::PlainShell` with
+`RecoveryPolicy::Manual` remains the only combination `app/festerm` currently
+constructs; `RecoveryPolicy::Automatic` is still rejected at the API boundary
+for any strategy that reports `supports_automatic_recovery() == false`,
+matching the strict reading of this ADR's decision that automatic recovery is
+not merely off by default but not valid for a strategy that cannot safely
+recover durable remote state.
 
-Liveness probing (wake/network-triggered active verification) and
-persistent-session providers (`tmux`, `screen`) remain unimplemented and are
-tracked separately as follow-up work (issues #48 and #49); see the
+Liveness probing (wake/network-triggered active verification) is
+implemented; the platform-specific wake/network-change hooks that would call
+it proactively remain tracked separately (issue #48 follow-up). See the
 "Alternatives considered" and "Decision" sections above for their intended
 shape.
+
+`festerm-ssh` now implements the persistent-session-provider layer for issue
+#49: a `PersistenceProvider` enum (`Tmux`, `Screen`) supplies a lazy,
+explicit remote capability-probe command (e.g. `command -v tmux`, only ever
+run when a user opts a profile into persistence — never speculatively or in
+the background) and an idempotent attach-or-create command (e.g.
+`tmux new-session -A -s <name>`, `screen -xRR <name>`). A validated
+`PersistentSessionName` restricts session names to a conservative,
+shell-metacharacter-free character set by construction, since the name is
+interpolated directly into a remote exec string and there is no reliable,
+portable way to shell-quote it for an arbitrary remote login shell.
+`SessionStrategy::Persistent { provider, session_name }` is a real,
+constructible variant now, and `supports_automatic_recovery()` returns `true`
+for it — `RecoveryPolicy::Automatic` is valid (still opt-in) once a session
+uses a persistent strategy. `establish_connection` execs the provider's
+attach-or-create command in place of an interactive shell whenever the
+strategy is `Persistent`; because that same command is idempotent, every
+reconnect attempt (manual or automatic) naturally reattaches to the same
+durable remote session rather than creating a new one, with no separate
+recovery code path required.
+
+Not yet implemented: any `app/festerm` UI to configure a profile's
+persistence provider/session name, toggle "Enable persistent sessions", or
+distinguish "Reconnect" (new transport, new plain shell) from "Resume" (new
+transport, provider reattachment) in the session inspector's language. Until
+that UI exists, `SessionStrategy::Persistent` is only reachable
+programmatically; no user-facing profile can select it yet. This is tracked
+as the remaining scope of issue #49.
 
 `festerm-ssh` now implements the SSH-level liveness probe itself
 (`SshSession::try_check_liveness`, backed by an ordinary `keepalive`/`ping`
