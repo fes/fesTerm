@@ -1263,6 +1263,117 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn rapid_live_resizes_preserve_continuous_pty_output_and_apply_the_settled_size() {
+        fn terminal_text_including_scrollback(terminal: &Terminal) -> String {
+            let history = terminal
+                .scrollback_lines()
+                .flat_map(|line| line.cells())
+                .map(|cell| cell.character())
+                .collect::<String>();
+            let visible = (0..terminal.dimensions().rows())
+                .filter_map(|row| terminal.row_text(row))
+                .collect::<String>();
+            format!("{history}{visible}")
+        }
+
+        // A real PTY continuously emits numbered lines while the application
+        // receives a jittery corner-drag-sized sequence. This covers the
+        // boundary absent from core-only reflow tests: terminal reflow happens
+        // synchronously, while the child receives only the debounced final
+        // TIOCSWINSZ/SIGWINCH resize.
+        let profile = LocalProfile::new("/bin/sh").with_arguments([
+            "-c",
+            "i=0; while [ \"$i\" -lt 64 ]; do printf 'FRAME:%02d\\n' \"$i\"; \
+             i=$((i + 1)); sleep 0.02; done",
+        ]);
+        let session = LocalPtySession::start(profile, TerminalSize::new(40, 8).unwrap())
+            .expect("controlled resize stream starts");
+        let mut controller = SessionController::with_session(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(40, 8).unwrap()).expect("terminal allocation");
+
+        let drag_steps = [
+            (41, 9),
+            (44, 10),
+            (43, 9),
+            (48, 12),
+            (52, 11),
+            (57, 14),
+            (55, 13),
+            (60, 16),
+        ];
+        for index in 0..64 {
+            let (columns, rows) = drag_steps[index % drag_steps.len()];
+            let dimensions = Dimensions::new(columns, rows).expect("drag dimensions are valid");
+            terminal.resize(dimensions).expect("live reflow succeeds");
+            controller.record_terminal_resize(dimensions);
+            controller.pump_events(&mut terminal);
+            controller.observe_resize_probe_terminal_state(&terminal);
+            controller.forward_terminal_replies(&mut terminal);
+            controller.flush_pending_writes();
+            controller.flush_pending_resize();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let settled_size = TerminalSize::new(60, 16).expect("settled size is valid");
+        controller.force_flush_pending_resize();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            controller.pump_events(&mut terminal);
+            controller.observe_resize_probe_terminal_state(&terminal);
+            controller.forward_terminal_replies(&mut terminal);
+            controller.flush_pending_writes();
+            controller.flush_pending_resize();
+
+            let terminal_text = terminal_text_including_scrollback(&terminal);
+            let final_resize_applied =
+                controller
+                    .resize_probe()
+                    .generations()
+                    .last()
+                    .is_some_and(|generation| {
+                        generation.applied && generation.dimensions == settled_size
+                    });
+            if final_resize_applied && terminal_text.contains("FRAME:63") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let terminal_text = terminal_text_including_scrollback(&terminal);
+        for index in 0..64 {
+            assert!(
+                terminal_text.contains(&format!("FRAME:{index:02}")),
+                "rapid live resizing lost PTY output marker FRAME:{index:02}"
+            );
+        }
+        assert_eq!(
+            controller.resize_probe().requested_generations(),
+            1,
+            "rapid UI resizes must collapse into one settled PTY resize"
+        );
+        assert!(
+            controller
+                .resize_probe()
+                .generations()
+                .last()
+                .is_some_and(
+                    |generation| generation.applied && generation.dimensions == settled_size
+                ),
+            "the settled PTY resize must be applied before the stream completes"
+        );
+        assert!(matches!(
+            controller
+                .session()
+                .expect("controlled session remains available")
+                .shutdown(Duration::from_secs(2)),
+            Ok(festerm_session::ShutdownResult::AlreadyStopped)
+                | Ok(festerm_session::ShutdownResult::Stopped)
+        ));
+    }
+
+    #[cfg(unix)]
     fn pump_controlled_session_until(
         controller: &mut SessionController<LocalPtySession>,
         terminal: &mut Terminal,
