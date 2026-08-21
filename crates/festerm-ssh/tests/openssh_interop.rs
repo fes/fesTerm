@@ -10,8 +10,8 @@ use festerm_session::{
     SessionTryReceiveError, ShutdownResult, TerminalSize,
 };
 use festerm_ssh::{
-    HostIdentity, HostTrustDecision, ReconnectPolicy, SshAuthentication, SshConnectionProfile,
-    SshKeyPassphrase, SshPrivateKey, SshSession, SshSessionOptions,
+    HostIdentity, HostTrustDecision, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
+    SshPrivateKey, SshSession, SshSessionOptions,
 };
 
 const MARKER: &[u8] = b"__FESTERM_OPENSSH_INTEROP_OK__";
@@ -458,22 +458,23 @@ fn docker_output(arguments: &[&str], operation: &str) -> String {
 
 #[test]
 #[ignore = "requires the repository-owned OpenSSH Docker fixture"]
-fn controlled_openssh_reconnect_interoperability() {
+fn controlled_openssh_manual_reconnect_interoperability() {
     const INITIAL_MARKER: &[u8] = b"__FESTERM_OPENSSH_RECONNECT_INITIAL_OK__";
     const RECONNECTED_MARKER: &[u8] = b"__FESTERM_OPENSSH_RECONNECT_OK__";
 
     let configuration =
         OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
     let fixture = DockerFixture::from_environment();
-    let reconnect_policy =
-        ReconnectPolicy::new(6, Duration::from_millis(250), Duration::from_secs(1))
-            .expect("reconnect policy must be valid");
+    // Ordinary SSH sessions are plain shells with no durable-session
+    // provider, so automatic recovery is not valid for them (ADR 0018);
+    // `SshSessionOptions::new()` is the only constructible option today and
+    // always means manual-only reconnect.
     let session = SshSession::start_with_options(
         connection_profile(&configuration),
         SshAuthentication::password(configuration.password),
-        SshSessionOptions::with_reconnect_policy(reconnect_policy),
+        SshSessionOptions::new(),
     )
-    .expect("could not start reconnect-enabled OpenSSH session");
+    .expect("could not start the OpenSSH session");
     let resolver = session.host_key_decision_resolver();
 
     let deadline = Instant::now() + EVENT_TIMEOUT;
@@ -528,7 +529,23 @@ fn controlled_openssh_reconnect_interoperability() {
         "initial controlled SSH shell command did not produce its expected marker"
     );
 
+    // Ordinary SSH sessions have no durable-session provider (ADR 0018), so
+    // there is no automatic recovery here: killing the fixture alone must
+    // never move the session into a reconnecting state by itself. Recovery
+    // only happens once the user explicitly requests it.
     fixture.kill();
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        !matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting))
+        ),
+        "an unintentional transport loss must never auto-reconnect a plain SSH session"
+    );
+    session
+        .try_reconnect()
+        .expect("an explicit reconnect must always be available for a running plain SSH session");
+
     let deadline = Instant::now() + RECONNECT_EVENT_TIMEOUT;
     let mut reconnecting = false;
     while Instant::now() < deadline && !reconnecting {
@@ -548,7 +565,7 @@ fn controlled_openssh_reconnect_interoperability() {
     }
     assert!(
         reconnecting,
-        "SSH session did not enter reconnecting state within the test timeout"
+        "the explicitly requested reconnect did not enter a reconnecting state within the test timeout"
     );
     assert_eq!(
         session.try_send_input(b"must-not-be-queued-during-reconnect"),

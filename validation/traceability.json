@@ -34,8 +34,8 @@
       "id": "launcher",
       "edges": ["LAUNCH-*"],
       "requirements": ["docs/gui-design.md#session-launcher"],
-      "decisions": ["ADR-0014"],
-      "automated_tests": ["platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end", "ssh_form_returns_a_typed_password_command_with_default_port"],
+      "decisions": ["ADR-0014", "ADR-0018"],
+      "automated_tests": ["platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end", "ssh_form_returns_a_typed_password_command_with_default_port", "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell"],
       "manual_scenarios": ["AS-01", "AS-02"],
       "status": "partial",
       "prerequisites": []
@@ -74,8 +74,8 @@
       "id": "ssh-lifecycle",
       "edges": ["SSH-*"],
       "requirements": ["docs/gui-design.md#ssh-session-creation", "docs/gui-design.md#reconnect-presentation"],
-      "decisions": ["ADR-0013", "ADR-0017"],
-      "automated_tests": ["restored_ssh_tab_requires_fresh_authentication_without_starting_a_session", "application_advances_lifecycle_generation_at_reconnect_boundary"],
+      "decisions": ["ADR-0013", "ADR-0017", "ADR-0018"],
+      "automated_tests": ["restored_ssh_tab_requires_fresh_authentication_without_starting_a_session", "application_advances_lifecycle_generation_at_reconnect_boundary", "reconnect_options_default_to_manual_plain_shell_recovery", "reconnect_request_is_limited_to_running_sessions"],
       "manual_scenarios": ["TI-07"],
       "status": "partial",
       "prerequisites": ["generation-boundary presentation remains incomplete"]

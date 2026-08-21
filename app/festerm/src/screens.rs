@@ -10,8 +10,8 @@ use eframe::egui::{self, vec2, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetTy
 use festerm_config::{Profile, SshProfileConfiguration};
 use festerm_session::TerminalSize;
 use festerm_ssh::{
-    HostIdentity, ReconnectPolicy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
-    SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
+    HostIdentity, SshAuthentication, SshConnectionProfile, SshKeyPassphrase, SshPrivateKey,
+    SshPrivateKeyError, SshSessionOptions,
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
@@ -161,7 +161,7 @@ enum SshAuthenticationMethod {
 ///
 /// This belongs only to egui's temporary per-tab data. In particular, it is
 /// never a profile, workspace, diagnostic, or application-state field.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct SshLauncherForm {
     host: String,
     port: String,
@@ -170,7 +170,6 @@ struct SshLauncherForm {
     password: String,
     private_key: String,
     key_passphrase: String,
-    reconnect_enabled: bool,
     saved_profile_id: Option<String>,
     saved_profile_has_credential: bool,
     remember_password: bool,
@@ -180,51 +179,16 @@ struct SshLauncherForm {
     focus_username: bool,
 }
 
-impl Default for SshLauncherForm {
-    /// Reconnect defaults to enabled: dropped SSH sessions are the common
-    /// case worth retrying automatically, so a fresh form should not require
-    /// an extra click to opt into it. (This default itself may change with a
-    /// future ADR revisiting reconnect behavior.)
-    fn default() -> Self {
-        Self {
-            host: String::new(),
-            port: String::new(),
-            username: String::new(),
-            authentication_method: SshAuthenticationMethod::default(),
-            password: String::new(),
-            private_key: String::new(),
-            key_passphrase: String::new(),
-            reconnect_enabled: true,
-            saved_profile_id: None,
-            saved_profile_has_credential: false,
-            remember_password: false,
-            feedback: None,
-            focus_username: false,
-        }
-    }
-}
-
 impl SshLauncherForm {
     const DEFAULT_PORT: u16 = 22;
-    /// The Launcher permits only three fresh connection attempts after a
-    /// user-requested reconnect, starting after 500 ms and capped at 2 s.
-    /// This bounds retained transient authentication and retry activity.
-    const RECONNECT_MAXIMUM_ATTEMPTS: u8 = 3;
-    const RECONNECT_INITIAL_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
-    const RECONNECT_MAXIMUM_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
+    /// Ordinary SSH sessions have no durable-session provider, so automatic
+    /// recovery is not valid for them (ADR 0018); every reconnect is the
+    /// user-initiated action available from the session Inspector once
+    /// connected. This always returns the manual-recovery plain-shell
+    /// options; there is no other combination to choose from yet.
     fn session_options(&self) -> SshSessionOptions {
-        if !self.reconnect_enabled {
-            return SshSessionOptions::new();
-        }
-
-        let policy = ReconnectPolicy::new(
-            Self::RECONNECT_MAXIMUM_ATTEMPTS,
-            Self::RECONNECT_INITIAL_DELAY,
-            Self::RECONNECT_MAXIMUM_DELAY,
-        )
-        .expect("the fixed Launcher reconnect policy is valid");
-        SshSessionOptions::with_reconnect_policy(policy)
+        SshSessionOptions::new()
     }
 
     fn prefill_from_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -550,16 +514,6 @@ fn show_ssh_form(
             };
 
             if result.is_none() {
-                ui.add_space(10.0);
-                ssh_section_heading(ui, "Reconnect");
-                ui.checkbox(
-                    &mut form.reconnect_enabled,
-                    format!(
-                        "Reconnect after a disconnect (up to {} attempts)",
-                        SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS
-                    ),
-                );
-
                 ui.add_space(12.0);
                 let submit_label = match form.authentication_method {
                     SshAuthenticationMethod::Password => "Connect with password",
@@ -1109,56 +1063,23 @@ mod tests {
         );
         assert_eq!(
             options.reconnect_policy(),
-            Some(
-                ReconnectPolicy::new(
-                    SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS,
-                    SshLauncherForm::RECONNECT_INITIAL_DELAY,
-                    SshLauncherForm::RECONNECT_MAXIMUM_DELAY,
-                )
-                .expect("the fixed Launcher reconnect policy is valid")
-            ),
-            "reconnect defaults to enabled on a fresh form"
+            None,
+            "plain SSH sessions default to manual-only reconnect (ADR 0018)"
         );
     }
 
     #[test]
-    fn ssh_form_can_opt_into_the_bounded_reconnect_policy() {
-        let mut form = SshLauncherForm {
-            host: "example.invalid".to_owned(),
-            username: "test-user".to_owned(),
-            password: "transient-test-password".to_owned(),
-            reconnect_enabled: true,
-            ..Default::default()
-        };
-
-        let AppCommand::StartSshSession { options, .. } =
-            form.submit().expect("valid form must submit")
-        else {
-            unreachable!("the form only creates SSH commands");
-        };
-
-        assert_eq!(
-            options.reconnect_policy(),
-            Some(
-                ReconnectPolicy::new(
-                    SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS,
-                    SshLauncherForm::RECONNECT_INITIAL_DELAY,
-                    SshLauncherForm::RECONNECT_MAXIMUM_DELAY,
-                )
-                .expect("the fixed Launcher reconnect policy is valid")
-            )
-        );
-    }
-
-    #[test]
-    fn ssh_form_shows_the_transient_reconnect_control() {
+    fn ssh_form_never_offers_automatic_reconnect_for_a_plain_shell() {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
 
-        assert!(harness
-            .query_by_label("Reconnect after a disconnect (up to 3 attempts)")
-            .is_some());
+        assert!(
+            harness.query_by_label("Reconnect").is_none(),
+            "a plain SSH session has no durable-session provider, so automatic \
+             recovery is not offered (ADR 0018); only the manual Inspector \
+             Reconnect action applies once connected"
+        );
     }
 
     #[test]

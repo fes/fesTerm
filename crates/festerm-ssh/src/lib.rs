@@ -520,34 +520,118 @@ impl ReconnectPolicy {
     }
 }
 
+/// The kind of remote session fesTerm creates or attaches to for a live SSH
+/// connection (ADR 0018).
+///
+/// Only [`Self::PlainShell`] exists today. This enum's future growth is
+/// reserved for durable remote-session providers such as `tmux` or `screen`;
+/// those variants are not implemented yet.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SessionStrategy {
+    /// An ordinary remote shell with no durable-session provider attached.
+    /// Losing the transport always loses that shell, so there is nothing to
+    /// safely recover without an explicit user action.
+    #[default]
+    PlainShell,
+}
+
+impl SessionStrategy {
+    /// Whether this strategy can safely recover durable remote state after an
+    /// unintentional transport loss, and so may be paired with
+    /// [`RecoveryPolicy::Automatic`] (ADR 0018).
+    ///
+    /// A plain shell cannot: it is not attached to anything but the dead
+    /// transport, so an automatic reconnect could only create a new,
+    /// unrelated shell rather than recover the old one.
+    pub const fn supports_automatic_recovery(self) -> bool {
+        match self {
+            Self::PlainShell => false,
+        }
+    }
+}
+
+/// Whether a live SSH session may replace its transport without an explicit
+/// user action after an unintentional connection loss (ADR 0018).
+///
+/// A user-requested manual reconnect is always available regardless of this
+/// policy; it governs only *unintentional*-loss retries.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RecoveryPolicy {
+    /// The only reconnect that happens is an explicit, user-requested one.
+    #[default]
+    Manual,
+    /// An unintentional transport loss may schedule bounded, cancellable
+    /// reconnect attempts using the given policy. Only valid for a
+    /// [`SessionStrategy`] that reports
+    /// [`SessionStrategy::supports_automatic_recovery`].
+    Automatic(ReconnectPolicy),
+}
+
+/// A [`RecoveryPolicy::Automatic`] policy paired with a [`SessionStrategy`]
+/// that cannot safely support it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryPolicyError;
+
+impl fmt::Display for RecoveryPolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "automatic recovery requires a session strategy that can safely recover durable state",
+        )
+    }
+}
+
+impl std::error::Error for RecoveryPolicyError {}
+
 /// Explicit optional behavior for a live [`SshSession`].
 ///
-/// Reconnect is disabled by default. When enabled, each reconnect is a new
-/// SSH transport, channel, PTY, and shell; remote process state and unsent or
+/// A user-requested manual reconnect is always available regardless of these
+/// options (ADR 0018): only automatic, unintentional-loss retry is governed
+/// here, and only a [`SessionStrategy`] that can safely recover durable state
+/// may enable it. Every reconnect, manual or automatic, is a new SSH
+/// transport, channel, PTY, and shell; remote process state and unsent or
 /// in-flight input are never restored.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SshSessionOptions {
-    reconnect_policy: Option<ReconnectPolicy>,
+    strategy: SessionStrategy,
+    recovery: RecoveryPolicy,
 }
 
 impl SshSessionOptions {
-    /// Creates options with automatic reconnect disabled.
+    /// Creates options for an ordinary plain-shell session with manual-only
+    /// recovery — the only combination valid today.
     pub const fn new() -> Self {
         Self {
-            reconnect_policy: None,
+            strategy: SessionStrategy::PlainShell,
+            recovery: RecoveryPolicy::Manual,
         }
     }
 
-    /// Enables bounded reconnect using `policy`.
-    pub const fn with_reconnect_policy(policy: ReconnectPolicy) -> Self {
-        Self {
-            reconnect_policy: Some(policy),
+    /// Builds options from an explicit strategy/recovery pair, rejecting an
+    /// automatic policy the strategy cannot safely support (ADR 0018).
+    pub const fn with_recovery_policy(
+        strategy: SessionStrategy,
+        recovery: RecoveryPolicy,
+    ) -> Result<Self, RecoveryPolicyError> {
+        if matches!(recovery, RecoveryPolicy::Automatic(_))
+            && !strategy.supports_automatic_recovery()
+        {
+            return Err(RecoveryPolicyError);
         }
+        Ok(Self { strategy, recovery })
     }
 
-    /// Returns the selected reconnect policy, if automatic reconnect is on.
+    /// Returns the session strategy in effect.
+    pub const fn strategy(self) -> SessionStrategy {
+        self.strategy
+    }
+
+    /// Returns the selected automatic reconnect policy, if automatic
+    /// recovery is on. `None` means every reconnect is manual/explicit.
     pub const fn reconnect_policy(self) -> Option<ReconnectPolicy> {
-        self.reconnect_policy
+        match self.recovery {
+            RecoveryPolicy::Automatic(policy) => Some(policy),
+            RecoveryPolicy::Manual => None,
+        }
     }
 }
 
@@ -557,7 +641,6 @@ impl SshSessionOptions {
 /// or protocol data, so applications can present it safely.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SshReconnectError {
-    Disabled,
     NotRunning,
     AlreadyRequested,
     QueueFull,
@@ -567,7 +650,6 @@ pub enum SshReconnectError {
 impl fmt::Display for SshReconnectError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Disabled => formatter.write_str("SSH reconnect is not enabled for this session"),
             Self::NotRunning => {
                 formatter.write_str("SSH reconnect is only available while connected")
             }
@@ -1903,18 +1985,14 @@ impl SshWorkerFoundation {
         self.try_send_command(WorkerCommand::Shutdown, SessionOperation::Shutdown)
     }
 
-    fn reconnect_available(&self, reconnect_enabled: bool) -> bool {
+    fn reconnect_available(&self) -> bool {
         reconnect_request_is_available(
-            reconnect_enabled,
             &self.lifecycle(),
             self.shared.is_reconnecting() || self.shared.reconnect_requested(),
         )
     }
 
-    fn try_reconnect(&self, reconnect_enabled: bool) -> Result<(), SshReconnectError> {
-        if !reconnect_enabled {
-            return Err(SshReconnectError::Disabled);
-        }
+    fn try_reconnect(&self) -> Result<(), SshReconnectError> {
         if !matches!(self.lifecycle(), SessionLifecycle::Running) {
             return Err(SshReconnectError::NotRunning);
         }
@@ -2067,7 +2145,6 @@ impl std::error::Error for SshSessionStartError {}
 /// transient authentication, and interactive session-channel setup.
 pub struct SshSession {
     foundation: SshWorkerFoundation,
-    reconnect_enabled: bool,
     host_key_resolver: HostKeyDecisionResolver,
     host_key_gate: Arc<HostKeyDecisionGate>,
     completion_receiver: Mutex<Receiver<Result<ShutdownResult, SessionError>>>,
@@ -2153,7 +2230,6 @@ impl SshSession {
 
         Ok(Self {
             foundation,
-            reconnect_enabled: options.reconnect_policy().is_some(),
             host_key_resolver,
             host_key_gate,
             completion_receiver: Mutex::new(completion_receiver),
@@ -2168,20 +2244,23 @@ impl SshSession {
 
     /// Returns whether this connected session can accept one reconnect request.
     ///
-    /// The request is available only for a session started with an explicit
-    /// bounded reconnect policy. It does not block on network I/O.
+    /// A manual reconnect is always available for a running session,
+    /// independent of any automatic recovery policy (ADR 0018). It does not
+    /// block on network I/O.
     pub fn reconnect_available(&self) -> bool {
-        self.foundation.reconnect_available(self.reconnect_enabled)
+        self.foundation.reconnect_available()
     }
 
-    /// Asks the worker to replace the current SSH transport using its existing
-    /// bounded reconnect policy.
+    /// Asks the worker to replace the current SSH transport with a fresh one.
     ///
-    /// This is nonblocking. A successful request only queues worker work; the
-    /// normal lifecycle and host-key event paths report its result. The fresh
-    /// connection has a new PTY and shell, with no remote-state restoration.
+    /// This is nonblocking and always honored once requested, independent of
+    /// any automatic recovery policy: an explicit reconnect is a deliberate
+    /// user action, not an unintentional-loss retry. A successful request
+    /// only queues worker work; the normal lifecycle and host-key event paths
+    /// report its result. The fresh connection re-verifies host trust and has
+    /// a new PTY and shell, with no remote-state restoration.
     pub fn try_reconnect(&self) -> Result<(), SshReconnectError> {
-        self.foundation.try_reconnect(self.reconnect_enabled)
+        self.foundation.try_reconnect()
     }
 
     fn await_completion(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
@@ -2212,12 +2291,8 @@ impl SshSession {
     }
 }
 
-fn reconnect_request_is_available(
-    reconnect_enabled: bool,
-    lifecycle: &SessionLifecycle,
-    request_pending: bool,
-) -> bool {
-    reconnect_enabled && matches!(lifecycle, SessionLifecycle::Running) && !request_pending
+fn reconnect_request_is_available(lifecycle: &SessionLifecycle, request_pending: bool) -> bool {
+    matches!(lifecycle, SessionLifecycle::Running) && !request_pending
 }
 
 impl Session for SshSession {
@@ -2346,7 +2421,7 @@ async fn ssh_worker(
                         shared.set_lifecycle(SessionLifecycle::Exited(exit));
                         return Ok(ShutdownResult::AlreadyStopped);
                     }
-                    RunningOutcome::ConnectionLost | RunningOutcome::ReconnectRequested => {
+                    RunningOutcome::ConnectionLost => {
                         match schedule_reconnect(
                             &mut planner,
                             ConnectionFailure::Transport,
@@ -2361,6 +2436,22 @@ async fn ssh_worker(
                             ReconnectSchedule::Unavailable => {}
                         }
                         return Err(ssh_failure(&shared, "SSH connection ended unexpectedly"));
+                    }
+                    RunningOutcome::ReconnectRequested => {
+                        // A manual reconnect is always honored once explicitly
+                        // requested: it is a deliberate user action, not an
+                        // unintentional-loss retry, so it does not consult
+                        // (and is never blocked by) any automatic recovery
+                        // policy (ADR 0018). Best-effort reset the planner's
+                        // own bookkeeping so a subsequent unintentional loss
+                        // starts its bounded backoff from a clean state.
+                        if let Some(planner) = planner.as_mut() {
+                            let _ = planner.connection_established();
+                        }
+                        shared.set_reconnecting(true);
+                        shared.clear_reconnect_request();
+                        shared.set_lifecycle(SessionLifecycle::Starting);
+                        continue;
                     }
                 }
             }
@@ -3298,36 +3389,45 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_options_are_explicit_and_disabled_by_default() {
+    fn reconnect_options_default_to_manual_plain_shell_recovery() {
         let policy =
             ReconnectPolicy::new(2, Duration::from_millis(10), Duration::from_millis(20)).unwrap();
 
         assert_eq!(SshSessionOptions::new().reconnect_policy(), None);
         assert_eq!(
-            SshSessionOptions::with_reconnect_policy(policy).reconnect_policy(),
-            Some(policy)
+            SshSessionOptions::new().strategy(),
+            SessionStrategy::PlainShell
+        );
+        assert_eq!(
+            SshSessionOptions::with_recovery_policy(
+                SessionStrategy::PlainShell,
+                RecoveryPolicy::Automatic(policy)
+            ),
+            Err(RecoveryPolicyError),
+            "a plain shell cannot safely support automatic recovery (ADR 0018)"
+        );
+        assert_eq!(
+            SshSessionOptions::with_recovery_policy(
+                SessionStrategy::PlainShell,
+                RecoveryPolicy::Manual
+            )
+            .expect("manual recovery is always valid")
+            .reconnect_policy(),
+            None
         );
     }
 
     #[test]
-    fn reconnect_request_is_limited_to_enabled_running_sessions() {
+    fn reconnect_request_is_limited_to_running_sessions() {
         assert!(reconnect_request_is_available(
-            true,
             &SessionLifecycle::Running,
             false
         ));
         assert!(!reconnect_request_is_available(
-            false,
-            &SessionLifecycle::Running,
-            false
-        ));
-        assert!(!reconnect_request_is_available(
-            true,
             &SessionLifecycle::Starting,
             false
         ));
         assert!(!reconnect_request_is_available(
-            true,
             &SessionLifecycle::Running,
             true
         ));
@@ -3336,7 +3436,6 @@ mod tests {
     #[test]
     fn reconnect_request_errors_are_content_free() {
         for error in [
-            SshReconnectError::Disabled,
             SshReconnectError::NotRunning,
             SshReconnectError::AlreadyRequested,
             SshReconnectError::QueueFull,
@@ -3348,24 +3447,20 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_request_queues_once_for_an_enabled_running_session() {
+    fn reconnect_request_queues_once_for_a_running_session() {
         let (foundation, command_receiver, _) = SshWorkerFoundation::new(profile());
 
         assert_eq!(
-            foundation.try_reconnect(false),
-            Err(SshReconnectError::Disabled)
-        );
-        assert_eq!(
-            foundation.try_reconnect(true),
+            foundation.try_reconnect(),
             Err(SshReconnectError::NotRunning)
         );
 
         foundation.set_running();
-        assert!(foundation.reconnect_available(true));
-        assert_eq!(foundation.try_reconnect(true), Ok(()));
-        assert!(!foundation.reconnect_available(true));
+        assert!(foundation.reconnect_available());
+        assert_eq!(foundation.try_reconnect(), Ok(()));
+        assert!(!foundation.reconnect_available());
         assert_eq!(
-            foundation.try_reconnect(true),
+            foundation.try_reconnect(),
             Err(SshReconnectError::AlreadyRequested)
         );
         assert!(matches!(
