@@ -20,9 +20,18 @@ guard AXIsProcessTrustedWithOptions(trustOptions) else {
 }
 
 let application = AXUIElementCreateApplication(pid)
-var windowsValue: CFTypeRef?
-guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsValue) == .success,
-      let window = (windowsValue as? [AXUIElement])?.first else {
+let windowDeadline = Date().addingTimeInterval(10)
+var window: AXUIElement?
+while Date() < windowDeadline && window == nil {
+    var windowsValue: CFTypeRef?
+    if AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsValue) == .success {
+        window = (windowsValue as? [AXUIElement])?.first
+    }
+    if window == nil {
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+}
+guard let window else {
     fputs("fesTerm did not expose an accessibility window.\n", stderr)
     exit(1)
 }

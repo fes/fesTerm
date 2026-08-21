@@ -2397,7 +2397,7 @@ mod tests {
             egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
             egui::Key::P,
         );
-        harness.run();
+        harness.step();
         harness.get_by_label("Reset Terminal").click();
         // The transient "Terminal reset" toast keeps requesting repaints
         // until it expires; one step is enough to observe the result of
