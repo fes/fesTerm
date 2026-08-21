@@ -7,11 +7,11 @@
 //! the single command-handling path.
 
 use eframe::egui::{self, vec2, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
-use festerm_config::{Profile, SshProfileConfiguration};
+use festerm_config::{PersistenceConfiguration, Profile, SshProfileConfiguration};
 use festerm_session::TerminalSize;
 use festerm_ssh::{
-    HostIdentity, SshAuthentication, SshConnectionProfile, SshKeyPassphrase, SshPrivateKey,
-    SshPrivateKeyError, SshSessionOptions,
+    HostIdentity, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
+    SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
@@ -172,6 +172,9 @@ struct SshLauncherForm {
     key_passphrase: String,
     saved_profile_id: Option<String>,
     saved_profile_has_credential: bool,
+    /// The saved profile's durable remote-session provider and name, if any
+    /// (ADR 0018). `None` means this session is an ordinary plain shell.
+    persistence: Option<PersistenceConfiguration>,
     remember_password: bool,
     feedback: Option<String>,
     /// Set whenever the form is (re)opened so the Username field can claim
@@ -185,16 +188,23 @@ impl SshLauncherForm {
     /// Ordinary SSH sessions have no durable-session provider, so automatic
     /// recovery is not valid for them (ADR 0018); every reconnect is the
     /// user-initiated action available from the session Inspector once
-    /// connected. This always returns the manual-recovery plain-shell
-    /// options; there is no other combination to choose from yet.
+    /// connected. Manual recovery is always valid, so building these options
+    /// from `self.persistence` (when a saved profile configured one) can
+    /// never fail.
     fn session_options(&self) -> SshSessionOptions {
-        SshSessionOptions::new()
+        let strategy = self
+            .persistence
+            .as_ref()
+            .and_then(|persistence| persistence.to_session_strategy().ok())
+            .unwrap_or(SessionStrategy::PlainShell);
+        SshSessionOptions::manual_recovery(strategy)
     }
 
     fn prefill_from_profile(&mut self, profile: &SshProfileConfiguration) {
         self.host = profile.host().to_owned();
         self.port = profile.port().to_string();
         self.username = profile.username().to_owned();
+        self.persistence = profile.persistence().cloned();
     }
 
     fn prefill_saved_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -1340,6 +1350,55 @@ mod tests {
         assert!(harness
             .query_by_label("SSH host must not contain whitespace")
             .is_some());
+    }
+
+    #[test]
+    fn prefilling_from_a_persistent_profile_yields_persistent_session_options() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.invalid",
+            22,
+            "test-user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(festerm_config::PersistenceProviderKind::Tmux, "build")
+        .unwrap();
+
+        let mut form = SshLauncherForm::default();
+        form.prefill_saved_profile(profile.as_ssh().unwrap());
+
+        assert_eq!(
+            form.session_options().strategy(),
+            SessionStrategy::Persistent {
+                provider: festerm_ssh::PersistenceProvider::Tmux,
+                session_name: festerm_ssh::PersistentSessionName::new("build").unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn prefilling_from_an_ordinary_profile_yields_plain_shell_session_options() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.invalid",
+            22,
+            "test-user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+
+        let mut form = SshLauncherForm::default();
+        form.prefill_saved_profile(profile.as_ssh().unwrap());
+
+        assert_eq!(
+            form.session_options().strategy(),
+            SessionStrategy::PlainShell
+        );
     }
 
     #[test]

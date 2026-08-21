@@ -761,6 +761,21 @@ impl SshSessionOptions {
             RecoveryPolicy::Manual => None,
         }
     }
+
+    /// Builds options for `strategy` with manual-only recovery.
+    ///
+    /// Manual recovery is always valid for any [`SessionStrategy`] (ADR
+    /// 0018: a persistent-session strategy makes automatic recovery *safe
+    /// enough to offer*, it does not enable it by itself), so this
+    /// constructor is infallible, unlike [`Self::with_recovery_policy`].
+    /// Callers that resolve a strategy from saved profile metadata without
+    /// yet exposing an automatic-recovery opt-in should use this.
+    pub const fn manual_recovery(strategy: SessionStrategy) -> Self {
+        Self {
+            strategy,
+            recovery: RecoveryPolicy::Manual,
+        }
+    }
 }
 
 /// A rejected nonblocking request to reconnect a live SSH session.

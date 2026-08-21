@@ -8,7 +8,7 @@ use std::{
 };
 
 use eframe::egui;
-use festerm_config::{Configuration, InterfaceSettings};
+use festerm_config::{Configuration, InterfaceSettings, Profile};
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
@@ -800,9 +800,21 @@ impl FesTermApp {
     }
 
     fn start_stored_password_profile(&mut self, profile_id: String, context: &egui::Context) {
+        // Derive a manual-recovery strategy from the saved profile's
+        // durable-session configuration (ADR 0018), so clicking a saved
+        // profile's "use stored password" action attaches/creates its
+        // configured tmux/screen session instead of always opening a plain
+        // shell.
+        let strategy = self
+            .state
+            .configuration()
+            .profile(&profile_id)
+            .and_then(Profile::as_ssh)
+            .and_then(|profile| profile.session_strategy().ok())
+            .unwrap_or(festerm_ssh::SessionStrategy::PlainShell);
         self.start_stored_password_profile_with_options(
             profile_id,
-            festerm_ssh::SshSessionOptions::new(),
+            festerm_ssh::SshSessionOptions::manual_recovery(strategy),
             context,
         );
     }

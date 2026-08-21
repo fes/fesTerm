@@ -21,7 +21,9 @@ use std::{
 use festerm_pty::LocalProfile;
 use festerm_secret_store::SecretReference;
 use festerm_session::TerminalSize;
-use festerm_ssh::{HostIdentity, SshConnectionProfile};
+use festerm_ssh::{
+    HostIdentity, PersistenceProvider, PersistentSessionName, SessionStrategy, SshConnectionProfile,
+};
 use serde::{Deserialize, Serialize};
 
 /// The only document schema accepted by this initial configuration slice.
@@ -725,6 +727,7 @@ impl Profile {
             initial_columns,
             initial_rows,
             credential_id: None,
+            persistence: None,
         });
         profile.validate()?;
         Ok(profile)
@@ -744,6 +747,27 @@ impl Profile {
             ));
         };
         profile.credential_id = Some(CredentialReference::new(credential_reference));
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Configures an SSH profile's durable remote-session provider and name
+    /// (ADR 0018).
+    ///
+    /// This only changes which remote session a *future* connection for this
+    /// profile creates or attaches to; it never claims to convert an
+    /// already-live plain shell into a persistent session.
+    pub fn with_persistence(
+        mut self,
+        provider: PersistenceProviderKind,
+        session_name: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let Self::Ssh(profile) = &mut self else {
+            return Err(ConfigError::new(
+                ConfigErrorKind::PersistenceRequiresSshProfile,
+            ));
+        };
+        profile.persistence = Some(PersistenceConfiguration::new(provider, session_name));
         self.validate()?;
         Ok(self)
     }
@@ -776,6 +800,12 @@ impl Profile {
     pub fn credential_reference(&self) -> Option<&SecretReference> {
         self.as_ssh()
             .and_then(SshProfileConfiguration::credential_reference)
+    }
+
+    /// Returns this SSH profile's durable remote-session provider and name,
+    /// if persistence is configured (ADR 0018).
+    pub fn persistence(&self) -> Option<&PersistenceConfiguration> {
+        self.as_ssh().and_then(SshProfileConfiguration::persistence)
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -874,6 +904,8 @@ pub struct SshProfileConfiguration {
     initial_rows: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential_id: Option<CredentialReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    persistence: Option<PersistenceConfiguration>,
 }
 
 impl SshProfileConfiguration {
@@ -918,6 +950,13 @@ impl SshProfileConfiguration {
             .map(CredentialReference::as_secret_reference)
     }
 
+    /// Returns this profile's configured durable-session provider and name,
+    /// if persistence is enabled (ADR 0018). `None` means this profile is an
+    /// ordinary plain-shell SSH session.
+    pub fn persistence(&self) -> Option<&PersistenceConfiguration> {
+        self.persistence.as_ref()
+    }
+
     /// Converts safe metadata into the SSH backend's connection profile.
     pub fn to_connection_profile(&self) -> Result<SshConnectionProfile, ConfigError> {
         let identity = HostIdentity::new(&self.host, self.port)
@@ -926,6 +965,17 @@ impl SshProfileConfiguration {
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
         SshConnectionProfile::new(identity, &self.username, &self.terminal_type, size)
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))
+    }
+
+    /// Converts this profile's persistence configuration, if any, into the
+    /// SSH backend's session strategy (ADR 0018). Returns
+    /// [`SessionStrategy::PlainShell`] when no persistence is configured.
+    pub fn session_strategy(&self) -> Result<SessionStrategy, ConfigError> {
+        self.persistence
+            .as_ref()
+            .map_or(Ok(SessionStrategy::PlainShell), |persistence| {
+                persistence.to_session_strategy()
+            })
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -939,7 +989,86 @@ impl SshProfileConfiguration {
         {
             return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
         }
-        self.to_connection_profile().map(|_| ())
+        self.to_connection_profile().map(|_| ())?;
+        self.session_strategy().map(|_| ())
+    }
+}
+
+/// Non-secret configuration selecting a durable remote-session provider and
+/// name for an SSH profile (ADR 0018).
+///
+/// Absent by default: an SSH profile with no `PersistenceConfiguration` is an
+/// ordinary plain-shell session (`SessionStrategy::PlainShell`). Storing
+/// this only changes which remote session a *future* connection creates or
+/// attaches to; it never retroactively claims to wrap or capture an
+/// already-live plain shell.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistenceConfiguration {
+    provider: PersistenceProviderKind,
+    session_name: String,
+}
+
+impl PersistenceConfiguration {
+    /// Creates persistence metadata for `provider`/`session_name`.
+    ///
+    /// This does not itself validate `session_name`; validation happens on
+    /// first use via [`Self::to_session_strategy`] (and, transitively,
+    /// whenever the owning profile is constructed or validated), consistent
+    /// with how other profile fields are validated.
+    pub fn new(provider: PersistenceProviderKind, session_name: impl Into<String>) -> Self {
+        Self {
+            provider,
+            session_name: session_name.into(),
+        }
+    }
+
+    /// Returns the configured durable-session provider.
+    pub const fn provider(&self) -> PersistenceProviderKind {
+        self.provider
+    }
+
+    /// Returns the configured durable-session name.
+    pub fn session_name(&self) -> &str {
+        &self.session_name
+    }
+
+    /// Converts this configuration into the SSH backend's session strategy,
+    /// validating the durable-session name against
+    /// [`PersistentSessionName`]'s conservative character-set restriction.
+    pub fn to_session_strategy(&self) -> Result<SessionStrategy, ConfigError> {
+        let session_name = PersistentSessionName::new(self.session_name.clone())
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPersistenceConfiguration))?;
+        Ok(SessionStrategy::Persistent {
+            provider: self.provider.to_backend(),
+            session_name,
+        })
+    }
+}
+
+/// Which durable remote-session provider a profile uses (ADR 0018).
+///
+/// This mirrors `festerm_ssh::PersistenceProvider`, which is deliberately not
+/// `Serialize`/`Deserialize` itself so the SSH backend's protocol/session
+/// types stay independent of the configuration document format.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PersistenceProviderKind {
+    Tmux,
+    Screen,
+}
+
+impl PersistenceProviderKind {
+    const fn to_backend(self) -> PersistenceProvider {
+        match self {
+            Self::Tmux => PersistenceProvider::Tmux,
+            Self::Screen => PersistenceProvider::Screen,
+        }
+    }
+
+    /// A short, user-displayable name for this provider.
+    pub const fn label(self) -> &'static str {
+        self.to_backend().label()
     }
 }
 
@@ -1123,6 +1252,8 @@ pub enum ConfigErrorKind {
     DuplicateProfileIdentifier,
     InvalidLocalProfile,
     InvalidSshProfile,
+    InvalidPersistenceConfiguration,
+    PersistenceRequiresSshProfile,
     InvalidCredentialReference,
     CredentialReferenceRequiresSshProfile,
     WorkspacePresentWhenDisabled,
@@ -1194,6 +1325,12 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
+            ),
+            ConfigErrorKind::InvalidPersistenceConfiguration => formatter.write_str(
+                "a persistent session name may only contain ASCII letters, digits, '-', '_', or '.', and must be 1-64 bytes",
+            ),
+            ConfigErrorKind::PersistenceRequiresSshProfile => formatter.write_str(
+                "a durable-session provider and name may be configured only on SSH profiles",
             ),
             ConfigErrorKind::InvalidCredentialReference => formatter.write_str(
                 "SSH credential_id must be a canonical opaque UUID-v4 reference",
@@ -2362,6 +2499,111 @@ id = "launcher"
         let loaded = Configuration::load_from_path(&path).unwrap();
         assert!(loaded.profiles()[0].credential_reference().is_some());
         assert_eq!(loaded, configuration);
+    }
+
+    #[test]
+    fn saves_and_loads_a_durable_session_configuration() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("profiles.toml");
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(PersistenceProviderKind::Tmux, "build")
+        .unwrap()])
+        .unwrap();
+
+        configuration.save_to_path(&path).unwrap();
+
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("provider = \"tmux\""));
+        assert!(saved.contains("session_name = \"build\""));
+        let loaded = Configuration::load_from_path(&path).unwrap();
+        let persistence = loaded.profiles()[0].persistence().unwrap();
+        assert_eq!(persistence.provider(), PersistenceProviderKind::Tmux);
+        assert_eq!(persistence.session_name(), "build");
+        assert_eq!(loaded, configuration);
+    }
+
+    #[test]
+    fn ssh_profile_without_persistence_reports_a_plain_shell_strategy() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+
+        let strategy = profile.as_ssh().unwrap().session_strategy().unwrap();
+
+        assert_eq!(strategy, SessionStrategy::PlainShell);
+    }
+
+    #[test]
+    fn ssh_profile_with_persistence_reports_a_persistent_strategy() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(PersistenceProviderKind::Screen, "editor")
+        .unwrap();
+
+        let strategy = profile.as_ssh().unwrap().session_strategy().unwrap();
+
+        assert_eq!(
+            strategy,
+            SessionStrategy::Persistent {
+                provider: PersistenceProvider::Screen,
+                session_name: PersistentSessionName::new("editor").unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_an_invalid_persistent_session_name() {
+        let error = Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(PersistenceProviderKind::Tmux, "has spaces")
+        .unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            ConfigErrorKind::InvalidPersistenceConfiguration
+        );
+    }
+
+    #[test]
+    fn with_persistence_requires_an_ssh_profile() {
+        let error = Profile::local("local", "/bin/sh", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::Tmux, "build")
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ConfigErrorKind::PersistenceRequiresSshProfile);
     }
 
     #[test]
