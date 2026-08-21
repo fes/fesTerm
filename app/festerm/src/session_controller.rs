@@ -1318,7 +1318,12 @@ mod tests {
 
         let settled_size = TerminalSize::new(60, 16).expect("settled size is valid");
         controller.force_flush_pending_resize();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // A real child process emits 64 lines at ~20ms apart (~1.3s) after a
+        // debounced resize settle; under CI's noisier/more loaded runners
+        // that can occasionally take much longer than on a quiet local
+        // machine, so give it generous headroom rather than the 5s that
+        // works reliably locally.
+        let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
             controller.pump_events(&mut terminal);
             controller.observe_resize_probe_terminal_state(&terminal);

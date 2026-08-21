@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,17 +14,39 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = REPOSITORY_ROOT / "scripts" / "bootstrap-vm-evidence-lab.sh"
 
 
+def _windows_git_bash() -> str:
+    """Locates Git for Windows' real `bash.exe`, bypassing the WSL stub.
+
+    Modern Windows ships its own `C:\\Windows\\System32\\bash.exe`, which
+    just launches WSL (and fails with "Windows Subsystem for Linux has no
+    installed distributions" if none is installed). Since `System32`
+    typically precedes Git's `bin` directory on `PATH`, a bare `"bash"`
+    lookup resolves to that stub instead of Git's real bash on GitHub's
+    hosted `windows-latest` runners. Derive Git's bash path from `git.exe`
+    (guaranteed to be on `PATH`) instead of trusting `PATH` order for
+    `bash` itself.
+    """
+    git_exe = shutil.which("git")
+    if git_exe:
+        # Git for Windows ships bash.exe at <root>/bin/bash.exe, with
+        # git.exe itself living in <root>/cmd or <root>/mingw64/bin.
+        candidate = Path(git_exe).resolve().parent.parent / "bin" / "bash.exe"
+        if candidate.exists():
+            return str(candidate)
+    return "bash"
+
+
 def bootstrap_command(*arguments: str) -> list[str]:
     """Builds the argument list to run the `sh` bootstrap script.
 
     Windows has no shebang support, so `CreateProcess` cannot launch a `.sh`
     file directly (`WinError 193: %1 is not a valid Win32 application`).
     GitHub's hosted `windows-latest` runners (and most Windows dev machines
-    with Git installed) ship Git for Windows' `bash.exe` on `PATH`, so route
-    through that there instead of relying on direct execution.
+    with Git installed) ship Git for Windows' `bash.exe`, so route through
+    that there instead of relying on direct execution.
     """
     if sys.platform == "win32":
-        return ["bash", str(BOOTSTRAP), *arguments]
+        return [_windows_git_bash(), str(BOOTSTRAP), *arguments]
     return [str(BOOTSTRAP), *arguments]
 
 
