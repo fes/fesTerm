@@ -105,6 +105,50 @@ fn show_launcher_choice(
     response
 }
 
+/// A bordered "Back" control that renders the app's own chevron glyph
+/// (`icon::Icon::Back`) instead of a Unicode arrow character, since the
+/// bundled font has no glyph for the arrow and would otherwise show a tofu
+/// box (`docs/icon-system.md`'s painter-drawn icons avoid exactly this).
+fn ssh_back_button(ui: &mut Ui) -> egui::Response {
+    let text = "Back";
+    let font = egui::FontId::proportional(13.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), theme::TEXT_PRIMARY);
+    let icon_size = 14.0;
+    let spacing = 6.0;
+    let padding = vec2(10.0, 6.0);
+    let size = vec2(
+        icon_size + spacing + galley.size().x + padding.x * 2.0,
+        galley.size().y.max(icon_size) + padding.y * 2.0,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let hovered = response.hovered();
+    ui.painter().rect(
+        rect,
+        6.0,
+        if hovered {
+            theme::SURFACE_TAB_ACTIVE
+        } else {
+            theme::SURFACE_TAB_INACTIVE
+        },
+        Stroke::new(1.0, theme::BORDER_SUBTLE),
+        egui::StrokeKind::Inside,
+    );
+    let icon_rect = egui::Rect::from_min_size(
+        rect.left_top() + vec2(padding.x, (rect.height() - icon_size) / 2.0),
+        vec2(icon_size, icon_size),
+    );
+    icon::paint(ui.painter(), Icon::Back, icon_rect, theme::TEXT_PRIMARY);
+    ui.painter().galley(
+        rect.left_top() + vec2(padding.x + icon_size + spacing, padding.y),
+        galley,
+        theme::TEXT_PRIMARY,
+    );
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, text));
+    response
+}
+
 /// Authentication method selected for one transient SSH connection attempt.
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum SshAuthenticationMethod {
@@ -117,7 +161,7 @@ enum SshAuthenticationMethod {
 ///
 /// This belongs only to egui's temporary per-tab data. In particular, it is
 /// never a profile, workspace, diagnostic, or application-state field.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct SshLauncherForm {
     host: String,
     port: String,
@@ -131,6 +175,33 @@ struct SshLauncherForm {
     saved_profile_has_credential: bool,
     remember_password: bool,
     feedback: Option<String>,
+    /// Set whenever the form is (re)opened so the Username field can claim
+    /// initial keyboard focus once, without re-stealing it on every frame.
+    focus_username: bool,
+}
+
+impl Default for SshLauncherForm {
+    /// Reconnect defaults to enabled: dropped SSH sessions are the common
+    /// case worth retrying automatically, so a fresh form should not require
+    /// an extra click to opt into it. (This default itself may change with a
+    /// future ADR revisiting reconnect behavior.)
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: String::new(),
+            username: String::new(),
+            authentication_method: SshAuthenticationMethod::default(),
+            password: String::new(),
+            private_key: String::new(),
+            key_passphrase: String::new(),
+            reconnect_enabled: true,
+            saved_profile_id: None,
+            saved_profile_has_credential: false,
+            remember_password: false,
+            feedback: None,
+            focus_username: false,
+        }
+    }
 }
 
 impl SshLauncherForm {
@@ -278,6 +349,37 @@ fn ssh_form_has_focus(ui: &Ui, tab_id: TabId) -> bool {
     .any(|id| ui.memory(|memory| memory.has_focus(id)))
 }
 
+/// A small uppercase, muted sub-section label, matching the Session
+/// Inspector's grouped-row convention (`inspector.rs`'s `section_heading`)
+/// so launcher surfaces share one "quiet section" visual language rather
+/// than each screen inventing its own heading style.
+///
+/// Unlike a plain label, this never adds space above itself: callers add
+/// spacing between sections explicitly, so the very first heading in a card
+/// sits right under the card's own top padding instead of compounding it.
+fn ssh_section_heading(ui: &mut Ui, heading: &str) {
+    ui.label(
+        egui::RichText::new(heading.to_uppercase())
+            .size(10.0)
+            .color(theme::TEXT_MUTED),
+    );
+    ui.add_space(4.0);
+}
+
+/// Body copy sized and colored to match the rest of the launcher, and
+/// wrapped to the card's width instead of the full window so long
+/// explanatory text stays legible and doesn't visually escape its section.
+fn ssh_paragraph(ui: &mut Ui, text: &str) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .size(12.0)
+                .color(theme::TEXT_SECONDARY),
+        )
+        .wrap(),
+    );
+}
+
 fn ssh_text_edit(
     ui: &mut Ui,
     tab_id: TabId,
@@ -285,16 +387,24 @@ fn ssh_text_edit(
     label: &str,
     value: &mut String,
     password: bool,
+    request_focus: bool,
 ) -> egui::Response {
     ui.horizontal(|ui| {
-        let label = ui.label(label);
-        ui.add(
+        ui.add_space(2.0);
+        let label = ui.add(
+            egui::Label::new(egui::RichText::new(label).color(theme::TEXT_SECONDARY))
+                .selectable(false),
+        );
+        let field = ui.add(
             TextEdit::singleline(value)
                 .id_salt(("launcher_ssh", tab_id, field))
                 .password(password)
-                .desired_width(220.0),
-        )
-        .labelled_by(label.id)
+                .desired_width(180.0),
+        );
+        if request_focus {
+            field.request_focus();
+        }
+        field.labelled_by(label.id)
     })
     .inner
 }
@@ -326,132 +436,151 @@ fn show_ssh_form(
     form: &mut SshLauncherForm,
     native_store_available: bool,
 ) -> Option<AppCommand> {
-    ui.add_space(12.0);
-    ui.separator();
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new("SSH connection").strong());
-    ui.label("Connect once with transient authentication. Port defaults to 22.");
-
-    ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false);
-    ssh_text_edit(ui, tab_id, "port", "Port (optional)", &mut form.port, false);
-    ssh_text_edit(
-        ui,
-        tab_id,
-        "username",
-        "Username",
-        &mut form.username,
-        false,
-    );
-    ui.horizontal(|ui| {
-        ui.radio_value(
-            &mut form.authentication_method,
-            SshAuthenticationMethod::Password,
-            "Password authentication",
-        );
-        ui.radio_value(
-            &mut form.authentication_method,
-            SshAuthenticationMethod::PrivateKey,
-            "Private-key authentication",
-        );
-    });
-    let submit_with_enter = match form.authentication_method {
-        SshAuthenticationMethod::Password => {
-            let submit =
-                ssh_text_edit(ui, tab_id, "password", "Password", &mut form.password, true)
-                    .lost_focus()
-                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if form.saved_profile_id.is_some() {
-                ui.checkbox(
-                    &mut form.remember_password,
-                    "Remember this password in native secure storage",
-                );
-                ui.label(
-                    "Only this saved SSH profile can use native password storage. \
-                     Private keys, passphrases, agents, key files, and host trust are never stored.",
-                );
-            } else {
-                ui.label(
-                    "Remembering a password requires an existing saved SSH profile; \
-                     this one-off connection remains transient.",
-                );
-            }
-            if form.saved_profile_has_credential {
-                if ui
-                    .add_enabled(
-                        native_store_available,
-                        egui::Button::new("Use stored password"),
-                    )
-                    .clicked()
-                {
-                    return form.saved_profile_id.as_ref().map(|profile_id| {
-                        AppCommand::StartStoredPasswordSshProfile {
-                            profile_id: profile_id.clone(),
-                        }
-                    });
-                }
-                if !native_store_available {
-                    ui.label(
-                        "Native secure storage is unavailable. Unlock or enable it, then try again.",
-                    );
-                }
-            }
-            submit
-        }
-        SshAuthenticationMethod::PrivateKey => {
-            ssh_multiline_secret_text_edit(
-                ui,
-                tab_id,
-                "private_key",
-                "OpenSSH private key",
-                &mut form.private_key,
-            );
-            ui.label(
-                "The key is masked, parsed only in memory, and never saved. \
-                 An optional passphrase is used only for an encrypted key.",
-            );
+    ui.add_space(16.0);
+    let mut result = None;
+    let focus_username = form.focus_username;
+    form.focus_username = false;
+    egui::Frame::new()
+        .fill(theme::SURFACE_TAB_INACTIVE)
+        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(340.0);
+            ssh_section_heading(ui, "Connection");
             ssh_text_edit(
                 ui,
                 tab_id,
-                "key_passphrase",
-                "Key passphrase (optional)",
-                &mut form.key_passphrase,
-                true,
-            )
-            .lost_focus()
-                && ui.input(|input| input.key_pressed(egui::Key::Enter))
-        }
-    };
-    ui.checkbox(
-        &mut form.reconnect_enabled,
-        format!(
-            "Reconnect after a disconnect (up to {} attempts)",
-            SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS
-        ),
-    );
-    ui.label(
-        "Reconnect creates a fresh remote shell and re-verifies the host key; \
-         it does not restore remote process state. Delays start at 500 ms and \
-         are capped at 2 seconds. This setting applies only to this session \
-         and is not saved.",
-    );
+                "username",
+                "Username",
+                &mut form.username,
+                false,
+                focus_username,
+            );
+            ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false, false);
+            ssh_text_edit(
+                ui,
+                tab_id,
+                "port",
+                "Port (default: 22)",
+                &mut form.port,
+                false,
+                false,
+            );
 
-    let submit_label = match form.authentication_method {
-        SshAuthenticationMethod::Password => "Connect with password",
-        SshAuthenticationMethod::PrivateKey => "Connect with private key",
-    };
-    if ui.button(submit_label).clicked() || submit_with_enter {
-        match form.submit() {
-            Ok(command) => {
-                form.feedback = None;
-                return Some(command);
+            ui.add_space(10.0);
+            ssh_section_heading(ui, "Authentication");
+            ui.horizontal(|ui| {
+                ui.radio_value(
+                    &mut form.authentication_method,
+                    SshAuthenticationMethod::Password,
+                    "Password authentication",
+                );
+                ui.radio_value(
+                    &mut form.authentication_method,
+                    SshAuthenticationMethod::PrivateKey,
+                    "Private-key authentication",
+                );
+            });
+            ui.add_space(4.0);
+            let submit_with_enter = match form.authentication_method {
+                SshAuthenticationMethod::Password => {
+                    let submit = ssh_text_edit(
+                        ui,
+                        tab_id,
+                        "password",
+                        "Password",
+                        &mut form.password,
+                        true,
+                        false,
+                    )
+                    .lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    ui.add_space(4.0);
+                    if form.saved_profile_id.is_some() {
+                        ui.checkbox(
+                            &mut form.remember_password,
+                            "Remember this password in native secure storage",
+                        );
+                    } else {
+                        ssh_paragraph(ui, "Saving a password requires a saved profile.");
+                    }
+                    if form.saved_profile_has_credential {
+                        ui.add_space(4.0);
+                        if ui
+                            .add_enabled(
+                                native_store_available,
+                                egui::Button::new("Use stored password"),
+                            )
+                            .clicked()
+                        {
+                            result = form.saved_profile_id.as_ref().map(|profile_id| {
+                                AppCommand::StartStoredPasswordSshProfile {
+                                    profile_id: profile_id.clone(),
+                                }
+                            });
+                        }
+                        if !native_store_available {
+                            ssh_paragraph(ui, "Native secure storage is unavailable.");
+                        }
+                    }
+                    submit
+                }
+                SshAuthenticationMethod::PrivateKey => {
+                    ssh_multiline_secret_text_edit(
+                        ui,
+                        tab_id,
+                        "private_key",
+                        "OpenSSH private key",
+                        &mut form.private_key,
+                    );
+                    ssh_paragraph(ui, "The key is kept in memory only, never saved.");
+                    ssh_text_edit(
+                        ui,
+                        tab_id,
+                        "key_passphrase",
+                        "Key passphrase (optional)",
+                        &mut form.key_passphrase,
+                        true,
+                        false,
+                    )
+                    .lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                }
+            };
+
+            if result.is_none() {
+                ui.add_space(10.0);
+                ssh_section_heading(ui, "Reconnect");
+                ui.checkbox(
+                    &mut form.reconnect_enabled,
+                    format!(
+                        "Reconnect after a disconnect (up to {} attempts)",
+                        SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS
+                    ),
+                );
+
+                ui.add_space(12.0);
+                let submit_label = match form.authentication_method {
+                    SshAuthenticationMethod::Password => "Connect with password",
+                    SshAuthenticationMethod::PrivateKey => "Connect with private key",
+                };
+                if ui.button(submit_label).clicked() || submit_with_enter {
+                    match form.submit() {
+                        Ok(command) => {
+                            form.feedback = None;
+                            result = Some(command);
+                        }
+                        Err(feedback) => form.feedback = Some(feedback),
+                    }
+                }
+                if let Some(feedback) = &form.feedback {
+                    ui.add_space(4.0);
+                    ui.colored_label(theme::STATUS_ERROR, feedback);
+                }
             }
-            Err(feedback) => form.feedback = Some(feedback),
-        }
-    }
-    if let Some(feedback) = &form.feedback {
-        ui.colored_label(egui::Color32::from_rgb(220, 110, 110), feedback);
-    }
-    None
+        });
+    result
 }
 
 enum SavedSshProfileAction {
@@ -561,16 +690,35 @@ pub fn show_launcher(
 
     if state.ssh_open {
         let mut command = None;
+        let mut back_clicked = false;
         ui.vertical(|ui| {
             ui.add_space(24.0);
-            ui.heading("Connect with SSH");
-            ui.label("Enter destination and transient authentication details.");
-            if ui.button("Back").clicked() {
-                state.ssh_open = false;
-            } else {
-                command = show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available);
-            }
+            ui.horizontal(|ui| {
+                ui.add_space(34.0);
+                ui.vertical(|ui| {
+                    if ssh_back_button(ui).clicked() {
+                        back_clicked = true;
+                    }
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("Connect with SSH")
+                            .size(24.0)
+                            .color(theme::TEXT_PRIMARY),
+                    );
+                    ui.label(
+                        egui::RichText::new("Enter connection details.")
+                            .size(11.0)
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                    if !back_clicked {
+                        command = show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available);
+                    }
+                });
+            });
         });
+        if back_clicked {
+            state.ssh_open = false;
+        }
         ui.data_mut(|data| data.insert_temp(state_id, state));
         return command;
     }
@@ -631,6 +779,7 @@ pub fn show_launcher(
                 .clicked()
                 {
                     state.ssh_open = true;
+                    state.ssh.focus_username = true;
                 }
                 if command.is_none() && !state.ssh_open {
                     saved_ssh_action =
@@ -647,6 +796,7 @@ pub fn show_launcher(
     if command.is_none() && launch_via_keyboard {
         if state.selected == items.len() {
             state.ssh_open = true;
+            state.ssh.focus_username = true;
         } else {
             command = Some(items[state.selected].command());
         }
@@ -657,6 +807,7 @@ pub fn show_launcher(
                 state.ssh = SshLauncherForm::default();
                 state.ssh.prefill_saved_profile(&profile);
                 state.ssh_open = true;
+                state.ssh.focus_username = true;
             }
             SavedSshProfileAction::UseStoredPassword(profile_id) => {
                 command = Some(AppCommand::StartStoredPasswordSshProfile { profile_id });
@@ -918,6 +1069,18 @@ mod tests {
     }
 
     #[test]
+    fn opening_the_ssh_form_focuses_the_username_field() {
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+
+        assert!(
+            harness.get_by_label("Username").is_focused(),
+            "Username must have initial keyboard focus when the SSH form opens"
+        );
+    }
+
+    #[test]
     fn ssh_form_returns_a_typed_password_command_with_default_port() {
         let mut harness = harness();
         harness.run();
@@ -946,8 +1109,15 @@ mod tests {
         );
         assert_eq!(
             options.reconnect_policy(),
-            None,
-            "reconnect must remain disabled until the transient control is selected"
+            Some(
+                ReconnectPolicy::new(
+                    SshLauncherForm::RECONNECT_MAXIMUM_ATTEMPTS,
+                    SshLauncherForm::RECONNECT_INITIAL_DELAY,
+                    SshLauncherForm::RECONNECT_MAXIMUM_DELAY,
+                )
+                .expect("the fixed Launcher reconnect policy is valid")
+            ),
+            "reconnect defaults to enabled on a fresh form"
         );
     }
 
@@ -981,21 +1151,13 @@ mod tests {
     }
 
     #[test]
-    fn ssh_form_shows_the_transient_reconnect_control_and_warning() {
+    fn ssh_form_shows_the_transient_reconnect_control() {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
 
         assert!(harness
             .query_by_label("Reconnect after a disconnect (up to 3 attempts)")
-            .is_some());
-        assert!(harness
-            .query_by_label(
-                "Reconnect creates a fresh remote shell and re-verifies the host key; \
-                 it does not restore remote process state. Delays start at 500 ms and \
-                 are capped at 2 seconds. This setting applies only to this session \
-                 and is not saved."
-            )
             .is_some());
     }
 
@@ -1208,10 +1370,7 @@ mod tests {
             .query_by_label("Key passphrase (optional)")
             .is_some());
         assert!(harness
-            .query_by_label(
-                "The key is masked, parsed only in memory, and never saved. \
-                 An optional passphrase is used only for an encrypted key."
-            )
+            .query_by_label("The key is kept in memory only, never saved.")
             .is_some());
     }
 

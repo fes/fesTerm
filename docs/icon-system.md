@@ -70,6 +70,7 @@ The intended first enum surface is:
 | `ThemeAppearance` | `theme-appearance.svg` | Theme and appearance settings |
 | `TypographyFont` | `typography-font.svg` | Terminal font settings |
 | `SecretStorage` | `secret-storage.svg` | Locked credential/secret storage boundary |
+| `Back` | `back.svg` | Return to the prior step of a multi-step flow |
 
 Do not name variants after where they happen to appear (`TopBarSearch`) or
 after visual construction (`ThreeDots`). Names describe intent so launcher,
