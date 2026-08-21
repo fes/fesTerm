@@ -1,8 +1,10 @@
 # ADR 0018: SSH Liveness, Reconnect, and Persistent Session Recovery
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-20
-- **Supersedes:** None
+- **Supersedes:** ADR-0013 (reconnect-default policy only; `russh` transport
+  selection, bounded-backoff mechanism, and host-trust decisions in ADR-0013
+  remain in force)
 
 ## Context
 
@@ -280,8 +282,6 @@ providers demonstrate the need.
   continuity.
 - **GUI/action edges affected:** Existing SSH Launcher connect/reconnect controls,
   disconnected-session recovery actions, and future profile persistence controls.
-  Stable action-graph IDs should be assigned when the implementation change is
-  made; this proposed ADR does not invent IDs ahead of that update.
 - **Automated tests required:** Add state-machine coverage proving liveness-probe
   failure only marks a plain session disconnected; explicit reconnect creates a
   fresh plain shell; explicit close/auth/host-key failures never auto-reconnect;
@@ -294,8 +294,24 @@ providers demonstrate the need.
   fail, or recovery requires user action. Persistent-provider acceptance should
   include a real remote `tmux` or `screen` environment once those providers are
   implemented.
-- **Coverage superseded:** Existing tests or documentation that assume the plain
-  SSH Launcher defaults reconnect to enabled must be updated when this ADR is
-  accepted and implemented. No machine-readable trace relationship changes in
-  this documentation-only proposed change; update `validation/traceability.json`
-  with the implementation that assigns stable action/scenario IDs.
+- **Coverage superseded:** Existing tests or documentation that assumed the plain
+  SSH Launcher defaulted reconnect to enabled have been updated. See
+  `validation/traceability.json` (`launcher`, `ssh-lifecycle`) for the current
+  automated-test references.
+
+## Implementation status
+
+The `SessionStrategy`/`RecoveryPolicy` split, the removal of the automatic-
+reconnect checkbox from the plain SSH connect form, and the decoupling of
+manual (user-initiated) reconnect from automatic policy are implemented in
+`festerm-ssh` and `app/festerm`. Only `SessionStrategy::PlainShell` with
+`RecoveryPolicy::Manual` is constructible today; `RecoveryPolicy::Automatic`
+is rejected for it at the API boundary, matching the strict reading of this
+ADR's decision that automatic recovery is not merely off by default but not
+valid for a strategy that cannot safely recover durable remote state.
+
+Liveness probing (wake/network-triggered active verification) and
+persistent-session providers (`tmux`, `screen`) remain unimplemented and are
+tracked separately as follow-up work (issues #48 and #49); see the
+"Alternatives considered" and "Decision" sections above for their intended
+shape.

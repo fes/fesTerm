@@ -2,6 +2,13 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-07
+- **Refined by:** ADR-0018 (SSH Liveness, Reconnect, and Persistent Session
+  Recovery) restates reconnect as a policy layered on top of the mechanism
+  decided here: for a plain SSH session, only the manual/user-initiated
+  reconnect path described below is enabled by default, and an automatic
+  bounded-backoff policy is not currently constructible for it. The `russh`
+  transport selection, bounded-backoff mechanism, and host-trust decisions in
+  this ADR remain in force.
 
 ## Context
 
