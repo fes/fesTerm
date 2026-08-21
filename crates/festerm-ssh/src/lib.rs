@@ -518,6 +518,21 @@ impl ReconnectPolicy {
     pub const fn maximum_attempts(self) -> u8 {
         self.maximum_attempts
     }
+
+    /// A conservative default bounded-exponential backoff for automatic
+    /// recovery, offered so a user opting a persistent session into
+    /// automatic recovery (ADR 0018 requires that opt-in itself) is not also
+    /// required to choose numeric backoff parameters. This intentionally
+    /// matches the cadence fesTerm already uses when retrying a
+    /// user-initiated manual reconnect after a transient failure.
+    pub fn default_automatic() -> Self {
+        Self::new(
+            MANUAL_RECONNECT_MAX_ATTEMPTS,
+            MANUAL_RECONNECT_INITIAL_DELAY,
+            MANUAL_RECONNECT_MAX_DELAY,
+        )
+        .expect("the default automatic-recovery policy's fixed parameters are valid")
+    }
 }
 
 /// A remote durable-session provider fesTerm can attach to or create for a
@@ -4007,6 +4022,13 @@ mod tests {
             ReconnectPolicy::new(1, Duration::from_secs(2), Duration::from_secs(1)),
             Err(ReconnectPolicyError::MaximumBeforeInitial)
         );
+    }
+
+    #[test]
+    fn default_automatic_reconnect_policy_is_bounded_and_valid() {
+        let policy = ReconnectPolicy::default_automatic();
+
+        assert!(policy.maximum_attempts() > 0);
     }
 
     #[test]

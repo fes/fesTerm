@@ -10,8 +10,8 @@ use eframe::egui::{self, vec2, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetTy
 use festerm_config::{PersistenceConfiguration, Profile, SshProfileConfiguration};
 use festerm_session::TerminalSize;
 use festerm_ssh::{
-    HostIdentity, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
-    SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
+    HostIdentity, ReconnectPolicy, RecoveryPolicy, SessionStrategy, SshAuthentication,
+    SshConnectionProfile, SshKeyPassphrase, SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
@@ -175,6 +175,14 @@ struct SshLauncherForm {
     /// The saved profile's durable remote-session provider and name, if any
     /// (ADR 0018). `None` means this session is an ordinary plain shell.
     persistence: Option<PersistenceConfiguration>,
+    /// Whether this launch should opt into automatic recovery. Only
+    /// meaningful (and only shown in the form) when `persistence` is set:
+    /// automatic recovery is never valid for a plain shell, and is never on
+    /// merely because a durable-session provider is configured (ADR 0018
+    /// requires an explicit, separate opt-in from persistence itself). This
+    /// always starts `false`, so each launch re-opts in rather than
+    /// remembering a prior choice.
+    automatic_recovery: bool,
     remember_password: bool,
     feedback: Option<String>,
     /// Set whenever the form is (re)opened so the Username field can claim
@@ -188,15 +196,24 @@ impl SshLauncherForm {
     /// Ordinary SSH sessions have no durable-session provider, so automatic
     /// recovery is not valid for them (ADR 0018); every reconnect is the
     /// user-initiated action available from the session Inspector once
-    /// connected. Manual recovery is always valid, so building these options
-    /// from `self.persistence` (when a saved profile configured one) can
-    /// never fail.
+    /// connected. A persistent session only gets automatic recovery when
+    /// `self.automatic_recovery` is explicitly set, which
+    /// `with_recovery_policy` can never reject for a persistent strategy,
+    /// so this falls back to manual recovery only if that invariant is
+    /// somehow violated.
     fn session_options(&self) -> SshSessionOptions {
         let strategy = self
             .persistence
             .as_ref()
             .and_then(|persistence| persistence.to_session_strategy().ok())
             .unwrap_or(SessionStrategy::PlainShell);
+        if self.automatic_recovery {
+            let recovery = RecoveryPolicy::Automatic(ReconnectPolicy::default_automatic());
+            if let Ok(options) = SshSessionOptions::with_recovery_policy(strategy.clone(), recovery)
+            {
+                return options;
+            }
+        }
         SshSessionOptions::manual_recovery(strategy)
     }
 
@@ -205,6 +222,7 @@ impl SshLauncherForm {
         self.port = profile.port().to_string();
         self.username = profile.username().to_owned();
         self.persistence = profile.persistence().cloned();
+        self.automatic_recovery = false;
     }
 
     fn prefill_saved_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -441,6 +459,23 @@ fn show_ssh_form(
                 false,
                 false,
             );
+
+            if let Some(persistence) = form.persistence.clone() {
+                ui.add_space(10.0);
+                ssh_section_heading(ui, "Durable session");
+                ssh_paragraph(
+                    ui,
+                    &format!(
+                        "This profile attaches to or creates a {} session named \"{}\".",
+                        persistence.provider().label(),
+                        persistence.session_name()
+                    ),
+                );
+                ui.checkbox(
+                    &mut form.automatic_recovery,
+                    "Automatically resume this session after a lost connection",
+                );
+            }
 
             ui.add_space(10.0);
             ssh_section_heading(ui, "Authentication");
@@ -1121,6 +1156,59 @@ mod tests {
              recovery is not offered (ADR 0018); only the manual Inspector \
              Reconnect action applies once connected"
         );
+        assert!(
+            harness
+                .query_by_label("Automatically resume this session after a lost connection")
+                .is_none(),
+            "the automatic-recovery opt-in must not be offered without a durable-session provider"
+        );
+    }
+
+    #[test]
+    fn saved_persistent_ssh_profile_offers_automatic_recovery_opt_in() {
+        let profile = Profile::ssh(
+            "build",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test profile is valid")
+        .with_persistence(festerm_config::PersistenceProviderKind::Tmux, "build")
+        .expect("persistence config is valid");
+        let mut harness = harness_with_profiles(vec![profile]);
+        harness.run();
+        harness
+            .get_by_label("Enter or replace password for build")
+            .click();
+        harness.run();
+
+        assert!(
+            harness
+                .query_by_label("Automatically resume this session after a lost connection")
+                .is_some(),
+            "a durable-session profile must offer the automatic-recovery opt-in checkbox"
+        );
+
+        harness
+            .get_by_label("Automatically resume this session after a lost connection")
+            .click();
+        harness.run();
+        enter_text(&mut harness, "Password", "transient-test-password");
+        harness.get_by_label("Connect with password").click();
+        harness.run();
+
+        let Some(AppCommand::StartSshSession { options, .. }) = harness.state().command.as_ref()
+        else {
+            panic!("the valid SSH form must return a typed SSH command");
+        };
+        assert!(
+            options.reconnect_policy().is_some(),
+            "opting in to automatic recovery on a durable-session profile must \
+             attach a reconnect policy (ADR 0018)"
+        );
     }
 
     #[test]
@@ -1377,6 +1465,69 @@ mod tests {
                 session_name: festerm_ssh::PersistentSessionName::new("build").unwrap(),
             }
         );
+        assert_eq!(form.session_options().reconnect_policy(), None);
+    }
+
+    #[test]
+    fn prefilling_a_persistent_profile_never_defaults_automatic_recovery_on() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.invalid",
+            22,
+            "test-user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(festerm_config::PersistenceProviderKind::Tmux, "build")
+        .unwrap();
+
+        let mut form = SshLauncherForm::default();
+        form.prefill_saved_profile(profile.as_ssh().unwrap());
+
+        assert!(
+            !form.automatic_recovery,
+            "ADR 0018 requires automatic recovery to be an explicit, separate opt-in"
+        );
+    }
+
+    #[test]
+    fn opting_into_automatic_recovery_only_takes_effect_for_a_persistent_profile() {
+        let profile = Profile::ssh(
+            "remote",
+            "example.invalid",
+            22,
+            "test-user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(festerm_config::PersistenceProviderKind::Screen, "editor")
+        .unwrap();
+
+        let mut form = SshLauncherForm::default();
+        form.prefill_saved_profile(profile.as_ssh().unwrap());
+        form.automatic_recovery = true;
+
+        assert!(form.session_options().reconnect_policy().is_some());
+    }
+
+    #[test]
+    fn opting_into_automatic_recovery_without_persistence_has_no_effect() {
+        let form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            automatic_recovery: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            form.session_options().strategy(),
+            SessionStrategy::PlainShell
+        );
+        assert_eq!(form.session_options().reconnect_policy(), None);
     }
 
     #[test]
