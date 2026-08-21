@@ -99,7 +99,7 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     let request_focus = state.needs_focus;
     state.needs_focus = false;
 
-    Window::new("Command Palette")
+    let area_response = Window::new("Command Palette")
         .id(Id::new("festerm_command_palette"))
         .collapsible(false)
         .resizable(false)
@@ -140,18 +140,27 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
 
             ui.separator();
             ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                for (index, item) in matches.iter().enumerate() {
-                    let highlighted = index == state.selected;
-                    let text = if let Some(hint) = &item.hint {
-                        RichText::new(format!("{}  \u{2014}  {}", item.label, hint))
-                    } else {
-                        RichText::new(&item.label)
-                    };
-                    let text = if highlighted { text.strong() } else { text };
-                    if ui.selectable_label(highlighted, text).clicked() {
-                        decision = Some(Some(item.id));
-                    }
-                }
+                // `with_cross_justify(true)` makes each row fill the full
+                // available width instead of shrinking to its own text, so
+                // the highlighted background spans the whole popup rather
+                // than just the label.
+                ui.with_layout(
+                    egui::Layout::top_down(egui::Align::Min).with_cross_justify(true),
+                    |ui| {
+                        for (index, item) in matches.iter().enumerate() {
+                            let highlighted = index == state.selected;
+                            let text = if let Some(hint) = &item.hint {
+                                RichText::new(format!("{}  \u{2014}  {}", item.label, hint))
+                            } else {
+                                RichText::new(&item.label)
+                            };
+                            let text = if highlighted { text.strong() } else { text };
+                            if ui.selectable_label(highlighted, text).clicked() {
+                                decision = Some(Some(item.id));
+                            }
+                        }
+                    },
+                );
             });
 
             if enter_pressed {
@@ -163,6 +172,32 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
                 decision = Some(None);
             }
         });
+
+    // Clicking anywhere outside the popup dismisses it without a selection,
+    // matching how the launcher's own overlays and native command palettes
+    // behave (`docs/gui-design.md` "Quiet by default"). We check for a
+    // fresh primary-button *press* outside the window rect rather than
+    // using `Response::clicked_elsewhere()`: that API only resolves once
+    // the corresponding release is fully attributed to a layer, which can
+    // lag by a frame or more and would otherwise dismiss the palette on a
+    // later frame than the click that opened it (the same click a caller
+    // used to toggle the palette open, e.g. a chrome button, must never be
+    // mistaken for a dismiss).
+    if decision.is_none() {
+        if let Some(area_response) = area_response {
+            let window_rect = area_response.response.rect;
+            let pressed_outside = ctx.input(|input| {
+                input.pointer.primary_pressed()
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|pos| !window_rect.contains(pos))
+            });
+            if pressed_outside {
+                decision = Some(None);
+            }
+        }
+    }
 
     decision
 }
@@ -291,5 +326,90 @@ mod tests {
         harness.run();
 
         assert_eq!(harness.state().decision, Some(None));
+    }
+
+    #[test]
+    fn clicking_outside_the_popup_dismisses_without_a_selection() {
+        let mut palette = PaletteState::default();
+        palette.open();
+        let mut harness = harness(PaletteHarnessState {
+            palette,
+            items: vec![item(1, "New Session…")],
+            decision: None,
+        });
+        harness.run();
+
+        // The 500x400 harness canvas anchors the 420x320 popup centered near
+        // the top, so its bottom-left corner is reliably outside it.
+        let outside = egui::pos2(5.0, 395.0);
+        harness.event(egui::Event::PointerMoved(outside));
+        harness.event(egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        assert_eq!(harness.state().decision, Some(None));
+    }
+
+    #[test]
+    fn the_click_that_opens_the_palette_does_not_also_dismiss_it() {
+        // Regression test: a real click's press and release land on
+        // separate frames (the press before a caller's button reacts on
+        // release). If a caller opens the palette in reaction to that
+        // release, the palette must not immediately treat the very same
+        // click as an "outside" dismissal just because its press landed
+        // outside where the window is about to be drawn for the first
+        // time.
+        let mut harness = harness(PaletteHarnessState {
+            palette: PaletteState::default(),
+            items: vec![item(1, "New Session…")],
+            decision: None,
+        });
+        harness.run();
+
+        // The 500x400 harness canvas anchors the 420x320 popup centered near
+        // the top, so its bottom-left corner is reliably outside it.
+        let outside = egui::pos2(5.0, 395.0);
+
+        // Frame N-1: the press that will eventually resolve into the click
+        // that opens the palette (e.g. a button elsewhere in the chrome).
+        // The palette is still closed and drawn nowhere this frame.
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::PointerMoved(outside));
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // Frame N: the release resolves the click; the caller's button
+        // handling reacts to it by opening the palette this same frame.
+        harness.state_mut().palette.open();
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        assert_eq!(
+            harness.state().decision,
+            None,
+            "the palette must stay open on the frame it was opened"
+        );
     }
 }
