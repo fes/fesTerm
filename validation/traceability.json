@@ -355,7 +355,7 @@
       "edges": ["STOP-*"],
       "requirements": ["docs/gui-design.md#session-inspector", "docs/gui-design.md#closing-sessions-and-quitting"],
       "decisions": ["ADR-0014", "ADR-0017"],
-      "automated_tests": ["clicking_close_tab_reports_that_action"],
+      "automated_tests": ["clicking_a_chip_close_button_emits_a_close_action"],
       "manual_scenarios": ["TI-06"],
       "status": "partial",
       "prerequisites": ["read-only-history-preserving Stop/Disconnect/Close Port actions"]
