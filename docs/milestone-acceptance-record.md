@@ -1,8 +1,8 @@
 # fesTerm Milestone Acceptance Record
 
 **Document status:** Active M6 evidence record
-**Candidate SHA:** `99d028d` (`main`, 2026-08-12; evidence record refreshed
-after direct hardware-backed Windows P4 evidence collection)
+**Candidate SHA:** `c55a202` (`main`, 2026-08-21; clean macOS live-resize
+evidence collection)
 
 ## Status vocabulary
 
@@ -44,6 +44,23 @@ Run [`scripts/collect-m6-evidence.sh`/`.ps1`](m6-evidence-collection.md) to
 reproduce the scriptable rows of this table on a given machine, and follow
 [`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md) for
 the P5 rows that require human judgment.
+
+### Issue #45 — rapid live-resize output continuity
+
+**Status: Accepted for automated and native-drag output continuity.**
+
+The clean macOS bundle `macos-20260821T042205Z-c55a202` recorded
+`overall_status=pass` at `c55a202d130a6546c03ba51e44a6989a3e86d069`. It
+includes the deterministic real-PTY/controller regression and the
+independently driven macOS smoke: a 64-step physical lower-right-corner drag
+while a controlled PTY emits 120 numbered frames. The driver confirmed the
+native window size changed, and fesTerm confirmed every frame remained in
+terminal history with an applied resize generation.
+
+This acceptance is intentionally limited to the reported corruption/output-loss
+failure class. It does **not** replace the manual macOS compositor judgment
+for visible tearing, flashing, stalls, or DPI-boundary rendering described in
+[`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md).
 
 | Backlog item | Status | Evidence and remaining condition |
 | --- | --- | --- |
