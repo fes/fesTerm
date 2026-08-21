@@ -2140,6 +2140,38 @@ const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Bounded, cancellable backoff for retries that follow one explicit
+/// reconnect request (ADR 0018).
+///
+/// This is independent of any [`ReconnectPolicy`] the session may have: that
+/// policy only governs whether an *unintentional* transport loss retries on
+/// its own. A user-requested reconnect is a repeatable action regardless of
+/// that policy — if the fresh attempt it triggers only hits a transient
+/// transport problem (for example, the host briefly unreachable right after
+/// the user asked to reconnect), it keeps retrying with this bounded
+/// backoff before giving up and returning to `Disconnected` for another
+/// explicit user action, rather than requiring the user to notice the
+/// failure and click reconnect again for every transient hiccup.
+const MANUAL_RECONNECT_MAX_ATTEMPTS: u8 = 8;
+const MANUAL_RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(500);
+const MANUAL_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(4);
+
+/// Doubling backoff delay before the given 1-based manual-reconnect retry
+/// attempt, capped at [`MANUAL_RECONNECT_MAX_DELAY`].
+fn manual_reconnect_delay(attempt: u8) -> Duration {
+    let mut delay = MANUAL_RECONNECT_INITIAL_DELAY;
+    for _ in 1..attempt {
+        if delay >= MANUAL_RECONNECT_MAX_DELAY {
+            return MANUAL_RECONNECT_MAX_DELAY;
+        }
+        delay = delay
+            .checked_mul(2)
+            .unwrap_or(MANUAL_RECONNECT_MAX_DELAY)
+            .min(MANUAL_RECONNECT_MAX_DELAY);
+    }
+    delay
+}
+
 /// Failure to create the dedicated SSH worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SshSessionStartError;
@@ -2411,15 +2443,18 @@ async fn ssh_worker(
 ) -> Result<ShutdownResult, SessionError> {
     let authentication = authentication.into_worker_authentication();
     let mut planner = reconnect_policy.map(ReconnectPlanner::new);
-    // Tracks whether the *next* `establish_connection` attempt below is the
-    // direct result of an explicit, user-initiated reconnect (as opposed to
-    // the session's very first connection attempt, or an automatic-policy
-    // attempt). A manual reconnect that itself fails to transiently reach
-    // the host must return the session to `Disconnected` rather than ending
-    // it outright (ADR 0018: explicit reconnect is a repeatable user action,
-    // not a one-shot attempt) - first connections keep their existing
-    // fail-outright behavior.
-    let mut manual_recovery_attempt = false;
+    // Counts the *next* `establish_connection` attempt below as the Nth
+    // attempt (1-based) directly following an explicit, user-initiated
+    // reconnect (as opposed to the session's very first connection attempt,
+    // or an automatic-policy attempt); `0` means no manual-reconnect episode
+    // is in progress. A manual reconnect that itself fails to transiently
+    // reach the host retries with a bounded backoff (see
+    // `manual_reconnect_delay`) rather than returning to `Disconnected` or
+    // ending the session outright on the very first failure (ADR 0018:
+    // explicit reconnect is a repeatable user action, not a one-shot
+    // attempt) - first connections keep their existing fail-outright
+    // behavior.
+    let mut manual_recovery_attempts: u8 = 0;
 
     loop {
         match establish_connection(
@@ -2432,7 +2467,7 @@ async fn ssh_worker(
         .await
         {
             ConnectionAttempt::Established(handle, channel) => {
-                manual_recovery_attempt = false;
+                manual_recovery_attempts = 0;
                 if let Some(planner) = planner.as_mut() {
                     let _ = planner.connection_established();
                 }
@@ -2484,7 +2519,7 @@ async fn ssh_worker(
                                 if let Some(planner) = planner.as_mut() {
                                     let _ = planner.connection_established();
                                 }
-                                manual_recovery_attempt = true;
+                                manual_recovery_attempts = 1;
                                 shared.set_reconnecting(true);
                                 shared.clear_reconnect_request();
                                 shared.set_lifecycle(SessionLifecycle::Starting);
@@ -2507,7 +2542,7 @@ async fn ssh_worker(
                         if let Some(planner) = planner.as_mut() {
                             let _ = planner.connection_established();
                         }
-                        manual_recovery_attempt = true;
+                        manual_recovery_attempts = 1;
                         shared.set_reconnecting(true);
                         shared.clear_reconnect_request();
                         shared.set_lifecycle(SessionLifecycle::Starting);
@@ -2532,11 +2567,29 @@ async fn ssh_worker(
                 // An explicit reconnect is a repeatable user action (ADR
                 // 0018): if the fresh attempt it triggered hit only a
                 // transient transport problem (e.g. the host briefly
-                // unreachable), fall back to `Disconnected` so the user can
-                // try again, instead of ending the session outright.
-                if std::mem::take(&mut manual_recovery_attempt)
-                    && failure == ConnectionFailure::Transport
-                {
+                // unreachable right after the reconnect was requested),
+                // retry with a short bounded backoff before falling back to
+                // `Disconnected`, instead of giving up on the first failure.
+                if manual_recovery_attempts > 0 && failure == ConnectionFailure::Transport {
+                    if manual_recovery_attempts < MANUAL_RECONNECT_MAX_ATTEMPTS {
+                        let delay = manual_reconnect_delay(manual_recovery_attempts);
+                        manual_recovery_attempts += 1;
+                        if wait_for_reconnect_delay(
+                            delay,
+                            &command_receiver,
+                            &shared,
+                            &host_key_gate,
+                        )
+                        .await
+                        {
+                            shared.set_lifecycle(SessionLifecycle::Stopped);
+                            return Ok(ShutdownResult::Stopped);
+                        }
+                        // Stay in the reconnecting state across retries; the
+                        // user only sees `Disconnected` once the whole
+                        // bounded retry budget is exhausted below.
+                        continue;
+                    }
                     shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
                         SessionErrorKind::Spawn,
                         message,
@@ -2544,7 +2597,7 @@ async fn ssh_worker(
                     match wait_for_manual_recovery(&command_receiver, &shared, &host_key_gate).await
                     {
                         ManualRecoveryOutcome::Reconnect => {
-                            manual_recovery_attempt = true;
+                            manual_recovery_attempts = 1;
                             shared.set_reconnecting(true);
                             shared.clear_reconnect_request();
                             shared.set_lifecycle(SessionLifecycle::Starting);
@@ -3260,6 +3313,24 @@ mod tests {
             TerminalSize::new(80, 24).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn manual_reconnect_delay_doubles_and_caps_at_the_maximum() {
+        assert_eq!(manual_reconnect_delay(1), MANUAL_RECONNECT_INITIAL_DELAY);
+        assert_eq!(
+            manual_reconnect_delay(2),
+            MANUAL_RECONNECT_INITIAL_DELAY * 2
+        );
+        assert_eq!(
+            manual_reconnect_delay(3),
+            MANUAL_RECONNECT_INITIAL_DELAY * 4
+        );
+        // Keeps doubling until it reaches the cap, then stays there rather
+        // than overflowing or exceeding it, even for attempt counts well
+        // past `MANUAL_RECONNECT_MAX_ATTEMPTS`.
+        assert_eq!(manual_reconnect_delay(20), MANUAL_RECONNECT_MAX_DELAY);
+        assert!(MANUAL_RECONNECT_MAX_DELAY >= MANUAL_RECONNECT_INITIAL_DELAY);
     }
 
     #[test]
