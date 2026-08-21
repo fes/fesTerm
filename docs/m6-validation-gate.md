@@ -4,6 +4,12 @@
 
 This document converts the current architectural review into discrete work packages that can be assigned to coding agents. It is a stabilization gate for Milestone 6, not a new product milestone.
 
+To run every currently scriptable piece of this gate's evidence on a real
+laptop, see [`m6-evidence-collection.md`](m6-evidence-collection.md)
+(`scripts/collect-m6-evidence.sh` / `.ps1`). For the reference-application,
+`vttest`, and usability evidence that has no automated oracle, see
+[`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md).
+
 ## Execution Issues
 
 This document is the canonical M6 scope and acceptance record. The linked issues

@@ -10,3 +10,4 @@ third_party/conpty/*.nupkg
 .session-screenshot.ps1
 .shot.png
 .session-screenshot.png
+/m6-evidence/

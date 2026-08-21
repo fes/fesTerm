@@ -162,6 +162,11 @@ same change.
 - `ui-test-plan.md` defines the automated and platform test architecture.
 - `m6-validation-gate.md` defines the current milestone acceptance gate.
 - `m6-compatibility-checklist.md` defines reference-application scenarios.
+- `m6-evidence-collection.md` and `scripts/collect-m6-evidence.{sh,ps1}` run
+  every scriptable M6 suite on a real laptop and bundle the results.
+- `m6-manual-evidence-instructions.md` is the step-by-step protocol for the
+  M6 reference-application, `vttest`, and usability evidence that has no
+  automated oracle.
 - `vm-evidence-framework.md` defines controlled cross-platform execution and
   evidence handling.
 - `gui-design.md` defines intended behavior and identifies usability

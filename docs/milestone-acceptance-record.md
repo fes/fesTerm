@@ -40,6 +40,10 @@ counts are intentionally not carried forward from the pre-merge record; record
 actual platform CI results with their run URLs after GitHub Actions recovers.
 [`milestone-progress.md`](milestone-progress.md) gives the concise narrative
 of how this gate, the parallel GUI/M8 vertical slice, and implemented M7 relate.
+Run [`scripts/collect-m6-evidence.sh`/`.ps1`](m6-evidence-collection.md) to
+reproduce the scriptable rows of this table on a given machine, and follow
+[`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md) for
+the P5 rows that require human judgment.
 
 | Backlog item | Status | Evidence and remaining condition |
 | --- | --- | --- |
