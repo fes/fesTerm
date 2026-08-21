@@ -1381,6 +1381,10 @@ impl FesTermApp {
             "Terminal reset".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
         ));
+        // The palette closes as this command is dispatched; without
+        // explicitly restoring focus the terminal is left unfocused and
+        // the next keystroke is swallowed until the user presses Escape.
+        self.restore_active_terminal_focus();
         context.request_repaint();
     }
 
@@ -1396,6 +1400,7 @@ impl FesTermApp {
             "Terminal history cleared".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
         ));
+        self.restore_active_terminal_focus();
         context.request_repaint();
     }
 
@@ -2368,6 +2373,71 @@ mod tests {
             session.terminal.scrollback_stats().logical_lines(),
             scrollback_before,
             "reset must not clear scrollback"
+        );
+    }
+
+    #[test]
+    fn reset_terminal_click_in_the_palette_does_not_select_or_swallow_terminal_input() {
+        // Regression test: clicking a command-palette row (e.g. "Reset
+        // Terminal") over a live terminal session must not leak that same
+        // click through to the terminal grid as a text selection, and must
+        // not leave any stray egui focus/interaction state that swallows
+        // the next keystroke until the user presses Escape.
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+
+        let selection_before = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session.view.selection().clone(),
+            _ => panic!("Enter must start a local session"),
+        };
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::P,
+        );
+        harness.run();
+        harness.get_by_label("Reset Terminal").click();
+        // The transient "Terminal reset" toast keeps requesting repaints
+        // until it expires; one step is enough to observe the result of
+        // this frame's click without waiting on that timer.
+        harness.step();
+
+        assert!(
+            !harness.state().palette.is_open(),
+            "selecting a command must close the palette"
+        );
+        let selection_after = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session.view.selection().clone(),
+            _ => panic!("the session tab must remain active"),
+        };
+        assert_eq!(
+            selection_after, selection_before,
+            "the dismissing click must not leave a stray terminal selection"
+        );
+
+        let bytes_before = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session
+                .view
+                .diagnostics()
+                .input_sink
+                .map_or(0, |diagnostics| diagnostics.byte_count),
+            _ => unreachable!("checked above"),
+        };
+        harness.event(egui::Event::Text("x".to_owned()));
+        harness.step();
+        let bytes_after = match &harness.state().state.active_tab().content {
+            TabContent::Session(session) => session
+                .view
+                .diagnostics()
+                .input_sink
+                .map_or(0, |diagnostics| diagnostics.byte_count),
+            _ => unreachable!("checked above"),
+        };
+        assert!(
+            bytes_after > bytes_before,
+            "a keystroke right after dismissing the palette must reach the terminal without an extra Escape"
         );
     }
 

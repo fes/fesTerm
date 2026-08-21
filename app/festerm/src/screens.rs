@@ -1035,6 +1035,37 @@ mod tests {
     }
 
     #[test]
+    fn ssh_form_orders_fields_username_then_host_then_port_with_default_port_wording() {
+        // Regression test pinning the requested field order (Username,
+        // Host, Port) and the "(default: 22)" wording, replacing the older
+        // "(optional)" / "port defaults to 22" phrasing.
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+
+        let username_top = harness.get_by_label("Username").rect().top();
+        let host_top = harness.get_by_label("Host").rect().top();
+        let port_top = harness.get_by_label("Port (default: 22)").rect().top();
+
+        assert!(
+            username_top < host_top,
+            "Username must be positioned above Host"
+        );
+        assert!(host_top < port_top, "Host must be positioned above Port");
+
+        assert!(
+            harness.query_by_label("Port (optional)").is_none(),
+            "the old 'Port (optional)' wording must not be present"
+        );
+        assert!(
+            harness
+                .query_by_label("Port (port defaults to 22)")
+                .is_none(),
+            "the old 'port defaults to 22' wording must not be present"
+        );
+    }
+
+    #[test]
     fn ssh_form_returns_a_typed_password_command_with_default_port() {
         let mut harness = harness();
         harness.run();
