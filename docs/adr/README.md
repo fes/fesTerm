@@ -22,6 +22,10 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0016: Native Secret Store Boundary](0016-native-secret-store-boundary.md)
 - [ADR 0017: Bounded Logical Scrollback and Anchored Viewports](0017-bounded-logical-scrollback-and-anchored-viewports.md)
 
+## Proposed Decisions
+
+- [ADR 0018: SSH Liveness, Reconnect, and Persistent Session Recovery](0018-ssh-liveness-reconnect-and-persistent-session-recovery.md)
+
 ## Status Values
 
 - **Proposed:** under discussion and not yet binding.
