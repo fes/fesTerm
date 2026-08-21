@@ -478,7 +478,9 @@ impl SessionTab {
         match self.controller.lifecycle() {
             None | Some(SessionLifecycle::Starting) => ChipStatus::Starting,
             Some(SessionLifecycle::Running) => ChipStatus::Connected,
-            Some(SessionLifecycle::Stopping) => ChipStatus::Disconnected,
+            Some(SessionLifecycle::Stopping | SessionLifecycle::Disconnected(_)) => {
+                ChipStatus::Disconnected
+            }
             Some(SessionLifecycle::Exited(_) | SessionLifecycle::Stopped) => ChipStatus::Exited,
             Some(SessionLifecycle::Failed(_)) => ChipStatus::Failed,
         }

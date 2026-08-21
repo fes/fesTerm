@@ -1952,6 +1952,15 @@ impl SshWorkerFoundation {
         self.shared.set_lifecycle(SessionLifecycle::Running);
     }
 
+    #[cfg(test)]
+    fn set_disconnected(&self) {
+        self.shared
+            .set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
+                SessionErrorKind::Spawn,
+                "test transport loss",
+            )));
+    }
+
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
         if bytes.len() > MAX_IO_CHUNK_BYTES {
             return Err(SessionSendError::TooLarge {
@@ -1993,7 +2002,16 @@ impl SshWorkerFoundation {
     }
 
     fn try_reconnect(&self) -> Result<(), SshReconnectError> {
-        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+        // A session remains reconnect-eligible both while still connected
+        // (a proactive, user-initiated reconnect) and after an unintentional
+        // transport loss has moved it to `Disconnected` (ADR 0018's
+        // "disconnected/recovery-eligible state"). Any other lifecycle
+        // (Starting, Stopping, Failed for a non-transport reason, Exited,
+        // Stopped) is not reconnect-eligible.
+        if !matches!(
+            self.lifecycle(),
+            SessionLifecycle::Running | SessionLifecycle::Disconnected(_)
+        ) {
             return Err(SshReconnectError::NotRunning);
         }
         if !self.shared.request_reconnect() {
@@ -2292,7 +2310,10 @@ impl SshSession {
 }
 
 fn reconnect_request_is_available(lifecycle: &SessionLifecycle, request_pending: bool) -> bool {
-    matches!(lifecycle, SessionLifecycle::Running) && !request_pending
+    matches!(
+        lifecycle,
+        SessionLifecycle::Running | SessionLifecycle::Disconnected(_)
+    ) && !request_pending
 }
 
 impl Session for SshSession {
@@ -2390,6 +2411,15 @@ async fn ssh_worker(
 ) -> Result<ShutdownResult, SessionError> {
     let authentication = authentication.into_worker_authentication();
     let mut planner = reconnect_policy.map(ReconnectPlanner::new);
+    // Tracks whether the *next* `establish_connection` attempt below is the
+    // direct result of an explicit, user-initiated reconnect (as opposed to
+    // the session's very first connection attempt, or an automatic-policy
+    // attempt). A manual reconnect that itself fails to transiently reach
+    // the host must return the session to `Disconnected` rather than ending
+    // it outright (ADR 0018: explicit reconnect is a repeatable user action,
+    // not a one-shot attempt) - first connections keep their existing
+    // fail-outright behavior.
+    let mut manual_recovery_attempt = false;
 
     loop {
         match establish_connection(
@@ -2402,6 +2432,7 @@ async fn ssh_worker(
         .await
         {
             ConnectionAttempt::Established(handle, channel) => {
+                manual_recovery_attempt = false;
                 if let Some(planner) = planner.as_mut() {
                     let _ = planner.connection_established();
                 }
@@ -2435,7 +2466,35 @@ async fn ssh_worker(
                             ReconnectSchedule::Shutdown => return Ok(ShutdownResult::Stopped),
                             ReconnectSchedule::Unavailable => {}
                         }
-                        return Err(ssh_failure(&shared, "SSH connection ended unexpectedly"));
+                        // No automatic recovery resumed the connection (either
+                        // there is no durable-session policy, or its bounded
+                        // backoff was exhausted). Per ADR 0018, unintentional
+                        // transport loss must never be terminal by itself: the
+                        // session moves to a disconnected/recovery-eligible
+                        // state and waits here for the user to either request
+                        // an explicit reconnect or shut the session down.
+                        shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
+                            SessionErrorKind::Spawn,
+                            "SSH connection ended unexpectedly",
+                        )));
+                        match wait_for_manual_recovery(&command_receiver, &shared, &host_key_gate)
+                            .await
+                        {
+                            ManualRecoveryOutcome::Reconnect => {
+                                if let Some(planner) = planner.as_mut() {
+                                    let _ = planner.connection_established();
+                                }
+                                manual_recovery_attempt = true;
+                                shared.set_reconnecting(true);
+                                shared.clear_reconnect_request();
+                                shared.set_lifecycle(SessionLifecycle::Starting);
+                                continue;
+                            }
+                            ManualRecoveryOutcome::Shutdown => {
+                                shared.set_lifecycle(SessionLifecycle::Stopped);
+                                return Ok(ShutdownResult::Stopped);
+                            }
+                        }
                     }
                     RunningOutcome::ReconnectRequested => {
                         // A manual reconnect is always honored once explicitly
@@ -2448,6 +2507,7 @@ async fn ssh_worker(
                         if let Some(planner) = planner.as_mut() {
                             let _ = planner.connection_established();
                         }
+                        manual_recovery_attempt = true;
                         shared.set_reconnecting(true);
                         shared.clear_reconnect_request();
                         shared.set_lifecycle(SessionLifecycle::Starting);
@@ -2468,6 +2528,33 @@ async fn ssh_worker(
                     ReconnectSchedule::Reconnect => continue,
                     ReconnectSchedule::Shutdown => return Ok(ShutdownResult::Stopped),
                     ReconnectSchedule::Unavailable => {}
+                }
+                // An explicit reconnect is a repeatable user action (ADR
+                // 0018): if the fresh attempt it triggered hit only a
+                // transient transport problem (e.g. the host briefly
+                // unreachable), fall back to `Disconnected` so the user can
+                // try again, instead of ending the session outright.
+                if std::mem::take(&mut manual_recovery_attempt)
+                    && failure == ConnectionFailure::Transport
+                {
+                    shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
+                        SessionErrorKind::Spawn,
+                        message,
+                    )));
+                    match wait_for_manual_recovery(&command_receiver, &shared, &host_key_gate).await
+                    {
+                        ManualRecoveryOutcome::Reconnect => {
+                            manual_recovery_attempt = true;
+                            shared.set_reconnecting(true);
+                            shared.clear_reconnect_request();
+                            shared.set_lifecycle(SessionLifecycle::Starting);
+                            continue;
+                        }
+                        ManualRecoveryOutcome::Shutdown => {
+                            shared.set_lifecycle(SessionLifecycle::Stopped);
+                            return Ok(ShutdownResult::Stopped);
+                        }
+                    }
                 }
                 return Err(ssh_failure(&shared, message));
             }
@@ -3010,6 +3097,54 @@ async fn process_authenticated_commands(
     }
 }
 
+/// Outcome of waiting in the `Disconnected` (recovery-eligible) state after
+/// an unintentional transport loss for a session with no automatic recovery
+/// resuming it (ADR 0018).
+enum ManualRecoveryOutcome {
+    /// The user explicitly requested a reconnect via [`WorkerCommand::Reconnect`].
+    Reconnect,
+    /// The user shut the session down while it was disconnected.
+    Shutdown,
+}
+
+/// Waits, polling at [`COMMAND_POLL_INTERVAL`], for the user to either
+/// explicitly request a reconnect or shut down a session that is currently
+/// `Disconnected`. Input and resize commands are reported as unsupported
+/// (there is no live channel to apply them to) without ending the wait.
+async fn wait_for_manual_recovery(
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> ManualRecoveryOutcome {
+    loop {
+        if shared.shutdown_requested() {
+            host_key_gate.reject_pending();
+            return ManualRecoveryOutcome::Shutdown;
+        }
+        match command_receiver.try_recv() {
+            Ok(WorkerCommand::Input(bytes)) => {
+                let _ = bytes.len();
+                report_unsupported(shared, "SSH input is not available");
+            }
+            Ok(WorkerCommand::Resize(size)) => {
+                let _ = size.columns();
+                report_unsupported(shared, "SSH resize is not available");
+            }
+            Ok(WorkerCommand::Reconnect) => {
+                shared.clear_reconnect_request();
+                return ManualRecoveryOutcome::Reconnect;
+            }
+            Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                host_key_gate.reject_pending();
+                return ManualRecoveryOutcome::Shutdown;
+            }
+            Err(TryRecvError::Empty) => {
+                tokio::time::sleep(COMMAND_POLL_INTERVAL).await;
+            }
+        }
+    }
+}
+
 fn process_commands_before_running(
     command_receiver: &WorkerCommandReceiver,
     shared: &WorkerShared,
@@ -3434,6 +3569,20 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_request_is_available_after_unintentional_transport_loss() {
+        // ADR 0018: unintentional transport loss moves a plain SSH session
+        // to `Disconnected`, not directly to a terminal state, and an
+        // explicit reconnect must remain available from there.
+        let disconnected = SessionLifecycle::Disconnected(SessionError::new(
+            SessionErrorKind::Spawn,
+            "test transport loss",
+        ));
+        assert!(reconnect_request_is_available(&disconnected, false));
+        assert!(!reconnect_request_is_available(&disconnected, true));
+        assert!(!disconnected.is_terminal());
+    }
+
+    #[test]
     fn reconnect_request_errors_are_content_free() {
         for error in [
             SshReconnectError::NotRunning,
@@ -3456,6 +3605,27 @@ mod tests {
         );
 
         foundation.set_running();
+        assert!(foundation.reconnect_available());
+        assert_eq!(foundation.try_reconnect(), Ok(()));
+        assert!(!foundation.reconnect_available());
+        assert_eq!(
+            foundation.try_reconnect(),
+            Err(SshReconnectError::AlreadyRequested)
+        );
+        assert!(matches!(
+            command_receiver.try_recv(),
+            Ok(WorkerCommand::Reconnect)
+        ));
+    }
+
+    #[test]
+    fn reconnect_request_queues_once_for_a_disconnected_session() {
+        // ADR 0018: a plain session left `Disconnected` by an unintentional
+        // transport loss must still accept exactly one explicit reconnect
+        // request, the same as a still-`Running` session.
+        let (foundation, command_receiver, _) = SshWorkerFoundation::new(profile());
+
+        foundation.set_disconnected();
         assert!(foundation.reconnect_available());
         assert_eq!(foundation.try_reconnect(), Ok(()));
         assert!(!foundation.reconnect_available());

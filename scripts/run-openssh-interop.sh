@@ -76,8 +76,12 @@ ssh-keygen -q -t ed25519 -N '' -f "$private_key_path" >/dev/null 2>&1 ||
     fail 'key-generation-failed'
 encrypted_private_key_passphrase="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 [ -n "$encrypted_private_key_passphrase" ] || fail 'encrypted-key-passphrase-generation-failed'
-printf '%s\n%s\n' "$encrypted_private_key_passphrase" "$encrypted_private_key_passphrase" |
-    ssh-keygen -q -t ed25519 -f "$encrypted_private_key_path" >/dev/null 2>&1 ||
+# Pass the passphrase via -N rather than piping it to stdin: without a
+# controlling terminal, ssh-keygen's interactive passphrase prompt falls
+# back to invoking $SSH_ASKPASS to re-confirm it, which silently fails in a
+# non-interactive script and produces an *unencrypted* key while still
+# exiting 0.
+ssh-keygen -q -t ed25519 -N "$encrypted_private_key_passphrase" -f "$encrypted_private_key_path" >/dev/null 2>&1 ||
     fail 'encrypted-key-generation-failed'
 
 if ! docker build --quiet --tag "$image_tag" tests/openssh >/dev/null; then

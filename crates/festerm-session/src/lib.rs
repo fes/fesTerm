@@ -202,6 +202,11 @@ pub enum SessionLifecycle {
     Starting,
     Running,
     Stopping,
+    /// Transport was lost unintentionally and no durable-session recovery
+    /// resumed it automatically (ADR 0018). This is deliberately distinct
+    /// from `Failed`: it is not terminal, and an explicit, user-initiated
+    /// reconnect remains available from this state.
+    Disconnected(SessionError),
     Exited(SessionExit),
     Failed(SessionError),
     Stopped,
