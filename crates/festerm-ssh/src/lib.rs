@@ -2579,6 +2579,21 @@ impl SshWorkerFoundation {
             sha256_fingerprint,
         )
     }
+
+    #[cfg(test)]
+    fn request_password_verification(
+        &self,
+        attempt: u8,
+        previous_attempt_failed: bool,
+    ) -> Result<PasswordDecisionWaiter, PasswordVerificationRequestError> {
+        request_password_verification(
+            &self.profile,
+            &self.shared,
+            &self.password_gate,
+            attempt,
+            previous_attempt_failed,
+        )
+    }
 }
 
 fn request_host_key_verification(
@@ -5296,6 +5311,84 @@ mod tests {
                 "SHA256:queueFull"
             )),
             Err(HostKeyDecisionResolutionError::NoPendingPrompt)
+        );
+        assert_eq!(worker.metrics().backpressure_count, 1);
+    }
+
+    #[test]
+    fn password_gate_rejects_missing_timeout_cancel_and_invalid_resolutions() {
+        let (worker, _receiver, _host_key_resolver, resolver) = SshWorkerFoundation::new(profile());
+        assert_eq!(
+            resolver.resolve(
+                &festerm_session::PasswordPrompt::new("fes", "example.com", 1, false),
+                "irrelevant".to_owned()
+            ),
+            Err(PasswordDecisionResolutionError::NoPendingPrompt)
+        );
+
+        let timed_out = worker.request_password_verification(1, false).unwrap();
+        assert_eq!(timed_out.wait(&worker.password_gate, Duration::ZERO), None);
+
+        let cancelled = worker.request_password_verification(2, true).unwrap();
+        resolver.cancel(&cancelled.prompt).unwrap();
+        assert_eq!(cancelled.wait(&worker.password_gate, Duration::ZERO), None);
+
+        let resolved = worker.request_password_verification(3, true).unwrap();
+        resolver
+            .resolve(&resolved.prompt, "typed-password".to_owned())
+            .unwrap();
+        assert_eq!(
+            resolver.resolve(&resolved.prompt, "second-typed-password".to_owned()),
+            Err(PasswordDecisionResolutionError::AlreadyResolved)
+        );
+        assert_eq!(
+            resolved.wait(&worker.password_gate, Duration::ZERO),
+            Some("typed-password".to_owned())
+        );
+    }
+
+    #[test]
+    fn stale_password_decision_cannot_resolve_a_later_prompt() {
+        let (worker, _receiver, _host_key_resolver, resolver) = SshWorkerFoundation::new(profile());
+        let expired = worker.request_password_verification(1, false).unwrap();
+        let expired_prompt = expired.prompt.clone();
+        assert_eq!(expired.wait(&worker.password_gate, Duration::ZERO), None);
+
+        let current = worker.request_password_verification(2, true).unwrap();
+        assert_eq!(
+            resolver.resolve(&expired_prompt, "stale-password".to_owned()),
+            Err(PasswordDecisionResolutionError::PromptMismatch)
+        );
+        resolver
+            .resolve(&current.prompt, "current-password".to_owned())
+            .unwrap();
+        assert_eq!(
+            current.wait(&worker.password_gate, Duration::ZERO),
+            Some("current-password".to_owned())
+        );
+    }
+
+    #[test]
+    fn password_prompt_is_rejected_when_the_bounded_event_queue_is_full() {
+        let (worker, _receiver, _host_key_resolver, resolver) =
+            SshWorkerFoundation::new_with_capacities(
+                profile(),
+                1,
+                1,
+                noop_session_event_notifier(),
+            );
+        assert!(matches!(
+            worker.request_password_verification(1, false),
+            Err(PasswordVerificationRequestError::EventQueueFull)
+        ));
+        assert_eq!(
+            resolver.cancel(&festerm_session::PasswordPrompt::new(
+                "fes",
+                "example.com",
+                1,
+                false
+            )),
+            Err(PasswordDecisionResolutionError::NoPendingPrompt)
         );
         assert_eq!(worker.metrics().backpressure_count, 1);
     }

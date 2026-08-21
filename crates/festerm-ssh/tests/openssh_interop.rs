@@ -164,6 +164,117 @@ fn controlled_openssh_interoperability() {
 
 #[test]
 #[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_interactive_password_interoperability() {
+    const INTERACTIVE_MARKER: &[u8] = b"__FESTERM_OPENSSH_INTERACTIVE_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    // Interactive auth never carries a credential upfront: the worker
+    // connects and verifies the host key first, exactly like the fingerprint
+    // -first UX this exercises, and only asks for a password afterward.
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::interactive(),
+    )
+    .expect("could not start interactive OpenSSH session");
+    let host_key_resolver = session.host_key_decision_resolver();
+    let password_resolver = session.password_decision_resolver();
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut host_key_prompt_seen = false;
+    let mut wrong_password_sent = false;
+    let mut reprompt_after_rejection_seen = false;
+    let mut running = false;
+    let mut marker_seen_in_output = false;
+    let mut output_tail = Vec::new();
+
+    while Instant::now() < deadline && !(running && marker_seen_in_output) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) if !host_key_prompt_seen => {
+                host_key_resolver
+                    .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                    .expect("could not accept the interactive test server host key");
+                host_key_prompt_seen = true;
+            }
+            Ok(SessionEvent::HostKeyVerification(_)) => {
+                panic!("interactive OpenSSH session emitted more than one host-key prompt")
+            }
+            Ok(SessionEvent::PasswordRequested(prompt)) if !wrong_password_sent => {
+                assert!(
+                    host_key_prompt_seen,
+                    "the password prompt must arrive only after host-key verification, \
+                     mirroring `ssh`'s own fingerprint-first ordering"
+                );
+                assert!(
+                    !prompt.previous_attempt_failed(),
+                    "the first password attempt must not claim a prior rejection"
+                );
+                password_resolver
+                    .resolve(&prompt, "definitely-the-wrong-password".to_owned())
+                    .expect("could not submit the deliberately wrong interactive password");
+                wrong_password_sent = true;
+            }
+            Ok(SessionEvent::PasswordRequested(prompt)) if !reprompt_after_rejection_seen => {
+                assert!(
+                    prompt.previous_attempt_failed(),
+                    "a reprompt following a rejected password must report the prior failure, \
+                     mirroring `ssh`'s own \"Permission denied, please try again.\""
+                );
+                password_resolver
+                    .resolve(&prompt, configuration.password.clone())
+                    .expect("could not submit the correct interactive password after rejection");
+                reprompt_after_rejection_seen = true;
+            }
+            Ok(SessionEvent::PasswordRequested(_)) => {
+                panic!("interactive OpenSSH session requested a password more times than expected")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(b"printf '__FESTERM_OPENSSH_INTERACTIVE_OK__\\n'\n")
+                    .expect("could not send interactive controlled SSH shell command");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                marker_seen_in_output |= marker_seen(&mut output_tail, &bytes, INTERACTIVE_MARKER);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "interactive SSH session emitted a {:?} error before controlled exchange completed",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!(
+                    "interactive SSH session event stream closed before controlled exchange completed"
+                );
+            }
+        }
+    }
+
+    assert!(
+        host_key_prompt_seen,
+        "interactive SSH session did not request host-key verification"
+    );
+    assert!(
+        wrong_password_sent && reprompt_after_rejection_seen,
+        "interactive SSH session did not exercise a rejected-then-corrected password round"
+    );
+    assert!(
+        running,
+        "interactive SSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        marker_seen_in_output,
+        "interactive controlled SSH shell command did not produce its expected marker"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("interactive SSH session did not shut down within the test timeout"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
 fn controlled_openssh_public_key_interoperability() {
     const KEY_MARKER: &[u8] = b"__FESTERM_OPENSSH_PUBLIC_KEY_OK__";
 

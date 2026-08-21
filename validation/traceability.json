@@ -54,8 +54,8 @@
       "id": "ssh-trust",
       "edges": ["TRUST-*"],
       "requirements": ["docs/gui-design.md#host-key-verification"],
-      "decisions": ["ADR-0013"],
-      "automated_tests": ["canonical_host_port_preserves_ssh_destination_boundaries", "host_key_resolution_failure_is_visible_in_session_status"],
+      "decisions": ["ADR-0013", "ADR-0019"],
+      "automated_tests": ["canonical_host_port_preserves_ssh_destination_boundaries", "host_key_resolution_failure_is_visible_in_session_status", "a_pending_host_key_prompt_and_a_pending_password_prompt_can_coexist_on_the_controller"],
       "manual_scenarios": ["TI-07"],
       "status": "partial",
       "prerequisites": []
@@ -64,8 +64,8 @@
       "id": "ssh-authentication",
       "edges": ["AUTH-*"],
       "requirements": ["docs/gui-design.md#authentication"],
-      "decisions": ["ADR-0016"],
-      "automated_tests": ["ssh_form_submit_clears_the_transient_password", "saved_ssh_password_form_returns_a_redacted_store_command"],
+      "decisions": ["ADR-0016", "ADR-0019"],
+      "automated_tests": ["ssh_form_submit_clears_the_transient_password", "saved_ssh_password_form_returns_a_redacted_store_command", "interactive_ssh_command_replaces_the_active_launcher_in_place", "a_plain_typed_password_session_retains_full_reconnect_retry_state", "ssh_live_password_prompt_shows_the_ssh_style_prompt_line", "ssh_live_password_prompt_submits_a_typed_password_on_enter", "password_prompt_crosses_the_session_boundary_and_clears_once_resolved", "password_gate_rejects_missing_timeout_cancel_and_invalid_resolutions", "stale_password_decision_cannot_resolve_a_later_prompt", "password_prompt_is_rejected_when_the_bounded_event_queue_is_full", "controlled_openssh_interactive_password_interoperability"],
       "manual_scenarios": ["TI-07", "CP-03"],
       "status": "partial",
       "prerequisites": []

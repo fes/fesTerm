@@ -207,15 +207,22 @@ field and a Connect button, matching how most SSH clients' fast path works,
 with a "Show advanced settings" checkbox that reveals the full destination,
 persistence, and authentication-method form
 (`app/festerm/src/screens.rs`'s `show_ssh_quick_connect`/`show_ssh_form`).
-Submitting with no password (from either surface) never attempts to connect
-with no credential; it opens an in-terminal, `ssh`-CLI-styled password prompt
-(`user@host's password:`, `show_ssh_password_prompt`) instead, and a rejected
-password reprompts up to three times ("Permission denied, please try again.",
-matching `ssh`'s own `NumberOfPasswordPrompts` default) before falling back to
-the ordinary failed-session presentation. This deliberately does not
-implement server-driven keyboard-interactive prompts or 2FA; that remains a
-separate, larger feature (see the SSH keyboard-interactive/2FA follow-up
-issue).
+Submitting with no password (from either surface) starts the session
+immediately with no credential attached (`SshAuthentication::Interactive`)
+rather than collecting one blind beforehand, mirroring `ssh`'s own ordering:
+the worker connects and verifies the host key first (see
+[Host-key verification](#host-key-verification)), and only once
+authentication is actually needed does an in-terminal, pty-styled password
+prompt appear (`user@host's password:`, `show_ssh_live_password_prompt`),
+rendered in the bundled terminal font in place of the terminal view with no
+textbox or button — typed characters are never echoed, matching real `ssh`,
+and Enter submits. A rejected password appends "Permission denied, please try
+again." plus a fresh prompt line below (matching `ssh`'s own
+`NumberOfPasswordPrompts` default of three in-connection attempts,
+`festerm_ssh::MAX_INTERACTIVE_PASSWORD_ATTEMPTS`) before falling back to the
+ordinary failed-session presentation. This deliberately does not implement
+server-driven keyboard-interactive prompts or 2FA; that remains a separate,
+larger feature (see the SSH keyboard-interactive/2FA follow-up issue).
 
 ### Launcher as a tab
 
@@ -944,15 +951,21 @@ the byte stream.
 ![Host-key verification target](images/gui-mockups/host-key-verification.png)
 
 Host-key verification is an in-tab decision that blocks only the affected
-connection. It shows the canonical `host:port`, key algorithm, and full SHA-256
-fingerprint with selectable/copyable text. It does not claim that the host is
-safe; it asks the user to confirm the fingerprint through a trusted source.
+connection, rendered pty-style (bundled terminal font, terminal background)
+in place of the terminal view, mimicking `ssh`'s own prompt text rather than
+a dialog. It shows the canonical `host:port`, key algorithm, and full SHA-256
+fingerprint. It does not claim that the host is safe; it asks the user to
+confirm the fingerprint through a trusted source.
 
-For a previously unknown host, the actions are Reject and Accept Once. Accept
-Once applies only to the current connection attempt. Reject cancels the
-attempt and returns to destination entry with non-secret fields retained.
-Persistent trust and an accept-and-store action remain absent until M8 owns
-appropriate storage.
+For a previously unknown host, the implemented surface
+(`app/festerm/src/app.rs`'s `show_host_key_prompt_ui`) shows `ssh`'s own
+`Are you sure you want to continue connecting (yes/no)? [y/N] ` line with a
+blinking terminal cursor and captures `y`/`n`/Escape directly from the
+keyboard — no Reject/Accept Once buttons, matching the "feel" of answering a
+real terminal prompt. `y` accepts the connection for this attempt only;
+`n`/Escape rejects it and returns to destination entry with non-secret fields
+retained. Persistent trust and an accept-and-store action remain absent until
+M8 owns appropriate storage.
 
 A changed previously trusted key is a separate high-severity state showing
 both expected and presented fingerprints. It offers Cancel Connection and a

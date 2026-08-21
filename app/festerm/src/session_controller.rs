@@ -1152,6 +1152,74 @@ mod tests {
     }
 
     #[test]
+    fn password_prompt_crosses_the_session_boundary_and_clears_once_resolved() {
+        let session = FakeSession::new([SessionEvent::PasswordRequested(PasswordPrompt::new(
+            "fes",
+            "ssh.example.test",
+            0,
+            false,
+        ))]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        assert!(!controller.pump_events(&mut terminal));
+        let prompt = controller
+            .password_prompt()
+            .expect("password prompt retained")
+            .clone();
+        assert_eq!(prompt.username(), "fes");
+        assert_eq!(prompt.host(), "ssh.example.test");
+        assert!(!prompt.previous_attempt_failed());
+
+        assert!(controller.clear_password_prompt(&prompt));
+        assert!(controller.password_prompt().is_none());
+    }
+
+    #[test]
+    fn a_pending_host_key_prompt_and_a_pending_password_prompt_can_coexist_on_the_controller() {
+        // The worker only ever emits a password request once the host key
+        // has already been verified, mirroring `ssh`'s own fingerprint
+        // -first ordering (see `establish_connection`'s `Interactive` arm).
+        // Nothing at the controller layer enforces mutual exclusion between
+        // the two Option fields, though: it is application chrome
+        // (`app.rs`'s `TabContent::Session` rendering) that must check
+        // `host_key_prompt()` before `password_prompt()` so an unresolved
+        // fingerprint prompt is never silently skipped in favor of a later
+        // password prompt. This test pins that both can be simultaneously
+        // present on the controller, so a future refactor that makes chrome
+        // stop checking host-key first fails loudly in the UI rather than
+        // relying on an invariant that isn't actually enforced here.
+        let session = FakeSession::new([
+            SessionEvent::HostKeyVerification(HostKeyPrompt::new(
+                "ssh.example.test",
+                22,
+                "SHA256:content-free-fingerprint",
+            )),
+            SessionEvent::PasswordRequested(PasswordPrompt::new(
+                "fes",
+                "ssh.example.test",
+                0,
+                false,
+            )),
+        ]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        controller.pump_events(&mut terminal);
+
+        assert!(
+            controller.host_key_prompt().is_some(),
+            "an unresolved host-key prompt must remain visible"
+        );
+        assert!(
+            controller.password_prompt().is_some(),
+            "a password prompt the worker already emitted must remain visible too"
+        );
+    }
+
+    #[test]
     fn host_key_resolution_failure_is_visible_in_session_status() {
         let mut controller = SessionController::for_test(FakeSession::new([]));
 
