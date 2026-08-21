@@ -498,6 +498,22 @@ impl SessionTab {
             && matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running))
     }
 
+    /// Whether the terminal viewport should still deliver typed keystrokes
+    /// and mouse-reporting bytes to the transport. Once a session has
+    /// stopped, exited, failed, or (per ADR 0018) disconnected without an
+    /// explicit user-initiated reconnect, history becomes read-only: scroll,
+    /// selection, and copy keep working, but typed input must not be
+    /// attempted (`docs/gui-action-graph.md` `HIST-06`/`SSH-02`). Mirrors the
+    /// same "still alive" states as `close_requires_confirmation`, which is
+    /// slightly looser than `accepts_input` (Paste is Running-only).
+    pub fn accepts_typed_input(&self) -> bool {
+        self.controller.start_error().is_none()
+            && matches!(
+                self.controller.lifecycle(),
+                Some(SessionLifecycle::Starting | SessionLifecycle::Running)
+            )
+    }
+
     /// Whether closing this tab still ends an owned transport attempt or live
     /// transport and therefore requires explicit destructive confirmation.
     pub fn close_requires_confirmation(&self) -> bool {

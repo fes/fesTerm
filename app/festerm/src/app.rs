@@ -1964,7 +1964,8 @@ impl FesTermApp {
                 TabContent::Session(session) => {
                     let options = festerm_ui_egui::TerminalViewOptions {
                         paste_available: session.accepts_input(),
-                        terminal_input_enabled: self.pending_close.is_none()
+                        terminal_input_enabled: session.accepts_typed_input()
+                            && self.pending_close.is_none()
                             && self.pending_paste.is_none()
                             && self.pending_settings_reset.is_none()
                             && !self.about_open
@@ -2466,6 +2467,71 @@ mod tests {
         assert!(
             app.transient_notice.is_none(),
             "a latched eviction notice must not repeat on every frame"
+        );
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    fn exited_session_becomes_read_only_and_stops_delivering_typed_input() {
+        // M9 disconnected-history lifecycle: once a session's process has
+        // exited, `docs/gui-action-graph.md`'s `HIST-06`/`SSH-02` invariant
+        // says scrollback/selection/copy remain available but typed input
+        // must be absent/ignored rather than attempted against a dead
+        // transport.
+        let context = egui::Context::default();
+        let quick_exit = if cfg!(windows) {
+            LocalProfile::new("cmd.exe").with_arguments(["/C", "exit 0"])
+        } else {
+            LocalProfile::new("/bin/sh").with_arguments(["-c", "printf hello; exit 0"])
+        };
+        let (state, tab) =
+            AppState::with_primary_session(&context, Some(quick_exit), Configuration::empty());
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state = state;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump_all_sessions(&context);
+            let session = app
+                .state
+                .session_tab_mut(tab)
+                .expect("active terminal session");
+            if session.chip_status() == ChipStatus::Exited {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "quick-exit fixture did not reach Exited within the timeout"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let history_before = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session")
+            .terminal
+            .row_text(0);
+
+        let session = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session");
+        assert!(
+            !session.accepts_typed_input(),
+            "an exited session must stop accepting typed input"
+        );
+
+        // History remains readable/unchanged; nothing was corrupted by the
+        // (correctly refused) input attempt.
+        assert_eq!(
+            app.state
+                .session_tab_mut(tab)
+                .expect("active terminal session")
+                .terminal
+                .row_text(0),
+            history_before,
+            "read-only history must remain intact after the session exits"
         );
     }
 
