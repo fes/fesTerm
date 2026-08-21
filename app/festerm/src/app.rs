@@ -2500,7 +2500,12 @@ mod tests {
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
         app.state = state;
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        // A real child process's exit must be observed via the OS (no fixed
+        // number of pumps is guaranteed to suffice), so bound this loop with
+        // a wall-clock deadline rather than an iteration count. 15s gives
+        // ample headroom over the near-instant exit this fixture actually
+        // performs, while still catching a genuine hang.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
             app.pump_all_sessions(&context);
             let session = app
