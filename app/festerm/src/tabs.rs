@@ -1255,6 +1255,12 @@ impl AppState {
         if let Err(error) = session.resolve_host_key_trust(decision) {
             session.controller.record_host_key_resolution_error(error);
         }
+        // The "Reject"/"Accept Once" buttons steal keyboard focus from the
+        // terminal for however long the prompt is on screen. Unlike the
+        // close/paste/rename overlays, nothing else claims focus afterwards,
+        // so without this the terminal is left silently unfocused - typing
+        // does nothing until the user clicks into it.
+        session.view.request_focus_on_next_frame();
     }
 
     fn request_reconnect(&mut self, tab: TabId) {
