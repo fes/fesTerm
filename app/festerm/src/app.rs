@@ -1,5 +1,8 @@
 use std::{
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -152,8 +155,38 @@ pub struct FesTermApp {
     /// have one shared answer.
     overlays: OverlayState,
     native_menu: festerm_macos_window::NativeMenu,
+    /// Resume-from-sleep notifier (see `install_wake_monitor`). `None` until
+    /// installed by the real composition root; headless tests never call
+    /// `install_wake_monitor`, so they simply never receive wake signals.
+    wake_monitor: Option<PlatformWakeMonitor>,
+    /// Set from the wake-monitor's OS-thread callback, and drained on the
+    /// main thread once per frame (`logic`). A plain flag, not a channel:
+    /// coalescing repeated wake signals into a single liveness pass is
+    /// correct and avoids unbounded queuing while the app is backgrounded.
+    wake_requested: Arc<AtomicBool>,
     focus_mode: bool,
     terminal_fonts_installed: bool,
+}
+
+#[cfg(target_os = "macos")]
+type PlatformWakeMonitor = festerm_macos_window::WakeMonitor;
+#[cfg(target_os = "windows")]
+type PlatformWakeMonitor = festerm_windows_power::WakeMonitor;
+#[cfg(target_os = "linux")]
+type PlatformWakeMonitor = festerm_linux_power::WakeMonitor;
+
+/// Platforms with no wake-notification hook yet still work correctly: they
+/// simply rely on ordinary transport-error detection and probe cadence, per
+/// ADR 0018 ("wake/network events optimize detection, they do not gate
+/// correctness").
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+struct PlatformWakeMonitor;
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+impl PlatformWakeMonitor {
+    fn install(_wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self
+    }
 }
 
 fn native_secret_store() -> Result<Arc<dyn SecretStore>, SecretStoreError> {
@@ -289,6 +322,8 @@ impl FesTermApp {
             rename_restore_tab: None,
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
+            wake_monitor: None,
+            wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: true,
         }
@@ -300,6 +335,21 @@ impl FesTermApp {
             festerm_macos_window::install_application_menu(std::sync::Arc::new(move || {
                 context.request_repaint()
             }));
+    }
+
+    /// Starts the platform wake-notification hook (resume-from-sleep on
+    /// macOS/Windows, `PrepareForSleep` over D-Bus on Linux; a no-op on any
+    /// other platform). The callback only sets a flag and asks for a
+    /// repaint; the actual liveness probe runs later on the main thread from
+    /// `logic`, since `AppState`'s tabs are not safe to touch from the
+    /// monitor's own OS thread.
+    pub(crate) fn install_wake_monitor(&mut self, context: &egui::Context) {
+        let context = context.clone();
+        let wake_requested = Arc::clone(&self.wake_requested);
+        self.wake_monitor = Some(PlatformWakeMonitor::install(Arc::new(move || {
+            wake_requested.store(true, Ordering::Release);
+            context.request_repaint();
+        })));
     }
 
     /// Keeps the native macOS traffic lights vertically centered against the
@@ -927,6 +977,16 @@ impl FesTermApp {
             .map(|name| name.to_string_lossy().into_owned())
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| terminal_title.to_owned())
+    }
+
+    /// Runs a liveness probe across every open SSH session once, if the wake
+    /// monitor's OS thread signaled a resume since the previous frame. Runs
+    /// on the main thread deliberately: `AppState`'s tabs are not safe to
+    /// reach from the monitor's own background thread.
+    fn check_wake_monitor_signal(&mut self) {
+        if self.wake_requested.swap(false, Ordering::AcqRel) {
+            self.state.request_liveness_check_on_all_sessions();
+        }
     }
 
     /// Drains every open session's bounded backend queues, independent of
@@ -1742,6 +1802,7 @@ impl eframe::App for FesTermApp {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
         Self::sync_native_window_chrome(frame);
         self.process_pending_password_store(context);
+        self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
         self.update_window_title(context);
         if let Some(smoke) = self.native_smoke.as_mut() {
@@ -2055,6 +2116,8 @@ impl FesTermApp {
             rename_restore_tab: None,
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
+            wake_monitor: None,
+            wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: false,
         }
@@ -2093,6 +2156,25 @@ mod tests {
         assert_eq!(shown_lines, 2);
         assert_eq!(shown_characters, PASTE_PREVIEW_CHARACTER_LIMIT);
         assert!(shown_characters < text.chars().count());
+    }
+
+    #[test]
+    fn wake_monitor_signal_drives_a_liveness_pass_and_then_clears_itself() {
+        // No real wake monitor is installed by `for_test_with_live_session`
+        // (that only happens via `install_wake_monitor`, called from the
+        // real composition root); this simulates the OS-thread callback
+        // firing directly, the same way any of the three platform monitors
+        // would signal it.
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.wake_requested.store(true, Ordering::Release);
+
+        app.check_wake_monitor_signal();
+
+        assert!(!app.wake_requested.load(Ordering::Acquire));
+
+        // A second pass with nothing pending is a harmless no-op.
+        app.check_wake_monitor_signal();
     }
 
     #[test]

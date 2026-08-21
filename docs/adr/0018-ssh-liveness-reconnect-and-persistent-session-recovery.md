@@ -313,10 +313,23 @@ not merely off by default but not valid for a strategy that cannot safely
 recover durable remote state.
 
 Liveness probing (wake/network-triggered active verification) is
-implemented; the platform-specific wake/network-change hooks that would call
-it proactively remain tracked separately (issue #48 follow-up). See the
-"Alternatives considered" and "Decision" sections above for their intended
-shape.
+implemented, and platform-specific wake hooks now call it proactively:
+`AppState::request_liveness_check_on_all_sessions()` fans out to every open
+SSH session's `try_check_liveness()` (a benign no-op for local sessions),
+triggered from a `WakeMonitor` per platform — macOS via
+`NSWorkspaceDidWakeNotification`, Windows via a message-only window
+listening for `WM_POWERBROADCAST`/`PBT_APMRESUME*`, Linux via
+systemd-logind's `PrepareForSleep(false)` D-Bus signal — wired into
+`app/festerm`'s `FesTermApp` so a resume-from-sleep event runs one liveness
+pass across all open sessions on the next frame. Network-interface/route-
+change detection remains out of scope on all three platforms and is tracked
+as a further #48 follow-up. The macOS hook is verified locally (build +
+clippy, this being a macOS development host); the Windows and Linux hooks
+were written against each platform's documented API without local
+cross-compilation and are verified via CI's per-OS `windows-latest`/
+`ubuntu-latest` jobs. Native/manual evidence of an actual resume-from-sleep
+event driving a real reconnect on hardware/VMs for all three platforms is
+still outstanding, per the "Validation impact" section above.
 
 `festerm-ssh` now implements the persistent-session-provider layer for issue
 #49: a `PersistenceProvider` enum (`Tmux`, `Screen`) supplies a lazy,

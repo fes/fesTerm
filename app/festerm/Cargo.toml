@@ -12,12 +12,14 @@ directories = "6"
 eframe = "0"
 festerm-config = { path = "../../crates/festerm-config" }
 festerm-core = { path = "../../crates/festerm-core" }
+festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
+festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

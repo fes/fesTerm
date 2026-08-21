@@ -13,6 +13,110 @@ pub enum NativeMenuCommand {
     ToggleSessionInspector,
 }
 
+/// Observes macOS resume-from-sleep (ADR 0018: "resume from system sleep" is
+/// the primary wake/network-change trigger for an on-demand SSH liveness
+/// probe). Network-interface/route-change detection is deliberately out of
+/// scope here; see issue #48 for that follow-up.
+#[cfg(target_os = "macos")]
+mod wake {
+    use std::sync::Arc;
+
+    use objc2::rc::Retained;
+    use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadOnly};
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol};
+
+    struct WakeObserverIvars {
+        wake: Arc<dyn Fn() + Send + Sync>,
+    }
+
+    define_class!(
+        // SAFETY: NSObject imposes no additional subclassing invariants. The
+        // observer is main-thread-only and its Rust ivars are dropped
+        // normally.
+        #[unsafe(super = NSObject)]
+        #[thread_kind = MainThreadOnly]
+        #[ivars = WakeObserverIvars]
+        struct WakeObserver;
+
+        // SAFETY: NSObjectProtocol has no additional safety requirements.
+        unsafe impl NSObjectProtocol for WakeObserver {}
+
+        impl WakeObserver {
+            #[unsafe(method(didWake:))]
+            fn did_wake(&self, _notification: Option<&NSNotification>) {
+                (self.ivars().wake)();
+            }
+        }
+    );
+
+    impl WakeObserver {
+        fn new(wake: Arc<dyn Fn() + Send + Sync>, mtm: MainThreadMarker) -> Retained<Self> {
+            let this = Self::alloc(mtm).set_ivars(WakeObserverIvars { wake });
+            // SAFETY: NSObject's init signature is correct.
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    /// Registers `wake` to run once per resume-from-sleep for as long as the
+    /// returned `WakeMonitor` stays alive; dropping it unregisters the
+    /// observer.
+    pub struct WakeMonitor {
+        // The observer is retained for its NSNotificationCenter registration;
+        // dropping it removes that registration in `Drop` below.
+        observer: Option<Retained<WakeObserver>>,
+    }
+
+    impl WakeMonitor {
+        pub fn install(wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+            let mtm =
+                MainThreadMarker::new().expect("wake-monitor installation requires main thread");
+            let observer = WakeObserver::new(wake, mtm);
+            let center = NSWorkspace::sharedWorkspace().notificationCenter();
+            // SAFETY: `observer` is a valid, retained NSObject subclass
+            // implementing `didWake:`, and it outlives this registration
+            // (removed in `Drop` before the observer is deallocated).
+            unsafe {
+                center.addObserver_selector_name_object(
+                    &observer,
+                    sel!(didWake:),
+                    Some(objc2_app_kit::NSWorkspaceDidWakeNotification),
+                    None,
+                );
+            }
+            Self {
+                observer: Some(observer),
+            }
+        }
+    }
+
+    impl Drop for WakeMonitor {
+        fn drop(&mut self) {
+            if let Some(observer) = self.observer.take() {
+                let center = NSWorkspace::sharedWorkspace().notificationCenter();
+                // SAFETY: `observer` was registered above and is still a
+                // valid NSObject at this point.
+                unsafe {
+                    center.removeObserver(&observer);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub use wake::WakeMonitor;
+
+#[cfg(not(target_os = "macos"))]
+pub struct WakeMonitor;
+
+#[cfg(not(target_os = "macos"))]
+impl WakeMonitor {
+    pub fn install(_wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod menu {
     use std::sync::{mpsc, Arc};

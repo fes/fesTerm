@@ -32,7 +32,7 @@ use festerm_session::{
 };
 use festerm_ssh::{
     HostKeyDecisionResolutionError, HostTrustDecision, SshAuthentication, SshConnectionProfile,
-    SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
+    SshLivenessCheckError, SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
 };
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
@@ -170,6 +170,18 @@ impl ApplicationSession {
         session
             .try_reconnect()
             .map_err(SessionReconnectError::Transport)
+    }
+
+    /// Queues one on-demand SSH-level liveness probe (ADR 0018). A local
+    /// session has no transport to probe, so this is always a silent no-op
+    /// for it rather than an error: callers triggering this across every
+    /// open tab (e.g. after an OS wake/network-change signal) should not
+    /// have to distinguish tab kinds first.
+    fn try_check_liveness(&self) -> Result<(), SshLivenessCheckError> {
+        let Self::Ssh(session) = self else {
+            return Ok(());
+        };
+        session.try_check_liveness()
     }
 }
 
@@ -1025,6 +1037,23 @@ impl AppState {
                 | TabContent::Settings
                 | TabContent::SshAuthenticationRequired(_) => None,
             })
+    }
+
+    /// Requests an on-demand SSH-level liveness probe (ADR 0018) on every
+    /// open SSH session tab. Intended for a wake/network-change signal:
+    /// each request is coalescing and nonblocking, so calling this
+    /// repeatedly (e.g. once per detected event) never queues more than one
+    /// pending probe per session. Errors are deliberately discarded — a
+    /// session that isn't running, or that already has a probe pending, is
+    /// an ordinary, expected outcome here, not a fault to surface.
+    pub fn request_liveness_check_on_all_sessions(&self) {
+        for tab in &self.tabs {
+            if let TabContent::Session(session) = &tab.content {
+                if let Some(session) = session.controller.session() {
+                    let _ = session.try_check_liveness();
+                }
+            }
+        }
     }
 
     /// Applies one `AppCommand`. This is the single command-handling path;

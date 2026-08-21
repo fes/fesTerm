@@ -1,0 +1,13 @@
+[package]
+name = "festerm-linux-power"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Linux resume-from-suspend wake notification support for fesTerm."
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.18", default-features = false, features = ["async-io"] }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }

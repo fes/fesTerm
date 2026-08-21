@@ -3,6 +3,7 @@ members = [
     "app/festerm",
     "crates/festerm-core",
     "crates/festerm-config",
+    "crates/festerm-linux-power",
     "crates/festerm-macos-window",
     "crates/festerm-pty",
     "crates/festerm-pty-test-child",
@@ -12,6 +13,7 @@ members = [
     "crates/festerm-test-support",
     "crates/festerm-ui-egui",
     "crates/festerm-windows-job",
+    "crates/festerm-windows-power",
     "crates/festerm-windows-runtime",
 ]
 resolver = "2"
