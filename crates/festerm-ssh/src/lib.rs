@@ -664,6 +664,32 @@ impl fmt::Display for SshReconnectError {
 
 impl std::error::Error for SshReconnectError {}
 
+/// A rejected nonblocking request to actively verify a live SSH session's
+/// transport (ADR 0018's liveness probe).
+///
+/// Like [`SshReconnectError`], this intentionally contains no destination,
+/// credential, terminal, or protocol data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshLivenessCheckError {
+    NotRunning,
+    AlreadyRequested,
+}
+
+impl fmt::Display for SshLivenessCheckError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotRunning => {
+                formatter.write_str("an SSH liveness probe is only available while connected")
+            }
+            Self::AlreadyRequested => {
+                formatter.write_str("an SSH liveness probe is already pending")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SshLivenessCheckError {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReconnectPolicyError {
     ZeroAttempts,
@@ -1728,6 +1754,7 @@ struct WorkerShared {
     lifecycle: Mutex<SessionLifecycle>,
     reconnecting: AtomicBool,
     reconnect_requested: AtomicBool,
+    liveness_check_requested: AtomicBool,
     shutdown_requested: AtomicBool,
     metrics: Mutex<SessionMetrics>,
     event_sender: SyncSender<SessionEvent>,
@@ -1770,6 +1797,22 @@ impl WorkerShared {
 
     fn reconnect_requested(&self) -> bool {
         self.reconnect_requested.load(Ordering::Acquire)
+    }
+
+    /// Coalesces one pending on-demand liveness-probe request (ADR 0018):
+    /// a future wake/network-change hook, or an explicit application
+    /// request, sets this without blocking on network I/O; the worker
+    /// consumes it via [`Self::take_liveness_check_requested`]. Returns
+    /// `false` if a request is already pending.
+    fn request_liveness_check(&self) -> bool {
+        self.liveness_check_requested
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Consumes a pending on-demand liveness-probe request, if any.
+    fn take_liveness_check_requested(&self) -> bool {
+        self.liveness_check_requested.swap(false, Ordering::AcqRel)
     }
 
     fn request_shutdown(&self) {
@@ -1907,6 +1950,7 @@ impl SshWorkerFoundation {
             lifecycle: Mutex::new(SessionLifecycle::Starting),
             reconnecting: AtomicBool::new(false),
             reconnect_requested: AtomicBool::new(false),
+            liveness_check_requested: AtomicBool::new(false),
             shutdown_requested: AtomicBool::new(false),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: event_capacity,
@@ -2030,6 +2074,25 @@ impl SshWorkerFoundation {
         }
     }
 
+    /// Coalesces an on-demand liveness-probe request. Unlike
+    /// [`Self::try_reconnect`] this never queues a worker command: the
+    /// worker itself notices the flag at its next command-poll tick
+    /// (typically within [`COMMAND_POLL_INTERVAL`]) and performs the probe,
+    /// so there is no queue to fill or close out from under the caller.
+    fn try_check_liveness(&self) -> Result<(), SshLivenessCheckError> {
+        // Only a live transport has anything to probe; a session that is
+        // `Disconnected`/terminal has no handle to send a keepalive over
+        // (ADR 0018 distinguishes the liveness probe itself from the
+        // recovery that follows a probe failure).
+        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+            return Err(SshLivenessCheckError::NotRunning);
+        }
+        if !self.shared.request_liveness_check() {
+            return Err(SshLivenessCheckError::AlreadyRequested);
+        }
+        Ok(())
+    }
+
     fn try_send_command(
         &self,
         command: WorkerCommand,
@@ -2139,6 +2202,14 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+/// Ordinary SSH liveness/keepalive cadence (ADR 0018): how often a running
+/// session actively verifies its transport even without an explicit
+/// wake/network-change trigger or on-demand [`SshSession::try_check_liveness`]
+/// request.
+const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(60);
+/// Bound on how long a single liveness probe waits for the remote peer to
+/// reply before the transport is treated as unresponsive.
+const LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Bounded, cancellable backoff for retries that follow one explicit
 /// reconnect request (ADR 0018).
@@ -2311,6 +2382,28 @@ impl SshSession {
     /// a new PTY and shell, with no remote-state restoration.
     pub fn try_reconnect(&self) -> Result<(), SshReconnectError> {
         self.foundation.try_reconnect()
+    }
+
+    /// Actively verifies the current SSH transport is still responsive
+    /// (ADR 0018's liveness probe), independent of ordinary read/write
+    /// activity.
+    ///
+    /// This is nonblocking: it only requests that the worker perform a
+    /// benign SSH-level probe (a keepalive/ping) at its next opportunity,
+    /// typically within tens of milliseconds. Intended for callers that
+    /// detect a plausible network-assumption change (system wake, network
+    /// interface/route change, Wi-Fi reconnect) and want to confirm the
+    /// transport promptly rather than wait for the next failed write or the
+    /// ordinary keepalive cadence.
+    ///
+    /// A probe success is silent and leaves the session unchanged. A probe
+    /// failure is reported through the same lifecycle path as any other
+    /// unintentional transport loss: the session moves to `Disconnected`
+    /// (or, if an automatic recovery policy applies, attempts bounded
+    /// recovery) exactly as ADR 0018 requires — this method never reconnects
+    /// by itself.
+    pub fn try_check_liveness(&self) -> Result<(), SshLivenessCheckError> {
+        self.foundation.try_check_liveness()
     }
 
     fn await_completion(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
@@ -2487,7 +2580,7 @@ async fn ssh_worker(
                         shared.set_lifecycle(SessionLifecycle::Exited(exit));
                         return Ok(ShutdownResult::AlreadyStopped);
                     }
-                    RunningOutcome::ConnectionLost => {
+                    RunningOutcome::ConnectionLost(reason) => {
                         match schedule_reconnect(
                             &mut planner,
                             ConnectionFailure::Transport,
@@ -2510,7 +2603,7 @@ async fn ssh_worker(
                         // an explicit reconnect or shut the session down.
                         shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
                             SessionErrorKind::Spawn,
-                            "SSH connection ended unexpectedly",
+                            reason,
                         )));
                         match wait_for_manual_recovery(&command_receiver, &shared, &host_key_gate)
                             .await
@@ -3030,8 +3123,25 @@ async fn wait_for_channel_request_reply(
 enum RunningOutcome {
     Shutdown(ShutdownResult),
     Exited(festerm_session::SessionExit),
-    ConnectionLost,
+    ConnectionLost(&'static str),
     ReconnectRequested,
+}
+
+/// Sends a benign SSH-level liveness probe (ADR 0018: "a supported SSH-level
+/// keepalive/global request... whose only purpose is to determine whether
+/// the existing transport still responds") and waits up to
+/// [`LIVENESS_PROBE_TIMEOUT`] for the remote peer's reply.
+///
+/// Returns `true` only if the reply arrived in time. A dead transport
+/// typically fails fast (the underlying send fails once the connection task
+/// has already noticed the loss); a merely slow or partially-black-holed
+/// path is treated as failed once the bound elapses, since ADR 0018 defines
+/// liveness as "still responds", not "may eventually respond".
+async fn probe_liveness(handle: &russh::client::Handle<SshClientHandler>) -> bool {
+    matches!(
+        tokio::time::timeout(LIVENESS_PROBE_TIMEOUT, handle.send_ping()).await,
+        Ok(Ok(()))
+    )
 }
 
 async fn run_authenticated_channel(
@@ -3041,10 +3151,27 @@ async fn run_authenticated_channel(
     shared: &Arc<WorkerShared>,
     host_key_gate: &Arc<HostKeyDecisionGate>,
 ) -> RunningOutcome {
+    // Tracks the next *automatic* liveness probe (ADR 0018's "ordinary SSH
+    // liveness/keepalive cadence"), independent of any on-demand request a
+    // caller makes via `SshSession::try_check_liveness`/
+    // `WorkerShared::request_liveness_check` (e.g. a future wake/network-
+    // change hook), which is checked on every tick regardless of this
+    // deadline.
+    let mut next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
     loop {
+        let probe_due = shared.take_liveness_check_requested()
+            || tokio::time::Instant::now() >= next_liveness_probe;
+        if probe_due {
+            if !probe_liveness(&handle).await {
+                return RunningOutcome::ConnectionLost(
+                    "SSH liveness probe did not receive a response",
+                );
+            }
+            next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
+        }
         tokio::select! {
             result = &mut handle => match result {
-                Ok(()) | Err(_) => return RunningOutcome::ConnectionLost,
+                Ok(()) | Err(_) => return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly"),
             },
             message = channel.wait() => match message {
                 Some(russh::ChannelMsg::Data { data }) => emit_channel_output(shared, data.as_ref()),
@@ -3055,7 +3182,7 @@ async fn run_authenticated_channel(
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_signal(0, "remote signal"));
                 }
                 Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
-                    return RunningOutcome::ConnectionLost;
+                    return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
                 }
                 Some(_) => {}
             },
@@ -3069,7 +3196,7 @@ async fn run_authenticated_channel(
                         let _ = stop_handle(handle, shared).await;
                         return RunningOutcome::ReconnectRequested;
                     }
-                    Err(_) => return RunningOutcome::ConnectionLost,
+                    Err(_) => return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly"),
                 }
             }
         }
@@ -3708,6 +3835,57 @@ mod tests {
             command_receiver.try_recv(),
             Ok(WorkerCommand::Reconnect)
         ));
+    }
+
+    #[test]
+    fn liveness_check_is_limited_to_running_sessions() {
+        // Unlike a manual reconnect, an on-demand liveness probe has no
+        // transport to probe once a session is `Disconnected` (ADR 0018
+        // treats the probe and the recovery it may lead to as separate
+        // steps): only `Running` is eligible.
+        let (foundation, _command_receiver, _) = SshWorkerFoundation::new(profile());
+
+        assert_eq!(
+            foundation.try_check_liveness(),
+            Err(SshLivenessCheckError::NotRunning)
+        );
+
+        foundation.set_disconnected();
+        assert_eq!(
+            foundation.try_check_liveness(),
+            Err(SshLivenessCheckError::NotRunning)
+        );
+
+        foundation.set_running();
+        assert_eq!(foundation.try_check_liveness(), Ok(()));
+    }
+
+    #[test]
+    fn liveness_check_coalesces_a_single_pending_request() {
+        let (foundation, _command_receiver, _) = SshWorkerFoundation::new(profile());
+        foundation.set_running();
+
+        assert_eq!(foundation.try_check_liveness(), Ok(()));
+        assert_eq!(
+            foundation.try_check_liveness(),
+            Err(SshLivenessCheckError::AlreadyRequested)
+        );
+
+        // The worker consuming the pending request (as it does once per
+        // command-poll tick) frees the next caller to request another probe.
+        assert!(foundation.shared.take_liveness_check_requested());
+        assert_eq!(foundation.try_check_liveness(), Ok(()));
+    }
+
+    #[test]
+    fn liveness_check_errors_are_content_free() {
+        for error in [
+            SshLivenessCheckError::NotRunning,
+            SshLivenessCheckError::AlreadyRequested,
+        ] {
+            assert!(!error.to_string().contains("password"));
+            assert!(!error.to_string().contains("private"));
+        }
     }
 
     #[test]

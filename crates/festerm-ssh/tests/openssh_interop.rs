@@ -11,7 +11,7 @@ use festerm_session::{
 };
 use festerm_ssh::{
     HostIdentity, HostTrustDecision, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
-    SshPrivateKey, SshSession, SshSessionOptions,
+    SshLivenessCheckError, SshPrivateKey, SshSession, SshSessionOptions,
 };
 
 const MARKER: &[u8] = b"__FESTERM_OPENSSH_INTEROP_OK__";
@@ -644,5 +644,115 @@ fn controlled_openssh_manual_reconnect_interoperability() {
     match session.shutdown(SHUTDOWN_TIMEOUT) {
         Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
         Err(_) => panic!("reconnected SSH session did not shut down within the test timeout"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_liveness_probe_succeeds_without_disrupting_a_healthy_session() {
+    const MARKER_BEFORE: &[u8] = b"__FESTERM_OPENSSH_LIVENESS_BEFORE_OK__";
+    const MARKER_AFTER: &[u8] = b"__FESTERM_OPENSSH_LIVENESS_AFTER_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password),
+    )
+    .expect("could not start OpenSSH session");
+    let resolver = session.host_key_decision_resolver();
+
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut running = false;
+    let mut marker_before_seen = false;
+    let mut output_tail = Vec::new();
+    while Instant::now() < deadline && !(running && marker_before_seen) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => resolver
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .expect("could not accept the test server host key"),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(
+                        b"printf '%s%s%s\\n' '__FESTERM_OPENSSH_' 'LIVENESS_BEFORE_' 'OK__'\n",
+                    )
+                    .expect("could not send controlled SSH shell command");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                marker_before_seen |= marker_seen(&mut output_tail, &bytes, MARKER_BEFORE);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error before liveness testing began",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before liveness testing began");
+            }
+        }
+    }
+    assert!(
+        running,
+        "SSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        marker_before_seen,
+        "controlled SSH shell command did not produce its expected marker before the liveness probe"
+    );
+
+    // ADR 0018: an on-demand liveness probe against a healthy transport must
+    // succeed silently and never disrupt the running session, and a second
+    // request must coalesce with the still-pending first one.
+    session
+        .try_check_liveness()
+        .expect("a liveness probe must be available for a running session");
+    assert_eq!(
+        session.try_check_liveness(),
+        Err(SshLivenessCheckError::AlreadyRequested),
+        "a second on-demand probe must coalesce with the first until the worker services it"
+    );
+    session
+        .try_send_input(b"printf '%s%s%s\\n' '__FESTERM_OPENSSH_' 'LIVENESS_AFTER_' 'OK__'\n")
+        .expect("could not send controlled SSH shell command after requesting a liveness probe");
+
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut marker_after_seen = false;
+    output_tail.clear();
+    while Instant::now() < deadline && !marker_after_seen {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Lifecycle(
+                SessionLifecycle::Disconnected(_)
+                | SessionLifecycle::Failed(_)
+                | SessionLifecycle::Exited(_)
+                | SessionLifecycle::Stopping
+                | SessionLifecycle::Stopped,
+            )) => {
+                panic!("a liveness probe against a healthy transport must not disrupt the session");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                marker_after_seen |= marker_seen(&mut output_tail, &bytes, MARKER_AFTER);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error while a liveness probe was pending",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed while a liveness probe was pending");
+            }
+        }
+    }
+    assert!(
+        marker_after_seen,
+        "controlled SSH shell command did not produce its expected marker after the liveness probe"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("SSH session did not shut down within the test timeout"),
     }
 }

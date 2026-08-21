@@ -315,3 +315,17 @@ persistent-session providers (`tmux`, `screen`) remain unimplemented and are
 tracked separately as follow-up work (issues #48 and #49); see the
 "Alternatives considered" and "Decision" sections above for their intended
 shape.
+
+`festerm-ssh` now implements the SSH-level liveness probe itself
+(`SshSession::try_check_liveness`, backed by an ordinary `keepalive`/`ping`
+global request via `russh`), on an automatic cadence
+(`LIVENESS_PROBE_INTERVAL`) plus an on-demand, nonblocking trigger point a
+future wake/network-change hook can call. A probe failure is routed through
+the exact same `ConnectionFailure::Transport` path as any other unintentional
+transport loss, so it inherits the existing guarantee that a plain-shell
+session only moves to `Disconnected` and never auto-reconnects by itself.
+The platform-specific wake/network-change notification hooks (macOS/Windows/
+Linux) that would call this trigger proactively remain unimplemented; until
+they exist, detection still relies on the automatic probe cadence and
+ordinary transport read/write failures. See issue #48 for the remaining
+platform-hook scope.
