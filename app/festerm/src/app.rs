@@ -1010,6 +1010,35 @@ impl FesTermApp {
         if needs_repaint {
             context.request_repaint();
         }
+        self.show_active_eviction_notice_if_needed(context);
+    }
+
+    /// M9 eviction notice: the first time the *active* tab's retained
+    /// scrollback discards a logical line to stay within its memory bound,
+    /// surface a one-shot transient notice so the user learns why history
+    /// they scroll back to may stop short, instead of silently truncating
+    /// with no visible signal. Latched per tab (`eviction_notice_shown`) so
+    /// a sustained-output workload that keeps evicting doesn't repaint a
+    /// notice every frame. Deliberately scoped to the active tab only:
+    /// background tabs evicting quietly should not steal the single shared
+    /// transient-notice slot from whatever the user is looking at.
+    fn show_active_eviction_notice_if_needed(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        if session.eviction_notice_shown {
+            return;
+        }
+        if session.terminal.scrollback_stats().evicted_lines() == 0 {
+            return;
+        }
+        session.eviction_notice_shown = true;
+        self.transient_notice = Some((
+            "Scrollback limit reached — oldest history discarded".to_owned(),
+            Instant::now() + Duration::from_millis(2_500),
+        ));
+        context.request_repaint();
     }
 
     fn tab_id_for_chip(&self, chip_id: ChipId) -> Option<TabId> {
@@ -2373,6 +2402,70 @@ mod tests {
             session.terminal.scrollback_stats().logical_lines(),
             scrollback_before,
             "reset must not clear scrollback"
+        );
+    }
+
+    #[test]
+    fn active_tab_eviction_shows_a_one_shot_transient_notice() {
+        // M9 eviction notices: the first time the active tab's retained
+        // scrollback discards a logical line to stay within its configured
+        // memory bound, the user must see a visible signal rather than
+        // history silently getting shorter than expected.
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        {
+            let session = app
+                .state
+                .session_tab_mut(tab)
+                .expect("active terminal session");
+            // A tiny viewport (mirrors festerm-core's own eviction test)
+            // scrolls almost every ingested line into history immediately,
+            // and a tiny scrollback budget forces eviction after only a few
+            // of those lines instead of needing megabytes of filler.
+            let tiny_dimensions = festerm_core::Dimensions::new(4, 2)
+                .expect("4x2 is a valid terminal size for forcing eviction");
+            session.terminal = festerm_core::Terminal::with_scrollback_limit(tiny_dimensions, 1024)
+                .expect("small scrollback limit is valid");
+            for line in 1..=64 {
+                session
+                    .terminal
+                    .ingest(format!("line{line}\r\n").as_bytes());
+            }
+        }
+        assert!(
+            app.state
+                .session_tab_mut(tab)
+                .expect("active terminal session")
+                .terminal
+                .scrollback_stats()
+                .evicted_lines()
+                > 0,
+            "the tiny scrollback limit must have forced at least one eviction"
+        );
+
+        app.pump_all_sessions(&context);
+
+        assert!(
+            app.transient_notice
+                .as_ref()
+                .is_some_and(|(text, _)| text.contains("Scrollback limit reached")),
+            "eviction must surface a transient notice"
+        );
+        assert!(
+            app.state
+                .session_tab_mut(tab)
+                .expect("active terminal session")
+                .eviction_notice_shown,
+            "the notice must latch so it isn't re-triggered every frame"
+        );
+
+        // Dismiss the notice and pump again: continued eviction from
+        // sustained output must not re-show it.
+        app.transient_notice = None;
+        app.pump_all_sessions(&context);
+        assert!(
+            app.transient_notice.is_none(),
+            "a latched eviction notice must not repeat on every frame"
         );
     }
 

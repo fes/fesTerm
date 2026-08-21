@@ -253,6 +253,11 @@ pub struct SessionTab {
     /// Non-secret immutable launch facts exposed to application-owned
     /// presentation such as the Session Inspector.
     pub inspector_transport: InspectorTransport,
+    /// Whether the one-shot "scrollback limit reached" transient notice has
+    /// already been shown for this tab (M9: eviction notices). Latches once
+    /// `true` so continued eviction from a sustained-output workload does
+    /// not repeatedly re-trigger the notice every frame.
+    pub eviction_notice_shown: bool,
 }
 
 /// Narrow transport metadata safe for application chrome. Keeping this owned
@@ -465,6 +470,7 @@ impl SessionTab {
             launch_secondary,
             profile_identifier,
             inspector_transport,
+            eviction_notice_shown: false,
         }
     }
 
