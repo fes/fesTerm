@@ -1122,6 +1122,8 @@ impl FesTermApp {
         const ZOOM_OUT: u64 = 8;
         const RESET_ZOOM: u64 = 9;
         const ABOUT: u64 = 10;
+        const RESET_TERMINAL: u64 = 11;
+        const CLEAR_TERMINAL_HISTORY: u64 = 12;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -1186,6 +1188,16 @@ impl FesTermApp {
                     id: RESET_ZOOM,
                     label: "Reset Zoom".to_owned(),
                     hint: ApplicationShortcut::ZoomReset.label().map(str::to_owned),
+                },
+                PaletteItem {
+                    id: RESET_TERMINAL,
+                    label: "Reset Terminal".to_owned(),
+                    hint: None,
+                },
+                PaletteItem {
+                    id: CLEAR_TERMINAL_HISTORY,
+                    label: "Clear Terminal History".to_owned(),
+                    hint: None,
                 },
             ]);
         }
@@ -1257,6 +1269,8 @@ impl FesTermApp {
                 self.about_licenses_open = false;
                 context.request_repaint();
             }
+            11 => self.reset_active_terminal(context),
+            12 => self.clear_active_terminal_history(context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -1350,6 +1364,39 @@ impl FesTermApp {
             ));
             context.request_repaint();
         }
+    }
+
+    /// Resets the active session's terminal display state (screen, cursor,
+    /// colors/attributes, modes) without touching its retained scrollback
+    /// history. Mirrors what a real terminal does on `ESC c` (RIS) or a
+    /// shell's `reset` command, but works even if the running program can't
+    /// be asked to emit that sequence itself (e.g. it's wedged).
+    fn reset_active_terminal(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        session.terminal.reset_to_initial_state();
+        self.transient_notice = Some((
+            "Terminal reset".to_owned(),
+            Instant::now() + Duration::from_millis(1_500),
+        ));
+        context.request_repaint();
+    }
+
+    /// Clears the active session's retained scrollback without changing
+    /// its visible screen, distinct from `reset_active_terminal` above.
+    fn clear_active_terminal_history(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        session.terminal.clear_scrollback();
+        self.transient_notice = Some((
+            "Terminal history cleared".to_owned(),
+            Instant::now() + Duration::from_millis(1_500),
+        ));
+        context.request_repaint();
     }
 
     fn toggle_focus_mode(&mut self, context: &egui::Context) {
@@ -1886,7 +1933,8 @@ impl FesTermApp {
                         terminal_input_enabled: self.pending_close.is_none()
                             && self.pending_paste.is_none()
                             && self.pending_settings_reset.is_none()
-                            && !self.about_open,
+                            && !self.about_open
+                            && !self.palette.is_open(),
                         defer_paste_to_application: true,
                     };
                     session.view.show_with_options(
@@ -2271,6 +2319,95 @@ mod tests {
                 .view
                 .font_size_points(),
             14.0
+        );
+    }
+
+    #[test]
+    fn reset_terminal_palette_command_clears_screen_but_keeps_scrollback() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        let items = app.palette_items();
+        assert!(items.iter().any(|item| item.label == "Reset Terminal"));
+        assert!(items
+            .iter()
+            .any(|item| item.label == "Clear Terminal History"));
+
+        {
+            let session = app
+                .state
+                .session_tab_mut(tab)
+                .expect("active terminal session");
+            for line in 1..=60 {
+                session
+                    .terminal
+                    .ingest(format!("line{line}\r\n").as_bytes());
+            }
+            session.terminal.ingest(b"\x1b[1;31mred bold");
+        }
+        let scrollback_before = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session")
+            .terminal
+            .scrollback_stats()
+            .logical_lines();
+        assert!(scrollback_before > 0);
+
+        const RESET_TERMINAL: u64 = 11;
+        app.dispatch_palette_selection(RESET_TERMINAL, &context);
+
+        let session = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session");
+        assert_eq!(
+            session.terminal.attributes(),
+            festerm_core::Attributes::NONE
+        );
+        assert_eq!(
+            session.terminal.scrollback_stats().logical_lines(),
+            scrollback_before,
+            "reset must not clear scrollback"
+        );
+    }
+
+    #[test]
+    fn clear_terminal_history_palette_command_clears_only_scrollback() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+
+        {
+            let session = app
+                .state
+                .session_tab_mut(tab)
+                .expect("active terminal session");
+            session
+                .terminal
+                .ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nprompt$ ");
+        }
+        let visible_before = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session")
+            .terminal
+            .row_text(0);
+
+        const CLEAR_TERMINAL_HISTORY: u64 = 12;
+        app.dispatch_palette_selection(CLEAR_TERMINAL_HISTORY, &context);
+
+        let session = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session");
+        assert_eq!(
+            session.terminal.scrollback_stats().logical_lines(),
+            0,
+            "history should be cleared"
+        );
+        assert_eq!(
+            session.terminal.row_text(0),
+            visible_before,
+            "the visible screen must be unaffected"
         );
     }
 

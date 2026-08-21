@@ -427,6 +427,37 @@ impl Terminal {
         self.scrollback.clear();
     }
 
+    /// Resets the terminal's display state to how it looks right after
+    /// construction: clears the visible screen, homes the cursor, restores
+    /// default colors/attributes/modes/tab stops, exits the alternate
+    /// screen if active, and clears any parser byte-stream state (e.g. a
+    /// truncated escape sequence). This mirrors what a real terminal does
+    /// on `ESC c` (RIS) or a shell's `reset` command, but is invoked
+    /// directly by the GUI so it works even if the running program is
+    /// wedged and can't be asked to emit that sequence itself.
+    ///
+    /// Retained scrollback history is left untouched, matching how
+    /// terminal emulators typically distinguish "reset the screen" from
+    /// "clear the scrollback" as separate user actions; see
+    /// [`Self::clear_scrollback`] for the latter.
+    pub fn reset_to_initial_state(&mut self) {
+        let dimensions = self.dimensions();
+        self.primary.reset();
+        self.alternate = None;
+        self.active_screen = ActiveScreen::Primary;
+        self.modes = TerminalModes::default();
+        self.cursor_style = CursorStyle::default();
+        self.cursor_style_set = false;
+        self.tab_stops = default_tab_stops(dimensions);
+        self.current_attributes = Attributes::NONE;
+        self.current_foreground = Color::Default;
+        self.current_background = Color::Default;
+        self.title.clear();
+        self.current_hyperlink = None;
+        self.parser = Parser::new();
+        self.utf8 = Utf8Decoder::new();
+    }
+
     pub fn is_row_dirty(&self, row: usize) -> Option<bool> {
         self.screen().is_row_dirty(row)
     }

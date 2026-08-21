@@ -1005,6 +1005,62 @@ mod tests {
     }
 
     #[test]
+    fn reset_to_initial_state_clears_screen_cursor_style_and_modes_but_keeps_scrollback() {
+        let mut terminal = terminal(10, 4);
+        // Push enough content to build up real scrollback, then leave the
+        // screen in a non-default state: colored/bold text, cursor moved
+        // away from home, alternate screen active, and a custom scroll
+        // region.
+        terminal.ingest(b"first\r\nsecond\r\nthird\r\nfourth\r\n");
+        terminal.ingest(b"\x1b[1;31mred bold\x1b[3;5H\x1b[?1049h\x1b[2;3r");
+        assert_ne!(terminal.attributes(), Attributes::NONE);
+        assert_ne!(terminal.foreground(), Color::Default);
+        assert!(terminal.scrollback_stats().logical_lines() > 0);
+        let scrollback_lines_before = terminal.scrollback_stats().logical_lines();
+
+        terminal.reset_to_initial_state();
+
+        assert_eq!(terminal.cursor().column, 0);
+        assert_eq!(terminal.cursor().row, 0);
+        assert_eq!(terminal.attributes(), Attributes::NONE);
+        assert_eq!(terminal.foreground(), Color::Default);
+        assert_eq!(terminal.background(), Color::Default);
+        assert!(terminal.title().is_empty());
+        assert_eq!(
+            terminal.alternate_screen(),
+            None,
+            "reset should exit the alternate screen"
+        );
+        for row in 0..terminal.dimensions().rows() {
+            assert_eq!(
+                terminal.row_text(row).unwrap_or_default().trim(),
+                "",
+                "the visible screen should be blank after reset"
+            );
+        }
+        // Scrollback history is a separate, opt-in action
+        // (`clear_scrollback`) and must survive a display reset.
+        assert_eq!(
+            terminal.scrollback_stats().logical_lines(),
+            scrollback_lines_before
+        );
+
+        // The reset terminal must still behave normally afterward: a scroll
+        // region set before reset must not still be constraining new
+        // output (this is exactly the stale-scroll-region bug class fixed
+        // above, so a full reset must not reintroduce it).
+        terminal.ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+        assert!(
+            (0..terminal.dimensions().rows())
+                .map(|row| terminal.row_text(row).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("")
+                .contains("five"),
+            "output after reset should scroll normally"
+        );
+    }
+
+    #[test]
     fn scroll_region_spanning_full_screen_grows_with_the_screen_on_resize() {
         // Regression test for a real bug: after growing the primary screen
         // (e.g. dragging a window corner to make it both wider and taller),
