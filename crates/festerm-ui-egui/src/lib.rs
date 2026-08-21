@@ -1961,8 +1961,16 @@ mod tests {
         assert!(update.full_refresh);
         assert_eq!(cache.dimensions(), Some(Dimensions::new(100, 30).unwrap()));
         assert_eq!(sink.0, vec![b"\x1b[B".to_vec()]);
+        // This is a pure-CPU regression watchdog (no I/O or subprocess), so
+        // it normally completes in well under a second; the generous
+        // ceiling exists only to catch a genuine multiple-orders-of-
+        // magnitude algorithmic regression, not to enforce a tight budget.
+        // GitHub's hosted `windows-latest` runners are documented to run
+        // noticeably slower/noisier than `ubuntu-latest`/`macos-latest`
+        // (particularly for unoptimized debug builds under load), so give
+        // it enough headroom to avoid CI-only false positives.
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < Duration::from_secs(20),
             "representative output path became unexpectedly slow"
         );
     }
