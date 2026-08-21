@@ -266,12 +266,64 @@ impl HostKeyPrompt {
     }
 }
 
+/// A content-free interactive password request emitted by a remote session,
+/// mirroring [`HostKeyPrompt`]: the password itself never crosses this
+/// boundary, only the request to display an `ssh`-style prompt and resolve
+/// it through the transport-specific session API.
+///
+/// Distinct requests for the same connection attempt are distinguished by
+/// `attempt` (1-based), so a stale prompt can never be confused with a
+/// fresh one after a "Permission denied, please try again" retry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PasswordPrompt {
+    username: String,
+    host: String,
+    attempt: u8,
+    previous_attempt_failed: bool,
+}
+
+impl PasswordPrompt {
+    pub fn new(
+        username: impl Into<String>,
+        host: impl Into<String>,
+        attempt: u8,
+        previous_attempt_failed: bool,
+    ) -> Self {
+        Self {
+            username: username.into(),
+            host: host.into(),
+            attempt,
+            previous_attempt_failed,
+        }
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub const fn attempt(&self) -> u8 {
+        self.attempt
+    }
+
+    /// Whether this prompt follows a rejected attempt on the same
+    /// connection, so the UI can show `ssh`'s own "Permission denied,
+    /// please try again." line above the retry.
+    pub const fn previous_attempt_failed(&self) -> bool {
+        self.previous_attempt_failed
+    }
+}
+
 /// Events emitted by a session backend for application coordination.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionEvent {
     Lifecycle(SessionLifecycle),
     Output(Vec<u8>),
     HostKeyVerification(HostKeyPrompt),
+    PasswordRequested(PasswordPrompt),
     ResizeApplied(TerminalSize),
     Backpressure {
         direction: FlowDirection,

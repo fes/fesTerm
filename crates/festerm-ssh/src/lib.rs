@@ -92,6 +92,15 @@ pub enum SshAuthentication {
     Password(SshPassword),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(SshPrivateKey),
+    /// No credential is supplied upfront. The worker connects and verifies
+    /// the host key first (exactly as it would for any other credential),
+    /// then requests a password from the application only once the
+    /// connection actually needs one — mirroring `ssh`'s own ordering
+    /// (host-key confirmation, then `user@host's password:`) instead of
+    /// collecting a password blind before a connection even exists. A
+    /// rejected password is retried in place, on the same connection, up to
+    /// [`MAX_INTERACTIVE_PASSWORD_ATTEMPTS`].
+    Interactive,
 }
 
 impl SshAuthentication {
@@ -130,11 +139,20 @@ impl SshAuthentication {
         Self::PublicKey(private_key)
     }
 
+    /// Selects interactive password authentication: no credential is
+    /// supplied upfront, so the worker prompts for one (through
+    /// [`SessionEvent::PasswordRequested`]) only after the host key has
+    /// already been verified.
+    pub const fn interactive() -> Self {
+        Self::Interactive
+    }
+
     fn into_worker_authentication(self) -> WorkerAuthentication {
         match self {
             Self::Password(password) => WorkerAuthentication::Password(password.password),
             Self::StoredPassword(password) => WorkerAuthentication::StoredPassword(password),
             Self::PublicKey(private_key) => WorkerAuthentication::PublicKey(private_key.key),
+            Self::Interactive => WorkerAuthentication::Interactive,
         }
     }
 }
@@ -147,6 +165,7 @@ impl fmt::Debug for SshAuthentication {
                 formatter.write_str("SshAuthentication::StoredPassword([REDACTED])")
             }
             Self::PublicKey(_) => formatter.write_str("SshAuthentication::PublicKey([REDACTED])"),
+            Self::Interactive => formatter.write_str("SshAuthentication::Interactive"),
         }
     }
 }
@@ -291,6 +310,7 @@ enum WorkerAuthentication {
     Password(String),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(Arc<russh::keys::PrivateKey>),
+    Interactive,
 }
 
 /// Content-free failures while resolving a native stored SSH password.
@@ -1889,6 +1909,239 @@ impl HostKeyDecisionWaiter {
     }
 }
 
+/// Resolves the single pending interactive password request for one SSH
+/// session, mirroring [`HostKeyDecisionResolver`]. This handle contains no
+/// password material: the GUI supplies one from its event handler, and only
+/// the future network worker awaits and consumes it.
+#[derive(Clone)]
+pub struct PasswordDecisionResolver {
+    gate: Arc<PasswordDecisionGate>,
+}
+
+impl PasswordDecisionResolver {
+    pub fn resolve(
+        &self,
+        prompt: &festerm_session::PasswordPrompt,
+        password: String,
+    ) -> Result<(), PasswordDecisionResolutionError> {
+        self.gate.resolve(prompt, password)
+    }
+
+    /// Cancels the current prompt. Cancellation always ends the connection
+    /// attempt, exactly as closing the tab mid-prompt would.
+    pub fn cancel(
+        &self,
+        prompt: &festerm_session::PasswordPrompt,
+    ) -> Result<(), PasswordDecisionResolutionError> {
+        self.gate.cancel(prompt)
+    }
+}
+
+impl fmt::Debug for PasswordDecisionResolver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PasswordDecisionResolver")
+    }
+}
+
+/// A rejected or stale attempt to resolve an interactive password prompt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PasswordDecisionResolutionError {
+    NoPendingPrompt,
+    AlreadyResolved,
+    PromptMismatch,
+}
+
+impl fmt::Display for PasswordDecisionResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoPendingPrompt => formatter.write_str("no password prompt is pending"),
+            Self::AlreadyResolved => formatter.write_str("password prompt is already resolved"),
+            Self::PromptMismatch => {
+                formatter.write_str("password does not match the pending prompt")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PasswordDecisionResolutionError {}
+
+#[allow(dead_code)]
+enum PasswordGateState {
+    Idle,
+    Waiting(festerm_session::PasswordPrompt),
+    Resolved(String),
+    Cancelled,
+}
+
+/// Pauses an SSH worker immediately before password authentication and
+/// resumes it once the application supplies (or cancels) one, mirroring
+/// [`HostKeyDecisionGate`]'s pause-and-resolve pattern.
+struct PasswordDecisionGate {
+    state: Mutex<PasswordGateState>,
+    changed: Condvar,
+    notified: tokio::sync::Notify,
+}
+
+#[allow(dead_code)]
+impl PasswordDecisionGate {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(PasswordGateState::Idle),
+            changed: Condvar::new(),
+            notified: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn begin(
+        &self,
+        prompt: festerm_session::PasswordPrompt,
+    ) -> Result<PasswordDecisionWaiter, PasswordDecisionResolutionError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("password gate lock is not poisoned");
+        match *state {
+            PasswordGateState::Idle => {
+                *state = PasswordGateState::Waiting(prompt.clone());
+                Ok(PasswordDecisionWaiter { prompt })
+            }
+            PasswordGateState::Resolved(_) => Err(PasswordDecisionResolutionError::AlreadyResolved),
+            PasswordGateState::Waiting(_) | PasswordGateState::Cancelled => {
+                Err(PasswordDecisionResolutionError::NoPendingPrompt)
+            }
+        }
+    }
+
+    fn resolve(
+        &self,
+        prompt: &festerm_session::PasswordPrompt,
+        password: String,
+    ) -> Result<(), PasswordDecisionResolutionError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("password gate lock is not poisoned");
+        match &*state {
+            PasswordGateState::Waiting(current) if current == prompt => {
+                *state = PasswordGateState::Resolved(password);
+                self.changed.notify_all();
+                self.notified.notify_waiters();
+                Ok(())
+            }
+            PasswordGateState::Waiting(_) => Err(PasswordDecisionResolutionError::PromptMismatch),
+            PasswordGateState::Resolved(_) => Err(PasswordDecisionResolutionError::AlreadyResolved),
+            PasswordGateState::Idle | PasswordGateState::Cancelled => {
+                Err(PasswordDecisionResolutionError::NoPendingPrompt)
+            }
+        }
+    }
+
+    fn cancel(
+        &self,
+        prompt: &festerm_session::PasswordPrompt,
+    ) -> Result<(), PasswordDecisionResolutionError> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("password gate lock is not poisoned");
+        match &*state {
+            PasswordGateState::Waiting(current) if current == prompt => {
+                *state = PasswordGateState::Cancelled;
+                self.changed.notify_all();
+                self.notified.notify_waiters();
+                Ok(())
+            }
+            PasswordGateState::Waiting(_) => Err(PasswordDecisionResolutionError::PromptMismatch),
+            PasswordGateState::Resolved(_) => Err(PasswordDecisionResolutionError::AlreadyResolved),
+            PasswordGateState::Idle | PasswordGateState::Cancelled => {
+                Err(PasswordDecisionResolutionError::NoPendingPrompt)
+            }
+        }
+    }
+
+    fn wait_for_decision(&self, timeout: Duration) -> Option<String> {
+        let state = self
+            .state
+            .lock()
+            .expect("password gate lock is not poisoned");
+        let (mut state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| {
+                matches!(state, PasswordGateState::Waiting(_))
+            })
+            .expect("password gate lock is not poisoned");
+        let password = match &mut *state {
+            PasswordGateState::Resolved(password) => Some(std::mem::take(password)),
+            PasswordGateState::Idle
+            | PasswordGateState::Waiting(_)
+            | PasswordGateState::Cancelled => None,
+        };
+        *state = PasswordGateState::Idle;
+        self.notified.notify_waiters();
+        password
+    }
+
+    fn reject_pending(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("password gate lock is not poisoned");
+        if matches!(*state, PasswordGateState::Waiting(_)) {
+            *state = PasswordGateState::Cancelled;
+            self.changed.notify_all();
+            self.notified.notify_waiters();
+        }
+    }
+
+    async fn wait_for_decision_async(&self, timeout: Duration) -> Option<String> {
+        let password = tokio::time::timeout(timeout, async {
+            loop {
+                let notified = self.notified.notified();
+                {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .expect("password gate lock is not poisoned");
+                    match &mut *state {
+                        PasswordGateState::Resolved(password) => {
+                            return Some(std::mem::take(password))
+                        }
+                        PasswordGateState::Idle | PasswordGateState::Cancelled => return None,
+                        PasswordGateState::Waiting(_) => {}
+                    }
+                }
+                notified.await;
+            }
+        })
+        .await
+        .unwrap_or(None);
+        *self
+            .state
+            .lock()
+            .expect("password gate lock is not poisoned") = PasswordGateState::Idle;
+        self.changed.notify_all();
+        self.notified.notify_waiters();
+        password
+    }
+}
+
+/// Worker-only proof that a prompt has been emitted and may now be awaited.
+#[allow(dead_code)]
+struct PasswordDecisionWaiter {
+    prompt: festerm_session::PasswordPrompt,
+}
+
+#[allow(dead_code)]
+impl PasswordDecisionWaiter {
+    fn wait(self, gate: &PasswordDecisionGate, timeout: Duration) -> Option<String> {
+        gate.wait_for_decision(timeout)
+    }
+
+    async fn wait_async(self, gate: &PasswordDecisionGate, timeout: Duration) -> Option<String> {
+        gate.wait_for_decision_async(timeout).await
+    }
+}
+
 enum WorkerCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
@@ -2069,13 +2322,19 @@ struct SshWorkerFoundation {
     command_capacity: usize,
     event_receiver: Mutex<Receiver<SessionEvent>>,
     host_key_gate: Arc<HostKeyDecisionGate>,
+    password_gate: Arc<PasswordDecisionGate>,
 }
 
 impl SshWorkerFoundation {
     #[cfg(test)]
     fn new(
         profile: SshConnectionProfile,
-    ) -> (Self, WorkerCommandReceiver, HostKeyDecisionResolver) {
+    ) -> (
+        Self,
+        WorkerCommandReceiver,
+        HostKeyDecisionResolver,
+        PasswordDecisionResolver,
+    ) {
         Self::new_with_capacities(
             profile,
             DEFAULT_COMMAND_QUEUE_CAPACITY,
@@ -2089,7 +2348,12 @@ impl SshWorkerFoundation {
         command_capacity: usize,
         event_capacity: usize,
         event_notifier: Arc<dyn SessionEventNotifier>,
-    ) -> (Self, WorkerCommandReceiver, HostKeyDecisionResolver) {
+    ) -> (
+        Self,
+        WorkerCommandReceiver,
+        HostKeyDecisionResolver,
+        PasswordDecisionResolver,
+    ) {
         #[cfg(not(test))]
         let _ = profile;
         assert!(
@@ -2103,6 +2367,7 @@ impl SshWorkerFoundation {
         let (command_sender, command_receiver) = mpsc::sync_channel(command_capacity);
         let (event_sender, event_receiver) = mpsc::sync_channel(event_capacity);
         let host_key_gate = Arc::new(HostKeyDecisionGate::new());
+        let password_gate = Arc::new(PasswordDecisionGate::new());
         let shared = Arc::new(WorkerShared {
             id: SessionId::next(),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
@@ -2127,12 +2392,16 @@ impl SshWorkerFoundation {
                 command_capacity,
                 event_receiver: Mutex::new(event_receiver),
                 host_key_gate: Arc::clone(&host_key_gate),
+                password_gate: Arc::clone(&password_gate),
             },
             WorkerCommandReceiver {
                 receiver: command_receiver,
             },
             HostKeyDecisionResolver {
                 gate: host_key_gate,
+            },
+            PasswordDecisionResolver {
+                gate: password_gate,
             },
         )
     }
@@ -2356,8 +2625,54 @@ enum HostKeyVerificationRequestError {
     Resolution(HostKeyDecisionResolutionError),
 }
 
+/// Requests an interactive password prompt through `password_gate`,
+/// mirroring [`request_host_key_verification`]. `attempt` is 1-based;
+/// `previous_attempt_failed` lets the UI show `ssh`'s own "Permission
+/// denied, please try again." line above a retry.
+fn request_password_verification(
+    profile: &SshConnectionProfile,
+    shared: &WorkerShared,
+    password_gate: &PasswordDecisionGate,
+    attempt: u8,
+    previous_attempt_failed: bool,
+) -> Result<PasswordDecisionWaiter, PasswordVerificationRequestError> {
+    let prompt = festerm_session::PasswordPrompt::new(
+        profile.username(),
+        profile.identity.host(),
+        attempt,
+        previous_attempt_failed,
+    );
+    let waiter = password_gate
+        .begin(prompt.clone())
+        .map_err(PasswordVerificationRequestError::Resolution)?;
+    if shared.try_emit(SessionEvent::PasswordRequested(prompt.clone())) {
+        Ok(waiter)
+    } else {
+        let _ = password_gate.cancel(&prompt);
+        // No waiter escaped on this path, so reset the rejection before a
+        // future retry attempt reprompts.
+        let _ = password_gate.wait_for_decision(Duration::ZERO);
+        Err(PasswordVerificationRequestError::EventQueueFull)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
+enum PasswordVerificationRequestError {
+    EventQueueFull,
+    Resolution(PasswordDecisionResolutionError),
+}
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HOST_KEY_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long an interactive password prompt waits for the application to
+/// resolve it. Generous relative to [`HOST_KEY_DECISION_TIMEOUT`] since
+/// typing a password (unlike clicking Accept/Reject) can reasonably take a
+/// while.
+const PASSWORD_DECISION_TIMEOUT: Duration = Duration::from_secs(120);
+/// Maximum number of interactive password prompts on one connection before
+/// giving up, matching `ssh`'s own default `NumberOfPasswordPrompts`.
+pub const MAX_INTERACTIVE_PASSWORD_ATTEMPTS: u8 = 3;
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 /// Ordinary SSH liveness/keepalive cadence (ADR 0018): how often a running
@@ -2426,6 +2741,8 @@ pub struct SshSession {
     foundation: SshWorkerFoundation,
     host_key_resolver: HostKeyDecisionResolver,
     host_key_gate: Arc<HostKeyDecisionGate>,
+    password_resolver: PasswordDecisionResolver,
+    password_gate: Arc<PasswordDecisionGate>,
     completion_receiver: Mutex<Receiver<Result<ShutdownResult, SessionError>>>,
     completion: Mutex<Option<Result<ShutdownResult, SessionError>>>,
 }
@@ -2474,7 +2791,7 @@ impl SshSession {
         options: SshSessionOptions,
         event_notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, SshSessionStartError> {
-        let (foundation, command_receiver, host_key_resolver) =
+        let (foundation, command_receiver, host_key_resolver, password_resolver) =
             SshWorkerFoundation::new_with_capacities(
                 profile.clone(),
                 DEFAULT_COMMAND_QUEUE_CAPACITY,
@@ -2483,7 +2800,9 @@ impl SshSession {
             );
         let shared = Arc::clone(&foundation.shared);
         let host_key_gate = Arc::clone(&foundation.host_key_gate);
-        let worker_gate = Arc::clone(&host_key_gate);
+        let password_gate = Arc::clone(&foundation.password_gate);
+        let worker_host_key_gate = Arc::clone(&host_key_gate);
+        let worker_password_gate = Arc::clone(&password_gate);
         let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name(format!("festerm-ssh-{}", foundation.id()))
@@ -2501,7 +2820,8 @@ impl SshSession {
                             options.reconnect_policy(),
                             shared,
                             command_receiver,
-                            worker_gate,
+                            worker_host_key_gate,
+                            worker_password_gate,
                         ))
                     });
                 let _ = completion_sender.send(result);
@@ -2512,6 +2832,8 @@ impl SshSession {
             foundation,
             host_key_resolver,
             host_key_gate,
+            password_resolver,
+            password_gate,
             completion_receiver: Mutex::new(completion_receiver),
             completion: Mutex::new(None),
         })
@@ -2520,6 +2842,11 @@ impl SshSession {
     /// Returns a resolver for the current host-key verification request.
     pub fn host_key_decision_resolver(&self) -> HostKeyDecisionResolver {
         self.host_key_resolver.clone()
+    }
+
+    /// Returns a resolver for the current interactive password request.
+    pub fn password_decision_resolver(&self) -> PasswordDecisionResolver {
+        self.password_resolver.clone()
     }
 
     /// Returns whether this connected session can accept one reconnect request.
@@ -2623,6 +2950,7 @@ impl Session for SshSession {
 
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         self.host_key_gate.reject_pending();
+        self.password_gate.reject_pending();
         self.foundation.try_shutdown()
     }
 
@@ -2641,6 +2969,7 @@ impl Drop for SshSession {
         // Explicit `Session::shutdown` performs the caller-bounded wait. This
         // destructor only wakes the worker and never blocks application exit.
         self.host_key_gate.reject_pending();
+        self.password_gate.reject_pending();
         let _ = self.foundation.try_shutdown();
     }
 }
@@ -2685,6 +3014,13 @@ impl russh::client::Handler for SshClientHandler {
     }
 }
 
+/// Runs the worker's connection/reconnect loop for one session's lifetime.
+/// Bundling `host_key_gate`/`password_gate` into a shared struct isn't worth
+/// it here: every other worker helper (`wait_for_ssh_operation`,
+/// `process_commands_before_running`, `wait_for_manual_recovery`, ...)
+/// already threads `host_key_gate` alone, and this is the only site that
+/// additionally needs `password_gate`.
+#[allow(clippy::too_many_arguments)]
 async fn ssh_worker(
     profile: SshConnectionProfile,
     authentication: SshAuthentication,
@@ -2693,6 +3029,7 @@ async fn ssh_worker(
     shared: Arc<WorkerShared>,
     command_receiver: WorkerCommandReceiver,
     host_key_gate: Arc<HostKeyDecisionGate>,
+    password_gate: Arc<PasswordDecisionGate>,
 ) -> Result<ShutdownResult, SessionError> {
     let authentication = authentication.into_worker_authentication();
     let mut planner = reconnect_policy.map(ReconnectPlanner::new);
@@ -2717,6 +3054,7 @@ async fn ssh_worker(
             &shared,
             &command_receiver,
             &host_key_gate,
+            &password_gate,
         )
         .await
         {
@@ -3021,6 +3359,7 @@ async fn establish_connection(
     shared: &Arc<WorkerShared>,
     command_receiver: &WorkerCommandReceiver,
     host_key_gate: &Arc<HostKeyDecisionGate>,
+    password_gate: &Arc<PasswordDecisionGate>,
 ) -> ConnectionAttempt {
     if process_commands_before_running(command_receiver, shared, host_key_gate) {
         return ConnectionAttempt::Shutdown;
@@ -3140,6 +3479,61 @@ async fn establish_connection(
                 host_key_gate,
             )
             .await
+        }
+        WorkerAuthentication::Interactive => {
+            // No credential was supplied upfront: the host key has already
+            // been verified above (via `check_server_key`, exactly like any
+            // other credential), so this is the first moment a password is
+            // actually needed — matching `ssh`'s own ordering instead of
+            // collecting one blind before a connection even exists. A wrong
+            // password is retried in place, on this same connection, up to
+            // `MAX_INTERACTIVE_PASSWORD_ATTEMPTS`.
+            let mut attempt: u8 = 1;
+            let mut previous_attempt_failed = false;
+            loop {
+                let waiter = match request_password_verification(
+                    profile,
+                    shared,
+                    password_gate,
+                    attempt,
+                    previous_attempt_failed,
+                ) {
+                    Ok(waiter) => waiter,
+                    Err(_) => {
+                        let _ = stop_handle(handle, shared).await;
+                        return ConnectionAttempt::Shutdown;
+                    }
+                };
+                let mut password = match waiter
+                    .wait_async(password_gate, PASSWORD_DECISION_TIMEOUT)
+                    .await
+                {
+                    Some(password) => password,
+                    None => {
+                        let _ = stop_handle(handle, shared).await;
+                        return ConnectionAttempt::Shutdown;
+                    }
+                };
+                let result = wait_for_ssh_operation(
+                    handle.authenticate_password(profile.username(), &password),
+                    command_receiver,
+                    shared,
+                    host_key_gate,
+                )
+                .await;
+                password.zeroize();
+                let retry_exhausted = attempt >= MAX_INTERACTIVE_PASSWORD_ATTEMPTS;
+                match &result {
+                    WorkerWait::Completed(Ok(auth)) if auth.success() => break result,
+                    WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_))
+                        if !retry_exhausted =>
+                    {
+                        attempt += 1;
+                        previous_attempt_failed = true;
+                    }
+                    WorkerWait::Completed(_) | WorkerWait::Shutdown => break result,
+                }
+            }
         }
     };
 
@@ -4256,7 +4650,7 @@ mod tests {
 
     #[test]
     fn reconnect_request_queues_once_for_a_running_session() {
-        let (foundation, command_receiver, _) = SshWorkerFoundation::new(profile());
+        let (foundation, command_receiver, _, _) = SshWorkerFoundation::new(profile());
 
         assert_eq!(
             foundation.try_reconnect(),
@@ -4282,7 +4676,7 @@ mod tests {
         // ADR 0018: a plain session left `Disconnected` by an unintentional
         // transport loss must still accept exactly one explicit reconnect
         // request, the same as a still-`Running` session.
-        let (foundation, command_receiver, _) = SshWorkerFoundation::new(profile());
+        let (foundation, command_receiver, _, _) = SshWorkerFoundation::new(profile());
 
         foundation.set_disconnected();
         assert!(foundation.reconnect_available());
@@ -4304,7 +4698,7 @@ mod tests {
         // transport to probe once a session is `Disconnected` (ADR 0018
         // treats the probe and the recovery it may lead to as separate
         // steps): only `Running` is eligible.
-        let (foundation, _command_receiver, _) = SshWorkerFoundation::new(profile());
+        let (foundation, _command_receiver, _, _) = SshWorkerFoundation::new(profile());
 
         assert_eq!(
             foundation.try_check_liveness(),
@@ -4323,7 +4717,7 @@ mod tests {
 
     #[test]
     fn liveness_check_coalesces_a_single_pending_request() {
-        let (foundation, _command_receiver, _) = SshWorkerFoundation::new(profile());
+        let (foundation, _command_receiver, _, _) = SshWorkerFoundation::new(profile());
         foundation.set_running();
 
         assert_eq!(foundation.try_check_liveness(), Ok(()));
@@ -4664,7 +5058,7 @@ mod tests {
 
     #[test]
     fn worker_command_queue_is_bounded_and_rejects_large_input() {
-        let (worker, receiver, _) = SshWorkerFoundation::new_with_capacities(
+        let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
             profile(),
             2,
             4,
@@ -4715,7 +5109,7 @@ mod tests {
 
     #[test]
     fn worker_rejects_input_and_resize_while_reconnecting() {
-        let (worker, receiver, _) = SshWorkerFoundation::new_with_capacities(
+        let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
             profile(),
             2,
             4,
@@ -4741,7 +5135,7 @@ mod tests {
     #[test]
     fn worker_events_update_lifecycle_metrics_and_notifier() {
         let notifier = Arc::new(CountingNotifier::default());
-        let (worker, _receiver, _) =
+        let (worker, _receiver, _, _) =
             SshWorkerFoundation::new_with_capacities(profile(), 2, 4, notifier.clone());
         let id = worker.id();
         assert_eq!(worker.lifecycle(), SessionLifecycle::Starting);
@@ -4783,7 +5177,7 @@ mod tests {
 
     #[test]
     fn host_key_gate_accepts_only_explicit_resolutions() {
-        let (worker, _receiver, resolver) = SshWorkerFoundation::new(profile());
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
         let waiter = worker
             .request_host_key_verification("SHA256:abcDef012+/")
             .unwrap();
@@ -4809,7 +5203,7 @@ mod tests {
 
     #[test]
     fn stale_host_key_decision_cannot_approve_a_later_prompt() {
-        let (worker, _receiver, resolver) = SshWorkerFoundation::new(profile());
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
         let expired = worker
             .request_host_key_verification("SHA256:expired")
             .unwrap();
@@ -4837,7 +5231,7 @@ mod tests {
 
     #[test]
     fn host_key_gate_rejects_missing_timeout_cancel_and_invalid_resolutions() {
-        let (worker, _receiver, resolver) = SshWorkerFoundation::new(profile());
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
         assert_eq!(
             resolver.resolve(
                 &festerm_session::HostKeyPrompt::new("example.com", 22, "SHA256:missing"),
@@ -4885,7 +5279,7 @@ mod tests {
 
     #[test]
     fn host_key_prompt_is_rejected_when_the_bounded_event_queue_is_full() {
-        let (worker, _receiver, resolver) = SshWorkerFoundation::new_with_capacities(
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new_with_capacities(
             profile(),
             1,
             1,
@@ -4921,7 +5315,7 @@ mod tests {
 
     #[test]
     fn handler_accepts_only_resolved_host_key_decisions() {
-        let (worker, _receiver, resolver) = SshWorkerFoundation::new(profile());
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
         let public_key = russh::keys::PublicKey::from_openssh(
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
         )

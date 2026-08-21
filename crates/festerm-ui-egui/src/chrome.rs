@@ -895,6 +895,14 @@ fn paint_chip(
             // sitting flush at the top like every other chip.
             ui.set_min_size(outer_rect.size());
             ui.add_space(3.0);
+            // Reserve the close button's width (if shown) so both the
+            // primary label and the secondary line truncate before
+            // reaching under it, without otherwise affecting either
+            // line's left-aligned position. Shared across both lines so a
+            // long secondary line (e.g. "Awaiting SSH password") can't run
+            // under the button the way the primary label used to before
+            // this was hoisted out of the primary-only closure below.
+            let reserved = close_rect.map_or(0.0, |rect| outer_rect.right() - rect.left());
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 if !matches!(chip.status, ChipStatus::Neutral) {
@@ -904,10 +912,6 @@ fn paint_chip(
                 let rename_id = rename_buffer_id(chip.id);
                 let editing: Option<String> = ui.data(|d| d.get_temp(rename_id));
 
-                // Reserve the close button's width (if shown) so the
-                // label truncates before reaching under it, without
-                // otherwise affecting the label's left-aligned position.
-                let reserved = close_rect.map_or(0.0, |rect| outer_rect.right() - rect.left());
                 ui.scope(|ui| {
                     let max_width = (ui.available_width() - reserved).max(0.0);
                     ui.set_max_width(max_width);
@@ -923,18 +927,22 @@ fn paint_chip(
                     } else {
                         22.0
                     });
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(secondary).color(CHIP_SECONDARY_TEXT).small(),
-                        )
-                        // Chip text is identity/navigation chrome, not
-                        // selectable document content: without this, egui's
-                        // default `selectable_labels` style makes the whole
-                        // chip show a text (I-beam) hover cursor instead of
-                        // the plain arrow a clickable chip should have.
-                        .selectable(false)
-                        .truncate(),
-                    );
+                    ui.scope(|ui| {
+                        let max_width = (ui.available_width() - reserved).max(0.0);
+                        ui.set_max_width(max_width);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(secondary).color(CHIP_SECONDARY_TEXT).small(),
+                            )
+                            // Chip text is identity/navigation chrome, not
+                            // selectable document content: without this, egui's
+                            // default `selectable_labels` style makes the whole
+                            // chip show a text (I-beam) hover cursor instead of
+                            // the plain arrow a clickable chip should have.
+                            .selectable(false)
+                            .truncate(),
+                        );
+                    });
                 });
             }
             ui.add_space(4.0);
@@ -1363,6 +1371,35 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::Close(ChipId(2))));
+    }
+
+    #[test]
+    fn chip_secondary_line_stays_clear_of_the_close_button() {
+        // Regression test: the secondary line (e.g. "Awaiting SSH
+        // password") used to lay out at the chip's full width, unaware
+        // that the primary line above it was reserving space for the
+        // close button, so a long secondary string could visually run
+        // under/behind the close button instead of truncating before it.
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![ChipViewModel {
+                secondary: Some("Awaiting SSH password authentication".to_owned()),
+                ..chip(1, "one")
+            }],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        let close_rect = harness.get_by_label("Close").rect();
+        let secondary_rect = harness
+            .get_by_label_contains("Awaiting SSH password")
+            .rect();
+        assert!(
+            secondary_rect.right() <= close_rect.left() + 1.0,
+            "expected the secondary line ({secondary_rect:?}) to stay clear of the close \
+             button ({close_rect:?})"
+        );
     }
 
     #[test]

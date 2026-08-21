@@ -80,7 +80,19 @@ pub fn install_terminal_fonts(context: &egui::Context) {
     });
 }
 
-pub(crate) fn terminal_fonts_installed(context: &egui::Context) -> bool {
+/// The terminal view's default font size in points, shared with chrome that
+/// must visually match the terminal at its un-zoomed size (e.g. pty-styled
+/// prompts rendered before a session has a live terminal view yet).
+pub const DEFAULT_TERMINAL_FONT_SIZE: f32 = 14.0;
+
+/// Returns the `FontId` for the bundled regular terminal face at the given
+/// point size, for chrome (e.g. pty-styled prompts) that must visually match
+/// the real terminal view rather than the application's UI font.
+pub fn terminal_font(size_points: f32) -> egui::FontId {
+    egui::FontId::new(size_points, FontFamily::Name(REGULAR_FAMILY.into()))
+}
+
+pub fn terminal_fonts_installed(context: &egui::Context) -> bool {
     context.data(|data| {
         data.get_temp::<bool>(egui::Id::new(INSTALLATION_MARKER))
             .unwrap_or(false)

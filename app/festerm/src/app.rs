@@ -13,6 +13,7 @@ use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
 use festerm_secret_store::{native_store, SecretStore, SecretStoreError};
+use festerm_session::HostKeyPrompt;
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
@@ -408,9 +409,7 @@ impl FesTermApp {
         let close_label = match self.state.active_tab().content {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
-            TabContent::SshAuthenticationRequired(_)
-            | TabContent::SshPasswordPrompt(_)
-            | TabContent::Session(_) => "Close Session",
+            TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => "Close Session",
         };
         self.native_menu.update(
             close_label,
@@ -1247,9 +1246,9 @@ impl FesTermApp {
             label: match &self.state.active_tab().content {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
-                TabContent::SshAuthenticationRequired(_)
-                | TabContent::SshPasswordPrompt(_)
-                | TabContent::Session(_) => "Close Session…".to_owned(),
+                TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => {
+                    "Close Session…".to_owned()
+                }
             },
             hint: None,
         });
@@ -1264,14 +1263,6 @@ impl FesTermApp {
                         tab.profile.host(),
                         tab.profile.port()
                     )),
-                ),
-                TabContent::SshPasswordPrompt(prompt) => (
-                    format!(
-                        "{}@{}",
-                        prompt.profile.username(),
-                        prompt.profile.identity().host()
-                    ),
-                    Some("Awaiting SSH password".to_owned()),
                 ),
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
@@ -1638,15 +1629,6 @@ impl FesTermApp {
                         )),
                         ChipStatus::Neutral,
                     ),
-                    TabContent::SshPasswordPrompt(prompt) => (
-                        format!(
-                            "{}@{}",
-                            prompt.profile.username(),
-                            prompt.profile.identity().host()
-                        ),
-                        Some("Awaiting SSH password".to_owned()),
-                        ChipStatus::Starting,
-                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = (!dynamic_title.is_empty())
@@ -1767,8 +1749,7 @@ impl FesTermApp {
         let (dimensions, system, status, status_label) = match &self.state.active_tab().content {
             TabContent::Launcher
             | TabContent::Settings
-            | TabContent::SshAuthenticationRequired(_)
-            | TabContent::SshPasswordPrompt(_) => (None, None, ChipStatus::Neutral, ""),
+            | TabContent::SshAuthenticationRequired(_) => (None, None, ChipStatus::Neutral, ""),
             TabContent::Session(session) => {
                 let status = session.chip_status();
                 (
@@ -1796,43 +1777,79 @@ impl FesTermApp {
             });
     }
 
-    /// Shows the M7 host-trust decision only for the active SSH tab. The
-    /// returned command is dispatched after UI construction, so clicking a
-    /// control only signals the SSH worker and never waits for network I/O on
+    /// Shows the openssh-style host-key verification prompt only for the
+    /// active SSH tab, rendered pty-styled (monospace, terminal background)
+    /// in place of the terminal content — there is no real PTY output yet at
+    /// this point in the connection — with keyboard-driven `[y/N]` capture
+    /// instead of buttons, mirroring `ssh`'s own
+    /// "Are you sure you want to continue connecting (yes/no)?" prompt. The
+    /// returned command is dispatched after UI construction, so pressing a
+    /// key only signals the SSH worker and never waits for network I/O on
     /// the GUI thread.
-    fn show_host_key_prompt(&self, ui: &mut egui::Ui) -> Option<AppCommand> {
-        let tab = self.state.active_tab();
-        let TabContent::Session(session) = &tab.content else {
+    fn show_host_key_prompt_ui(
+        ui: &mut egui::Ui,
+        tab_id: TabId,
+        prompt: &HostKeyPrompt,
+    ) -> Option<AppCommand> {
+        if !festerm_ui_egui::terminal_fonts_installed(ui.ctx()) {
+            // Mirrors `TerminalView`'s own guard: the named terminal font
+            // family only becomes usable after egui rebuilds its atlas at
+            // the next pass boundary, so skip laying out text with it here.
+            festerm_ui_egui::install_terminal_fonts(ui.ctx());
+            ui.ctx().request_repaint();
             return None;
-        };
-        let prompt = session.host_key_prompt()?;
+        }
         let host_port = Self::canonical_host_port(prompt.host(), prompt.port());
         let fingerprint = prompt.sha256_fingerprint();
         let mut decision = None;
+        let font = festerm_ui_egui::terminal_font(festerm_ui_egui::DEFAULT_TERMINAL_FONT_SIZE);
+        let mono = |text: String, color: egui::Color32| {
+            egui::RichText::new(text).font(font.clone()).color(color)
+        };
 
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.heading("Verify SSH Host Key");
-            ui.label("Verify this host before connecting:");
-            ui.horizontal(|ui| {
-                ui.label("Host:");
-                ui.monospace(&host_port);
+        egui::Frame::new()
+            .fill(theme::SURFACE_TERMINAL)
+            .inner_margin(egui::Margin::same(16))
+            .show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                ui.label(mono(
+                    format!("The authenticity of host '{host_port}' can't be established."),
+                    theme::TEXT_PRIMARY,
+                ));
+                ui.label(mono(
+                    format!("ED25519 key fingerprint is {fingerprint}."),
+                    theme::TEXT_PRIMARY,
+                ));
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(mono(
+                        "Are you sure you want to continue connecting (yes/no)? [y/N] ".to_owned(),
+                        theme::TEXT_PRIMARY,
+                    ));
+                    ui.label(mono(
+                        screens::pty_cursor_glyph(ui).to_owned(),
+                        theme::TEXT_PRIMARY,
+                    ));
+                });
             });
-            ui.horizontal(|ui| {
-                ui.label("SHA-256 fingerprint:");
-                ui.monospace(fingerprint);
-            });
-            ui.horizontal(|ui| {
-                if ui.button("Reject").clicked() {
-                    decision = Some(HostKeyTrustDecision::Reject);
-                }
-                if ui.button("Accept Once").clicked() {
-                    decision = Some(HostKeyTrustDecision::AcceptOnce);
-                }
-            });
+
+        // Keyboard-driven, matching the "feel" of a real pty prompt: no
+        // terminal view is shown this frame to compete for these keys, so
+        // consuming them here is sufficient to capture input without a
+        // dedicated focus target.
+        ui.ctx().input_mut(|input| {
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::Y) {
+                decision = Some(HostKeyTrustDecision::AcceptOnce);
+            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::N)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+            {
+                decision = Some(HostKeyTrustDecision::Reject);
+            }
         });
 
         decision.map(|decision| AppCommand::ResolveHostKeyTrust {
-            tab: tab.id,
+            tab: tab_id,
             decision,
         })
     }
@@ -1852,7 +1869,7 @@ impl eframe::App for FesTermApp {
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
-        self.state.reprompt_rejected_ssh_passwords();
+        self.state.reprompt_rejected_ssh_passwords(context);
         self.update_window_title(context);
         if let Some(smoke) = self.native_smoke.as_mut() {
             if let Some(primary_tab) = self.primary_tab {
@@ -1946,7 +1963,6 @@ impl FesTermApp {
             }
         }
 
-        let host_key_command = self.show_host_key_prompt(ui);
         let content_rect = ui.available_rect_before_wrap();
         // Intercept outside pointer-button events before TerminalView reads
         // them. A foreground Area can paint above the terminal, but it cannot
@@ -2008,24 +2024,33 @@ impl FesTermApp {
                         native_store_available,
                     );
                 }
-                TabContent::SshPasswordPrompt(prompt) => {
-                    screen_command = screens::show_ssh_password_prompt(ui, active_tab_id, prompt);
-                }
                 TabContent::Session(session) => {
-                    let options = festerm_ui_egui::TerminalViewOptions {
-                        paste_available: session.accepts_input(),
-                        terminal_input_enabled: !self.overlays.blocks_terminal_input()
-                            && !self.palette.is_open(),
-                        keyboard_input_enabled: session.accepts_typed_input(),
-                        defer_paste_to_application: true,
-                    };
-                    session.view.show_with_options(
-                        ui,
-                        &mut session.terminal,
-                        &mut session.controller,
-                        options,
-                    );
-                    deferred_pastes = session.view.take_paste_requests();
+                    let host_key_prompt = session.host_key_prompt().cloned();
+                    let password_prompt = host_key_prompt
+                        .is_none()
+                        .then(|| session.password_prompt().cloned())
+                        .flatten();
+                    if let Some(prompt) = &host_key_prompt {
+                        screen_command = Self::show_host_key_prompt_ui(ui, active_tab_id, prompt);
+                    } else if let Some(prompt) = &password_prompt {
+                        screen_command =
+                            screens::show_ssh_live_password_prompt(ui, active_tab_id, prompt);
+                    } else {
+                        let options = festerm_ui_egui::TerminalViewOptions {
+                            paste_available: session.accepts_input(),
+                            terminal_input_enabled: !self.overlays.blocks_terminal_input()
+                                && !self.palette.is_open(),
+                            keyboard_input_enabled: session.accepts_typed_input(),
+                            defer_paste_to_application: true,
+                        };
+                        session.view.show_with_options(
+                            ui,
+                            &mut session.terminal,
+                            &mut session.controller,
+                            options,
+                        );
+                        deferred_pastes = session.view.take_paste_requests();
+                    }
                     session
                         .controller
                         .observe_resize_probe_terminal_state(&session.terminal);
@@ -2057,10 +2082,6 @@ impl FesTermApp {
                 )
             })
             .flatten();
-        if let Some(command) = host_key_command {
-            let context = ui.ctx().clone();
-            self.state.dispatch(command, &context);
-        }
         if let Some(action) = inspector_action {
             let context = ui.ctx().clone();
             match action {
@@ -2121,9 +2142,6 @@ impl FesTermApp {
                         self.state
                             .dispatch(AppCommand::ToggleSessionInspector, &context);
                     }
-                }
-                OverlayAction::CloseTab => {
-                    self.request_close_tab(active_tab_id, &context);
                 }
             }
         }

@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
-    FlowDirection, HostKeyPrompt, Session, SessionError, SessionEvent, SessionLifecycle,
-    SessionSendError, SessionTryReceiveError, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY,
-    MAX_IO_CHUNK_BYTES,
+    FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError, SessionEvent,
+    SessionLifecycle, SessionSendError, SessionTryReceiveError, TerminalSize,
+    DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use festerm_ui_egui::{
     EncodedInputSink, InputRoute, InputSinkDiagnostics, TERMINAL_RESIZE_DEBOUNCE,
@@ -318,6 +318,7 @@ pub struct SessionController<S: Session> {
     last_error: Option<String>,
     last_backpressure: Option<FlowDirection>,
     host_key_prompt: Option<HostKeyPrompt>,
+    password_prompt: Option<PasswordPrompt>,
     last_resize: Option<TerminalSize>,
     resize_probe: ResizeProbe,
 }
@@ -348,6 +349,7 @@ impl<S: Session> SessionController<S> {
             last_error: None,
             last_backpressure: None,
             host_key_prompt: None,
+            password_prompt: None,
             last_resize: None,
             resize_probe: ResizeProbe::default(),
         }
@@ -374,6 +376,7 @@ impl<S: Session> SessionController<S> {
             last_error: None,
             last_backpressure: None,
             host_key_prompt: None,
+            password_prompt: None,
             last_resize: None,
             resize_probe: ResizeProbe::default(),
         }
@@ -424,6 +427,26 @@ impl<S: Session> SessionController<S> {
     pub fn clear_host_key_prompt(&mut self, prompt: &HostKeyPrompt) -> bool {
         if self.host_key_prompt.as_ref() == Some(prompt) {
             self.host_key_prompt = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the current interactive password decision request, if any.
+    pub fn password_prompt(&self) -> Option<&PasswordPrompt> {
+        self.password_prompt.as_ref()
+    }
+
+    /// Clears `prompt` only when it is still the current password request.
+    ///
+    /// Mirrors [`Self::clear_host_key_prompt`]: resolution happens through
+    /// the SSH session owner, and this state transition keeps an
+    /// already-resolved request from lingering in the UI while a later
+    /// request is allowed to replace it.
+    pub fn clear_password_prompt(&mut self, prompt: &PasswordPrompt) -> bool {
+        if self.password_prompt.as_ref() == Some(prompt) {
+            self.password_prompt = None;
             true
         } else {
             false
@@ -493,6 +516,9 @@ impl<S: Session> SessionController<S> {
             }
             SessionEvent::HostKeyVerification(prompt) => {
                 self.host_key_prompt = Some(prompt);
+            }
+            SessionEvent::PasswordRequested(prompt) => {
+                self.password_prompt = Some(prompt);
             }
             SessionEvent::Error(error) => self.record_session_error(error),
             SessionEvent::Output(_) => {}

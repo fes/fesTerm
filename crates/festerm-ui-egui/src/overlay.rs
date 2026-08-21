@@ -16,16 +16,14 @@ use egui::{Align2, Area, Context, Frame, Order, RichText};
 
 use crate::chrome::ChipStatus;
 
-/// Actions a user can take from the connection overlay. Both map onto
-/// existing, already-implemented application commands (there is no
-/// session-restart/retry backend capability yet — see the tracking issue
-/// filed for that gap).
+/// Actions a user can take from the connection overlay. There is no
+/// close-tab action here: the established pattern for dismissing a tab is
+/// the chip's own close ("×") button, not a redundant control duplicated
+/// into every overlay.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayAction {
     /// Opens (or focuses) the session inspector for lifecycle/error detail.
     OpenDiagnostics,
-    /// Closes the affected tab.
-    CloseTab,
 }
 
 /// Returns `true` if `status` warrants a viewport overlay. Nominal states
@@ -56,37 +54,17 @@ pub fn show(ctx: &Context, status: ChipStatus) -> Option<OverlayAction> {
         .interactable(true)
         .show(ctx, |ui| {
             Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_max_width(360.0);
+                ui.set_max_width(220.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new(status.accessible_label()).strong());
-                    ui.label(RichText::new(reconnect_message(status)).small().weak());
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("View Diagnostics").clicked() {
-                            action = Some(OverlayAction::OpenDiagnostics);
-                        }
-                        if ui.button("Close Tab").clicked() {
-                            action = Some(OverlayAction::CloseTab);
-                        }
-                    });
+                    ui.label(RichText::new(status.accessible_label()).strong().small());
+                    ui.add_space(4.0);
+                    if ui.button("Open Diagnostics").clicked() {
+                        action = Some(OverlayAction::OpenDiagnostics);
+                    }
                 });
             });
         });
     action
-}
-
-/// A short, session-agnostic explanation for each non-nominal state. Kept
-/// generic because no per-session diagnostic text is threaded into this
-/// pure-presentation module; the inspector shows the detailed line.
-const fn reconnect_message(status: ChipStatus) -> &'static str {
-    match status {
-        ChipStatus::Reconnecting => "Attempting to restore the connection.",
-        ChipStatus::AuthRequired => "Authentication is required to continue.",
-        ChipStatus::Failed => "The session could not continue running.",
-        ChipStatus::Disconnected => "The connection has been lost.",
-        ChipStatus::Exited => "The session has exited.",
-        ChipStatus::Connected | ChipStatus::Starting | ChipStatus::Neutral => "",
-    }
 }
 
 #[cfg(test)]
@@ -117,31 +95,21 @@ mod tests {
             let mut harness = harness(status);
             harness.run();
             assert!(
-                harness.query_by_label("View Diagnostics").is_none(),
+                harness.query_by_label("Open Diagnostics").is_none(),
                 "unexpected overlay for {status:?}"
             );
         }
     }
 
     #[test]
-    fn failed_state_shows_an_overlay_with_both_actions() {
+    fn failed_state_shows_an_overlay_with_the_diagnostics_action() {
         let mut harness = harness(ChipStatus::Failed);
         harness.run();
 
         assert!(harness.get_by_label_contains("Failed").rect().width() > 0.0);
-        harness.get_by_label("View Diagnostics").click();
+        harness.get_by_label("Open Diagnostics").click();
         harness.run();
         assert_eq!(*harness.state(), Some(OverlayAction::OpenDiagnostics));
-    }
-
-    #[test]
-    fn clicking_close_tab_reports_that_action() {
-        let mut harness = harness(ChipStatus::Disconnected);
-        harness.run();
-
-        harness.get_by_label("Close Tab").click();
-        harness.run();
-        assert_eq!(*harness.state(), Some(OverlayAction::CloseTab));
     }
 
     #[test]
@@ -154,7 +122,7 @@ mod tests {
             let mut harness = harness(status);
             harness.run();
             assert!(
-                harness.query_by_label("Close Tab").is_some(),
+                harness.query_by_label("Open Diagnostics").is_some(),
                 "expected overlay for {status:?}"
             );
         }
