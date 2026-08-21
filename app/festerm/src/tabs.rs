@@ -31,8 +31,9 @@ use festerm_session::{
     TerminalSize,
 };
 use festerm_ssh::{
-    HostKeyDecisionResolutionError, HostTrustDecision, SshAuthentication, SshConnectionProfile,
-    SshLivenessCheckError, SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
+    HostKeyDecisionResolutionError, HostTrustDecision, SessionStrategy, SshAuthentication,
+    SshConnectionProfile, SshLivenessCheckError, SshReconnectError, SshSession, SshSessionOptions,
+    SshSessionStartError,
 };
 use festerm_ui_egui::{
     chrome::{ChipLayout, ChipStatus},
@@ -280,7 +281,21 @@ pub enum InspectorTransport {
         username: String,
         host: String,
         port: u16,
+        /// The durable remote-session provider and name this connection
+        /// attaches to or creates, if any (ADR 0018). `None` means this is
+        /// an ordinary manual-recovery plain shell. This drives the
+        /// Reconnect-vs-Resume language distinction in application chrome;
+        /// it is presentation metadata only and never itself a live process
+        /// or connection handle.
+        persistence: Option<InspectorPersistence>,
     },
+}
+
+/// Non-secret durable-session facts surfaced to application chrome.
+#[derive(Clone)]
+pub struct InspectorPersistence {
+    pub provider_label: &'static str,
+    pub session_name: String,
 }
 
 /// A restored SSH workspace surface that deliberately has no live session.
@@ -384,10 +399,21 @@ impl SessionTab {
             profile.identity().host(),
             profile.identity().port()
         ));
+        let persistence = match options.strategy() {
+            SessionStrategy::PlainShell => None,
+            SessionStrategy::Persistent {
+                provider,
+                session_name,
+            } => Some(InspectorPersistence {
+                provider_label: provider.label(),
+                session_name: session_name.as_str().to_owned(),
+            }),
+        };
         let inspector_transport = InspectorTransport::Ssh {
             username: profile.username().to_owned(),
             host: profile.identity().host().to_owned(),
             port: profile.identity().port(),
+            persistence,
         };
         let result = SshSession::start_with_notifier_and_options(
             profile,
@@ -1759,6 +1785,7 @@ mod tests {
                 username: "test-user".to_owned(),
                 host: "example.invalid".to_owned(),
                 port: 22,
+                persistence: None,
             },
         );
 

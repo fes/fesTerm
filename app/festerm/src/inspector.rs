@@ -14,6 +14,7 @@ const DESKTOP_INSET: f32 = 8.0;
 const NARROW_THRESHOLD: f32 = 480.0;
 const NARROW_HORIZONTAL_MARGIN: f32 = 16.0;
 
+#[derive(Clone)]
 pub enum TransportFacts<'a> {
     Local,
     Ssh {
@@ -23,6 +24,7 @@ pub enum TransportFacts<'a> {
     },
 }
 
+#[derive(Clone)]
 pub struct InspectorContent<'a> {
     pub subject_id: u64,
     pub identity: &'a str,
@@ -37,6 +39,18 @@ pub struct InspectorContent<'a> {
     pub trust_fingerprint: Option<&'a str>,
     pub diagnostics: &'a str,
     pub reconnect_available: bool,
+    /// The durable remote-session provider and name this SSH connection
+    /// attaches to or creates, if any (ADR 0018). `None` for local sessions
+    /// and for ordinary manual-recovery plain SSH shells; drives the
+    /// Reconnect-vs-Resume language distinction below.
+    pub persistent_session: Option<PersistentSessionFacts<'a>>,
+}
+
+/// Non-secret durable-session facts surfaced in the Session Inspector.
+#[derive(Clone, Copy)]
+pub struct PersistentSessionFacts<'a> {
+    pub provider_label: &'a str,
+    pub session_name: &'a str,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -192,9 +206,24 @@ pub fn show(
                                 fact(ui, "SHA-256 fingerprint", fingerprint, true);
                             }
 
+                            if let Some(persistence) = content.persistent_session {
+                                section_heading(ui, "Durable session");
+                                fact(ui, "Provider", persistence.provider_label, false);
+                                fact(ui, "Session name", persistence.session_name, true);
+                            }
+
                             if content.reconnect_available {
                                 section_heading(ui, "Actions");
-                                if ui.button("Reconnect").clicked() {
+                                // ADR 0018: a plain shell only gets a fresh
+                                // transport ("Reconnect"); a durable-session
+                                // profile reattaches to remote state that
+                                // outlives the transport ("Resume").
+                                let label = if content.persistent_session.is_some() {
+                                    "Resume"
+                                } else {
+                                    "Reconnect"
+                                };
+                                if ui.button(label).clicked() {
                                     action = Some(InspectorAction::Reconnect);
                                 }
                             }
@@ -245,6 +274,7 @@ fn fact(ui: &mut egui::Ui, label: &str, value: &str, selectable: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
 
     #[test]
     fn desktop_overlay_is_exactly_320_points_with_eight_point_insets() {
@@ -262,5 +292,63 @@ mod tests {
         let overlay = overlay_rect(content);
         assert_eq!(overlay.left() - content.left(), 16.0);
         assert_eq!(content.right() - overlay.right(), 16.0);
+    }
+
+    fn base_content(subject_id: u64) -> InspectorContent<'static> {
+        InspectorContent {
+            subject_id,
+            identity: "test-user@example.invalid",
+            type_label: "SSH",
+            state: "Connected",
+            state_message: None,
+            state_color: Color32::WHITE,
+            grid: None,
+            terminal_title: None,
+            profile: None,
+            transport: TransportFacts::Ssh {
+                username: "test-user",
+                host: "example.invalid",
+                port: 22,
+            },
+            trust_fingerprint: None,
+            diagnostics: "",
+            reconnect_available: true,
+            persistent_session: None,
+        }
+    }
+
+    fn harness_for(content: InspectorContent<'static>) -> Harness<'static, ()> {
+        Harness::builder()
+            .with_size(egui::vec2(760.0, 480.0))
+            .build_ui(move |ui| {
+                let content_rect = ui.max_rect();
+                show(ui.ctx(), content_rect, content.clone(), false);
+            })
+    }
+
+    #[test]
+    fn a_plain_shell_offers_reconnect_and_no_durable_session_facts() {
+        let mut harness = harness_for(base_content(1));
+        harness.run();
+
+        harness.get_by_label("Reconnect");
+        assert!(harness.query_by_label("Resume").is_none());
+        assert!(harness.query_by_label("DURABLE SESSION").is_none());
+    }
+
+    #[test]
+    fn a_persistent_strategy_offers_resume_and_shows_durable_session_facts() {
+        let mut content = base_content(2);
+        content.persistent_session = Some(PersistentSessionFacts {
+            provider_label: "tmux",
+            session_name: "build",
+        });
+        let mut harness = harness_for(content);
+        harness.run();
+
+        harness.get_by_label("Resume");
+        assert!(harness.query_by_label("Reconnect").is_none());
+        harness.get_by_label("DURABLE SESSION");
+        harness.get_by_label("build");
     }
 }

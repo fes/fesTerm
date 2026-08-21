@@ -1676,11 +1676,22 @@ impl FesTermApp {
                 username,
                 host,
                 port,
+                ..
             } => TransportFacts::Ssh {
                 username,
                 host,
                 port: *port,
             },
+        };
+        let persistent_session = match &session.inspector_transport {
+            InspectorTransport::Ssh {
+                persistence: Some(persistence),
+                ..
+            } => Some(crate::inspector::PersistentSessionFacts {
+                provider_label: persistence.provider_label,
+                session_name: &persistence.session_name,
+            }),
+            InspectorTransport::Local | InspectorTransport::Ssh { .. } => None,
         };
         let type_label = match session.inspector_transport {
             InspectorTransport::Local => "Local shell",
@@ -1697,7 +1708,11 @@ impl FesTermApp {
             }),
             ChipStatus::Disconnected => Some("The connection has been lost."),
             ChipStatus::Exited => Some("The session has exited."),
-            ChipStatus::Reconnecting => Some("Attempting to reconnect to the host."),
+            ChipStatus::Reconnecting => Some(if persistent_session.is_some() {
+                "Attempting to resume the durable remote session."
+            } else {
+                "Attempting to reconnect to the host."
+            }),
             ChipStatus::AuthRequired => Some("Authentication is required to continue."),
             ChipStatus::Starting | ChipStatus::Connected | ChipStatus::Neutral => None,
         };
@@ -1720,6 +1735,7 @@ impl FesTermApp {
                     .map(|prompt| prompt.sha256_fingerprint()),
                 diagnostics: &diagnostics,
                 reconnect_available: session.reconnect_available(),
+                persistent_session,
             },
             close_requested,
         )
