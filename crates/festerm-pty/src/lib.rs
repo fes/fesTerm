@@ -1296,8 +1296,17 @@ mod tests {
     /// directory as the test executable.  The test executable itself lives in
     /// `target/{profile}/deps/`, so we walk up one level when necessary.
     ///
-    /// Run `cargo test --workspace` (or `cargo build -p festerm-pty-test-child`
-    /// first) to ensure the binary exists before running these tests.
+    /// `festerm-pty-test-child` is a subprocess dependency of these tests,
+    /// not a linked (`[dev-dependencies]`) one -- it is a bin-only crate, and
+    /// Cargo has no build-graph edge to force it to finish building before
+    /// this package's own tests start running. `cargo test --workspace`
+    /// pipelines package builds and test runs, so it may start these tests
+    /// while that unrelated package is still linking, especially under CI's
+    /// noisier, more contended build parallelism (this was observed causing
+    /// intermittent failures here). If the binary isn't there yet, build it
+    /// on demand instead of assuming a race-free ordering; Cargo's own
+    /// target-directory locking makes this safe to call even if that
+    /// package's own build is still in flight elsewhere.
     #[cfg(any(unix, windows))]
     fn test_child_path() -> std::path::PathBuf {
         let mut path = std::env::current_exe()
@@ -1314,10 +1323,24 @@ mod tests {
             "festerm-pty-test-child"
         };
         path.push(name);
+        if !path.exists() {
+            static BUILD_ON_DEMAND: std::sync::Once = std::sync::Once::new();
+            BUILD_ON_DEMAND.call_once(|| {
+                let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+                let status = std::process::Command::new(cargo)
+                    .args(["build", "--package", "festerm-pty-test-child"])
+                    .status();
+                assert!(
+                    matches!(status, Ok(status) if status.success()),
+                    "on-demand `cargo build --package festerm-pty-test-child` failed: {status:?}"
+                );
+            });
+        }
         assert!(
             path.exists(),
-            "festerm-pty-test-child not found at {path:?}; \
-             run `cargo build -p festerm-pty-test-child` or `cargo test --workspace`"
+            "festerm-pty-test-child not found at {path:?} even after an \
+             on-demand build; run `cargo build -p festerm-pty-test-child` \
+             manually and re-run these tests"
         );
         path
     }
