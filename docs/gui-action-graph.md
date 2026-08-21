@@ -140,7 +140,7 @@ stateDiagram-v2
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `LAUNCH-01` | `K1 → K1` | Up/Down through implemented choices. | Highlight follows one compact column in logical order; semantic icon, primary label, and one factual secondary line remain aligned. | Return highlight to Local with Up/Home or rebuild `K1`. | H,N,U |
-| `LAUNCH-02` | `K1 → SshDestination` | Activate SSH. | Same Launcher chip shows focused host/port/username only; port defaults to 22; no dimensions, TERM, password, or unsupported auth controls. | `LAUNCH-03`. | H,V,N,U |
+| `LAUNCH-02` | `K1 → SshDestination` | Activate SSH. | Same Launcher chip shows only Username, Host, then Port (labeled "Port (default: 22)") in that order, with initial keyboard focus on Username; no dimensions, TERM, password, or unsupported auth controls. | `LAUNCH-03`. | H,V,N,U |
 | `LAUNCH-03` | `SshDestination → K1` | Back or Escape before connect. | No session is created; non-secret draft fields are discarded only when Launcher lifetime ends. | `LAUNCH-02`. | H,N |
 | `LAUNCH-04` | `SshDestination → same` | Continue with missing/invalid host, username, or port. | Validation stays beside exact field; no network attempt or modal error. | Correct field or `LAUNCH-03`. | P,H,N |
 | `LAUNCH-05` | `SshDestination → K7/K8` | Continue with valid fixture destination. | Work is asynchronous; unknown key goes to Host Key before credentials, known key goes to Authentication. | Reject/cancel through `TRUST-02` or `AUTH-03`. | P,H,N |
@@ -171,9 +171,9 @@ stateDiagram-v2
 | `AUTH-04` | StoredPassword states | Exercise available, missing, locked, unsupported, and backend-failed native store. | Only opaque reference persists; actionable non-secret feedback; one-off form never offers persistence. | Clear disposable store and return to `K1`. | P,H,N,U,privacy |
 | `SSH-01` | `K9 → K9` | Inspect normal remote session. | Generic remote icon; Connected and Remote language; destination details absent from permanent chrome but sourced in Inspector. Rename never changes destination. | Close Inspector, restore terminal focus. | H,V,N |
 | `SSH-02` | `K9 → K6` | Disconnect via Inspector when implemented. | Transport closes, chip/history survive read-only, no Paste/typing/mouse reporting. | Reconnect if capability exists or close to `K1`. | P,H,N; partial |
-| `SSH-03` | Disconnected → Reconnecting | Request real reconnect. | Same chip/identity; exact attempt/delay only if supplied; switching tabs does not stop retries; Stop Retrying stabilizes Disconnected. | Stop Retrying or allow success. | P,H,V,N,U; partial |
-| `SSH-04` | Reconnecting → K9 | Fixture reconnect succeeds. | New transport generation, modes reset, old history sealed with UI-owned noncopyable/nonsearchable boundary; current input targets only new generation. | Disconnect/close; rebuild `K9`. | P,H,N; deferred boundary |
-| `SSH-05` | Reconnecting → Disconnected | Retries fail or user stops. | No empty generation boundary; Details and valid actions only. | Reconnect again or close. | P,H |
+| `SSH-03` | Disconnected → Reconnecting | Activate the Inspector's explicit Reconnect action (ADR 0018: plain SSH sessions never reconnect automatically). | Same chip/identity; internal bounded retry/backoff (`festerm-ssh::ReconnectPolicy`) is not user-visible as a distinct attempt/delay and has no separate cancel action yet; Close Session remains the only way to abandon a reconnect in progress. | Allow success (`SSH-04`) or exhaustion (`SSH-05`). | P,H,V,N,U; partial |
+| `SSH-04` | Reconnecting → K9 | Fixture reconnect succeeds. | New transport generation, modes reset, old history sealed with UI-owned noncopyable/nonsearchable boundary; current input targets only new generation; fesTerm never describes the new shell as restoring prior remote process state. | Disconnect/close; rebuild `K9`. | P,H,N; deferred boundary |
+| `SSH-05` | Reconnecting → Disconnected | Bounded retries are exhausted. | No empty generation boundary; Details and Reconnect/Close actions only. | Reconnect again or close. | P,H |
 
 ## E. Serial lifecycle
 
@@ -223,7 +223,7 @@ backend and platform fixture exist.
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `PAL-01` | Any surface → Palette | Open via icon, shortcut, native menu. | Overlay does not resize terminal; width/margins responsive; search focused; applicable implemented commands only. | Escape through `PAL-04`. | H,V,N |
-| `PAL-02` | `Palette → TargetSurface` | Empty query, navigate Sessions then Commands; select each route. | Sessions in chip order with active identified; command routes converge on semantic policy; no Copy/Paste/native controls/trust/auth duplication. | Return with inverse action or checkpoint rebuild. | P,H,N |
+| `PAL-02` | `Palette → TargetSurface` | Empty query, navigate Sessions then Commands; select each route. | Sessions in chip order with active identified; command routes converge on semantic policy; no Copy/Paste/native controls/trust/auth duplication. Selecting any terminal-scoped command (e.g. Reset Terminal, Clear Terminal History) closes the palette and restores terminal focus/input exactly like `PAL-04`, leaving no stray selection or swallowed next keystroke. | Return with inverse action or checkpoint rebuild. | P,H,N |
 | `PAL-03` | Palette → filtered | Search stable identity, dynamic secondary, command names, no-match. | Stable identity ranks first; empty groups disappear; result list scrolls while field/context remain; query never persists/logs. | Clear query. | P,H,V |
 | `PAL-04` | Palette → prior | Escape or select no action. | Query clears; exact viable prior focus restored; no terminal Escape byte. | Reopen `PAL-01`. | H,N |
 | `KEY-01` | `K2/K4` | Exercise all documented shortcuts and plain Ctrl+T/C/W in Vim/Emacs/tmux fixtures. | Reserved physical modifiers act once; plain terminal chords reach PTY; menu/palette routes exist. | Exit fixture TUI and rebuild `K2`. | P,H,N |

@@ -83,12 +83,27 @@ passphrase; no key text or passphrase is persisted. When an active SSH tab
 needs host trust, it presents the canonical
 host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
 actions; trust persistence is intentionally deferred to M8. The core now owns
-the first bounded logical-history slice, but the application does not yet
-provide history viewport navigation, resize reflow, configuration editing or
-automatic persistence, agent or key-file UI, OpenSSH-config import UI,
-terminfo distribution, or user-visible ligature support. SSH reconnect is disabled by default; the
-Launcher has a transient opt-in for a bounded fresh-shell reconnect that
-re-verifies the host key and does not restore remote process state. `TERM`
+the first bounded logical-history slice, and the application layer built on
+top of it (Milestone 9, [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md))
+provides history viewport navigation — wheel/keyboard scrolling, Shift+Page
+Up/Down, Ctrl+End, a conditional `Jump to latest`, and a thin overlay
+scrollbar — plus primary-screen resize reflow and a one-shot eviction notice
+when the retained history discards its oldest lines. Once a session exits,
+fails, stops, or disconnects, its history becomes read-only and typed input
+is no longer delivered. A configurable scrollback-limit setting and
+selection preservation across reflow (selection is currently invalidated
+rather than remapped) remain open M9 work; see the Milestone 9 note in
+[`ROADMAP.md`](ROADMAP.md). Automatic persistence, agent or key-file UI,
+OpenSSH-config import UI,
+terminfo distribution, or user-visible ligature support are not yet
+provided. Following [ADR 0018](docs/adr/0018-ssh-liveness-reconnect-and-persistent-session-recovery.md),
+plain SSH sessions do not reconnect automatically: transport loss surfaces a
+Disconnected state with read-only history, and the Inspector offers an
+explicit Reconnect action (with bounded internal retry/backoff on that one
+request) that creates a fresh transport, re-verifies the host key, and starts
+a new shell without claiming to restore prior remote process state.
+Persistent-session (`tmux`/`screen`) recovery and opt-in automatic
+reconnect for such sessions remain future work. `TERM`
 remains `xterm-256color` as an
 interoperability baseline while M6 regression coverage defines the supported
 subset; see the M6 checklist for its conservative device-identity and future
