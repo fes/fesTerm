@@ -80,15 +80,23 @@ pub(crate) struct OverlayState {
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
     pub(crate) transient_notice: Option<(String, Instant)>,
+    /// The About modal is open. Like the confirmation prompts above (and
+    /// unlike the transient notice/password-store lookup), it is a
+    /// full-backdrop modal that must intercept terminal input.
+    pub(crate) about_open: bool,
+    /// The About modal's licenses section is expanded. Only meaningful
+    /// while `about_open` is true; kept alongside it rather than as a
+    /// separate `FesTermApp` field.
+    pub(crate) about_licenses_open: bool,
 }
 
 impl OverlayState {
-    /// True while a destructive confirmation dialog is open and must
-    /// intercept terminal keyboard/pointer input, native menu commands, and
-    /// most application shortcuts. Replaces the three-way
+    /// True while a destructive confirmation dialog or the About modal is
+    /// open and must intercept terminal keyboard/pointer input, native menu
+    /// commands, and most application shortcuts. Replaces the repeated
     /// `pending_close.is_some() || pending_paste.is_some() ||
-    /// pending_settings_reset.is_some()` check that was previously
-    /// duplicated at several call sites in `app.rs`.
+    /// pending_settings_reset.is_some() || about_open` checks that were
+    /// previously duplicated at several call sites in `app.rs`.
     ///
     /// Deliberately excludes `pending_password_store` and
     /// `transient_notice`: the secure-storage lookup runs in the
@@ -98,6 +106,7 @@ impl OverlayState {
         self.pending_close.is_some()
             || self.pending_paste.is_some()
             || self.pending_settings_reset.is_some()
+            || self.about_open
     }
 }
 
@@ -131,5 +140,14 @@ mod tests {
             ..OverlayState::default()
         };
         assert!(!overlays.blocks_terminal_input());
+    }
+
+    #[test]
+    fn blocks_terminal_input_is_true_while_the_about_modal_is_open() {
+        let overlays = OverlayState {
+            about_open: true,
+            ..OverlayState::default()
+        };
+        assert!(overlays.blocks_terminal_input());
     }
 }

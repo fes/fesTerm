@@ -153,8 +153,6 @@ pub struct FesTermApp {
     overlays: OverlayState,
     native_menu: festerm_macos_window::NativeMenu,
     focus_mode: bool,
-    about_open: bool,
-    about_licenses_open: bool,
     terminal_fonts_installed: bool,
 }
 
@@ -292,8 +290,6 @@ impl FesTermApp {
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             focus_mode: false,
-            about_open: false,
-            about_licenses_open: false,
             terminal_fonts_installed: true,
         }
     }
@@ -331,7 +327,7 @@ impl FesTermApp {
     fn sync_native_window_chrome(_frame: &eframe::Frame) {}
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
-        if self.overlays.blocks_terminal_input() || self.about_open {
+        if self.overlays.blocks_terminal_input() {
             return;
         }
         while let Some(command) = self.native_menu.try_recv() {
@@ -1236,8 +1232,8 @@ impl FesTermApp {
             8 => self.zoom_active_session(ZoomCommand::Out, context),
             9 => self.zoom_active_session(ZoomCommand::Reset, context),
             10 => {
-                self.about_open = true;
-                self.about_licenses_open = false;
+                self.overlays.about_open = true;
+                self.overlays.about_licenses_open = false;
                 context.request_repaint();
             }
             11 => self.reset_active_terminal(context),
@@ -1260,7 +1256,7 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.overlays.blocks_terminal_input() || self.about_open {
+        if self.overlays.blocks_terminal_input() {
             return;
         }
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
@@ -1434,12 +1430,12 @@ impl FesTermApp {
     }
 
     fn show_about(&mut self, context: &egui::Context, escape: bool) {
-        if !self.about_open {
+        if !self.overlays.about_open {
             return;
         }
         if escape {
-            self.about_open = false;
-            self.about_licenses_open = false;
+            self.overlays.about_open = false;
+            self.overlays.about_licenses_open = false;
             self.restore_active_terminal_focus();
             return;
         }
@@ -1480,7 +1476,7 @@ impl FesTermApp {
                 ui.label("A compact local, SSH, and serial terminal.");
                 ui.hyperlink_to("github.com/fes/fesTerm", "https://github.com/fes/fesTerm");
                 ui.add_space(8.0);
-                if self.about_licenses_open {
+                if self.overlays.about_licenses_open {
                     egui::ScrollArea::vertical()
                         .id_salt("fesTerm license text")
                         .max_height(180.0)
@@ -1505,12 +1501,12 @@ impl FesTermApp {
                     if ui.button("Copy Version Information").clicked() {
                         context.copy_text(Self::version_information());
                     }
-                    if self.about_licenses_open {
+                    if self.overlays.about_licenses_open {
                         if ui.button("Hide Licenses").clicked() {
-                            self.about_licenses_open = false;
+                            self.overlays.about_licenses_open = false;
                         }
                     } else if ui.button("Licenses").clicked() {
-                        self.about_licenses_open = true;
+                        self.overlays.about_licenses_open = true;
                     }
                     if ui.button("Close").clicked() {
                         close = true;
@@ -1518,8 +1514,8 @@ impl FesTermApp {
                 });
             });
         if close {
-            self.about_open = false;
-            self.about_licenses_open = false;
+            self.overlays.about_open = false;
+            self.overlays.about_licenses_open = false;
             self.restore_active_terminal_focus();
         }
     }
@@ -1786,16 +1782,21 @@ impl FesTermApp {
             self.focus_mode = false;
         }
 
-        // A destructive confirmation owns Escape before the terminal input
-        // adapter sees raw events. Backdrop clicks are intentionally ignored.
-        let confirmation_escape = self.overlays.blocks_terminal_input()
+        // A destructive confirmation or the About modal owns Escape before
+        // the terminal input adapter sees raw events. Backdrop clicks are
+        // intentionally ignored. The key is only consumed when some modal
+        // overlay is actually open, so other Escape handlers (inspector,
+        // chip rename) still see the event when neither applies.
+        let modal_owns_escape = self.overlays.blocks_terminal_input();
+        let escape_pressed = modal_owns_escape
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-        let about_escape = self.about_open
-            && ui
-                .ctx()
-                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let confirmation_escape = escape_pressed
+            && (self.overlays.pending_close.is_some()
+                || self.overlays.pending_paste.is_some()
+                || self.overlays.pending_settings_reset.is_some());
+        let about_escape = escape_pressed && self.overlays.about_open;
 
         if !self.focus_mode {
             let (chips, active_chip) = self.chip_view_models();
@@ -1901,7 +1902,6 @@ impl FesTermApp {
                     let options = festerm_ui_egui::TerminalViewOptions {
                         paste_available: session.accepts_input(),
                         terminal_input_enabled: !self.overlays.blocks_terminal_input()
-                            && !self.about_open
                             && !self.palette.is_open(),
                         keyboard_input_enabled: session.accepts_typed_input(),
                         defer_paste_to_application: true,
@@ -2056,8 +2056,6 @@ impl FesTermApp {
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             focus_mode: false,
-            about_open: false,
-            about_licenses_open: false,
             terminal_fonts_installed: false,
         }
     }
@@ -2578,21 +2576,21 @@ mod tests {
 
         harness.state_mut().dispatch_palette_selection(10, &context);
         harness.step();
-        assert!(harness.state().about_open);
+        assert!(harness.state().overlays.about_open);
         harness.get_by_label("About fesTerm");
         let version_label = format!("Version {}", env!("CARGO_PKG_VERSION"));
         harness.get_by_label(&version_label);
         harness.get_by_label("A compact local, SSH, and serial terminal.");
         harness.get_by_label("Copy Version Information");
         harness.get_by_label("Licenses");
-        harness.state_mut().about_licenses_open = true;
+        harness.state_mut().overlays.about_licenses_open = true;
         harness.step();
-        assert!(harness.state().about_licenses_open);
+        assert!(harness.state().overlays.about_licenses_open);
         assert!(harness.query_by_label_contains("MIT License").is_some());
 
         harness.key_press(egui::Key::Escape);
         harness.step();
-        assert!(!harness.state().about_open);
+        assert!(!harness.state().overlays.about_open);
         assert!(matches!(
             harness.state().state.active_tab().content,
             TabContent::Launcher
