@@ -162,6 +162,11 @@ pub enum SessionErrorKind {
     Shutdown,
     Unsupported,
     Internal,
+    /// The remote host rejected the credentials offered for this session
+    /// (wrong password, rejected key, etc). Distinguished from `Spawn` so a
+    /// password-authenticated SSH session can reprompt for a fresh password
+    /// in-tab instead of surfacing a raw failed session.
+    Authentication,
 }
 
 /// A user-displayable, content-free backend error.

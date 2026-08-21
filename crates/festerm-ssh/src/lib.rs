@@ -2863,11 +2863,19 @@ async fn ssh_worker(
                         }
                     }
                 }
-                return Err(ssh_failure(&shared, message));
+                return Err(ssh_failure_with_kind(
+                    &shared,
+                    session_error_kind_for_failure(failure),
+                    message,
+                ));
             }
             ConnectionAttempt::Permanent(failure, message) => {
                 debug_assert!(!reconnect_is_eligible(planner.is_some(), failure));
-                return Err(ssh_failure(&shared, message));
+                return Err(ssh_failure_with_kind(
+                    &shared,
+                    session_error_kind_for_failure(failure),
+                    message,
+                ));
             }
             ConnectionAttempt::Shutdown => {
                 shared.set_reconnecting(false);
@@ -2897,6 +2905,20 @@ enum ConnectionFailure {
 
 fn reconnect_is_eligible(policy_enabled: bool, failure: ConnectionFailure) -> bool {
     policy_enabled && matches!(failure, ConnectionFailure::Transport)
+}
+
+/// Maps a connection-establishment failure to the generic, content-free
+/// category the application layer can react to. Only `Authentication` is
+/// distinguished today: it lets the UI reprompt for a password in-tab
+/// (mimicking `ssh`'s own retry) instead of showing a raw failed session.
+const fn session_error_kind_for_failure(failure: ConnectionFailure) -> SessionErrorKind {
+    match failure {
+        ConnectionFailure::Authentication => SessionErrorKind::Authentication,
+        ConnectionFailure::Transport
+        | ConnectionFailure::HostTrust
+        | ConnectionFailure::Setup
+        | ConnectionFailure::ProviderUnavailable => SessionErrorKind::Spawn,
+    }
 }
 
 enum ConnectionAttempt {
@@ -3750,6 +3772,27 @@ mod tests {
             TerminalSize::new(80, 24).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn session_error_kind_for_failure_distinguishes_only_authentication() {
+        assert_eq!(
+            session_error_kind_for_failure(ConnectionFailure::Authentication),
+            SessionErrorKind::Authentication,
+            "a rejected credential must be classified distinctly so the UI can reprompt in-tab"
+        );
+        for other in [
+            ConnectionFailure::Transport,
+            ConnectionFailure::HostTrust,
+            ConnectionFailure::Setup,
+            ConnectionFailure::ProviderUnavailable,
+        ] {
+            assert_eq!(
+                session_error_kind_for_failure(other),
+                SessionErrorKind::Spawn,
+                "every other connection failure must keep the prior generic classification"
+            );
+        }
     }
 
     #[test]

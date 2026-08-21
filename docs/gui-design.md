@@ -202,6 +202,21 @@ in [SSH session creation](#ssh-session-creation). Saved profiles, agents,
 key-file selection, and OpenSSH-config import controls appear only when their
 capabilities are implemented and available, never as disabled placeholders.
 
+Selecting SSH opens **Quick Connect** by default: a single `user@host[:port]`
+field and a Connect button, matching how most SSH clients' fast path works,
+with a "Show advanced settings" checkbox that reveals the full destination,
+persistence, and authentication-method form
+(`app/festerm/src/screens.rs`'s `show_ssh_quick_connect`/`show_ssh_form`).
+Submitting with no password (from either surface) never attempts to connect
+with no credential; it opens an in-terminal, `ssh`-CLI-styled password prompt
+(`user@host's password:`, `show_ssh_password_prompt`) instead, and a rejected
+password reprompts up to three times ("Permission denied, please try again.",
+matching `ssh`'s own `NumberOfPasswordPrompts` default) before falling back to
+the ordinary failed-session presentation. This deliberately does not
+implement server-driven keyboard-interactive prompts or 2FA; that remains a
+separate, larger feature (see the SSH keyboard-interactive/2FA follow-up
+issue).
+
 ### Launcher as a tab
 
 The launcher should use the same tab model as sessions.

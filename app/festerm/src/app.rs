@@ -408,7 +408,9 @@ impl FesTermApp {
         let close_label = match self.state.active_tab().content {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
-            TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => "Close Session",
+            TabContent::SshAuthenticationRequired(_)
+            | TabContent::SshPasswordPrompt(_)
+            | TabContent::Session(_) => "Close Session",
         };
         self.native_menu.update(
             close_label,
@@ -1245,9 +1247,9 @@ impl FesTermApp {
             label: match &self.state.active_tab().content {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
-                TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => {
-                    "Close Session…".to_owned()
-                }
+                TabContent::SshAuthenticationRequired(_)
+                | TabContent::SshPasswordPrompt(_)
+                | TabContent::Session(_) => "Close Session…".to_owned(),
             },
             hint: None,
         });
@@ -1262,6 +1264,14 @@ impl FesTermApp {
                         tab.profile.host(),
                         tab.profile.port()
                     )),
+                ),
+                TabContent::SshPasswordPrompt(prompt) => (
+                    format!(
+                        "{}@{}",
+                        prompt.profile.username(),
+                        prompt.profile.identity().host()
+                    ),
+                    Some("Awaiting SSH password".to_owned()),
                 ),
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
@@ -1628,6 +1638,15 @@ impl FesTermApp {
                         )),
                         ChipStatus::Neutral,
                     ),
+                    TabContent::SshPasswordPrompt(prompt) => (
+                        format!(
+                            "{}@{}",
+                            prompt.profile.username(),
+                            prompt.profile.identity().host()
+                        ),
+                        Some("Awaiting SSH password".to_owned()),
+                        ChipStatus::Starting,
+                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = (!dynamic_title.is_empty())
@@ -1748,7 +1767,8 @@ impl FesTermApp {
         let (dimensions, system, status, status_label) = match &self.state.active_tab().content {
             TabContent::Launcher
             | TabContent::Settings
-            | TabContent::SshAuthenticationRequired(_) => (None, None, ChipStatus::Neutral, ""),
+            | TabContent::SshAuthenticationRequired(_)
+            | TabContent::SshPasswordPrompt(_) => (None, None, ChipStatus::Neutral, ""),
             TabContent::Session(session) => {
                 let status = session.chip_status();
                 (
@@ -1832,6 +1852,7 @@ impl eframe::App for FesTermApp {
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
+        self.state.reprompt_rejected_ssh_passwords();
         self.update_window_title(context);
         if let Some(smoke) = self.native_smoke.as_mut() {
             if let Some(primary_tab) = self.primary_tab {
@@ -1986,6 +2007,9 @@ impl FesTermApp {
                         &tab.profile,
                         native_store_available,
                     );
+                }
+                TabContent::SshPasswordPrompt(prompt) => {
+                    screen_command = screens::show_ssh_password_prompt(ui, active_tab_id, prompt);
                 }
                 TabContent::Session(session) => {
                     let options = festerm_ui_egui::TerminalViewOptions {

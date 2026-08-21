@@ -16,7 +16,7 @@ use festerm_ssh::{
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
 use crate::configuration_startup::ConfigurationStartupStatus;
-use crate::tabs::{AppCommand, PasswordToStore, TabId};
+use crate::tabs::{AppCommand, PasswordToStore, SshPasswordPromptTab, TabId};
 
 /// One selectable local launch option in the Launcher list.
 struct LauncherItem<'a> {
@@ -166,6 +166,18 @@ struct SshLauncherForm {
     host: String,
     port: String,
     username: String,
+    /// The default, minimal entry point: a single `user@host[:port]` field
+    /// parsed by `parse_quick_connect`. Shown instead of the full form until
+    /// `advanced_open` is set, matching how most SSH clients' fast path
+    /// works; IPv6 bracket notation (`user@[::1]:22`) is not specially
+    /// handled and needs the advanced form's separate Host field instead.
+    quick_connect: String,
+    /// Whether the full connection form (separate Host/Port/persistence/
+    /// authentication-method fields) is shown instead of the single Quick
+    /// Connect field. Always `true` once a saved or restored profile is
+    /// prefilled (`prefill_from_profile`), since its host/username are
+    /// already known and Quick Connect's only purpose is fast ad-hoc entry.
+    advanced_open: bool,
     authentication_method: SshAuthenticationMethod,
     password: String,
     private_key: String,
@@ -223,6 +235,7 @@ impl SshLauncherForm {
         self.username = profile.username().to_owned();
         self.persistence = profile.persistence().cloned();
         self.automatic_recovery = false;
+        self.advanced_open = true;
     }
 
     fn prefill_saved_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -273,6 +286,12 @@ impl SshLauncherForm {
                     options: self.session_options(),
                 })
             }
+            SshAuthenticationMethod::Password if password.is_empty() => {
+                Ok(AppCommand::OpenSshPasswordPrompt {
+                    profile,
+                    options: self.session_options(),
+                })
+            }
             SshAuthenticationMethod::Password => Ok(AppCommand::StartSshSession {
                 profile,
                 authentication: SshAuthentication::password(password),
@@ -284,6 +303,44 @@ impl SshLauncherForm {
                 options: self.session_options(),
             }),
         }
+    }
+
+    /// Parses `quick_connect` ("user@host" or "user@host:port") into the
+    /// same `host`/`port`/`username` fields the advanced form edits
+    /// directly, then submits through the same `submit()` path with no
+    /// password. That empty password is exactly what routes the connection
+    /// to the in-terminal password prompt (see `submit()`'s Password
+    /// branch) rather than attempting to connect with no credential.
+    fn submit_quick_connect(&mut self) -> Result<AppCommand, String> {
+        self.parse_quick_connect()?;
+        self.password.clear();
+        self.authentication_method = SshAuthenticationMethod::Password;
+        self.submit()
+    }
+
+    /// See `quick_connect`'s doc comment for the notation this accepts.
+    fn parse_quick_connect(&mut self) -> Result<(), String> {
+        let input = self.quick_connect.trim();
+        if input.is_empty() {
+            return Err("Enter a destination, e.g. user@host".to_owned());
+        }
+        let (username, remainder) = input
+            .split_once('@')
+            .ok_or_else(|| "Enter a destination as user@host".to_owned())?;
+        if username.is_empty() {
+            return Err("Enter a username before @".to_owned());
+        }
+        let (host, port) = match remainder.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (remainder, None),
+        };
+        if host.is_empty() {
+            return Err("Enter a host after @".to_owned());
+        }
+        self.username = username.to_owned();
+        self.host = host.to_owned();
+        self.port = port.map(str::to_owned).unwrap_or_default();
+        Ok(())
     }
 
     /// Parses an in-memory key while retaining neither its text nor passphrase.
@@ -422,6 +479,67 @@ fn ssh_multiline_secret_text_edit(
     .inner
 }
 
+/// The default, minimal launcher surface for a fresh SSH connection: a
+/// single `user@host[:port]` field and a Connect button, matching how most
+/// SSH clients' fast path works (`SshLauncherForm::quick_connect`).
+/// Submitting always goes through `submit_quick_connect`, which leaves the
+/// password empty so the connection opens the in-terminal password prompt
+/// (`show_ssh_password_prompt`) rather than attempting to connect with no
+/// credential — exactly mirroring how other SSH clients defer the password
+/// prompt until it's actually needed.
+fn show_ssh_quick_connect(
+    ui: &mut Ui,
+    tab_id: TabId,
+    form: &mut SshLauncherForm,
+    focus_quick_connect: bool,
+) -> Option<AppCommand> {
+    let mut result = None;
+    ssh_section_heading(ui, "Quick Connect");
+    let submit_with_enter = ui
+        .horizontal(|ui| {
+            ui.add_space(2.0);
+            let label = ui.add(
+                egui::Label::new(egui::RichText::new("user@host").color(theme::TEXT_SECONDARY))
+                    .selectable(false),
+            );
+            let field = ui.add(
+                TextEdit::singleline(&mut form.quick_connect)
+                    .id_salt(("launcher_ssh", tab_id, "quick_connect"))
+                    .hint_text("fes@10.1.213.213")
+                    .desired_width(220.0),
+            );
+            if focus_quick_connect {
+                field.request_focus();
+            }
+            let field = field.labelled_by(label.id);
+            field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        })
+        .inner;
+    ui.add_space(8.0);
+    if ui.button("Connect").clicked() || submit_with_enter {
+        match form.submit_quick_connect() {
+            Ok(command) => {
+                form.feedback = None;
+                result = Some(command);
+            }
+            Err(feedback) => form.feedback = Some(feedback),
+        }
+    }
+    if let Some(feedback) = &form.feedback {
+        ui.add_space(4.0);
+        ui.colored_label(theme::STATUS_ERROR, feedback);
+    }
+    ui.add_space(10.0);
+    if ui
+        .checkbox(&mut form.advanced_open, "Show advanced settings")
+        .changed()
+        && form.advanced_open
+    {
+        form.focus_username = true;
+    }
+    result
+}
+
 fn show_ssh_form(
     ui: &mut Ui,
     tab_id: TabId,
@@ -439,6 +557,12 @@ fn show_ssh_form(
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(340.0);
+            if !form.advanced_open {
+                result = show_ssh_quick_connect(ui, tab_id, form, focus_username);
+                return;
+            }
+            ui.checkbox(&mut form.advanced_open, "Show advanced settings");
+            ui.add_space(10.0);
             ssh_section_heading(ui, "Connection");
             ssh_text_edit(
                 ui,
@@ -858,6 +982,77 @@ pub fn show_ssh_authentication_required(
     command
 }
 
+/// Renders an in-tab, terminal-styled SSH password prompt (mimicking `ssh`'s
+/// own `user@host's password:` line) instead of the full connection form,
+/// for a connection Quick Connect submitted with no password or key, or
+/// whose most recent password attempt was rejected by the remote host
+/// (`SshPasswordPromptTab`, `AppState::reprompt_rejected_ssh_passwords`).
+///
+/// Unlike `show_ssh_form`, this deliberately collects nothing but a
+/// password: submitting dispatches the same `AppCommand::StartSshSession`
+/// the full form uses, so the rest of the connection (host-key trust,
+/// persistence, etc.) proceeds exactly as it would from there.
+pub fn show_ssh_password_prompt(
+    ui: &mut Ui,
+    tab_id: TabId,
+    prompt: &mut SshPasswordPromptTab,
+) -> Option<AppCommand> {
+    let focus_password = prompt.focus_password;
+    prompt.focus_password = false;
+    let mut command = None;
+    let mono = |text: String, color: egui::Color32| {
+        egui::RichText::new(text)
+            .font(egui::FontId::monospace(13.0))
+            .color(color)
+    };
+    egui::Frame::new()
+        .fill(theme::SURFACE_TERMINAL)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            ui.label(mono(
+                format!(
+                    "ssh {}@{}",
+                    prompt.profile.username(),
+                    prompt.profile.identity().host()
+                ),
+                theme::TEXT_SECONDARY,
+            ));
+            ui.add_space(4.0);
+            for line in &prompt.transcript {
+                ui.label(mono(line.clone(), theme::STATUS_ERROR));
+            }
+            ui.add_space(2.0);
+            let submit_with_enter = ui
+                .horizontal(|ui| {
+                    let label = ui.label(mono(prompt.prompt_line(), theme::TEXT_PRIMARY));
+                    let field = ui.add(
+                        TextEdit::singleline(&mut prompt.password)
+                            .id_salt(("ssh_password_prompt", tab_id))
+                            .password(true)
+                            .font(egui::FontId::monospace(13.0))
+                            .desired_width(180.0),
+                    );
+                    if focus_password {
+                        field.request_focus();
+                    }
+                    let field = field.labelled_by(label.id);
+                    field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                })
+                .inner;
+            ui.add_space(10.0);
+            if ui.button("Connect").clicked() || submit_with_enter {
+                let password = std::mem::take(&mut prompt.password);
+                command = Some(AppCommand::StartSshSession {
+                    profile: prompt.profile.clone(),
+                    authentication: SshAuthentication::password(password),
+                    options: prompt.options.clone(),
+                });
+            }
+        });
+    command
+}
+
 /// Renders the Settings application surface.
 ///
 /// `chip_layout` and `status_bar_visible` reflect the current interface
@@ -1039,6 +1234,10 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host")
             .click();
         harness.run();
+        // Quick Connect is the default surface; these tests exercise the
+        // full advanced form, so reveal it the same way a user would.
+        harness.get_by_label("Show advanced settings").click();
+        harness.run();
     }
 
     fn generated_openssh_private_key() -> String {
@@ -1142,6 +1341,156 @@ mod tests {
             None,
             "plain SSH sessions default to manual-only reconnect (ADR 0018)"
         );
+    }
+
+    #[test]
+    fn ssh_launcher_defaults_to_quick_connect_not_the_advanced_form() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("user@host").is_some(),
+            "a freshly opened SSH launcher must show the Quick Connect field"
+        );
+        assert!(
+            harness.query_by_label("Username").is_none(),
+            "the advanced form must stay hidden until 'Show advanced settings' is checked"
+        );
+    }
+
+    #[test]
+    fn quick_connect_focuses_its_field_when_the_launcher_opens() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        assert!(
+            harness.get_by_label("user@host").is_focused(),
+            "Quick Connect's field must have initial keyboard focus"
+        );
+    }
+
+    #[test]
+    fn quick_connect_with_no_password_opens_the_in_terminal_password_prompt() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        harness.get_by_label("user@host").type_text("fes@10.1.2.3");
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+
+        let Some(AppCommand::OpenSshPasswordPrompt { profile, .. }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("Quick Connect with no password must open the in-terminal password prompt");
+        };
+        assert_eq!(profile.username(), "fes");
+        assert_eq!(profile.identity().host(), "10.1.2.3");
+        assert_eq!(profile.identity().port(), 22);
+    }
+
+    #[test]
+    fn quick_connect_parses_an_explicit_port() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        harness
+            .get_by_label("user@host")
+            .type_text("fes@10.1.2.3:2222");
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+
+        let Some(AppCommand::OpenSshPasswordPrompt { profile, .. }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("a valid quick-connect destination must open the password prompt");
+        };
+        assert_eq!(profile.identity().port(), 2222);
+    }
+
+    #[test]
+    fn quick_connect_rejects_a_destination_with_no_at_sign() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        harness.get_by_label("user@host").type_text("10.1.2.3");
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+
+        assert!(
+            harness.state().command.is_none(),
+            "an invalid quick-connect destination must not dispatch a command"
+        );
+        assert!(harness
+            .query_by_label("Enter a destination as user@host")
+            .is_some());
+    }
+
+    #[test]
+    fn checking_show_advanced_settings_reveals_the_full_form_and_focuses_username() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        harness.get_by_label("Show advanced settings").click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Username").is_some(),
+            "checking 'Show advanced settings' must reveal the full form"
+        );
+        assert!(
+            harness.get_by_label("Username").is_focused(),
+            "revealing the advanced form must move focus to Username"
+        );
+    }
+
+    #[test]
+    fn advanced_form_with_an_empty_password_opens_the_password_prompt_instead_of_connecting() {
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+        enter_text(&mut harness, "Host", "example.invalid");
+        enter_text(&mut harness, "Username", "test-user");
+
+        harness.get_by_label("Connect with password").click();
+        harness.run();
+
+        let Some(AppCommand::OpenSshPasswordPrompt { profile, .. }) =
+            harness.state().command.as_ref()
+        else {
+            panic!(
+                "submitting the advanced form with no password must open the password prompt, \
+                 not attempt to connect with no credential"
+            );
+        };
+        assert_eq!(profile.username(), "test-user");
+        assert_eq!(profile.identity().host(), "example.invalid");
     }
 
     #[test]
@@ -1641,5 +1990,102 @@ mod tests {
         assert!(form.password.is_empty());
         assert!(form.private_key.is_empty());
         assert!(form.key_passphrase.is_empty());
+    }
+
+    fn test_ssh_password_prompt() -> SshPasswordPromptTab {
+        let profile = SshConnectionProfile::new(
+            HostIdentity::new("192.0.2.1", 22).expect("test host is valid"),
+            "test-user",
+            SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
+            TerminalSize::new(80, 24).expect("test size is valid"),
+        )
+        .expect("test profile is valid");
+        SshPasswordPromptTab {
+            profile,
+            options: SshSessionOptions::manual_recovery(SessionStrategy::PlainShell),
+            password: String::new(),
+            attempts: 0,
+            transcript: Vec::new(),
+            focus_password: true,
+        }
+    }
+
+    #[test]
+    fn ssh_password_prompt_shows_the_ssh_style_prompt_line() {
+        #[derive(Default)]
+        struct PromptHarnessState {
+            prompt: Option<SshPasswordPromptTab>,
+            command: Option<AppCommand>,
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut PromptHarnessState| {
+                    let prompt = state.prompt.as_mut().expect("prompt must be set");
+                    if let Some(command) =
+                        show_ssh_password_prompt(ui, AppState::for_test().active(), prompt)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                PromptHarnessState {
+                    prompt: Some(test_ssh_password_prompt()),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        assert!(harness
+            .query_by_label("test-user@192.0.2.1's password:")
+            .is_some());
+    }
+
+    #[test]
+    fn ssh_password_prompt_submits_a_typed_password_on_enter() {
+        struct PromptHarnessState {
+            prompt: SshPasswordPromptTab,
+            tab_id: TabId,
+            command: Option<AppCommand>,
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut PromptHarnessState| {
+                    if let Some(command) =
+                        show_ssh_password_prompt(ui, state.tab_id, &mut state.prompt)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                PromptHarnessState {
+                    prompt: test_ssh_password_prompt(),
+                    tab_id: AppState::for_test().active(),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        harness
+            .get_by_label("test-user@192.0.2.1's password:")
+            .type_text("typed-test-password");
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+
+        let Some(AppCommand::StartSshSession {
+            profile,
+            authentication,
+            ..
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("submitting the password prompt must return a typed SSH command");
+        };
+        assert_eq!(profile.username(), "test-user");
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::Password([REDACTED])"
+        );
     }
 }

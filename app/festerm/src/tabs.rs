@@ -26,9 +26,9 @@ use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_session::{
-    HostKeyPrompt, Session, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle,
-    SessionMetrics, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
-    TerminalSize,
+    HostKeyPrompt, Session, SessionErrorKind, SessionEvent, SessionEventNotifier, SessionId,
+    SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError, ShutdownError,
+    ShutdownResult, TerminalSize,
 };
 use festerm_ssh::{
     HostKeyDecisionResolutionError, HostTrustDecision, SessionStrategy, SshAuthentication,
@@ -271,6 +271,9 @@ pub struct SessionTab {
     /// `true` so continued eviction from a sustained-output workload does
     /// not repeatedly re-trigger the notice every frame.
     pub eviction_notice_shown: bool,
+    /// Present only when this session authenticated with a plain password.
+    /// See [`SshPasswordRetryState`].
+    pub ssh_password_retry: Option<SshPasswordRetryState>,
 }
 
 /// Narrow transport metadata safe for application chrome. Keeping this owned
@@ -305,6 +308,81 @@ pub struct InspectorPersistence {
 /// authentication form instead of starting a transport.
 pub struct SshAuthenticationRequiredTab {
     pub profile: SshProfileConfiguration,
+}
+
+/// Maximum number of in-tab password prompts before falling back to the
+/// ordinary failed-session presentation, matching `ssh`'s own default
+/// `NumberOfPasswordPrompts` limit.
+pub const MAX_SSH_PASSWORD_PROMPT_ATTEMPTS: u8 = 3;
+
+/// A tab midway through obtaining a password for a not-yet-started (or
+/// not-yet-successfully-authenticated) SSH session.
+///
+/// Shown as an in-terminal-styled prompt (mimicking `ssh`'s own
+/// `user@host's password:`) instead of the full connection form, whenever
+/// Quick Connect is submitted with no password or key, or a prior password
+/// attempt was rejected by the remote host.
+pub struct SshPasswordPromptTab {
+    pub profile: SshConnectionProfile,
+    pub options: SshSessionOptions,
+    /// Transient input buffer, taken on submit and never retained otherwise.
+    pub password: String,
+    /// Count of password attempts already rejected by this host. `0` means
+    /// no attempt has been made yet (the very first prompt).
+    pub attempts: u8,
+    /// Prior terminal-styled lines redisplayed above the prompt, e.g. a
+    /// `Permission denied, please try again.` line after a rejected retry.
+    pub transcript: Vec<String>,
+    /// Set whenever this tab (re)enters the prompt so the password field can
+    /// claim focus once, mirroring `TerminalView::request_focus_on_next_frame`.
+    pub focus_password: bool,
+}
+
+impl SshPasswordPromptTab {
+    fn new(profile: SshConnectionProfile, options: SshSessionOptions) -> Self {
+        Self {
+            profile,
+            options,
+            password: String::new(),
+            attempts: 0,
+            transcript: Vec::new(),
+            focus_password: true,
+        }
+    }
+
+    /// The prompt line shown above the password field, matching `ssh`'s own
+    /// wording (`user@host's password:`).
+    pub fn prompt_line(&self) -> String {
+        format!(
+            "{}@{}'s password:",
+            self.profile.username(),
+            self.profile.identity().host()
+        )
+    }
+}
+
+/// Retained only for a plain-password-authenticated SSH session (never
+/// public-key or native-stored-password): a rejected private key or stored
+/// password is a configuration problem, not something retyping in this tab
+/// fixes. Lets a rejected password reprompt in-tab instead of surfacing a
+/// raw failed session, bounded by `MAX_SSH_PASSWORD_PROMPT_ATTEMPTS`.
+pub struct SshPasswordRetryState {
+    pub profile: SshConnectionProfile,
+    pub options: SshSessionOptions,
+    pub attempts: u8,
+}
+
+/// Groups `from_session_result`'s non-outcome parameters so the function
+/// stays under clippy's argument-count lint; `from_local_session_result`
+/// and `from_ssh_session_result` each build one of these instead of passing
+/// their transport-specific fields through separately.
+struct SessionResultMeta<'a> {
+    label: &'a str,
+    launch_secondary: Option<String>,
+    profile_identifier: Option<String>,
+    session_name: &'static str,
+    inspector_transport: InspectorTransport,
+    ssh_password_retry: Option<SshPasswordRetryState>,
 }
 
 impl SessionTab {
@@ -388,6 +466,7 @@ impl SessionTab {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
         options: SshSessionOptions,
+        prior_password_attempts: u8,
         context: &egui::Context,
     ) -> Self {
         let size = profile.initial_size();
@@ -415,6 +494,17 @@ impl SessionTab {
             port: profile.identity().port(),
             persistence,
         };
+        // Only a plain-password attempt can be usefully retried by
+        // reprompting for a fresh password in-tab: a rejected private key or
+        // native-stored password is a configuration problem, not something
+        // retyping fixes (see `SshPasswordRetryState`).
+        let password_retry = matches!(authentication, SshAuthentication::Password(_)).then(|| {
+            SshPasswordRetryState {
+                profile: profile.clone(),
+                options: options.clone(),
+                attempts: prior_password_attempts,
+            }
+        });
         let result = SshSession::start_with_notifier_and_options(
             profile,
             authentication,
@@ -428,6 +518,7 @@ impl SessionTab {
             &label,
             launch_secondary,
             inspector_transport,
+            password_retry,
         )
     }
 
@@ -441,11 +532,14 @@ impl SessionTab {
         Self::from_session_result(
             result,
             dimensions,
-            label,
-            launch_secondary,
-            profile_identifier,
-            "Local shell",
-            InspectorTransport::Local,
+            SessionResultMeta {
+                label,
+                launch_secondary,
+                profile_identifier,
+                session_name: "Local shell",
+                inspector_transport: InspectorTransport::Local,
+                ssh_password_retry: None,
+            },
         )
     }
 
@@ -455,27 +549,35 @@ impl SessionTab {
         label: &str,
         launch_secondary: Option<String>,
         inspector_transport: InspectorTransport,
+        password_retry: Option<SshPasswordRetryState>,
     ) -> Self {
         Self::from_session_result(
             result,
             dimensions,
-            label,
-            launch_secondary,
-            None,
-            "SSH session",
-            inspector_transport,
+            SessionResultMeta {
+                label,
+                launch_secondary,
+                profile_identifier: None,
+                session_name: "SSH session",
+                inspector_transport,
+                ssh_password_retry: password_retry,
+            },
         )
     }
 
     fn from_session_result<E: std::fmt::Display>(
         result: Result<ApplicationSession, E>,
         dimensions: Dimensions,
-        label: &str,
-        launch_secondary: Option<String>,
-        profile_identifier: Option<String>,
-        session_name: &'static str,
-        inspector_transport: InspectorTransport,
+        meta: SessionResultMeta<'_>,
     ) -> Self {
+        let SessionResultMeta {
+            label,
+            launch_secondary,
+            profile_identifier,
+            session_name,
+            inspector_transport,
+            ssh_password_retry,
+        } = meta;
         let mut terminal =
             Terminal::new(dimensions).expect("default terminal allocation should succeed");
         let controller = match result {
@@ -509,6 +611,7 @@ impl SessionTab {
             profile_identifier,
             inspector_transport,
             eviction_notice_shown: false,
+            ssh_password_retry,
         }
     }
 
@@ -659,6 +762,7 @@ pub enum TabContent {
     Launcher,
     Settings,
     SshAuthenticationRequired(SshAuthenticationRequiredTab),
+    SshPasswordPrompt(SshPasswordPromptTab),
     Session(Box<SessionTab>),
 }
 
@@ -701,6 +805,15 @@ pub enum AppCommand {
     StartSshSession {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
+        options: SshSessionOptions,
+    },
+    /// Opens an in-tab, terminal-styled password prompt for an SSH
+    /// connection submitted with no password or key up front (Quick
+    /// Connect's default path), mimicking `ssh`'s own `user@host's
+    /// password:` prompt instead of requiring a credential in the launcher
+    /// form before connecting at all.
+    OpenSshPasswordPrompt {
+        profile: SshConnectionProfile,
         options: SshSessionOptions,
     },
     /// Starts an existing configured SSH profile by resolving its native
@@ -954,6 +1067,11 @@ impl AppState {
                     identifier.clone(),
                     ssh.profile.identifier(),
                 )?),
+                // Ad-hoc Quick Connect has no saved profile to restore
+                // against, and a not-yet-authenticated password prompt has
+                // no live session state worth persisting; treat it like the
+                // Launcher's own transient form.
+                TabContent::SshPasswordPrompt(_) => None,
                 TabContent::Session(session) => session
                     .profile_identifier
                     .as_deref()
@@ -1028,7 +1146,8 @@ impl AppState {
                 TabContent::Session(session) => Some(session.as_mut()),
                 TabContent::Launcher
                 | TabContent::Settings
-                | TabContent::SshAuthenticationRequired(_) => None,
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SshPasswordPrompt(_) => None,
             })
     }
 
@@ -1047,7 +1166,8 @@ impl AppState {
             TabContent::Session(session) => Some(session.terminal.dimensions()),
             TabContent::Launcher
             | TabContent::Settings
-            | TabContent::SshAuthenticationRequired(_) => None,
+            | TabContent::SshAuthenticationRequired(_)
+            | TabContent::SshPasswordPrompt(_) => None,
         })
     }
 
@@ -1061,7 +1181,8 @@ impl AppState {
                 TabContent::Session(session) => Some(session.as_mut()),
                 TabContent::Launcher
                 | TabContent::Settings
-                | TabContent::SshAuthenticationRequired(_) => None,
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SshPasswordPrompt(_) => None,
             })
     }
 
@@ -1101,6 +1222,9 @@ impl AppState {
                 authentication,
                 options,
             } => self.execute_ssh_session(profile, authentication, options, context),
+            AppCommand::OpenSshPasswordPrompt { profile, options } => {
+                self.open_ssh_password_prompt(profile, options)
+            }
             AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StoreSshPassword { .. } => {}
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
@@ -1208,10 +1332,23 @@ impl AppState {
         options: SshSessionOptions,
         context: &egui::Context,
     ) {
+        // Submitting from an in-tab password prompt carries forward how many
+        // prior attempts this host has already rejected, so the reprompt
+        // loop (see `reprompt_rejected_ssh_passwords`) stays bounded by
+        // `MAX_SSH_PASSWORD_PROMPT_ATTEMPTS` across the whole retry episode
+        // rather than resetting to zero on every resubmission.
+        let prior_password_attempts = match &self.active_tab().content {
+            TabContent::SshPasswordPrompt(prompt) => prompt.attempts,
+            TabContent::Launcher
+            | TabContent::Settings
+            | TabContent::SshAuthenticationRequired(_)
+            | TabContent::Session(_) => 0,
+        };
         self.place_session(SessionTab::start_ssh(
             profile,
             authentication,
             options,
+            prior_password_attempts,
             context,
         ));
     }
@@ -1275,14 +1412,16 @@ impl AppState {
     }
 
     fn place_session(&mut self, session: SessionTab) {
-        // Starting a session from the active Launcher or restored
-        // authentication-required tab replaces that surface in place (same
-        // position, same identity) rather than leaving it behind alongside a
-        // new session tab.
+        // Starting a session from the active Launcher, restored
+        // authentication-required tab, or in-tab password prompt replaces
+        // that surface in place (same position, same identity) rather than
+        // leaving it behind alongside a new session tab.
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
             if matches!(
                 tab.content,
-                TabContent::Launcher | TabContent::SshAuthenticationRequired(_)
+                TabContent::Launcher
+                    | TabContent::SshAuthenticationRequired(_)
+                    | TabContent::SshPasswordPrompt(_)
             ) {
                 tab.content = TabContent::Session(Box::new(session));
                 return;
@@ -1294,6 +1433,70 @@ impl AppState {
             content: TabContent::Session(Box::new(session)),
         });
         self.active = id;
+    }
+
+    /// Opens (or replaces the active Launcher/auth-required/password-prompt
+    /// surface with) an in-tab, terminal-styled password prompt for a not
+    /// yet-authenticated SSH connection: Quick Connect submitted with no
+    /// password or key, mimicking how `ssh` itself asks for a password only
+    /// once it actually needs one instead of requiring it up front.
+    fn open_ssh_password_prompt(
+        &mut self,
+        profile: SshConnectionProfile,
+        options: SshSessionOptions,
+    ) {
+        let prompt = TabContent::SshPasswordPrompt(SshPasswordPromptTab::new(profile, options));
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(
+                tab.content,
+                TabContent::Launcher
+                    | TabContent::SshAuthenticationRequired(_)
+                    | TabContent::SshPasswordPrompt(_)
+            ) {
+                tab.content = prompt;
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: prompt,
+        });
+        self.active = id;
+    }
+
+    /// Converts any session tab whose most recent connection attempt was
+    /// rejected on a plain password (`SessionErrorKind::Authentication`)
+    /// back into an in-tab password prompt, up to
+    /// `MAX_SSH_PASSWORD_PROMPT_ATTEMPTS`, mimicking `ssh`'s own
+    /// "Permission denied, please try again." retry loop. Runs across every
+    /// open tab, independent of which is active, matching
+    /// `session_tabs_mut`'s "keep making progress in the background" policy.
+    pub fn reprompt_rejected_ssh_passwords(&mut self) {
+        for tab in &mut self.tabs {
+            let TabContent::Session(session) = &tab.content else {
+                continue;
+            };
+            let Some(retry) = &session.ssh_password_retry else {
+                continue;
+            };
+            if retry.attempts >= MAX_SSH_PASSWORD_PROMPT_ATTEMPTS {
+                continue;
+            }
+            let Some(SessionLifecycle::Failed(error)) = session.controller.lifecycle() else {
+                continue;
+            };
+            if error.kind() != SessionErrorKind::Authentication {
+                continue;
+            }
+            let mut prompt =
+                SshPasswordPromptTab::new(retry.profile.clone(), retry.options.clone());
+            prompt.attempts = retry.attempts + 1;
+            prompt
+                .transcript
+                .push("Permission denied, please try again.".to_owned());
+            tab.content = TabContent::SshPasswordPrompt(prompt);
+        }
     }
 
     fn activate(&mut self, id: TabId) {
@@ -1793,6 +1996,7 @@ mod tests {
                 port: 22,
                 persistence: None,
             },
+            None,
         );
 
         assert_eq!(
@@ -1843,6 +2047,75 @@ mod tests {
         ));
 
         state.dispatch(AppCommand::CloseTab(launcher_id), &context);
+    }
+
+    #[test]
+    fn open_ssh_password_prompt_replaces_the_active_launcher_in_place() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher_id = state.active();
+
+        state.dispatch(
+            AppCommand::OpenSshPasswordPrompt {
+                profile: ssh_profile(),
+                options: SshSessionOptions::new(),
+            },
+            &context,
+        );
+
+        assert_eq!(
+            state.tabs().len(),
+            1,
+            "Quick Connect must reuse the existing Launcher tab, not open a second tab"
+        );
+        assert_eq!(state.active(), launcher_id);
+        let TabContent::SshPasswordPrompt(prompt) = &state.active_tab().content else {
+            panic!("OpenSshPasswordPrompt must place an in-tab password prompt");
+        };
+        assert_eq!(prompt.profile.username(), "test-user");
+        assert_eq!(prompt.attempts, 0);
+        assert!(prompt.transcript.is_empty());
+    }
+
+    #[test]
+    fn submitting_from_a_password_prompt_carries_its_attempt_count_forward() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+
+        state.dispatch(
+            AppCommand::OpenSshPasswordPrompt {
+                profile: ssh_profile(),
+                options: SshSessionOptions::new(),
+            },
+            &context,
+        );
+        let TabContent::SshPasswordPrompt(prompt) = &mut state.active_tab_mut().content else {
+            panic!("expected the prompt placed above");
+        };
+        prompt.attempts = 2;
+
+        state.dispatch(
+            AppCommand::StartSshSession {
+                profile: ssh_profile(),
+                authentication: SshAuthentication::password("retry-password"),
+                options: SshSessionOptions::new(),
+            },
+            &context,
+        );
+
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("resubmitting the prompt must place a session tab");
+        };
+        let retry = session
+            .ssh_password_retry
+            .as_ref()
+            .expect("password authentication must retain retry state");
+        assert_eq!(
+            retry.attempts, 2,
+            "the running attempt count must carry forward across resubmissions"
+        );
+
+        state.dispatch(AppCommand::CloseTab(state.active()), &context);
     }
 
     #[test]
