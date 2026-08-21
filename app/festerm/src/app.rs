@@ -3192,10 +3192,15 @@ mod tests {
                 .map_or(0, |diagnostics| diagnostics.byte_count),
             _ => panic!("rename must not change the active session"),
         };
+        // Escape must remain application-owned: canceling the rename must
+        // not leak a stray escape byte into the terminal. Focus reporting
+        // (DECSET ?1004) defaults to off, so regaining keyboard focus alone
+        // must not encode any bytes either - that's only asserted indirectly
+        // below, via the very next keystroke reaching the session with no
+        // extra bytes ahead of it.
         assert_eq!(
-            after_escape,
-            before_escape + b"\x1b[I".len() as u64,
-            "only the restored terminal-focus sequence may reach the session"
+            after_escape, before_escape,
+            "Escape must remain application-owned"
         );
 
         harness.event(egui::Event::Text("Q".to_owned()));
@@ -3208,6 +3213,10 @@ mod tests {
                 .map_or(0, |diagnostics| diagnostics.byte_count),
             _ => panic!("session must remain active"),
         };
-        assert_eq!(after_text, before_escape + b"\x1b[I".len() as u64 + 1);
+        assert_eq!(
+            after_text,
+            before_escape + 1,
+            "the keystroke right after cancelling rename must reach the terminal directly, confirming focus was restored"
+        );
     }
 }
