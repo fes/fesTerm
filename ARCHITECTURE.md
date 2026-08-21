@@ -7,9 +7,10 @@ runtime data flow, and Rust workspace structure for fesTerm. The repository
 contains `festerm-core`, `festerm-session`, `festerm-pty`,
 `festerm-test-support`, the `festerm-ui-egui` presentation crate, and the
 application composition shell. Native SSH, strict `festerm-config` loading,
-profile-backed local launch, and metadata-only workspace save/restore are
-integrated; profile editing, credential storage, and the complete M8 user
-experience remain target architecture.
+profile-backed local launch, opaque native-secret-store SSH password
+references, and metadata-only workspace save/restore are integrated; profile
+editing, additional credential types (e.g. key-file references), trust
+persistence, and the complete M8 user experience remain target architecture.
 
 ## Architectural Goals
 

@@ -16,11 +16,14 @@ reference-application PTY probes, OS-driven Windows input smoke, and the P6
 cell-geometry/shaping contract are implemented. It is not accepted because
 Linux visual evidence, cross-platform native-window/focus evidence, and
 native-desktop reference-application evidence remain incomplete. Those
-conditions are tracked by [#7](https://github.com/fes/fesTerm/issues/7),
-[#8](https://github.com/fes/fesTerm/issues/8),
+conditions are tracked by [#8](https://github.com/fes/fesTerm/issues/8),
 [#21](https://github.com/fes/fesTerm/issues/21),
 [#26](https://github.com/fes/fesTerm/issues/26), and
-[#27](https://github.com/fes/fesTerm/issues/27).
+[#50](https://github.com/fes/fesTerm/issues/50). (The original visual-snapshot
+issue, [#7](https://github.com/fes/fesTerm/issues/7), is closed; #50 now
+tracks refreshing the M6 acceptance candidate after subsequent terminal
+reflow changes. Terminfo packaging is deferred to M10 under
+[#27](https://github.com/fes/fesTerm/issues/27) and is not part of this gate.)
 
 A manually operated Parallels VM lab (`docs/vm-evidence-framework.md`)
 collected the first real cross-platform native-window evidence on 2026-08-10:

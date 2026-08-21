@@ -367,8 +367,9 @@ future wake/network-change hook can call. A probe failure is routed through
 the exact same `ConnectionFailure::Transport` path as any other unintentional
 transport loss, so it inherits the existing guarantee that a plain-shell
 session only moves to `Disconnected` and never auto-reconnects by itself.
-The platform-specific wake/network-change notification hooks (macOS/Windows/
-Linux) that would call this trigger proactively remain unimplemented; until
-they exist, detection still relies on the automatic probe cadence and
+The platform-specific resume-from-sleep hooks (macOS/Windows/Linux) described
+above already call this trigger proactively; only network-interface/route-
+change detection remains unimplemented on all three platforms, so detection
+of that specific case still relies on the automatic probe cadence and
 ordinary transport read/write failures. See issue #48 for the remaining
-platform-hook scope.
+network-change-detection scope.

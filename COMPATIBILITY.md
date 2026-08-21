@@ -107,7 +107,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | 256 color | Render indexed foreground and background colors | passing | Core fixture; M4 renderer palette mapping |
 | True color | Render RGB foreground and background colors | passing | Core fixture; M4 renderer RGB mapping |
 | Resize | Propagate rows and columns and preserve valid state without reflow | passing | Core fixture; M5 controlled PTY resize integration |
-| Reflow | Preserve primary-screen logical lines, viewport anchor, cursor, and selection across width changes | planned | M9 ADR, core fixtures/property tests, UI integration, and reference applications |
+| Reflow | Preserve primary-screen logical lines, viewport anchor, cursor, and selection across width changes | passing | M9 core reflow/history fixtures and UI resize integration; selection/search stability across reflow remains #43 |
 | Bracketed paste | Wrap pasted data only while the mode is enabled | passing | Exact-byte core test |
 | Focus | Emit focus events only while requested | passing | Exact-byte core test |
 | Mouse buttons | Report presses and releases according to active mode | passing | Exact-byte core test |
@@ -125,11 +125,11 @@ reference-application acceptance; P5 remains a manual release gate.
 | Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji test plus P6 fallback-emoji run-boundary regression; production fallback policy remains #22 |
 | Ligatures | Shape supported runs without moving cursor or selection boundaries | implemented architecture; feature deferred | P6 immutable cell geometry, clipped run seam, and reviewed snapshot; user-visible policy remains #22 |
 | High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
-| Scrollback | Scroll and select smoothly near configured limits | planned | M9 bounded-memory benchmark and GUI integration test |
+| Scrollback | Scroll and select smoothly near configured limits | passing | M9 bounded-memory core fixtures and GUI viewport integration; eviction fallback and disconnected read-only history remain #43 |
 | Dirty rendering | Redraw changed content without mandatory full-grid copying | passing | M4 `TerminalSnapshot` and dirty-row cache tests |
 | Local PTY | Run, resize, exit, and shut down a local application | passing | M5 Unix PTY and Windows ConPTY integration tests; CI runs the Windows test |
-| SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | planned | Controlled OpenSSH integration test |
-| OpenSSH config | Map supported host directives into an internal profile | planned | Configuration fixtures |
+| SSH PTY | Allocate, resize, disconnect, and reconnect a remote PTY | passing | Controlled OpenSSH integration test (`controlled_openssh_interoperability`, `controlled_openssh_manual_reconnect_interoperability`) |
+| OpenSSH config | Map supported host directives into an internal profile | planned | Configuration fixtures; M8 owns OpenSSH-config import UI |
 
 ## Reference Applications
 

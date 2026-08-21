@@ -259,8 +259,10 @@ finished. Current work proceeds from that foundation:
    ligature-capable rendering design.
 2. Stabilize the approved GUI/session-management behavior and complete M8
    profile, configuration, secret-storage, and workspace workflows.
-3. Deliver bounded scrollback, viewport navigation, and primary-screen reflow
-   under the Milestone 9 design gate.
+3. Finish the remaining Milestone 9 scope: selection/search position
+   stability across reflow, eviction fallback, and disconnected read-only
+   history (bounded scrollback, viewport navigation, and primary-screen
+   reflow are already implemented; see issue #43).
 4. Implement the already-defined first-class serial-session contract as a
    focused later transport track, without coupling it to local shells.
 

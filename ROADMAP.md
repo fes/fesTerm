@@ -246,11 +246,15 @@ matrix.
 
 P0 through P2 and P6 are implemented. P3/P4/P5 evidence remains the M6
 acceptance gate; see the [acceptance record](docs/milestone-acceptance-record.md)
-and issues [#7](https://github.com/fes/fesTerm/issues/7),
-[#8](https://github.com/fes/fesTerm/issues/8),
+and issues [#8](https://github.com/fes/fesTerm/issues/8),
 [#21](https://github.com/fes/fesTerm/issues/21),
 [#26](https://github.com/fes/fesTerm/issues/26), and
-[#27](https://github.com/fes/fesTerm/issues/27).
+[#50](https://github.com/fes/fesTerm/issues/50). (P3's original snapshot-layer
+issue, [#7](https://github.com/fes/fesTerm/issues/7), is closed; #50 tracks
+refreshing that acceptance candidate after subsequent terminal reflow changes.
+Packaging/terminfo work is deferred to M10 under
+[#27](https://github.com/fes/fesTerm/issues/27) and is not part of the M6
+gate.)
 
 ### Outcome
 
