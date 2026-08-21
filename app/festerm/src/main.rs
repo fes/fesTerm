@@ -3,6 +3,7 @@ mod configuration_startup;
 mod diagnostics;
 mod inspector;
 mod native_smoke;
+mod overlay_state;
 mod screens;
 pub mod session_controller;
 mod tabs;

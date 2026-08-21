@@ -9,7 +9,7 @@ use festerm_config::{Configuration, InterfaceSettings};
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
-use festerm_secret_store::{native_store, SecretReference, SecretStore, SecretStoreError};
+use festerm_secret_store::{native_store, SecretStore, SecretStoreError};
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
@@ -20,6 +20,10 @@ use crate::configuration_startup::{
 };
 use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
 use crate::native_smoke::NativeWindowSmoke;
+use crate::overlay_state::{
+    CloseConsequence, OverlayState, PendingCloseConfirmation, PendingPasswordStore,
+    PendingPasteConfirmation, PendingSettingsResetConfirmation,
+};
 use crate::screens;
 use crate::tabs::{
     AppCommand, AppState, HostKeyTrustDecision, InspectorTransport, TabContent, TabId,
@@ -136,76 +140,22 @@ pub struct FesTermApp {
     /// content-free status so local sessions and the rest of the app stay
     /// available.
     secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
-    pending_password_store: Option<PendingPasswordStore>,
     secure_storage_feedback: Option<&'static str>,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
     rename_restore_focus: Option<egui::Id>,
     rename_restore_tab: Option<TabId>,
-    pending_close: Option<PendingCloseConfirmation>,
-    pending_paste: Option<PendingPasteConfirmation>,
-    pending_settings_reset: Option<PendingSettingsResetConfirmation>,
+    /// Confirmation prompts, in-flight secure-storage lookup, and transient
+    /// status banner (see `overlay_state`); grouped into one type so the
+    /// several call sites that need "is anything blocking terminal input"
+    /// have one shared answer.
+    overlays: OverlayState,
     native_menu: festerm_macos_window::NativeMenu,
     focus_mode: bool,
-    transient_notice: Option<(String, Instant)>,
     about_open: bool,
     about_licenses_open: bool,
     terminal_fonts_installed: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CloseConsequence {
-    TerminateLocalProcess,
-    DisconnectSsh,
-}
-
-impl CloseConsequence {
-    const fn message(self) -> &'static str {
-        match self {
-            Self::TerminateLocalProcess => {
-                "The local process will be terminated and its terminal history discarded."
-            }
-            Self::DisconnectSsh => {
-                "The SSH connection will be disconnected and its terminal history discarded."
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct PendingCloseConfirmation {
-    tab: TabId,
-    identity: String,
-    consequence: CloseConsequence,
-    lifecycle_generation: u64,
-    restore_tab: TabId,
-    cancel_focus_requested: bool,
-}
-
-#[derive(Clone, Debug)]
-struct PendingPasteConfirmation {
-    tab: TabId,
-    identity: String,
-    text: String,
-    transport_state: &'static str,
-    lifecycle_generation: u64,
-    bracketed_paste: bool,
-    cancel_focus_requested: bool,
-}
-
-/// Confirmation shown only when resetting would actually discard a change
-/// from defaults (`docs/gui-action-graph.md` SET-02).
-#[derive(Clone, Debug)]
-struct PendingSettingsResetConfirmation {
-    cancel_focus_requested: bool,
-}
-
-struct PendingPasswordStore {
-    receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
-    profile_id: String,
-    options: festerm_ssh::SshSessionOptions,
-    store: Arc<dyn SecretStore>,
 }
 
 fn native_secret_store() -> Result<Arc<dyn SecretStore>, SecretStoreError> {
@@ -335,17 +285,13 @@ impl FesTermApp {
             configuration_status,
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store,
-            pending_password_store: None,
             secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
-            pending_close: None,
-            pending_paste: None,
-            pending_settings_reset: None,
+            overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             focus_mode: false,
-            transient_notice: None,
             about_open: false,
             about_licenses_open: false,
             terminal_fonts_installed: true,
@@ -385,11 +331,7 @@ impl FesTermApp {
     fn sync_native_window_chrome(_frame: &eframe::Frame) {}
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
-        if self.pending_close.is_some()
-            || self.pending_paste.is_some()
-            || self.pending_settings_reset.is_some()
-            || self.about_open
-        {
+        if self.overlays.blocks_terminal_input() || self.about_open {
             return;
         }
         while let Some(command) = self.native_menu.try_recv() {
@@ -458,7 +400,7 @@ impl FesTermApp {
             });
         if let Some(confirmation) = confirmation {
             self.palette.close();
-            self.pending_close = Some(confirmation);
+            self.overlays.pending_close = Some(confirmation);
         } else {
             self.state.dispatch(AppCommand::CloseTab(id), context);
         }
@@ -486,7 +428,7 @@ impl FesTermApp {
             );
             return;
         }
-        self.pending_paste = Some(PendingPasteConfirmation {
+        self.overlays.pending_paste = Some(PendingPasteConfirmation {
             tab,
             identity: session.label.clone(),
             text,
@@ -498,7 +440,7 @@ impl FesTermApp {
     }
 
     fn show_close_confirmation(&mut self, context: &egui::Context, escape: bool) {
-        let Some(pending) = self.pending_close.as_ref().cloned() else {
+        let Some(pending) = self.overlays.pending_close.as_ref().cloned() else {
             return;
         };
         let still_live = self
@@ -549,20 +491,20 @@ impl FesTermApp {
                     }
                 });
             });
-        if let Some(current) = self.pending_close.as_mut() {
+        if let Some(current) = self.overlays.pending_close.as_mut() {
             current.cancel_focus_requested = true;
         }
         if cancel {
             self.cancel_close_confirmation();
         } else if confirm {
-            self.pending_close = None;
+            self.overlays.pending_close = None;
             self.state
                 .dispatch(AppCommand::CloseTab(pending.tab), context);
         }
     }
 
     fn cancel_close_confirmation(&mut self) {
-        let Some(pending) = self.pending_close.take() else {
+        let Some(pending) = self.overlays.pending_close.take() else {
             return;
         };
         // Popup/menu widget IDs can disappear in the frame that opens the
@@ -573,7 +515,7 @@ impl FesTermApp {
     }
 
     fn cancel_paste_confirmation(&mut self) {
-        let Some(pending) = self.pending_paste.take() else {
+        let Some(pending) = self.overlays.pending_paste.take() else {
             return;
         };
         if let Some(session) = self.state.session_tab_mut(pending.tab) {
@@ -582,7 +524,7 @@ impl FesTermApp {
     }
 
     fn show_paste_confirmation(&mut self, context: &egui::Context, escape: bool) {
-        let Some(pending) = self.pending_paste.as_ref().cloned() else {
+        let Some(pending) = self.overlays.pending_paste.as_ref().cloned() else {
             return;
         };
         let valid_target = self.state.active() == pending.tab
@@ -654,13 +596,13 @@ impl FesTermApp {
                     }
                 });
             });
-        if let Some(current) = self.pending_paste.as_mut() {
+        if let Some(current) = self.overlays.pending_paste.as_mut() {
             current.cancel_focus_requested = true;
         }
         if cancel {
             self.cancel_paste_confirmation();
         } else if paste {
-            self.pending_paste = None;
+            self.overlays.pending_paste = None;
             if let Some(session) = self.state.session_tab_mut(pending.tab) {
                 let _ = festerm_ui_egui::route_input(
                     &mut session.terminal,
@@ -743,13 +685,13 @@ impl FesTermApp {
             return;
         }
         self.palette.close();
-        self.pending_settings_reset = Some(PendingSettingsResetConfirmation {
+        self.overlays.pending_settings_reset = Some(PendingSettingsResetConfirmation {
             cancel_focus_requested: false,
         });
     }
 
     fn show_settings_reset_confirmation(&mut self, context: &egui::Context, escape: bool) {
-        let Some(pending) = self.pending_settings_reset.as_ref().cloned() else {
+        let Some(pending) = self.overlays.pending_settings_reset.as_ref().cloned() else {
             return;
         };
         if self.state.interface_settings() == InterfaceSettings::DEFAULT {
@@ -780,13 +722,13 @@ impl FesTermApp {
                     }
                 });
             });
-        if let Some(current) = self.pending_settings_reset.as_mut() {
+        if let Some(current) = self.overlays.pending_settings_reset.as_mut() {
             current.cancel_focus_requested = true;
         }
         if cancel {
             self.cancel_settings_reset_confirmation();
         } else if confirm {
-            self.pending_settings_reset = None;
+            self.overlays.pending_settings_reset = None;
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
             self.persist_interface_settings();
@@ -794,7 +736,7 @@ impl FesTermApp {
     }
 
     fn cancel_settings_reset_confirmation(&mut self) {
-        self.pending_settings_reset = None;
+        self.overlays.pending_settings_reset = None;
     }
 
     fn native_store_available(&self) -> bool {
@@ -861,7 +803,7 @@ impl FesTermApp {
                 .map(secret_store_message);
             return;
         };
-        if self.pending_password_store.is_some() {
+        if self.overlays.pending_password_store.is_some() {
             self.secure_storage_feedback =
                 Some("A saved SSH password update is already in progress. Please wait.");
             return;
@@ -876,7 +818,7 @@ impl FesTermApp {
                 let _ = sender.send(worker_store.put(&secret));
             }) {
             Ok(_) => {
-                self.pending_password_store = Some(PendingPasswordStore {
+                self.overlays.pending_password_store = Some(PendingPasswordStore {
                     receiver,
                     profile_id,
                     options,
@@ -895,7 +837,7 @@ impl FesTermApp {
     }
 
     fn process_pending_password_store(&mut self, context: &egui::Context) {
-        let Some(pending) = self.pending_password_store.take() else {
+        let Some(pending) = self.overlays.pending_password_store.take() else {
             return;
         };
         match pending.receiver.try_recv() {
@@ -953,7 +895,7 @@ impl FesTermApp {
                 self.secure_storage_feedback = Some(secret_store_message(error));
             }
             Err(mpsc::TryRecvError::Empty) => {
-                self.pending_password_store = Some(pending);
+                self.overlays.pending_password_store = Some(pending);
                 context.request_repaint_after(Duration::from_millis(20));
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -1034,7 +976,7 @@ impl FesTermApp {
             return;
         }
         session.eviction_notice_shown = true;
-        self.transient_notice = Some((
+        self.overlays.transient_notice = Some((
             "Scrollback limit reached — oldest history discarded".to_owned(),
             Instant::now() + Duration::from_millis(2_500),
         ));
@@ -1318,11 +1260,7 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.pending_close.is_some()
-            || self.pending_paste.is_some()
-            || self.pending_settings_reset.is_some()
-            || self.about_open
-        {
+        if self.overlays.blocks_terminal_input() || self.about_open {
             return;
         }
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
@@ -1387,7 +1325,7 @@ impl FesTermApp {
             ZoomCommand::Reset => session.view.reset_zoom(),
         };
         if changed {
-            self.transient_notice = Some((
+            self.overlays.transient_notice = Some((
                 format!("Terminal zoom: {:.0} pt", session.view.font_size_points()),
                 Instant::now() + Duration::from_millis(1_500),
             ));
@@ -1406,7 +1344,7 @@ impl FesTermApp {
             return;
         };
         session.terminal.reset_to_initial_state();
-        self.transient_notice = Some((
+        self.overlays.transient_notice = Some((
             "Terminal reset".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
         ));
@@ -1425,7 +1363,7 @@ impl FesTermApp {
             return;
         };
         session.terminal.clear_scrollback();
-        self.transient_notice = Some((
+        self.overlays.transient_notice = Some((
             "Terminal history cleared".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
         ));
@@ -1438,7 +1376,7 @@ impl FesTermApp {
             return;
         }
         self.focus_mode = !self.focus_mode;
-        self.transient_notice = Some((
+        self.overlays.transient_notice = Some((
             if self.focus_mode {
                 format!(
                     "Focus Mode · {} → Exit Focus Mode",
@@ -1459,11 +1397,11 @@ impl FesTermApp {
     }
 
     fn show_transient_notice(&mut self, context: &egui::Context) {
-        let Some((text, deadline)) = self.transient_notice.as_ref() else {
+        let Some((text, deadline)) = self.overlays.transient_notice.as_ref() else {
             return;
         };
         if Instant::now() >= *deadline {
-            self.transient_notice = None;
+            self.overlays.transient_notice = None;
             return;
         }
         let text = text.clone();
@@ -1850,9 +1788,7 @@ impl FesTermApp {
 
         // A destructive confirmation owns Escape before the terminal input
         // adapter sees raw events. Backdrop clicks are intentionally ignored.
-        let confirmation_escape = (self.pending_close.is_some()
-            || self.pending_paste.is_some()
-            || self.pending_settings_reset.is_some())
+        let confirmation_escape = self.overlays.blocks_terminal_input()
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -1926,7 +1862,7 @@ impl FesTermApp {
         };
         let mut screen_command = None;
         let mut overlay_action = None;
-        let paste_was_pending = self.pending_paste.is_some();
+        let paste_was_pending = self.overlays.pending_paste.is_some();
         let mut deferred_pastes = Vec::new();
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
@@ -1964,9 +1900,7 @@ impl FesTermApp {
                 TabContent::Session(session) => {
                     let options = festerm_ui_egui::TerminalViewOptions {
                         paste_available: session.accepts_input(),
-                        terminal_input_enabled: self.pending_close.is_none()
-                            && self.pending_paste.is_none()
-                            && self.pending_settings_reset.is_none()
+                        terminal_input_enabled: !self.overlays.blocks_terminal_input()
                             && !self.about_open
                             && !self.palette.is_open(),
                         keyboard_input_enabled: session.accepts_typed_input(),
@@ -1998,11 +1932,7 @@ impl FesTermApp {
             // A later clipboard-delivery event invalidates the captured
             // operation. Never replace an open dialog or route a second paste.
             self.cancel_paste_confirmation();
-        } else if self.pending_close.is_none()
-            && self.pending_paste.is_none()
-            && self.pending_settings_reset.is_none()
-            && deferred_pastes.len() == 1
-        {
+        } else if !self.overlays.blocks_terminal_input() && deferred_pastes.len() == 1 {
             self.handle_paste_request(active_tab_id, deferred_pastes.remove(0));
         }
         let inspector_action = inspector_open
@@ -2085,9 +2015,9 @@ impl FesTermApp {
             }
         }
 
-        if self.pending_close.is_some() {
+        if self.overlays.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
-        } else if self.pending_settings_reset.is_some() {
+        } else if self.overlays.pending_settings_reset.is_some() {
             self.show_settings_reset_confirmation(ui.ctx(), confirmation_escape);
         } else {
             self.show_paste_confirmation(ui.ctx(), confirmation_escape);
@@ -2119,17 +2049,13 @@ impl FesTermApp {
             configuration_status: ConfigurationStartupStatus::Missing,
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store: Ok(Arc::new(MemorySecretStore::new())),
-            pending_password_store: None,
             secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
-            pending_close: None,
-            pending_paste: None,
-            pending_settings_reset: None,
+            overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             focus_mode: false,
-            transient_notice: None,
             about_open: false,
             about_licenses_open: false,
             terminal_fonts_installed: false,
@@ -2195,7 +2121,7 @@ mod tests {
 
         app.request_reset_interface_settings(&context);
 
-        assert!(app.pending_settings_reset.is_none());
+        assert!(app.overlays.pending_settings_reset.is_none());
         assert_eq!(app.state.interface_settings(), InterfaceSettings::DEFAULT);
     }
 
@@ -2208,7 +2134,7 @@ mod tests {
         assert_ne!(app.state.interface_settings(), InterfaceSettings::DEFAULT);
 
         app.request_reset_interface_settings(&context);
-        assert!(app.pending_settings_reset.is_some());
+        assert!(app.overlays.pending_settings_reset.is_some());
 
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 400.0))
@@ -2218,7 +2144,7 @@ mod tests {
 
         harness.get_by_label("Cancel").click();
         harness.step();
-        assert!(harness.state().pending_settings_reset.is_none());
+        assert!(harness.state().overlays.pending_settings_reset.is_none());
         assert_ne!(
             harness.state().state.interface_settings(),
             InterfaceSettings::DEFAULT
@@ -2230,7 +2156,7 @@ mod tests {
         harness.step();
         harness.get_by_label("Reset").click();
         harness.step();
-        assert!(harness.state().pending_settings_reset.is_none());
+        assert!(harness.state().overlays.pending_settings_reset.is_none());
         assert_eq!(
             harness.state().state.interface_settings(),
             InterfaceSettings::DEFAULT
@@ -2242,7 +2168,7 @@ mod tests {
         let context = egui::Context::default();
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
         app.request_close_tab(tab, &context);
-        assert!(app.pending_close.is_some());
+        assert!(app.overlays.pending_close.is_some());
 
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 516.0))
@@ -2252,12 +2178,12 @@ mod tests {
 
         harness.key_press(egui::Key::Enter);
         harness.step();
-        assert!(harness.state().pending_close.is_some());
+        assert!(harness.state().overlays.pending_close.is_some());
         assert_eq!(harness.state().state.active(), tab);
 
         harness.get_by_label("Close Session").click();
         harness.step();
-        assert!(harness.state().pending_close.is_none());
+        assert!(harness.state().overlays.pending_close.is_none());
         assert!(matches!(
             harness.state().state.active_tab().content,
             TabContent::Launcher
@@ -2276,7 +2202,7 @@ mod tests {
 
         harness.key_press(egui::Key::Escape);
         harness.step();
-        assert!(harness.state().pending_close.is_none());
+        assert!(harness.state().overlays.pending_close.is_none());
         assert_eq!(harness.state().state.active(), tab);
         assert!(matches!(
             harness.state().state.active_tab().content,
@@ -2447,7 +2373,8 @@ mod tests {
         app.pump_all_sessions(&context);
 
         assert!(
-            app.transient_notice
+            app.overlays
+                .transient_notice
                 .as_ref()
                 .is_some_and(|(text, _)| text.contains("Scrollback limit reached")),
             "eviction must surface a transient notice"
@@ -2462,10 +2389,10 @@ mod tests {
 
         // Dismiss the notice and pump again: continued eviction from
         // sustained output must not re-show it.
-        app.transient_notice = None;
+        app.overlays.transient_notice = None;
         app.pump_all_sessions(&context);
         assert!(
-            app.transient_notice.is_none(),
+            app.overlays.transient_notice.is_none(),
             "a latched eviction notice must not repeat on every frame"
         );
     }
