@@ -2218,6 +2218,7 @@ mod tests {
 
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 400.0))
+            .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         assert!(harness.get_by_label("Cancel").is_focused());
@@ -2252,6 +2253,7 @@ mod tests {
 
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 516.0))
+            .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         assert!(harness.get_by_label("Cancel").is_focused());
@@ -2277,6 +2279,7 @@ mod tests {
         app.request_close_tab(tab, &context);
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
 
@@ -2296,6 +2299,7 @@ mod tests {
         let (app, tab) = FesTermApp::for_test_with_live_session(&context);
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
 
@@ -2653,6 +2657,7 @@ mod tests {
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 516.0))
+            .with_max_steps(16)
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
 
@@ -2692,6 +2697,7 @@ mod tests {
     fn harness_with_configuration(configuration: Configuration) -> Harness<'static, FesTermApp> {
         Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
             .build_ui_state(
                 |ui, app: &mut FesTermApp| {
                     ui.ctx().set_visuals(theme::default_visuals());

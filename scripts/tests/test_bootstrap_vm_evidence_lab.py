@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,20 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = REPOSITORY_ROOT / "scripts" / "bootstrap-vm-evidence-lab.sh"
+
+
+def bootstrap_command(*arguments: str) -> list[str]:
+    """Builds the argument list to run the `sh` bootstrap script.
+
+    Windows has no shebang support, so `CreateProcess` cannot launch a `.sh`
+    file directly (`WinError 193: %1 is not a valid Win32 application`).
+    GitHub's hosted `windows-latest` runners (and most Windows dev machines
+    with Git installed) ship Git for Windows' `bash.exe` on `PATH`, so route
+    through that there instead of relying on direct execution.
+    """
+    if sys.platform == "win32":
+        return ["bash", str(BOOTSTRAP), *arguments]
+    return [str(BOOTSTRAP), *arguments]
 
 
 def run(*arguments: str, cwd: Path) -> str:
@@ -36,7 +51,7 @@ class BootstrapVmEvidenceLabTests(unittest.TestCase):
             )
             checkout = root / "checkout"
             subprocess.run(
-                [str(BOOTSTRAP), "--lock", str(lock), "--path", str(checkout)],
+                bootstrap_command("--lock", str(lock), "--path", str(checkout)),
                 check=True,
                 text=True,
             )
@@ -49,7 +64,7 @@ class BootstrapVmEvidenceLabTests(unittest.TestCase):
             run("git", "checkout", "--detach", "--quiet", newer_commit, cwd=checkout)
 
             subprocess.run(
-                [str(BOOTSTRAP), "--lock", str(lock), "--path", str(checkout)],
+                bootstrap_command("--lock", str(lock), "--path", str(checkout)),
                 check=True,
                 text=True,
             )
