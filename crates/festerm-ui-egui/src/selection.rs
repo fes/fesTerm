@@ -26,8 +26,15 @@ impl Selection {
         }
     }
 
+    /// Ends an in-progress selection gesture. A plain click (no drag, so the
+    /// released position never differed from the press position) collapses
+    /// to no selection at all, rather than leaving a single highlighted
+    /// character behind — selection should only ever result from a drag.
     pub fn finish(&mut self) {
         self.active = false;
+        if self.anchor == self.head {
+            self.clear();
+        }
     }
 
     pub fn clear(&mut self) {

@@ -1370,6 +1370,44 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_click_without_dragging_leaves_no_selection() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"hello");
+        let mut selection = Selection::default();
+        let mut sink = Sink::default();
+
+        route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Press(MouseButton::Left),
+                column: 2,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+        route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Release(MouseButton::Left),
+                column: 2,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+
+        assert_eq!(
+            selection.range(),
+            None,
+            "a click that never moved must not leave a single-character selection"
+        );
+        assert!(!selection.is_active());
+    }
+
+    #[test]
     fn wide_cells_use_one_two_column_paint_and_selection_span() {
         let mut terminal = terminal(4, 1);
         terminal.ingest(b"\x1b[4;38;2;1;2;3;48;5;196m\xe7\x95\x8c");
