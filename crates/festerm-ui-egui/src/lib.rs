@@ -856,6 +856,7 @@ mod tests {
                         TerminalViewOptions {
                             paste_available: false,
                             terminal_input_enabled: true,
+                            keyboard_input_enabled: true,
                             defer_paste_to_application: false,
                         },
                     );
@@ -869,6 +870,70 @@ mod tests {
 
         assert!(harness.query_by_label("Paste").is_none());
         assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes() {
+        // #51: once a session is exited/failed/stopped/disconnected, the
+        // application sets `keyboard_input_enabled: false` (distinct from
+        // the full-blackout `terminal_input_enabled` used for modal
+        // dialogs). Typed keystrokes must not reach the (dead) transport,
+        // but scrollback selection and Copy remain available so read-only
+        // history stays inspectable, per `docs/gui-action-graph.md`'s
+        // HIST-06/SSH-02 invariant.
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"copy me");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            paste_available: false,
+                            terminal_input_enabled: true,
+                            keyboard_input_enabled: false,
+                            defer_paste_to_application: false,
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+
+        // A keystroke sent to a read-only/dead session must not be encoded.
+        harness.get_by_label("Terminal viewport").click();
+        harness.run();
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        assert!(
+            harness.state().sink.0.is_empty(),
+            "keyboard_input_enabled: false must drop keystrokes bound for a dead transport"
+        );
+
+        // Selection and Copy must still work over the retained read-only
+        // history.
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+        assert!(harness.state().view.selection().range().is_some());
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(
+            harness.query_by_label("Copy").is_some(),
+            "Copy must remain available for a disconnected session's selected history"
+        );
     }
 
     #[test]

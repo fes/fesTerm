@@ -233,6 +233,20 @@ pub(crate) struct InputAdapterState<'a> {
     pub(crate) pointer: &'a mut TerminalPointerState,
 }
 
+/// Which parts of terminal input `route_egui_events` should suppress this
+/// frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct InputSuppression {
+    /// A full blackout (e.g. an open context menu or a foreground modal):
+    /// history navigation, selection, and keyboard routing are all inert.
+    pub(crate) blackout: bool,
+    /// The session backing this view can no longer accept keystrokes (it
+    /// has exited, failed, stopped, or disconnected). Unlike `blackout`,
+    /// this only drops keystrokes/paste bound for the shell; selection,
+    /// Copy, and scrollback navigation remain active.
+    pub(crate) keystrokes: bool,
+}
+
 pub(crate) fn route_egui_events(
     ui: &Ui,
     response: &Response,
@@ -240,7 +254,7 @@ pub(crate) fn route_egui_events(
     terminal: &mut Terminal,
     input: InputAdapterState<'_>,
     sink: &mut impl EncodedInputSink,
-    suppress_terminal_input: bool,
+    suppress: InputSuppression,
 ) -> InputRoutingReports {
     let InputAdapterState {
         selection,
@@ -254,7 +268,19 @@ pub(crate) fn route_egui_events(
     let mut terminal_key_routed = false;
 
     for event in events {
-        if suppress_terminal_input && !matches!(event, egui::Event::WindowFocused(_)) {
+        if suppress.blackout && !matches!(event, egui::Event::WindowFocused(_)) {
+            continue;
+        }
+        // A dead/read-only session (exited, failed, stopped, disconnected)
+        // still allows history navigation, selection, and Copy; only
+        // keystrokes/paste bound for the (no longer listening) shell are
+        // dropped here.
+        if suppress.keystrokes
+            && matches!(
+                event,
+                egui::Event::Paste(_) | egui::Event::Text(_) | egui::Event::Key { .. }
+            )
+        {
             continue;
         }
         match event {

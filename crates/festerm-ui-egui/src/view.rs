@@ -13,7 +13,7 @@ use crate::{
     geometry::{cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
-        KeyboardOwnership, TerminalPointerState, TERMINAL_RESIZE_DEBOUNCE,
+        InputSuppression, KeyboardOwnership, TerminalPointerState, TERMINAL_RESIZE_DEBOUNCE,
     },
     renderer::{
         measure_input_to_paint_submission, paint_grid, FontSettings, GlyphCache, GridLayout,
@@ -37,8 +37,17 @@ pub struct TerminalViewOptions {
     pub paste_available: bool,
     /// Application-owned foreground UI permits terminal keyboard and pointer
     /// input this frame. Confirmation dialogs set this false so input cannot
-    /// leak through their backdrop into a shell or full-screen TUI.
+    /// leak through their backdrop into a shell or full-screen TUI. This is
+    /// a full blackout: history navigation, selection, and the context menu
+    /// are also inert while it is false.
     pub terminal_input_enabled: bool,
+    /// The session backing this view can still accept typed keystrokes
+    /// (i.e. it has not exited, failed, stopped, or disconnected). Unlike
+    /// `terminal_input_enabled`, this only suppresses keystrokes/paste
+    /// delivered to the shell; scrollback navigation, selection, and Copy
+    /// remain available so a read-only/dead session's history stays
+    /// inspectable.
+    pub keyboard_input_enabled: bool,
     /// Clipboard text is returned to the application policy layer instead of
     /// being encoded immediately. This lets the composition root apply paste
     /// confirmation without exposing session identity to this crate.
@@ -50,6 +59,7 @@ impl Default for TerminalViewOptions {
         Self {
             paste_available: true,
             terminal_input_enabled: true,
+            keyboard_input_enabled: true,
             defer_paste_to_application: false,
         }
     }
@@ -722,7 +732,10 @@ impl TerminalView {
                 pointer: &mut self.pointer,
             },
             sink,
-            context_menu_open || !options.terminal_input_enabled,
+            InputSuppression {
+                blackout: context_menu_open || !options.terminal_input_enabled,
+                keystrokes: !options.keyboard_input_enabled,
+            },
         );
         for report in reports.routes {
             self.diagnostics.last_input_outcome = Some(report.outcome);
@@ -904,5 +917,76 @@ mod history_overlay_tests {
             vec!["first\nsecond".to_owned(), "later".to_owned()]
         );
         assert!(view.take_paste_requests().is_empty());
+    }
+
+    #[test]
+    fn reflowed_rescales_anchored_offset_and_clamps_to_new_history_size() {
+        // #51: an anchored viewport offset must stay roughly the same
+        // relative place in retained history after a resize reflows
+        // physical rows, rather than jumping to an unrelated raw count.
+        let mut history = HistoryViewport {
+            offset_rows: 40,
+            observed_history_rows: 100,
+            unseen_output: false,
+        };
+
+        // Reflow to a wider terminal that halves the physical row count:
+        // the anchored offset should rescale proportionally (40/100 -> ~20).
+        history.reflowed(100, 50);
+        assert_eq!(history.offset_rows, 20);
+        assert_eq!(history.observed_history_rows, 50);
+
+        // Reflow that shrinks retained history below the rescaled offset
+        // must clamp rather than leave a stale, out-of-range position.
+        history.reflowed(50, 5);
+        assert!(history.offset_rows <= 5);
+    }
+
+    #[test]
+    fn reflowed_leaves_following_viewport_untouched() {
+        // A viewport that is not anchored (offset 0, i.e. "following
+        // latest") must remain following after reflow instead of being
+        // pulled into history.
+        let mut history = HistoryViewport::default();
+        history.reflowed(100, 40);
+        assert_eq!(history.offset_rows, 0);
+        assert_eq!(history.observed_history_rows, 40);
+    }
+
+    #[test]
+    fn sync_clamps_anchored_offset_when_eviction_shrinks_retained_history() {
+        // #51: when eviction removes the rows an anchored offset pointed
+        // into, the viewport must clamp to the nearest retained position
+        // (deterministic fallback) instead of tracking a now-invalid index.
+        let dimensions = festerm_core::Dimensions::new(4, 2).expect("4x2 is a valid terminal size");
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 1024)
+            .expect("small scrollback limit is valid");
+        for line in 1..=8 {
+            terminal.ingest(format!("line{line}\r\n").as_bytes());
+        }
+        let rows_before_more_output = terminal.scrollback_stats().physical_rows();
+
+        let mut history = HistoryViewport {
+            offset_rows: rows_before_more_output,
+            observed_history_rows: rows_before_more_output,
+            unseen_output: false,
+        };
+
+        // Push enough additional output to force eviction of older rows.
+        for line in 9..=64 {
+            terminal.ingest(format!("line{line}\r\n").as_bytes());
+        }
+        assert!(
+            terminal.scrollback_stats().evicted_lines() > 0,
+            "the tiny scrollback limit must have forced eviction"
+        );
+
+        history.sync(&terminal);
+
+        let rows_after = terminal.scrollback_stats().physical_rows();
+        assert!(
+            history.offset_rows <= rows_after,
+            "an anchored offset must clamp to retained history after eviction"
+        );
     }
 }

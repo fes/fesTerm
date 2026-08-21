@@ -1964,12 +1964,12 @@ impl FesTermApp {
                 TabContent::Session(session) => {
                     let options = festerm_ui_egui::TerminalViewOptions {
                         paste_available: session.accepts_input(),
-                        terminal_input_enabled: session.accepts_typed_input()
-                            && self.pending_close.is_none()
+                        terminal_input_enabled: self.pending_close.is_none()
                             && self.pending_paste.is_none()
                             && self.pending_settings_reset.is_none()
                             && !self.about_open
                             && !self.palette.is_open(),
+                        keyboard_input_enabled: session.accepts_typed_input(),
                         defer_paste_to_application: true,
                     };
                     session.view.show_with_options(
