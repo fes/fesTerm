@@ -114,14 +114,16 @@ run_logged fmt-check cargo fmt --all -- --check
 run_logged clippy cargo clippy --workspace --all-targets -- -D warnings
 run_logged workspace-tests cargo test --workspace -- --test-threads=1
 
-FESTERM_RUN_OPTIONAL_VALIDATION=1 \
+# Guarded by `if` (rather than a bare statement followed by `$?`) so that,
+# under `set -e`, a non-zero exit here records the failure and continues
+# with the rest of the suites instead of aborting the whole script, matching
+# this script's documented "never aborts on the first failure" contract.
+if FESTERM_RUN_OPTIONAL_VALIDATION=1 \
     FESTERM_OPTIONAL_VALIDATION_RESULT_PATH="$output_dir/optional-validation-result.txt" \
     FESTERM_P5_REFERENCE_RESULT_PATH="$output_dir/p5-reference-result.txt" \
     FESTERM_P6_RENDER_RESULT_PATH="$output_dir/p6-render-result.txt" \
     FESTERM_OPENSSH_INTEROP_RESULT_PATH="$output_dir/openssh-interop-result.txt" \
-    scripts/run-optional-validation.sh >"$output_dir/optional-validation.log" 2>&1
-optional_validation_exit=$?
-if [ "$optional_validation_exit" -eq 0 ]; then
+    scripts/run-optional-validation.sh >"$output_dir/optional-validation.log" 2>&1; then
     record optional-validation pass
 else
     record optional-validation fail "see optional-validation.log and optional-validation-result.txt"

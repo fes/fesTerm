@@ -146,11 +146,19 @@ impl NativeWindowSmoke {
 
         let viewport = context.input(|input| input.viewport().clone());
         self.focus_observed |= viewport.focused == Some(true);
-        if viewport.inner_rect.is_none() || viewport.native_pixels_per_point.is_none() {
+        if viewport.native_pixels_per_point.is_none() {
             // WSLg and some compositors populate viewport metadata after their
             // first frame. Keep the native window alive until the bounded
             // smoke timeout rather than mistaking that startup frame for a
             // missing native viewport.
+            //
+            // `inner_rect`/`outer_rect` are deliberately not part of this
+            // readiness gate: per `egui::ViewportInfo`, both are always
+            // `None` on native Wayland (and Android) because the platform
+            // does not expose absolute window position to clients. Window
+            // size (unlike position) is still delivered on every platform,
+            // so size-dependent checks below use `Context::viewport_rect`
+            // instead of `inner_rect`.
             context.request_repaint_after(Duration::from_millis(10));
             return;
         }
@@ -198,10 +206,13 @@ impl NativeWindowSmoke {
             }
             (SmokeKind::NativeWindow, Phase::AwaitResize(index)) => {
                 let requested = RESIZE_SEQUENCE[index];
-                let applied = viewport.inner_rect.is_some_and(|rect| {
-                    (rect.width() - requested.0).abs() < 8.0
-                        && (rect.height() - requested.1).abs() < 8.0
-                });
+                // `viewport_rect` is the window's content size in points,
+                // derived from resize events rather than absolute window
+                // position, so (unlike `inner_rect`) it is populated on
+                // native Wayland.
+                let content_rect = context.viewport_rect();
+                let applied = (content_rect.width() - requested.0).abs() < 8.0
+                    && (content_rect.height() - requested.1).abs() < 8.0;
                 // The viewport event reaches `logic` before the following
                 // `ui` call applies its measured grid size to the terminal.
                 // Wait one settled frame so the recorded dimensions belong to
