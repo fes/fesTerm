@@ -2872,6 +2872,12 @@ enum ConnectionFailure {
     HostTrust,
     Authentication,
     Setup,
+    /// A persistent strategy's provider capability probe found the
+    /// configured provider missing (or could not be run at all) on the
+    /// remote host. This is a stable, non-transient condition: retrying the
+    /// same transport will not make an absent executable appear, so
+    /// [`reconnect_is_eligible`] never retries it (ADR 0018, Issue #49).
+    ProviderUnavailable,
 }
 
 fn reconnect_is_eligible(policy_enabled: bool, failure: ConnectionFailure) -> bool {
@@ -3114,6 +3120,43 @@ async fn establish_connection(
         }
     }
 
+    // A persistent strategy's capability is probed lazily, immediately
+    // before it would otherwise be relied on, and never speculatively or in
+    // the background (ADR 0018, Issue #49 "run the provider capability
+    // probe lazily and surface unavailable-provider errors clearly"). This
+    // uses its own throwaway channel so a missing provider is reported
+    // distinctly from an ordinary shell/exec setup failure, without ever
+    // touching the PTY channel opened below.
+    if let SessionStrategy::Persistent { provider, .. } = strategy {
+        match probe_persistence_provider(
+            &handle,
+            *provider,
+            command_receiver,
+            shared,
+            host_key_gate,
+        )
+        .await
+        {
+            ProviderProbeOutcome::Available => {}
+            ProviderProbeOutcome::Unavailable => {
+                return ConnectionAttempt::Permanent(
+                    ConnectionFailure::ProviderUnavailable,
+                    "the configured durable-session provider is not available on the remote host",
+                );
+            }
+            ProviderProbeOutcome::ProbeFailed => {
+                return ConnectionAttempt::Permanent(
+                    ConnectionFailure::ProviderUnavailable,
+                    "the durable-session provider could not be probed on the remote host",
+                );
+            }
+            ProviderProbeOutcome::Shutdown => {
+                let _ = stop_handle(handle, shared).await;
+                return ConnectionAttempt::Shutdown;
+            }
+        }
+    }
+
     let channel = match wait_for_ssh_operation(
         handle.channel_open_session(),
         command_receiver,
@@ -3277,6 +3320,88 @@ async fn wait_for_channel_request_reply(
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
                 if process_commands_before_running(command_receiver, shared, host_key_gate) {
                     return ChannelRequestReply::Shutdown;
+                }
+            }
+        }
+    }
+}
+
+/// The result of lazily probing whether `provider` is available on the
+/// remote host, run only immediately before a persistent strategy would
+/// otherwise rely on it (ADR 0018, Issue #49). This never runs
+/// speculatively, in the background, or for a plain shell.
+enum ProviderProbeOutcome {
+    /// `provider`'s capability-probe command exited zero: it is present.
+    Available,
+    /// `provider`'s capability-probe command exited non-zero: it is
+    /// missing, so the caller must not attempt to attach or create a
+    /// durable session with it.
+    Unavailable,
+    /// The probe command itself could not be run to completion (the probe
+    /// channel failed to open, the exec request was rejected, or the
+    /// remote end closed the channel before an exit status arrived). This
+    /// is distinct from `Unavailable`: the host may or may not have the
+    /// provider, but fesTerm could not find out.
+    ProbeFailed,
+    Shutdown,
+}
+
+/// Runs `provider`'s capability-probe command on a throwaway channel and
+/// waits for its exit status. Probe output is discarded rather than routed
+/// to the terminal: this channel never becomes the session's PTY.
+async fn probe_persistence_provider(
+    handle: &russh::client::Handle<SshClientHandler>,
+    provider: PersistenceProvider,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> ProviderProbeOutcome {
+    let mut channel = match wait_for_ssh_operation(
+        handle.channel_open_session(),
+        command_receiver,
+        shared,
+        host_key_gate,
+    )
+    .await
+    {
+        WorkerWait::Completed(Ok(channel)) => channel,
+        WorkerWait::Completed(Err(_)) => return ProviderProbeOutcome::ProbeFailed,
+        WorkerWait::Shutdown => return ProviderProbeOutcome::Shutdown,
+    };
+    match wait_for_ssh_operation(
+        channel.exec(true, provider.capability_probe_command()),
+        command_receiver,
+        shared,
+        host_key_gate,
+    )
+    .await
+    {
+        WorkerWait::Completed(Ok(())) => {}
+        WorkerWait::Completed(Err(_)) => return ProviderProbeOutcome::ProbeFailed,
+        WorkerWait::Shutdown => return ProviderProbeOutcome::Shutdown,
+    }
+    loop {
+        tokio::select! {
+            message = channel.wait() => match message {
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    return if exit_status == 0 {
+                        ProviderProbeOutcome::Available
+                    } else {
+                        ProviderProbeOutcome::Unavailable
+                    };
+                }
+                Some(russh::ChannelMsg::ExitSignal { .. }) => return ProviderProbeOutcome::ProbeFailed,
+                Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
+                    return ProviderProbeOutcome::ProbeFailed;
+                }
+                // The probe's own stdout/stderr is deliberately discarded:
+                // this channel is never the session's PTY, so its output
+                // must never reach the terminal.
+                Some(_) => {}
+            },
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return ProviderProbeOutcome::Shutdown;
                 }
             }
         }
@@ -3974,6 +4099,17 @@ mod tests {
             PersistenceProvider::Screen.capability_probe_command(),
             "command -v screen"
         );
+    }
+
+    #[test]
+    fn a_missing_persistence_provider_is_never_retried() {
+        // A missing remote executable is a stable condition (ADR 0018,
+        // Issue #49): retrying the same transport can never make it
+        // appear, unlike an ordinary transient transport loss.
+        assert!(!reconnect_is_eligible(
+            true,
+            ConnectionFailure::ProviderUnavailable
+        ));
     }
 
     #[test]
