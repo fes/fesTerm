@@ -1874,23 +1874,29 @@ pub fn show_profiles(
                         // the fields scroll, *inside* the panel; the panel
                         // itself keeps its natural (small-form) height and
                         // only grows a scrollbar once content would run past
-                        // the actual window height. `available_height` here
-                        // (measured inside the frame, after the heading and
-                        // margins above it are already accounted for) is the
-                        // true remaining space in the real window; only the
-                        // Save/Cancel row below still needs to be reserved.
-                        // `available_height()` is unreliable here: this Frame
-                        // auto-sizes to its content, so on the pass that
-                        // decides how tall to make itself its own max_rect
-                        // is degenerate (zero height) -- a chicken-and-egg
-                        // problem for any auto-sizing container in immediate
-                        // mode. Instead, measure the *absolute* remaining
-                        // space in the real viewport: the current cursor's
-                        // vertical position (screen coordinates, valid even
-                        // when max_rect isn't) down to the bottom of the
-                        // window, minus room for the Save/Cancel row below.
+                        // the actual window height. `available_height()` is
+                        // unreliable here: this Frame auto-sizes to its
+                        // content, so on the pass that decides how tall to
+                        // make itself its own max_rect is degenerate (zero
+                        // height) -- a chicken-and-egg problem for any
+                        // auto-sizing container in immediate mode. Instead,
+                        // measure the *absolute* remaining space in the real
+                        // viewport: the current cursor's vertical position
+                        // (screen coordinates, valid even when max_rect
+                        // isn't) down to the bottom of the window, minus
+                        // room for the Save/Cancel row below -- and, if the
+                        // bottom status bar is showing, its exact reserved
+                        // area (queried directly from its own persisted
+                        // panel state rather than guessed) so the panel
+                        // never overlaps it.
                         let panel_top = ui.cursor().top();
-                        let viewport_bottom = ui.ctx().content_rect().bottom();
+                        let mut viewport_bottom = ui.ctx().content_rect().bottom();
+                        if let Some(status_bar) = egui::containers::panel::PanelState::load(
+                            ui.ctx(),
+                            egui::Id::new("status_bar"),
+                        ) {
+                            viewport_bottom = viewport_bottom.min(status_bar.outer_rect.top());
+                        }
                         let scroll_max_height = (viewport_bottom - panel_top - 56.0).max(120.0);
                         // `ScrollArea` computes its own available space via
                         // `ui.available_rect_before_wrap()`, which is
@@ -3458,15 +3464,65 @@ mod tests {
         // default `ScrollBarVisibility::VisibleWhenNeeded` keeps the
         // scrollbar hidden (it may still exist in the accessibility tree,
         // just marked hidden).
-        // With ample room, the whole form fits without needing to scroll at
-        // all -- once content doesn't exceed the available height, egui's
-        // default `ScrollBarVisibility::VisibleWhenNeeded` keeps the
-        // scrollbar hidden (it may still exist in the accessibility tree,
-        // just marked hidden).
         let scroll_bar = harness.query_by_role(accesskit::Role::ScrollBar);
         assert!(
             scroll_bar.is_none_or(|node| node.accesskit_node().is_hidden()),
             "scroll bar should not be visible when the form fits comfortably"
+        );
+    }
+
+    #[test]
+    fn ssh_profile_editor_panel_does_not_overlap_a_visible_bottom_status_bar() {
+        // Regression test: the editor's height budget must account for the
+        // app's bottom status bar (reserved via `egui::Panel::bottom`), not
+        // just the raw window height, or the panel ends up sized as if that
+        // strip weren't there and visually runs into/under it.
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 350.0))
+            .build_ui_state(
+                |ui, state: &mut ProfilesHarnessState| {
+                    egui::Panel::bottom("status_bar")
+                        .resizable(false)
+                        .show_separator_line(false)
+                        .show(ui, |ui| {
+                            ui.set_min_height(24.0);
+                            ui.set_max_height(24.0);
+                        });
+                    if let Some(command) =
+                        show_profiles(ui, state.tab_id, &state.configuration, None)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                ProfilesHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration: festerm_config::Configuration::new(vec![profile]).unwrap(),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        harness.get_by_label("Edit").click();
+        harness.run();
+
+        let status_bar_top =
+            egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("status_bar"))
+                .expect("status bar panel state should be recorded")
+                .outer_rect
+                .top();
+        assert!(
+            harness.get_by_label("Save").rect().max.y < status_bar_top,
+            "the editor panel must stay above the status bar rather than overlapping it"
         );
     }
 
