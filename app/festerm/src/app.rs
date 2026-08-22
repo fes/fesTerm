@@ -905,6 +905,27 @@ impl FesTermApp {
         );
     }
 
+    /// Resolves whether a saved SSH profile has a stored native-secret
+    /// credential and starts it accordingly: with one, exactly like
+    /// `StartStoredPasswordSshProfile` (needs the composition root's secret
+    /// store); without one, `AppState::start_configured_ssh_profile_interactive`
+    /// handles the whole launch itself (openssh-style in-terminal prompt),
+    /// no composition-root resource required.
+    fn start_configured_ssh_profile(&mut self, profile_id: String, context: &egui::Context) {
+        let has_credential = self
+            .state
+            .configuration()
+            .profile(&profile_id)
+            .and_then(Profile::as_ssh)
+            .is_some_and(|profile| profile.credential_reference().is_some());
+        if has_credential {
+            self.start_stored_password_profile(profile_id, context);
+        } else {
+            self.state
+                .start_configured_ssh_profile_interactive(&profile_id, context);
+        }
+    }
+
     fn start_stored_password_profile_with_options(
         &mut self,
         profile_id: String,
@@ -936,6 +957,7 @@ impl FesTermApp {
         profile_id: String,
         password: crate::tabs::PasswordToStore,
         options: festerm_ssh::SshSessionOptions,
+        launch_after_store: bool,
         context: &egui::Context,
     ) {
         let Ok(store) = self.secret_store.as_ref() else {
@@ -967,6 +989,7 @@ impl FesTermApp {
                     profile_id,
                     options,
                     store,
+                    launch_after_store,
                 });
                 self.secure_storage_feedback =
                     Some("Saving SSH password in native secure storage…");
@@ -1014,11 +1037,13 @@ impl FesTermApp {
                         },
                         None => Some("SSH password saved in native secure storage."),
                     };
-                    self.start_stored_password_profile_with_options(
-                        pending.profile_id,
-                        pending.options,
-                        context,
-                    );
+                    if pending.launch_after_store {
+                        self.start_stored_password_profile_with_options(
+                            pending.profile_id,
+                            pending.options,
+                            context,
+                        );
+                    }
                 } else {
                     let cleanup = pending.store.delete(&reference);
                     self.configuration_status =
@@ -1262,26 +1287,31 @@ impl FesTermApp {
                 id: NEW_LAUNCHER_TAB,
                 label: "New Session…".to_owned(),
                 hint: ApplicationShortcut::NewSession.label().map(str::to_owned),
+                is_tab: false,
             },
             PaletteItem {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
                 hint: None,
+                is_tab: false,
             },
             PaletteItem {
                 id: OPEN_SETTINGS,
                 label: "Open Settings".to_owned(),
                 hint: ApplicationShortcut::Settings.label().map(str::to_owned),
+                is_tab: false,
             },
             PaletteItem {
                 id: OPEN_PROFILES,
                 label: "Open Profiles".to_owned(),
                 hint: None,
+                is_tab: false,
             },
             PaletteItem {
                 id: ABOUT,
                 label: "About fesTerm".to_owned(),
                 hint: None,
+                is_tab: false,
             },
         ];
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
@@ -1293,6 +1323,7 @@ impl FesTermApp {
                     "Show Session Inspector".to_owned()
                 },
                 hint: None,
+                is_tab: false,
             });
             items.extend([
                 PaletteItem {
@@ -1303,6 +1334,7 @@ impl FesTermApp {
                         "Enter Focus Mode".to_owned()
                     },
                     hint: None,
+                    is_tab: false,
                 },
                 PaletteItem {
                     id: ZOOM_IN,
@@ -1312,26 +1344,31 @@ impl FesTermApp {
                     } else {
                         "Ctrl++".to_owned()
                     }),
+                    is_tab: false,
                 },
                 PaletteItem {
                     id: ZOOM_OUT,
                     label: "Zoom Out".to_owned(),
                     hint: ApplicationShortcut::ZoomOut.label().map(str::to_owned),
+                    is_tab: false,
                 },
                 PaletteItem {
                     id: RESET_ZOOM,
                     label: "Reset Zoom".to_owned(),
                     hint: ApplicationShortcut::ZoomReset.label().map(str::to_owned),
+                    is_tab: false,
                 },
                 PaletteItem {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
                     hint: None,
+                    is_tab: false,
                 },
                 PaletteItem {
                     id: CLEAR_TERMINAL_HISTORY,
                     label: "Clear Terminal History".to_owned(),
                     hint: None,
+                    is_tab: false,
                 },
             ]);
         }
@@ -1346,6 +1383,7 @@ impl FesTermApp {
                 }
             },
             hint: None,
+            is_tab: false,
         });
         for tab in self.state.tabs() {
             let (label, hint) = match &tab.content {
@@ -1370,8 +1408,9 @@ impl FesTermApp {
             };
             items.push(PaletteItem {
                 id: TAB_ACTIVATE_OFFSET + tab.id.chip_id(),
-                label: format!("Activate: {label}"),
+                label,
                 hint,
+                is_tab: true,
             });
         }
         items
@@ -2264,8 +2303,13 @@ impl FesTermApp {
                     );
                 }
                 TabContent::Profiles => {
-                    screen_command =
-                        screens::show_profiles(ui, active_tab_id, self.state.configuration());
+                    let pending_edit = self.state.take_pending_profile_edit();
+                    screen_command = screens::show_profiles(
+                        ui,
+                        active_tab_id,
+                        self.state.configuration(),
+                        pending_edit,
+                    );
                 }
                 TabContent::SshAuthenticationRequired(tab) => {
                     screen_command = screens::show_ssh_authentication_required(
@@ -2357,6 +2401,9 @@ impl FesTermApp {
                 AppCommand::StartStoredPasswordSshProfile { profile_id } => {
                     self.start_stored_password_profile(profile_id, &ui.ctx().clone());
                 }
+                AppCommand::StartConfiguredSshProfile { profile_id } => {
+                    self.start_configured_ssh_profile(profile_id, &ui.ctx().clone());
+                }
                 AppCommand::StoreSshPassword {
                     profile_id,
                     password,
@@ -2365,6 +2412,17 @@ impl FesTermApp {
                     profile_id,
                     password,
                     options,
+                    true,
+                    &ui.ctx().clone(),
+                ),
+                AppCommand::StoreProfilePassword {
+                    profile_id,
+                    password,
+                } => self.store_password_for_profile(
+                    profile_id,
+                    password,
+                    festerm_ssh::SshSessionOptions::new(),
+                    false,
                     &ui.ctx().clone(),
                 ),
                 AppCommand::SaveProfile { profile } => self.save_profile(profile),
@@ -3199,7 +3257,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_password_launcher_path_uses_injected_memory_store_and_persists_only_reference() {
+    fn stored_ssh_password_path_uses_injected_memory_store_and_persists_only_reference() {
         let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
             "production",
             "ssh.example.test",
@@ -3223,19 +3281,16 @@ mod tests {
         harness.state_mut().configuration_reloader =
             ConfigurationReloader::from_path_for_test(path.clone());
         harness.run();
-        harness
-            .get_by_label("Enter or replace password for production")
-            .click();
-        harness.step();
-        harness.run();
-        harness.get_by_label("Password").click();
-        harness
-            .get_by_label("Password")
-            .type_text("memory-only-password");
-        harness
-            .get_by_label("Remember this password in native secure storage")
-            .click();
-        harness.get_by_label("Connect with password").click();
+        let context = egui::Context::default();
+        harness.state_mut().store_password_for_profile(
+            "production".to_owned(),
+            crate::tabs::PasswordToStore::new("memory-only-password".to_owned()),
+            festerm_ssh::SshSessionOptions::manual_recovery(
+                festerm_ssh::SessionStrategy::PlainShell,
+            ),
+            true,
+            &context,
+        );
         harness.step();
 
         for _ in 0..50 {
@@ -3794,7 +3849,9 @@ mod tests {
             egui::Key::P,
         );
         harness.run();
-        harness.get_by_label("Activate: Launcher").click();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "Launcher")
+            .click();
         harness.run();
 
         assert_ne!(harness.state().state.active(), settings_tab);

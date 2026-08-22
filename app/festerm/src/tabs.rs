@@ -814,6 +814,12 @@ pub enum AppCommand {
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
+    /// Opens (or focuses) the singleton Profiles surface directly into the
+    /// editor for one existing profile, e.g. from a Launcher card's edit
+    /// icon.
+    OpenProfileEditor {
+        identifier: String,
+    },
     /// Explicitly asks the composition root to reload the configuration
     /// selected at startup. The path stays outside `AppState`; a successful
     /// candidate is installed through [`AppState::replace_configuration`].
@@ -844,6 +850,18 @@ pub enum AppCommand {
     StartStoredPasswordSshProfile {
         profile_id: String,
     },
+    /// Launches a saved SSH profile the same way a saved local profile
+    /// launches: from a Launcher/Profiles card, with no upfront password
+    /// prompt in the launch surface itself. The composition root
+    /// (`FesTermApp::screen_command`) resolves whether the profile has a
+    /// stored native-secret credential first: with one, it behaves exactly
+    /// like `StartStoredPasswordSshProfile`; without one, it is fully
+    /// handled by `AppState::start_configured_ssh_profile_interactive`
+    /// (openssh-style in-terminal password prompt, no composition-root
+    /// resource needed). Never reaches `AppState::dispatch` for real work.
+    StartConfiguredSshProfile {
+        profile_id: String,
+    },
     /// Requests that the composition root store a password for an existing
     /// configured SSH profile before starting it. The value is redacted from
     /// debug output and moved to the background store worker.
@@ -851,6 +869,14 @@ pub enum AppCommand {
         profile_id: String,
         password: PasswordToStore,
         options: SshSessionOptions,
+    },
+    /// Requests that the composition root store or replace a password for
+    /// an existing configured SSH profile from the Profiles editor, with no
+    /// follow-up launch (unlike `StoreSshPassword`, which is submitted from
+    /// a live connect form and auto-launches once the credential is saved).
+    StoreProfilePassword {
+        profile_id: String,
+        password: PasswordToStore,
     },
     /// Resolves the displayed host-key request for one specific SSH tab.
     ///
@@ -973,6 +999,12 @@ pub struct AppState {
     inspector_open: bool,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
+    /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
+    /// singleton Profiles tab opens directly into that profile's editor
+    /// instead of the list. Consumed once by `FesTermApp::screen_command`
+    /// via `take_pending_profile_edit`, since the Profiles surface's own
+    /// per-tab UI state lives in `egui`'s `ui.data`, not here.
+    pending_profile_edit: Option<String>,
 }
 
 impl AppState {
@@ -992,6 +1024,7 @@ impl AppState {
             inspector_open: false,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
+            pending_profile_edit: None,
         }
     }
 
@@ -1019,6 +1052,7 @@ impl AppState {
             inspector_open: false,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
+            pending_profile_edit: None,
         };
         (state, id)
     }
@@ -1077,6 +1111,7 @@ impl AppState {
             inspector_open: false,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
+            pending_profile_edit: None,
         }
     }
 
@@ -1261,6 +1296,7 @@ impl AppState {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
+            AppCommand::OpenProfileEditor { identifier } => self.open_profile_editor(identifier),
             // The composition root owns the private selected file location;
             // it validates a candidate before calling `replace_configuration`.
             AppCommand::ReloadConfiguration | AppCommand::SaveWorkspace => {}
@@ -1274,7 +1310,9 @@ impl AppState {
                 options,
             } => self.execute_ssh_session(profile, authentication, options, context),
             AppCommand::StartStoredPasswordSshProfile { .. }
-            | AppCommand::StoreSshPassword { .. } => {}
+            | AppCommand::StoreSshPassword { .. }
+            | AppCommand::StoreProfilePassword { .. }
+            | AppCommand::StartConfiguredSshProfile { .. } => {}
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
             }
@@ -1379,6 +1417,22 @@ impl AppState {
         self.active = id;
     }
 
+    /// Opens (or focuses) the Profiles surface and marks `identifier` to be
+    /// consumed by `take_pending_profile_edit`, so the surface renders
+    /// straight into that profile's editor instead of the list.
+    fn open_profile_editor(&mut self, identifier: String) {
+        self.open_profiles();
+        self.pending_profile_edit = Some(identifier);
+    }
+
+    /// One-shot consumption of a pending profile-editor request set by
+    /// `open_profile_editor`. `FesTermApp::screen_command` calls this each
+    /// frame it renders the Profiles surface; the Profiles screen itself
+    /// cannot read `AppState` directly.
+    pub fn take_pending_profile_edit(&mut self) -> Option<String> {
+        self.pending_profile_edit.take()
+    }
+
     fn start_local_session(&mut self, context: &egui::Context) {
         let dimensions = self.current_session_dimensions();
         self.place_session(SessionTab::start_default(context, dimensions));
@@ -1398,6 +1452,48 @@ impl AppState {
             context,
             dimensions,
         ));
+    }
+
+    /// Starts a saved SSH profile that has no stored native-secret
+    /// credential, using the same openssh-style in-terminal interactive
+    /// prompt flow as Quick Connect. Unlike a stored-password profile (which
+    /// needs the composition root's secret store), this is fully handled
+    /// here. The launch inherits the current window's terminal size rather
+    /// than the profile's own stored initial size, matching how a local
+    /// session or Quick Connect starts already sized to the open window.
+    pub fn start_configured_ssh_profile_interactive(
+        &mut self,
+        profile_id: &str,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+        else {
+            return false;
+        };
+        let size = self
+            .current_session_dimensions()
+            .and_then(|dimensions| terminal_size(dimensions).ok());
+        let connection_profile =
+            size.and_then(|size| profile.to_connection_profile_with_size(size).ok());
+        let Some(connection_profile) =
+            connection_profile.or_else(|| profile.to_connection_profile().ok())
+        else {
+            return false;
+        };
+        let strategy = profile
+            .session_strategy()
+            .unwrap_or(festerm_ssh::SessionStrategy::PlainShell);
+        let options = SshSessionOptions::manual_recovery(strategy);
+        self.execute_ssh_session(
+            connection_profile,
+            SshAuthentication::interactive(),
+            options,
+            context,
+        );
+        true
     }
 
     fn execute_ssh_session(

@@ -237,6 +237,71 @@ fn discover_windows_shell(
         .ok_or(LocalProfileError::NoDefaultShell)
 }
 
+/// Searches `PATH` for executables whose file name starts with `query`
+/// (case-insensitive), returning up to `limit` absolute paths in
+/// alphabetical order.
+///
+/// Intended for the Local profile editor's executable field: as the user
+/// types a bare command name (e.g. `cmd`), this offers the concrete
+/// absolute paths on `PATH` (e.g. `C:\Windows\System32\cmd.exe`) so the
+/// user can pin one down rather than relying on the search order in effect
+/// when fesTerm itself launched. Leaving the field as a bare name is still
+/// valid: the launched process resolves it against `PATH` at spawn time,
+/// exactly as it does today.
+pub fn search_path_executables(query: &str, limit: usize) -> Vec<PathBuf> {
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    search_path_executables_in(query, std::env::split_paths(&path_var), limit)
+}
+
+fn search_path_executables_in(
+    query: &str,
+    directories: impl Iterator<Item = PathBuf>,
+    limit: usize,
+) -> Vec<PathBuf> {
+    if query.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let query = query.to_lowercase();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut matches = Vec::new();
+    for directory in directories {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+                continue;
+            };
+            if !name.to_lowercase().starts_with(&query) {
+                continue;
+            }
+            if !is_executable_candidate(&path) {
+                continue;
+            }
+            if seen.insert(path.clone()) {
+                matches.push(path);
+            }
+        }
+    }
+    matches.sort();
+    matches.truncate(limit);
+    matches
+}
+
+#[cfg(unix)]
+fn is_executable_candidate(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_executable_candidate(path: &Path) -> bool {
+    path.is_file()
+}
+
 /// Errors returned while allocating or launching a local PTY session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalPtyError {
@@ -1034,6 +1099,59 @@ mod tests {
             profile.validate(),
             Err(LocalProfileError::InvalidWorkingDirectory(_))
         ));
+    }
+
+    fn make_executable(path: &Path) {
+        std::fs::write(path, b"#!/bin/sh\n").expect("test file can be created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("test file permissions can be set");
+        }
+    }
+
+    #[test]
+    fn path_search_matches_case_insensitive_prefixes_across_directories_and_is_sorted_and_capped() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-path-search-test-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).expect("test directory can be created");
+        std::fs::create_dir_all(&second).expect("test directory can be created");
+
+        make_executable(&first.join("Cmd.exe"));
+        make_executable(&first.join("cargo"));
+        make_executable(&second.join("cmdlet"));
+        // Not executable: must be excluded even though the name matches.
+        std::fs::write(second.join("cmd-readme.txt"), b"not executable")
+            .expect("test file can be created");
+
+        let directories = [first.clone(), second.clone()].into_iter();
+        let matches = search_path_executables_in("cmd", directories, 10);
+        assert_eq!(
+            matches,
+            vec![first.join("Cmd.exe"), second.join("cmdlet")],
+            "matches are case-insensitive-prefix filtered, executable-only, and sorted"
+        );
+
+        let directories = [first.clone(), second.clone()].into_iter();
+        let capped = search_path_executables_in("cmd", directories, 1);
+        assert_eq!(capped.len(), 1, "the limit truncates the result set");
+
+        let directories = [first, second].into_iter();
+        assert!(
+            search_path_executables_in("", directories, 10).is_empty(),
+            "an empty query returns no suggestions"
+        );
+
+        std::fs::remove_dir_all(&root).expect("test directory can be removed");
     }
 
     #[test]

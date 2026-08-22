@@ -71,6 +71,8 @@ The intended first enum surface is:
 | `TypographyFont` | `typography-font.svg` | Terminal font settings |
 | `SecretStorage` | `secret-storage.svg` | Locked credential/secret storage boundary |
 | `Back` | `back.svg` | Return to the prior step of a multi-step flow |
+| `Edit` | `edit.svg` | Open a saved definition's editor |
+| `Activate` | `activate.svg` | Switch focus to an existing open tab |
 
 Do not name variants after where they happen to appear (`TopBarSearch`) or
 after visual construction (`ThreeDots`). Names describe intent so launcher,

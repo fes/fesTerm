@@ -18,31 +18,58 @@ use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 use crate::configuration_startup::ConfigurationStartupStatus;
 use crate::tabs::{AppCommand, PasswordToStore, TabId};
 
-/// One selectable local launch option in the Launcher list.
+/// One selectable launch option in the Launcher list: the fixed default
+/// local shell, or a saved local/SSH profile.
+enum LauncherItemKind<'a> {
+    LocalDefault,
+    LocalProfile(&'a str),
+    SshProfile(&'a str),
+}
+
 struct LauncherItem<'a> {
     label: String,
     description: String,
-    profile_id: Option<&'a str>,
+    kind: LauncherItemKind<'a>,
 }
 
 impl LauncherItem<'_> {
+    fn profile_id(&self) -> Option<&str> {
+        match self.kind {
+            LauncherItemKind::LocalDefault => None,
+            LauncherItemKind::LocalProfile(id) | LauncherItemKind::SshProfile(id) => Some(id),
+        }
+    }
+
+    fn remote(&self) -> bool {
+        matches!(self.kind, LauncherItemKind::SshProfile(_))
+    }
+
     fn command(&self) -> AppCommand {
-        match self.profile_id {
-            Some(profile_id) => AppCommand::StartConfiguredLocalProfile {
+        match self.kind {
+            LauncherItemKind::LocalDefault => AppCommand::StartLocalSession,
+            LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
-            None => AppCommand::StartLocalSession,
+            LauncherItemKind::SshProfile(profile_id) => AppCommand::StartConfiguredSshProfile {
+                profile_id: profile_id.to_owned(),
+            },
         }
     }
 }
 
+/// Renders one Launcher card. Saved profiles (`editable`) also get a small
+/// edit-icon control in the card's upper-right corner: clicking it opens
+/// that profile's editor instead of launching it, while clicking anywhere
+/// else on the card launches, matching how the standalone Profiles surface
+/// and this card share one visual language.
 fn show_launcher_choice(
     ui: &mut Ui,
     primary: &str,
     secondary: &str,
     selected: bool,
     remote: bool,
-) -> egui::Response {
+    editable: bool,
+) -> (egui::Response, Option<egui::Response>) {
     let width = ui.available_width().clamp(220.0, 420.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, 54.0), Sense::click());
     let active = selected || response.hovered();
@@ -102,7 +129,41 @@ fn show_launcher_choice(
     response.widget_info(|| {
         WidgetInfo::labeled(WidgetType::Button, true, format!("{primary} — {secondary}"))
     });
-    response
+
+    let edit_response = editable.then(|| {
+        let edit_rect =
+            egui::Rect::from_min_size(rect.right_top() + vec2(-30.0, 8.0), vec2(22.0, 22.0));
+        let edit_id = response.id.with("edit");
+        let edit_response = ui.interact(edit_rect, edit_id, Sense::click());
+        let edit_active = edit_response.hovered();
+        ui.painter().rect(
+            edit_rect,
+            4.0,
+            if edit_active {
+                theme::SURFACE_TAB_ACTIVE
+            } else {
+                egui::Color32::TRANSPARENT
+            },
+            Stroke::NONE,
+            egui::StrokeKind::Inside,
+        );
+        icon::paint(
+            ui.painter(),
+            Icon::Edit,
+            edit_rect.shrink(3.0),
+            if edit_active {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            },
+        );
+        edit_response.widget_info(|| {
+            WidgetInfo::labeled(WidgetType::Button, true, format!("Edit {primary}"))
+        });
+        edit_response
+    });
+
+    (response, edit_response)
 }
 
 /// A bordered "Back" control that renders the app's own chevron glyph
@@ -779,84 +840,24 @@ fn show_ssh_form(
     result
 }
 
-enum SavedSshProfileAction {
-    OpenPasswordForm(SshProfileConfiguration),
-    UseStoredPassword(String),
-}
-
-fn show_saved_ssh_profiles(
-    ui: &mut Ui,
-    profiles: &[Profile],
-    native_store_available: bool,
-) -> Option<SavedSshProfileAction> {
-    let ssh_profiles: Vec<_> = profiles.iter().filter_map(Profile::as_ssh).collect();
-    if ssh_profiles.is_empty() {
-        return None;
-    }
-
-    ui.add_space(12.0);
-    ui.separator();
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new("Saved SSH profiles").strong());
-    let mut action = None;
-    for profile in ssh_profiles {
-        ui.group(|ui| {
-            ui.label(
-                egui::RichText::new(format!("Saved SSH profile: {}", profile.identifier()))
-                    .strong(),
-            );
-            ui.label(format!(
-                "{}@{}:{} · {} · {}×{}",
-                profile.username(),
-                profile.host(),
-                profile.port(),
-                profile.terminal_type(),
-                profile.initial_size().0,
-                profile.initial_size().1,
-            ));
-            if profile.credential_reference().is_some()
-                && ui
-                    .add_enabled(
-                        native_store_available,
-                        egui::Button::new(format!(
-                            "Use stored password for {}",
-                            profile.identifier()
-                        )),
-                    )
-                    .clicked()
-            {
-                action = Some(SavedSshProfileAction::UseStoredPassword(
-                    profile.identifier().to_owned(),
-                ));
-            }
-            if ui
-                .button(format!(
-                    "Enter or replace password for {}",
-                    profile.identifier()
-                ))
-                .clicked()
-            {
-                action = Some(SavedSshProfileAction::OpenPasswordForm(profile.clone()));
-            }
-        });
-    }
-    action
-}
-
 /// Renders the session launcher content and returns any dispatched command.
 ///
 /// `docs/gui-design.md` ("Session Launcher"): fast, compact, and usable
 /// repeatedly rather than a wizard or onboarding flow. The SSH form is a
 /// one-off connection surface: it creates no profile and retains password,
 /// key text, and key passphrases only in temporary UI state until submit.
-/// Saved local profiles launch through a typed application command. Saved SSH
-/// metadata remains visibly non-launching until M8 secure credential storage;
-/// the transient form below is the only SSH launch path.
+/// Saved local and SSH profiles both launch directly from their own card,
+/// with no password prompt in this surface: a saved SSH profile with a
+/// stored native credential launches with it, and one without launches
+/// through the same openssh-style in-terminal interactive prompt Quick
+/// Connect uses. Entering or replacing a saved SSH profile's stored
+/// password lives in the Profiles editor, not here.
 ///
 /// The list is keyboard-navigable: Up/Down moves a highlighted selection
-/// (persisted against the singleton Launcher's `tab_id`) and Enter launches the
-/// highlighted item without requiring the mouse. The id prevents this
-/// temporary state from colliding with other application-surface widgets.
+/// (persisted against the singleton Launcher's `tab_id`), Tab cycles through
+/// it the same way, and Enter launches the highlighted item without
+/// requiring the mouse. The id prevents this temporary state from colliding
+/// with other application-surface widgets.
 pub fn show_launcher(
     ui: &mut Ui,
     tab_id: TabId,
@@ -867,7 +868,7 @@ pub fn show_launcher(
     let mut items = vec![LauncherItem {
         label: "Local Shell".to_owned(),
         description: "Default shell on this computer".to_owned(),
-        profile_id: None,
+        kind: LauncherItemKind::LocalDefault,
     }];
     items.extend(
         profiles
@@ -876,7 +877,22 @@ pub fn show_launcher(
             .map(|profile| LauncherItem {
                 label: profile.identifier().to_owned(),
                 description: "Saved local profile".to_owned(),
-                profile_id: Some(profile.identifier()),
+                kind: LauncherItemKind::LocalProfile(profile.identifier()),
+            }),
+    );
+    items.extend(
+        profiles
+            .iter()
+            .filter_map(Profile::as_ssh)
+            .map(|profile| LauncherItem {
+                label: profile.identifier().to_owned(),
+                description: format!(
+                    "Saved SSH profile · {}@{}:{}",
+                    profile.username(),
+                    profile.host(),
+                    profile.port()
+                ),
+                kind: LauncherItemKind::SshProfile(profile.identifier()),
             }),
     );
 
@@ -920,16 +936,25 @@ pub fn show_launcher(
     }
 
     let form_has_focus = ssh_form_has_focus(ui, tab_id);
-    if !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+    let cycle_forward = !form_has_focus
+        && ui.input(|i| {
+            i.key_pressed(egui::Key::ArrowDown)
+                || (i.key_pressed(egui::Key::Tab) && !i.modifiers.shift)
+        });
+    let cycle_backward = !form_has_focus
+        && ui.input(|i| {
+            i.key_pressed(egui::Key::ArrowUp)
+                || (i.key_pressed(egui::Key::Tab) && i.modifiers.shift)
+        });
+    if cycle_forward {
         state.selected = (state.selected + 1) % (items.len() + 1);
     }
-    if !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+    if cycle_backward {
         state.selected = (state.selected + items.len()) % (items.len() + 1);
     }
     let launch_via_keyboard = !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
     let mut command = None;
-    let mut saved_ssh_action = None;
     ui.vertical(|ui| {
         ui.add_space(24.0);
         ui.horizontal(|ui| {
@@ -953,14 +978,22 @@ pub fn show_launcher(
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for (index, item) in items.iter().enumerate() {
-                    let response = show_launcher_choice(
+                    let (response, edit_response) = show_launcher_choice(
                         ui,
                         &item.label,
                         &item.description,
                         index == state.selected,
-                        false,
+                        item.remote(),
+                        item.profile_id().is_some(),
                     );
-                    if response.clicked() {
+                    if edit_response.is_some_and(|edit| edit.clicked()) {
+                        command = Some(AppCommand::OpenProfileEditor {
+                            identifier: item
+                                .profile_id()
+                                .expect("editable launcher items always carry a profile id")
+                                .to_owned(),
+                        });
+                    } else if response.clicked() {
                         command = Some(item.command());
                     }
                     ui.add_space(12.0);
@@ -971,15 +1004,13 @@ pub fn show_launcher(
                     "Connect to a remote host",
                     state.selected == items.len(),
                     true,
+                    false,
                 )
+                .0
                 .clicked()
                 {
                     state.ssh_open = true;
                     state.ssh.focus_username = true;
-                }
-                if command.is_none() && !state.ssh_open {
-                    saved_ssh_action =
-                        show_saved_ssh_profiles(ui, profiles, native_store_available);
                 }
             });
         });
@@ -995,19 +1026,6 @@ pub fn show_launcher(
             state.ssh.focus_username = true;
         } else {
             command = Some(items[state.selected].command());
-        }
-    }
-    if let Some(action) = saved_ssh_action {
-        match action {
-            SavedSshProfileAction::OpenPasswordForm(profile) => {
-                state.ssh = SshLauncherForm::default();
-                state.ssh.prefill_saved_profile(&profile);
-                state.ssh_open = true;
-                state.ssh.focus_username = true;
-            }
-            SavedSshProfileAction::UseStoredPassword(profile_id) => {
-                command = Some(AppCommand::StartStoredPasswordSshProfile { profile_id });
-            }
         }
     }
 
@@ -1308,7 +1326,7 @@ fn profiles_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("profiles_state", tab_id))
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct LocalProfileDraft {
     /// `None` while creating a new profile; `Some` while editing an
     /// existing one, so Save always upserts by this original identifier
@@ -1319,6 +1337,24 @@ struct LocalProfileDraft {
     arguments: String,
     working_directory: String,
     error: Option<String>,
+}
+
+impl Default for LocalProfileDraft {
+    /// A brand-new Local profile defaults its executable to this
+    /// platform's actual default shell (`$SHELL`/`COMSPEC`, matching the
+    /// Local Shell launcher card) rather than leaving it empty.
+    fn default() -> Self {
+        Self {
+            original_id: None,
+            name: String::new(),
+            executable: festerm_pty::default_local_profile()
+                .map(|profile| profile.executable().display().to_string())
+                .unwrap_or_default(),
+            arguments: String::new(),
+            working_directory: String::new(),
+            error: None,
+        }
+    }
 }
 
 impl LocalProfileDraft {
@@ -1353,14 +1389,39 @@ impl LocalProfileDraft {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct SshProfileDraft {
     original_id: Option<String>,
     name: String,
     host: String,
     port: String,
     username: String,
+    /// Transient plaintext password entry for "remember/replace password"
+    /// in the profile editor (item 5: relocated here from the launcher's
+    /// live-connect form). Never persisted to disk directly — only ever
+    /// sent to the composition root's secret store worker via
+    /// `AppCommand::StoreProfilePassword` and cleared immediately after.
+    password: String,
+    has_stored_credential: bool,
     error: Option<String>,
+}
+
+impl Default for SshProfileDraft {
+    /// A brand-new SSH profile defaults its port to "22" in the text box
+    /// (matching Quick Connect's `SshLauncherForm::DEFAULT_PORT`) rather
+    /// than leaving it empty.
+    fn default() -> Self {
+        Self {
+            original_id: None,
+            name: String::new(),
+            host: String::new(),
+            port: SshLauncherForm::DEFAULT_PORT.to_string(),
+            username: String::new(),
+            password: String::new(),
+            has_stored_credential: false,
+            error: None,
+        }
+    }
 }
 
 impl SshProfileDraft {
@@ -1371,6 +1432,8 @@ impl SshProfileDraft {
             host: ssh.host().to_owned(),
             port: ssh.port().to_string(),
             username: ssh.username().to_owned(),
+            password: String::new(),
+            has_stored_credential: ssh.credential_reference().is_some(),
             error: None,
         }
     }
@@ -1393,14 +1456,105 @@ impl SshProfileDraft {
 /// The standalone Profiles management surface: list, create, edit,
 /// duplicate, and delete reusable local/SSH launch definitions
 /// (`docs/gui-design.md` "Profile editing").
-fn profile_text_edit(ui: &mut Ui, label: &str, value: &mut String) {
+fn profile_text_edit(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: &'static str,
+    label: &str,
+    value: &mut String,
+) -> egui::Response {
+    profile_text_edit_inner(ui, tab_id, field, label, value, false)
+}
+
+fn profile_password_edit(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: &'static str,
+    label: &str,
+    value: &mut String,
+) -> egui::Response {
+    profile_text_edit_inner(ui, tab_id, field, label, value, true)
+}
+
+fn profile_text_edit_inner(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: &'static str,
+    label: &str,
+    value: &mut String,
+    password: bool,
+) -> egui::Response {
     ui.horizontal(|ui| {
+        ui.add_space(2.0);
         let label = ui.add(
             egui::Label::new(egui::RichText::new(label).color(theme::TEXT_SECONDARY))
                 .selectable(false),
         );
-        let field = ui.add(TextEdit::singleline(value).desired_width(240.0));
-        field.labelled_by(label.id);
+        let field = ui.add(
+            TextEdit::singleline(value)
+                .id_salt(("profiles_form", tab_id, field))
+                .password(password)
+                .desired_width(240.0),
+        );
+        field.labelled_by(label.id)
+    })
+    .inner
+}
+
+/// Maximum number of `PATH` matches offered below the Local profile
+/// executable field as the user types.
+const EXECUTABLE_SUGGESTION_LIMIT: usize = 6;
+
+/// The Local profile editor's executable field, with a live `PATH`-search
+/// dropdown: as the user types a bare command name (e.g. `cmd`), this
+/// offers up to [`EXECUTABLE_SUGGESTION_LIMIT`] concrete absolute paths
+/// found on `PATH` so they can pin down exactly which one to launch
+/// instead of relying on fesTerm's own search order at spawn time.
+/// Selecting a suggestion fills in its absolute path; leaving the field as
+/// a bare name is equally valid — it is resolved against `PATH` normally
+/// when the profile launches.
+fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut String) {
+    ui.vertical(|ui| {
+        let field = ui
+            .horizontal(|ui| {
+                let label = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new("Executable").color(theme::TEXT_SECONDARY),
+                    )
+                    .selectable(false),
+                );
+                let field = ui.add(TextEdit::singleline(value).desired_width(240.0));
+                field.labelled_by(label.id)
+            })
+            .inner;
+
+        let mut suppress = ui.data(|data| data.get_temp::<bool>(autocomplete_id).unwrap_or(false));
+        if field.changed() {
+            suppress = false;
+        }
+
+        if field.has_focus() && !suppress && !value.trim().is_empty() {
+            let suggestions =
+                festerm_pty::search_path_executables(value.trim(), EXECUTABLE_SUGGESTION_LIMIT);
+            if !suggestions.is_empty() {
+                ui.add_space(4.0);
+                egui::Frame::new()
+                    .fill(theme::SURFACE_TAB_INACTIVE)
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .corner_radius(6.0)
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        for candidate in &suggestions {
+                            let text = candidate.display().to_string();
+                            if ui.selectable_label(false, &text).clicked() {
+                                *value = text;
+                                suppress = true;
+                            }
+                        }
+                    });
+            }
+        }
+        ui.data_mut(|data| data.insert_temp(autocomplete_id, suppress));
     });
 }
 
@@ -1408,6 +1562,7 @@ pub fn show_profiles(
     ui: &mut Ui,
     tab_id: TabId,
     configuration: &festerm_config::Configuration,
+    pending_edit: Option<String>,
 ) -> Option<AppCommand> {
     let state_id = profiles_state_id(tab_id);
     let mut state = ui.data(|data| {
@@ -1415,6 +1570,19 @@ pub fn show_profiles(
             .unwrap_or_default()
     });
     let mut command = None;
+
+    if let Some(identifier) = pending_edit {
+        if let Some(profile) = configuration.profile(&identifier) {
+            state.mode = match profile {
+                Profile::Local(local) => {
+                    ProfilesScreenMode::EditLocal(LocalProfileDraft::from_profile(local))
+                }
+                Profile::Ssh(ssh) => {
+                    ProfilesScreenMode::EditSsh(SshProfileDraft::from_profile(ssh))
+                }
+            };
+        }
+    }
 
     let mut next_mode = None;
     match &mut state.mode {
@@ -1442,49 +1610,68 @@ pub fn show_profiles(
                 for profile in configuration.profiles() {
                     let (kind, name, description) = profile_summary(profile);
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(egui::RichText::new(&name).strong());
-                            ui.label(
-                                egui::RichText::new(format!("{kind} · {description}"))
-                                    .size(11.0)
-                                    .color(theme::TEXT_SECONDARY),
-                            );
+                    egui::Frame::new()
+                        .fill(theme::SURFACE_TAB_INACTIVE)
+                        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(egui::RichText::new(&name).strong());
+                                    ui.label(
+                                        egui::RichText::new(format!("{kind} · {description}"))
+                                            .size(11.0)
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                });
+                                if ui.button("Connect").clicked() {
+                                    command = Some(match profile {
+                                        Profile::Local(_) => {
+                                            AppCommand::StartConfiguredLocalProfile {
+                                                profile_id: name.clone(),
+                                            }
+                                        }
+                                        Profile::Ssh(_) => AppCommand::StartConfiguredSshProfile {
+                                            profile_id: name.clone(),
+                                        },
+                                    });
+                                }
+                                if ui.button("Edit").clicked() {
+                                    next_mode = Some(match profile {
+                                        Profile::Local(local) => ProfilesScreenMode::EditLocal(
+                                            LocalProfileDraft::from_profile(local),
+                                        ),
+                                        Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
+                                            SshProfileDraft::from_profile(ssh),
+                                        ),
+                                    });
+                                }
+                                if ui.button("Duplicate").clicked() {
+                                    let duplicate_name = format!("{name}-copy");
+                                    next_mode = Some(match profile {
+                                        Profile::Local(local) => {
+                                            let mut draft = LocalProfileDraft::from_profile(local);
+                                            draft.original_id = None;
+                                            draft.name = duplicate_name;
+                                            ProfilesScreenMode::EditLocal(draft)
+                                        }
+                                        Profile::Ssh(ssh) => {
+                                            let mut draft = SshProfileDraft::from_profile(ssh);
+                                            draft.original_id = None;
+                                            draft.name = duplicate_name;
+                                            ProfilesScreenMode::EditSsh(draft)
+                                        }
+                                    });
+                                }
+                                if ui.button("Delete").clicked() {
+                                    next_mode = Some(ProfilesScreenMode::ConfirmDelete {
+                                        identifier: name.clone(),
+                                        references: configuration.workspace_tab_references(&name),
+                                    });
+                                }
+                            });
                         });
-                        if ui.button("Edit").clicked() {
-                            next_mode = Some(match profile {
-                                Profile::Local(local) => ProfilesScreenMode::EditLocal(
-                                    LocalProfileDraft::from_profile(local),
-                                ),
-                                Profile::Ssh(ssh) => {
-                                    ProfilesScreenMode::EditSsh(SshProfileDraft::from_profile(ssh))
-                                }
-                            });
-                        }
-                        if ui.button("Duplicate").clicked() {
-                            let duplicate_name = format!("{name}-copy");
-                            next_mode = Some(match profile {
-                                Profile::Local(local) => {
-                                    let mut draft = LocalProfileDraft::from_profile(local);
-                                    draft.original_id = None;
-                                    draft.name = duplicate_name;
-                                    ProfilesScreenMode::EditLocal(draft)
-                                }
-                                Profile::Ssh(ssh) => {
-                                    let mut draft = SshProfileDraft::from_profile(ssh);
-                                    draft.original_id = None;
-                                    draft.name = duplicate_name;
-                                    ProfilesScreenMode::EditSsh(draft)
-                                }
-                            });
-                        }
-                        if ui.button("Delete").clicked() {
-                            next_mode = Some(ProfilesScreenMode::ConfirmDelete {
-                                identifier: name.clone(),
-                                references: configuration.workspace_tab_references(&name),
-                            });
-                        }
-                    });
                 }
             });
         }
@@ -1496,34 +1683,66 @@ pub fn show_profiles(
                 } else {
                     "New Local Profile"
                 });
-                ui.add_space(12.0);
-                profile_text_edit(ui, "Name (lowercase letters, digits, hyphens)", &mut draft.name);
-                profile_text_edit(ui, "Executable", &mut draft.executable);
-                profile_text_edit(ui, "Arguments (space-separated)", &mut draft.arguments);
-                profile_text_edit(ui, "Working directory (optional)", &mut draft.working_directory);
-                if let Some(error) = &draft.error {
-                    ui.colored_label(theme::STATUS_ERROR, error);
-                }
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        match draft.build() {
-                            Ok(profile) => {
-                                command = Some(AppCommand::SaveProfile { profile });
+                ui.add_space(16.0);
+                egui::Frame::new()
+                    .fill(theme::SURFACE_TAB_INACTIVE)
+                    .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(340.0);
+                        ssh_section_heading(ui, "Profile");
+                        profile_text_edit(
+                            ui,
+                            tab_id,
+                            "name",
+                            "Name (lowercase letters, digits, hyphens)",
+                            &mut draft.name,
+                        );
+                        local_executable_field(
+                            ui,
+                            profiles_state_id(tab_id).with("executable_autocomplete"),
+                            &mut draft.executable,
+                        );
+                        profile_text_edit(
+                            ui,
+                            tab_id,
+                            "arguments",
+                            "Arguments (space-separated)",
+                            &mut draft.arguments,
+                        );
+                        profile_text_edit(
+                            ui,
+                            tab_id,
+                            "working_directory",
+                            "Working directory (optional)",
+                            &mut draft.working_directory,
+                        );
+                        if let Some(error) = &draft.error {
+                            ui.add_space(6.0);
+                            ui.colored_label(theme::STATUS_ERROR, error);
+                        }
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {
+                                match draft.build() {
+                                    Ok(profile) => {
+                                        command = Some(AppCommand::SaveProfile { profile });
+                                        next_mode = Some(ProfilesScreenMode::List);
+                                    }
+                                    Err(_) => {
+                                        draft.error = Some(
+                                            "Enter a valid name (lowercase letters, digits, hyphens) and a non-empty executable."
+                                                .to_owned(),
+                                        );
+                                    }
+                                }
+                            }
+                            if ui.button("Cancel").clicked() {
                                 next_mode = Some(ProfilesScreenMode::List);
                             }
-                            Err(_) => {
-                                draft.error = Some(
-                                    "Enter a valid name (lowercase letters, digits, hyphens) and a non-empty executable."
-                                        .to_owned(),
-                                );
-                            }
-                        }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        next_mode = Some(ProfilesScreenMode::List);
-                    }
-                });
+                        });
+                    });
             });
         }
         ProfilesScreenMode::EditSsh(draft) => {
@@ -1534,38 +1753,83 @@ pub fn show_profiles(
                 } else {
                     "New SSH Profile"
                 });
-                ui.add_space(12.0);
-                profile_text_edit(
-                    ui,
-                    "Name (lowercase letters, digits, hyphens)",
-                    &mut draft.name,
-                );
-                profile_text_edit(ui, "Host", &mut draft.host);
-                profile_text_edit(ui, "Port", &mut draft.port);
-                profile_text_edit(ui, "Username", &mut draft.username);
-                if let Some(error) = &draft.error {
-                    ui.colored_label(theme::STATUS_ERROR, error);
-                }
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        match draft.build() {
-                            Ok(profile) => {
-                                command = Some(AppCommand::SaveProfile { profile });
-                                next_mode = Some(ProfilesScreenMode::List);
-                            }
-                            Err(()) => {
-                                draft.error = Some(
-                                    "Enter a valid name, host, numeric port, and username."
-                                        .to_owned(),
-                                );
+                ui.add_space(16.0);
+                egui::Frame::new()
+                    .fill(theme::SURFACE_TAB_INACTIVE)
+                    .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.set_width(340.0);
+                        ssh_section_heading(ui, "Connection");
+                        profile_text_edit(
+                            ui,
+                            tab_id,
+                            "name",
+                            "Name (lowercase letters, digits, hyphens)",
+                            &mut draft.name,
+                        );
+                        profile_text_edit(ui, tab_id, "username", "Username", &mut draft.username);
+                        profile_text_edit(ui, tab_id, "host", "Host", &mut draft.host);
+                        profile_text_edit(ui, tab_id, "port", "Port", &mut draft.port);
+                        if let Some(profile_id) = draft.original_id.clone() {
+                            ui.add_space(10.0);
+                            ssh_section_heading(ui, "Authentication");
+                            ssh_paragraph(
+                                ui,
+                                if draft.has_stored_credential {
+                                    "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                } else {
+                                    "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
+                                },
+                            );
+                            ui.add_space(4.0);
+                            profile_password_edit(
+                                ui,
+                                tab_id,
+                                "password",
+                                "Password",
+                                &mut draft.password,
+                            );
+                            ui.add_space(4.0);
+                            if ui
+                                .add_enabled(!draft.password.is_empty(), egui::Button::new("Save password"))
+                                .clicked()
+                            {
+                                command = Some(AppCommand::StoreProfilePassword {
+                                    profile_id,
+                                    password: PasswordToStore::new(std::mem::take(
+                                        &mut draft.password,
+                                    )),
+                                });
+                                draft.has_stored_credential = true;
                             }
                         }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        next_mode = Some(ProfilesScreenMode::List);
-                    }
-                });
+                        if let Some(error) = &draft.error {
+                            ui.add_space(6.0);
+                            ui.colored_label(theme::STATUS_ERROR, error);
+                        }
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {
+                                match draft.build() {
+                                    Ok(profile) => {
+                                        command = Some(AppCommand::SaveProfile { profile });
+                                        next_mode = Some(ProfilesScreenMode::List);
+                                    }
+                                    Err(()) => {
+                                        draft.error = Some(
+                                            "Enter a valid name, host, numeric port, and username."
+                                                .to_owned(),
+                                        );
+                                    }
+                                }
+                            }
+                            if ui.button("Cancel").clicked() {
+                                next_mode = Some(ProfilesScreenMode::List);
+                            }
+                        });
+                    });
             });
         }
         ProfilesScreenMode::ConfirmDelete {
@@ -2142,7 +2406,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_persistent_ssh_profile_offers_automatic_recovery_opt_in() {
+    fn saved_ssh_profile_card_launches_directly_without_a_stored_credential() {
         let profile = Profile::ssh(
             "build",
             "ssh.example.test",
@@ -2157,35 +2421,17 @@ mod tests {
         .expect("persistence config is valid");
         let mut harness = harness_with_profiles(vec![profile]);
         harness.run();
+
         harness
-            .get_by_label("Enter or replace password for build")
+            .get_by_label("build — Saved SSH profile · deploy@ssh.example.test:2200")
             .click();
         harness.run();
 
-        assert!(
-            harness
-                .query_by_label("Automatically resume this session after a lost connection")
-                .is_some(),
-            "a durable-session profile must offer the automatic-recovery opt-in checkbox"
-        );
-
-        harness
-            .get_by_label("Automatically resume this session after a lost connection")
-            .click();
-        harness.run();
-        enter_text(&mut harness, "Password", "transient-test-password");
-        harness.get_by_label("Connect with password").click();
-        harness.run();
-
-        let Some(AppCommand::StartSshSession { options, .. }) = harness.state().command.as_ref()
-        else {
-            panic!("the valid SSH form must return a typed SSH command");
-        };
-        assert!(
-            options.reconnect_policy().is_some(),
-            "opting in to automatic recovery on a durable-session profile must \
-             attach a reconnect policy (ADR 0018)"
-        );
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::StartConfiguredSshProfile { ref profile_id })
+                if profile_id == "build"
+        ));
     }
 
     #[test]
@@ -2213,7 +2459,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_ssh_profile_can_open_the_password_form_without_a_stored_credential() {
+    fn saved_ssh_profile_appears_as_a_launcher_card_without_password_ui() {
         let profiles = vec![Profile::ssh(
             "production",
             "ssh.example.test",
@@ -2228,57 +2474,19 @@ mod tests {
         harness.run();
 
         assert!(harness
-            .query_by_label("Saved SSH profile: production")
+            .query_by_label("production — Saved SSH profile · deploy@ssh.example.test:2200")
             .is_some());
-        assert!(harness
-            .query_by_label("Enter or replace password for production")
-            .is_some());
-        assert!(harness
-            .query_by_label("Use stored password for production")
-            .is_none());
+        assert!(
+            harness
+                .query_by_label("Enter or replace password for production")
+                .is_none(),
+            "password entry belongs to the Profiles editor, not the Launcher"
+        );
         assert!(harness.state().command.is_none());
     }
 
     #[test]
-    fn saved_ssh_password_form_returns_a_redacted_store_command() {
-        let profile = Profile::ssh(
-            "production",
-            "ssh.example.test",
-            2200,
-            "deploy",
-            "xterm-256color",
-            100,
-            40,
-        )
-        .expect("test profile is valid");
-        let mut harness = harness_with_profiles(vec![profile]);
-        harness.run();
-        harness
-            .get_by_label("Enter or replace password for production")
-            .click();
-        harness.step();
-        harness.run();
-        enter_text(&mut harness, "Password", "stored-test-password");
-        harness
-            .get_by_label("Remember this password in native secure storage")
-            .click();
-        harness.get_by_label("Connect with password").click();
-        harness.run();
-
-        let Some(AppCommand::StoreSshPassword {
-            profile_id,
-            password,
-            ..
-        }) = harness.state().command.as_ref()
-        else {
-            panic!("saved form must create a typed storage command");
-        };
-        assert_eq!(profile_id, "production");
-        assert!(!format!("{password:?}").contains("stored-test-password"));
-    }
-
-    #[test]
-    fn saved_ssh_profile_exposes_stored_password_action_only_with_a_reference() {
+    fn saved_ssh_profile_card_dispatches_a_configured_launch_regardless_of_stored_credential() {
         let profile = Profile::ssh(
             "production",
             "ssh.example.test",
@@ -2294,13 +2502,13 @@ mod tests {
         let mut harness = harness_with_profiles(vec![profile]);
         harness.run();
         harness
-            .get_by_label("Use stored password for production")
+            .get_by_label("production — Saved SSH profile · deploy@ssh.example.test:2200")
             .click();
         harness.run();
 
         assert!(matches!(
             harness.state().command,
-            Some(AppCommand::StartStoredPasswordSshProfile { ref profile_id })
+            Some(AppCommand::StartConfiguredSshProfile { ref profile_id })
                 if profile_id == "production"
         ));
     }
@@ -2722,7 +2930,9 @@ mod tests {
             .with_size(egui::vec2(560.0, 640.0))
             .build_ui_state(
                 |ui, state: &mut ProfilesHarnessState| {
-                    if let Some(command) = show_profiles(ui, state.tab_id, &state.configuration) {
+                    if let Some(command) =
+                        show_profiles(ui, state.tab_id, &state.configuration, None)
+                    {
                         state.command = Some(command);
                     }
                 },
@@ -2793,6 +3003,48 @@ mod tests {
     }
 
     #[test]
+    fn local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path() {
+        // `cargo` must be resolvable on `PATH` for `cargo test` itself to be
+        // running, so this environment always has at least one real match
+        // without this test needing to mutate the process-wide `PATH`.
+        let Some(expected_path) = festerm_pty::search_path_executables("cargo", 1)
+            .into_iter()
+            .next()
+        else {
+            panic!("`cargo` must be discoverable on PATH while running under `cargo test`");
+        };
+
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+        harness.get_by_label("Executable").focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Executable").type_text("cargo");
+        harness.run();
+
+        let expected_label = expected_path.display().to_string();
+        // `click_accesskit()` dispatches a direct accesskit click action rather
+        // than a synthetic pointer press/release, which reliably lands on the
+        // suggestion regardless of exact pixel geometry.
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, &expected_label)
+            .click_accesskit();
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Executable").value().as_deref(),
+            Some(expected_label.as_str()),
+            "selecting a PATH suggestion must fill the field with its absolute path"
+        );
+        assert!(
+            harness.query_by_label(&expected_label).is_none(),
+            "the suggestion dropdown must be hidden immediately after a selection"
+        );
+    }
+
+    #[test]
     fn profiles_delete_flow_returns_a_delete_profile_command() {
         let profile = Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap();
         let mut harness =
@@ -2811,5 +3063,48 @@ mod tests {
             panic!("confirming deletion must return a DeleteProfile command");
         };
         assert_eq!(identifier, "dev-shell");
+    }
+
+    #[test]
+    fn ssh_profile_editor_offers_a_password_field_that_dispatches_store_profile_password() {
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        harness.get_by_label("Edit").click();
+        harness.run();
+        assert!(harness.query_by_label("Edit SSH Profile").is_some());
+
+        // No stored credential yet, so the field starts empty and "Save
+        // password" is disabled until something is typed.
+        assert!(harness
+            .query_by_label(
+                "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
+            )
+            .is_some());
+
+        harness.get_by_label("Password").focus();
+        harness.get_by_label("Password").type_text("hunter2");
+        harness.run();
+
+        harness.get_by_label("Save password").click();
+        harness.run();
+
+        let Some(AppCommand::StoreProfilePassword { profile_id, .. }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("clicking Save password must return a StoreProfilePassword command");
+        };
+        assert_eq!(profile_id, "prod");
     }
 }

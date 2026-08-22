@@ -148,7 +148,8 @@
       ],
       "automated_tests": [
         "ssh_form_submit_clears_the_transient_password",
-        "saved_ssh_password_form_returns_a_redacted_store_command",
+        "stored_ssh_password_path_uses_injected_memory_store_and_persists_only_reference",
+        "ssh_profile_editor_offers_a_password_field_that_dispatches_store_profile_password",
         "interactive_ssh_command_replaces_the_active_launcher_in_place",
         "a_plain_typed_password_session_retains_full_reconnect_retry_state",
         "ssh_live_password_prompt_shows_the_ssh_style_prompt_line",
@@ -626,7 +627,9 @@
         "profiles_list_shows_no_profiles_saved_yet_when_empty",
         "profiles_new_local_profile_flow_returns_a_save_profile_command",
         "profiles_new_local_profile_flow_reports_an_error_for_an_empty_name",
-        "profiles_delete_flow_returns_a_delete_profile_command"
+        "profiles_delete_flow_returns_a_delete_profile_command",
+        "local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path",
+        "ssh_profile_editor_offers_a_password_field_that_dispatches_store_profile_password"
       ],
       "manual_scenarios": [
         "CP-05"

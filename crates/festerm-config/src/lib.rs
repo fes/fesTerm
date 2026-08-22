@@ -1152,9 +1152,21 @@ impl SshProfileConfiguration {
 
     /// Converts safe metadata into the SSH backend's connection profile.
     pub fn to_connection_profile(&self) -> Result<SshConnectionProfile, ConfigError> {
-        let identity = HostIdentity::new(&self.host, self.port)
-            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
         let size = TerminalSize::new(self.initial_columns, self.initial_rows)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
+        self.to_connection_profile_with_size(size)
+    }
+
+    /// Converts safe metadata into the SSH backend's connection profile,
+    /// overriding the profile's own stored terminal size. Used when
+    /// launching a saved profile into an already-sized window: the launch
+    /// should inherit that window's current dimensions rather than the
+    /// profile's stored (and often stale) initial size.
+    pub fn to_connection_profile_with_size(
+        &self,
+        size: TerminalSize,
+    ) -> Result<SshConnectionProfile, ConfigError> {
+        let identity = HostIdentity::new(&self.host, self.port)
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
         SshConnectionProfile::new(identity, &self.username, &self.terminal_type, size)
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))

@@ -16,6 +16,8 @@
 
 use egui::{Context, Id, Key, Modifiers, RichText, ScrollArea, Window};
 
+use crate::icon::{self, Icon};
+
 /// One searchable entry: an application action or an open tab.
 #[derive(Clone, Debug)]
 pub struct PaletteItem {
@@ -28,6 +30,10 @@ pub struct PaletteItem {
     /// Optional secondary text such as terminal-provided dynamic title or a
     /// short hint. Never the sole identifying text.
     pub hint: Option<String>,
+    /// Whether this row activates an open tab rather than running a
+    /// one-shot action. Tab rows paint a small chevron icon instead of an
+    /// "Activate: " text prefix.
+    pub is_tab: bool,
 }
 
 /// Persistent (frame-to-frame) palette state: open/closed, current query
@@ -155,7 +161,25 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
                                 RichText::new(&item.label)
                             };
                             let text = if highlighted { text.strong() } else { text };
-                            if ui.selectable_label(highlighted, text).clicked() {
+                            let response = if item.is_tab {
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(14.0, 14.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    icon::paint(
+                                        ui.painter(),
+                                        Icon::Activate,
+                                        rect,
+                                        ui.visuals().text_color(),
+                                    );
+                                    ui.selectable_label(highlighted, text)
+                                })
+                                .inner
+                            } else {
+                                ui.selectable_label(highlighted, text)
+                            };
+                            if response.clicked() {
                                 decision = Some(Some(item.id));
                             }
                         }
@@ -211,6 +235,7 @@ mod tests {
             id,
             label: label.to_owned(),
             hint: None,
+            is_tab: false,
         }
     }
 
@@ -227,6 +252,7 @@ mod tests {
                 id: 1,
                 label: "production-db".to_owned(),
                 hint: Some("nvim server.rs".to_owned()),
+                is_tab: false,
             },
             item(2, "Open Settings"),
         ];

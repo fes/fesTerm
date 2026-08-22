@@ -40,6 +40,8 @@ pub enum Icon {
     TypographyFont,
     SecretStorage,
     Back,
+    Edit,
+    Activate,
 }
 
 /// Paints canonical 24-unit icon geometry into any logical-pixel rectangle.
@@ -278,6 +280,13 @@ pub fn paint(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
         Icon::Back => {
             g.poly(&[(15., 5.), (8., 12.), (15., 19.)]);
         }
+        Icon::Edit => {
+            g.poly(&[(4., 20.), (4., 16.), (15., 5.), (19., 9.), (8., 20.)]);
+            g.line((15., 5.), (19., 9.));
+        }
+        Icon::Activate => {
+            g.poly(&[(9., 5.), (16., 12.), (9., 19.)]);
+        }
     }
 }
 
@@ -373,8 +382,10 @@ mod tests {
             Icon::TypographyFont,
             Icon::SecretStorage,
             Icon::Back,
+            Icon::Edit,
+            Icon::Activate,
         ];
-        assert_eq!(icons.len(), 31);
+        assert_eq!(icons.len(), 33);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

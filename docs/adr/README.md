@@ -22,10 +22,12 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0016: Native Secret Store Boundary](0016-native-secret-store-boundary.md)
 - [ADR 0017: Bounded Logical Scrollback and Anchored Viewports](0017-bounded-logical-scrollback-and-anchored-viewports.md)
 - [ADR 0018: SSH Liveness, Reconnect, and Persistent Session Recovery](0018-ssh-liveness-reconnect-and-persistent-session-recovery.md)
+- [ADR 0019: Fingerprint-First SSH Authentication Ordering](0019-fingerprint-first-ssh-authentication-ordering.md)
+- [ADR 0020: Persistent Host-Key Trust](0020-persistent-host-key-trust.md)
 
 ## Proposed Decisions
 
-None.
+- [ADR 0021: `cargo-dist` and GitHub Releases for Build, Distribution, and Updates](0021-cargo-dist-github-releases-distribution.md)
 
 ## Status Values
 

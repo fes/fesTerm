@@ -68,6 +68,12 @@ pub(crate) struct PendingPasswordStore {
     pub(crate) profile_id: String,
     pub(crate) options: festerm_ssh::SshSessionOptions,
     pub(crate) store: std::sync::Arc<dyn SecretStore>,
+    /// Whether the profile should auto-launch once the credential finishes
+    /// saving. True for the live-connect form's "remember password"
+    /// checkbox (`AppCommand::StoreSshPassword`); false when the password is
+    /// entered directly in the Profiles editor
+    /// (`AppCommand::StoreProfilePassword`), which has no session to launch.
+    pub(crate) launch_after_store: bool,
 }
 
 /// The confirmation prompts, in-flight secure-storage lookup, and transient
