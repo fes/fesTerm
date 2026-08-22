@@ -129,6 +129,57 @@ impl Configuration {
         Ok(replacement)
     }
 
+    /// Returns a complete replacement with `profile` inserted, or replacing
+    /// any existing profile sharing its identifier.
+    ///
+    /// This is the single write path for profile creation and editing:
+    /// creating a new profile and saving edits to an existing one are the
+    /// same upsert-by-identifier operation, matching
+    /// [`Self::with_known_host_trust`]'s replace-outright convention. The
+    /// original document is left untouched (immutable-replacement pattern).
+    pub fn with_profile(&self, profile: Profile) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        replacement
+            .profiles
+            .retain(|existing| existing.identifier() != profile.identifier());
+        replacement.profiles.push(profile);
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns a complete replacement with the profile named `identifier`
+    /// removed.
+    ///
+    /// Deletion is rejected (rather than silently orphaning a reference) when
+    /// any workspace tab still names this profile; callers should surface
+    /// [`Self::workspace_tab_references`] to the user before attempting a
+    /// delete so the confirmation can name the affected tabs up front.
+    pub fn without_profile(&self, identifier: &str) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        replacement
+            .profiles
+            .retain(|profile| profile.identifier() != identifier);
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns how many saved workspace tabs currently launch from the
+    /// profile named `identifier`, for a delete-confirmation prompt
+    /// ("Delete requires confirmation and reports workspace references",
+    /// `docs/gui-design.md` "Profile editing").
+    pub fn workspace_tab_references(&self, identifier: &str) -> usize {
+        self.workspace
+            .as_ref()
+            .map(|workspace| {
+                workspace
+                    .tabs()
+                    .iter()
+                    .filter(|tab| tab.profile_id() == Some(identifier))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
     /// Returns a complete replacement recording `fingerprint` as the trusted
     /// host key for `host:port` (ADR 0020).
     ///
@@ -532,6 +583,8 @@ pub enum WorkspaceTab {
     Launcher(LauncherTabConfiguration),
     /// The application Settings surface, with no session.
     Settings(SettingsTabConfiguration),
+    /// The application Profiles management surface, with no session.
+    Profiles(ProfilesTabConfiguration),
     /// A local session recreated from a local profile.
     LocalSession(SessionTabConfiguration),
     /// An SSH session recreated from an SSH profile.
@@ -551,6 +604,15 @@ impl WorkspaceTab {
     /// Creates a Settings application-surface tab.
     pub fn settings(identifier: impl Into<String>) -> Result<Self, ConfigError> {
         let tab = Self::Settings(SettingsTabConfiguration {
+            id: identifier.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
+    /// Creates a Profiles application-surface tab.
+    pub fn profiles(identifier: impl Into<String>) -> Result<Self, ConfigError> {
+        let tab = Self::Profiles(ProfilesTabConfiguration {
             id: identifier.into(),
         });
         tab.validate_metadata()?;
@@ -588,6 +650,7 @@ impl WorkspaceTab {
         match self {
             Self::Launcher(tab) => tab.identifier(),
             Self::Settings(tab) => tab.identifier(),
+            Self::Profiles(tab) => tab.identifier(),
             Self::LocalSession(tab) | Self::SshSession(tab) => tab.identifier(),
         }
     }
@@ -596,7 +659,7 @@ impl WorkspaceTab {
     pub fn profile_id(&self) -> Option<&str> {
         match self {
             Self::LocalSession(tab) | Self::SshSession(tab) => Some(tab.profile_id()),
-            Self::Launcher(_) | Self::Settings(_) => None,
+            Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => None,
         }
     }
 
@@ -604,6 +667,7 @@ impl WorkspaceTab {
         match self {
             Self::Launcher(tab) => validate_tab_identifier(tab.identifier()),
             Self::Settings(tab) => validate_tab_identifier(tab.identifier()),
+            Self::Profiles(tab) => validate_tab_identifier(tab.identifier()),
             Self::LocalSession(tab) | Self::SshSession(tab) => tab.validate(),
         }
     }
@@ -612,7 +676,7 @@ impl WorkspaceTab {
         match self {
             Self::LocalSession(tab) => validate_session_profile(profiles, tab.profile_id(), true),
             Self::SshSession(tab) => validate_session_profile(profiles, tab.profile_id(), false),
-            Self::Launcher(_) | Self::Settings(_) => Ok(()),
+            Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => Ok(()),
         }
     }
 }
@@ -639,6 +703,20 @@ pub struct SettingsTabConfiguration {
 }
 
 impl SettingsTabConfiguration {
+    /// Returns this tab's stable application identifier.
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Serialized metadata for a Profiles management tab.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilesTabConfiguration {
+    id: String,
+}
+
+impl ProfilesTabConfiguration {
     /// Returns this tab's stable application identifier.
     pub fn identifier(&self) -> &str {
         &self.id
@@ -2098,6 +2176,84 @@ sha256_fingerprint = "{fingerprint}"
     }
 
     #[test]
+    fn with_profile_inserts_a_new_profile_and_replaces_an_existing_one_by_identifier() {
+        let original = Configuration::empty();
+        assert!(original.profile("development").is_none());
+
+        let created = original
+            .with_profile(Profile::local("development", "sh", Vec::new(), None).unwrap())
+            .expect("new local profile is valid");
+        assert_eq!(
+            created
+                .profile("development")
+                .unwrap()
+                .as_local()
+                .unwrap()
+                .executable(),
+            "sh"
+        );
+        // The original document is untouched (immutable-replacement pattern).
+        assert!(original.profile("development").is_none());
+
+        let edited = created
+            .with_profile(
+                Profile::local(
+                    "development",
+                    "zsh",
+                    vec!["-l".to_owned()],
+                    Some("/tmp".to_owned()),
+                )
+                .unwrap(),
+            )
+            .expect("editing an existing profile by identifier is valid");
+        assert_eq!(
+            edited.profiles().len(),
+            1,
+            "edit replaces, does not duplicate"
+        );
+        let edited_profile = edited.profile("development").unwrap().as_local().unwrap();
+        assert_eq!(edited_profile.executable(), "zsh");
+        assert_eq!(edited_profile.arguments(), ["-l"]);
+    }
+
+    #[test]
+    fn without_profile_deletes_an_unreferenced_profile_but_rejects_a_workspace_reference() {
+        let configuration =
+            Configuration::new(vec![
+                Profile::local("development", "sh", Vec::new(), None).unwrap()
+            ])
+            .unwrap();
+
+        let deleted = configuration
+            .without_profile("development")
+            .expect("deleting an unreferenced profile is valid");
+        assert!(deleted.profile("development").is_none());
+        // The original document is untouched (immutable-replacement pattern).
+        assert!(configuration.profile("development").is_some());
+
+        // Deleting a profile a workspace tab still references must fail
+        // rather than silently orphaning that tab.
+        let workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::local_session("development-tab", "development").unwrap()],
+            None,
+        )
+        .unwrap();
+        let with_workspace = configuration.with_workspace(workspace).unwrap();
+        assert_eq!(with_workspace.workspace_tab_references("development"), 1);
+        assert_eq!(
+            with_workspace
+                .without_profile("development")
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::UnknownWorkspaceProfileReference
+        );
+
+        // Deleting a profile with no such tab returns zero references and
+        // succeeds.
+        assert_eq!(with_workspace.workspace_tab_references("unused"), 0);
+    }
+
+    #[test]
     fn rejects_malformed_noncanonical_and_non_v4_credential_references() {
         for reference in [
             "not-a-reference",
@@ -2207,6 +2363,7 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
                 WorkspaceTab::local_session("local-tab", "local").unwrap(),
                 WorkspaceTab::ssh_session("ssh-tab", "remote").unwrap(),
                 WorkspaceTab::settings("settings").unwrap(),
+                WorkspaceTab::profiles("profiles").unwrap(),
             ],
             Some("ssh-tab".to_owned()),
         )

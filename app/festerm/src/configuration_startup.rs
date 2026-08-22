@@ -36,6 +36,10 @@ pub(crate) enum ConfigurationStartupStatus {
     InterfaceSettingsSaveFailure(ConfigurationLoadFailure),
     KnownHostTrustSaved,
     KnownHostTrustSaveFailure(ConfigurationLoadFailure),
+    ProfileSaved,
+    ProfileSaveFailure(ConfigurationLoadFailure),
+    ProfileDeleted,
+    ProfileDeleteFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
@@ -113,6 +117,19 @@ impl ConfigurationStartupStatus {
             Self::KnownHostTrustSaveFailure(_) => {
                 "This host key was accepted for now, but could not be saved as trusted; it will prompt again next time."
             }
+            Self::ProfileSaved => {
+                "The profile was saved and is available the next time you connect or launch."
+            }
+            Self::ProfileSaveFailure(ConfigurationLoadFailure::Invalid) => {
+                "The profile was not saved because the configuration is invalid. Fix the definition and try again."
+            }
+            Self::ProfileSaveFailure(_) => {
+                "The profile was not saved because configuration could not be written."
+            }
+            Self::ProfileDeleted => "The profile was deleted.",
+            Self::ProfileDeleteFailure(_) => {
+                "The profile was not deleted because configuration could not be written."
+            }
         }
     }
 
@@ -125,6 +142,8 @@ impl ConfigurationStartupStatus {
                 | Self::PasswordCredentialSaveFailure(_)
                 | Self::InterfaceSettingsSaveFailure(_)
                 | Self::KnownHostTrustSaveFailure(_)
+                | Self::ProfileSaveFailure(_)
+                | Self::ProfileDeleteFailure(_)
         )
     }
 }
@@ -285,6 +304,29 @@ impl ConfigurationReloader {
         match self.save_configuration(configuration) {
             Ok(()) => ConfigurationStartupStatus::KnownHostTrustSaved,
             Err(failure) => ConfigurationStartupStatus::KnownHostTrustSaveFailure(failure),
+        }
+    }
+
+    /// Saves an already validated complete replacement immediately after an
+    /// explicit Save in the Profiles editor, whether creating a new profile
+    /// or editing an existing one (both are the same upsert-by-identifier
+    /// write, `Configuration::with_profile`).
+    pub(crate) fn save_profile(&self, configuration: &Configuration) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::ProfileSaved,
+            Err(failure) => ConfigurationStartupStatus::ProfileSaveFailure(failure),
+        }
+    }
+
+    /// Saves an already validated complete replacement immediately after an
+    /// explicit, confirmed profile deletion (`Configuration::without_profile`).
+    pub(crate) fn delete_profile(
+        &self,
+        configuration: &Configuration,
+    ) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::ProfileDeleted,
+            Err(failure) => ConfigurationStartupStatus::ProfileDeleteFailure(failure),
         }
     }
 

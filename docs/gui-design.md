@@ -1032,9 +1032,24 @@ stays beside the relevant field. Delete requires confirmation and reports
 workspace references. Duplicate creates a distinct profile with an editable
 name. OpenSSH import, if implemented, is a separate explicit operation and
 does not imply continued synchronization. Recent one-off destinations are not
-silently converted into profiles. The Profiles category and launcher entries
-remain absent until versioned persisted configuration exists and contains real
-profiles.
+silently converted into profiles.
+
+A standalone **Profiles** surface (a singleton chip, opened from the chip-row
+overflow menu's "Open Profiles" button or the command palette's "Open
+Profiles" entry, mirroring Settings) lists every saved profile with its kind
+and a short description, plus "New Local Profile" and "New SSH Profile"
+buttons. Each row offers Edit, Duplicate, and Delete. Local editing currently
+covers name/executable/arguments/working directory; SSH editing currently
+covers name/host/port/username (agent, key-file, and stored-password
+authentication references remain scoped to the existing one-off SSH form and
+are not yet editable from a saved profile). A profile's name is also its
+identifier, so it is validated as kebab-case (lowercase letters, digits,
+hyphens); an invalid or empty name/executable surfaces a single inline
+validation message rather than field-specific errors. Delete asks for
+confirmation and, when the profile is still referenced by a saved workspace
+tab, reports the reference count and blocks the deletion (the same
+`UnknownWorkspaceProfileReference` validation workspaces already enforce)
+until the tab is removed or repointed.
 
 ## Settings
 

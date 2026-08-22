@@ -1264,6 +1264,351 @@ pub fn show_settings(
     command
 }
 
+/// One row's stable identifying summary in the Profiles list, without
+/// exposing credential material.
+fn profile_summary(profile: &Profile) -> (&'static str, String, String) {
+    match profile {
+        Profile::Local(local) => {
+            let mut description = local.executable().to_owned();
+            if !local.arguments().is_empty() {
+                description.push(' ');
+                description.push_str(&local.arguments().join(" "));
+            }
+            ("Local", local.identifier().to_owned(), description)
+        }
+        Profile::Ssh(ssh) => (
+            "SSH",
+            ssh.identifier().to_owned(),
+            format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
+        ),
+    }
+}
+
+/// Which staged view the Profiles surface is currently showing. Multi-field
+/// edits are staged behind Save; Cancel discards them
+/// (`docs/gui-design.md` "Profile editing").
+#[derive(Clone, Default)]
+enum ProfilesScreenMode {
+    #[default]
+    List,
+    EditLocal(LocalProfileDraft),
+    EditSsh(SshProfileDraft),
+    ConfirmDelete {
+        identifier: String,
+        references: usize,
+    },
+}
+
+#[derive(Clone, Default)]
+struct ProfilesScreenState {
+    mode: ProfilesScreenMode,
+}
+
+fn profiles_state_id(tab_id: TabId) -> egui::Id {
+    egui::Id::new(("profiles_state", tab_id))
+}
+
+#[derive(Clone, Default)]
+struct LocalProfileDraft {
+    /// `None` while creating a new profile; `Some` while editing an
+    /// existing one, so Save always upserts by this original identifier
+    /// rather than the (possibly just-edited) name field.
+    original_id: Option<String>,
+    name: String,
+    executable: String,
+    arguments: String,
+    working_directory: String,
+    error: Option<String>,
+}
+
+impl LocalProfileDraft {
+    fn from_profile(local: &festerm_config::LocalProfileConfiguration) -> Self {
+        Self {
+            original_id: Some(local.identifier().to_owned()),
+            name: local.identifier().to_owned(),
+            executable: local.executable().to_owned(),
+            arguments: local.arguments().join(" "),
+            working_directory: local
+                .working_directory()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            error: None,
+        }
+    }
+
+    fn build(&self) -> Result<Profile, festerm_config::ConfigError> {
+        let arguments = self
+            .arguments
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        let working_directory = (!self.working_directory.trim().is_empty())
+            .then(|| self.working_directory.trim().to_owned());
+        Profile::local(
+            self.name.trim(),
+            self.executable.trim(),
+            arguments,
+            working_directory,
+        )
+    }
+}
+
+#[derive(Clone, Default)]
+struct SshProfileDraft {
+    original_id: Option<String>,
+    name: String,
+    host: String,
+    port: String,
+    username: String,
+    error: Option<String>,
+}
+
+impl SshProfileDraft {
+    fn from_profile(ssh: &SshProfileConfiguration) -> Self {
+        Self {
+            original_id: Some(ssh.identifier().to_owned()),
+            name: ssh.identifier().to_owned(),
+            host: ssh.host().to_owned(),
+            port: ssh.port().to_string(),
+            username: ssh.username().to_owned(),
+            error: None,
+        }
+    }
+
+    fn build(&self) -> Result<Profile, ()> {
+        let port: u16 = self.port.trim().parse().map_err(|_| ())?;
+        Profile::ssh(
+            self.name.trim(),
+            self.host.trim(),
+            port,
+            self.username.trim(),
+            "xterm-256color",
+            80,
+            24,
+        )
+        .map_err(|_| ())
+    }
+}
+
+/// The standalone Profiles management surface: list, create, edit,
+/// duplicate, and delete reusable local/SSH launch definitions
+/// (`docs/gui-design.md` "Profile editing").
+fn profile_text_edit(ui: &mut Ui, label: &str, value: &mut String) {
+    ui.horizontal(|ui| {
+        let label = ui.add(
+            egui::Label::new(egui::RichText::new(label).color(theme::TEXT_SECONDARY))
+                .selectable(false),
+        );
+        let field = ui.add(TextEdit::singleline(value).desired_width(240.0));
+        field.labelled_by(label.id);
+    });
+}
+
+pub fn show_profiles(
+    ui: &mut Ui,
+    tab_id: TabId,
+    configuration: &festerm_config::Configuration,
+) -> Option<AppCommand> {
+    let state_id = profiles_state_id(tab_id);
+    let mut state = ui.data(|data| {
+        data.get_temp::<ProfilesScreenState>(state_id)
+            .unwrap_or_default()
+    });
+    let mut command = None;
+
+    let mut next_mode = None;
+    match &mut state.mode {
+        ProfilesScreenMode::List => {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading("Profiles");
+                ui.label("Reusable local shell and SSH launch definitions.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("New Local Profile").clicked() {
+                        next_mode =
+                            Some(ProfilesScreenMode::EditLocal(LocalProfileDraft::default()));
+                    }
+                    if ui.button("New SSH Profile").clicked() {
+                        next_mode = Some(ProfilesScreenMode::EditSsh(SshProfileDraft::default()));
+                    }
+                });
+                ui.add_space(12.0);
+                ui.separator();
+                if configuration.profiles().is_empty() {
+                    ui.add_space(12.0);
+                    ui.label("No profiles saved yet.");
+                }
+                for profile in configuration.profiles() {
+                    let (kind, name, description) = profile_summary(profile);
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(&name).strong());
+                            ui.label(
+                                egui::RichText::new(format!("{kind} · {description}"))
+                                    .size(11.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        });
+                        if ui.button("Edit").clicked() {
+                            next_mode = Some(match profile {
+                                Profile::Local(local) => ProfilesScreenMode::EditLocal(
+                                    LocalProfileDraft::from_profile(local),
+                                ),
+                                Profile::Ssh(ssh) => {
+                                    ProfilesScreenMode::EditSsh(SshProfileDraft::from_profile(ssh))
+                                }
+                            });
+                        }
+                        if ui.button("Duplicate").clicked() {
+                            let duplicate_name = format!("{name}-copy");
+                            next_mode = Some(match profile {
+                                Profile::Local(local) => {
+                                    let mut draft = LocalProfileDraft::from_profile(local);
+                                    draft.original_id = None;
+                                    draft.name = duplicate_name;
+                                    ProfilesScreenMode::EditLocal(draft)
+                                }
+                                Profile::Ssh(ssh) => {
+                                    let mut draft = SshProfileDraft::from_profile(ssh);
+                                    draft.original_id = None;
+                                    draft.name = duplicate_name;
+                                    ProfilesScreenMode::EditSsh(draft)
+                                }
+                            });
+                        }
+                        if ui.button("Delete").clicked() {
+                            next_mode = Some(ProfilesScreenMode::ConfirmDelete {
+                                identifier: name.clone(),
+                                references: configuration.workspace_tab_references(&name),
+                            });
+                        }
+                    });
+                }
+            });
+        }
+        ProfilesScreenMode::EditLocal(draft) => {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading(if draft.original_id.is_some() {
+                    "Edit Local Profile"
+                } else {
+                    "New Local Profile"
+                });
+                ui.add_space(12.0);
+                profile_text_edit(ui, "Name (lowercase letters, digits, hyphens)", &mut draft.name);
+                profile_text_edit(ui, "Executable", &mut draft.executable);
+                profile_text_edit(ui, "Arguments (space-separated)", &mut draft.arguments);
+                profile_text_edit(ui, "Working directory (optional)", &mut draft.working_directory);
+                if let Some(error) = &draft.error {
+                    ui.colored_label(theme::STATUS_ERROR, error);
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        match draft.build() {
+                            Ok(profile) => {
+                                command = Some(AppCommand::SaveProfile { profile });
+                                next_mode = Some(ProfilesScreenMode::List);
+                            }
+                            Err(_) => {
+                                draft.error = Some(
+                                    "Enter a valid name (lowercase letters, digits, hyphens) and a non-empty executable."
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        next_mode = Some(ProfilesScreenMode::List);
+                    }
+                });
+            });
+        }
+        ProfilesScreenMode::EditSsh(draft) => {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading(if draft.original_id.is_some() {
+                    "Edit SSH Profile"
+                } else {
+                    "New SSH Profile"
+                });
+                ui.add_space(12.0);
+                profile_text_edit(
+                    ui,
+                    "Name (lowercase letters, digits, hyphens)",
+                    &mut draft.name,
+                );
+                profile_text_edit(ui, "Host", &mut draft.host);
+                profile_text_edit(ui, "Port", &mut draft.port);
+                profile_text_edit(ui, "Username", &mut draft.username);
+                if let Some(error) = &draft.error {
+                    ui.colored_label(theme::STATUS_ERROR, error);
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        match draft.build() {
+                            Ok(profile) => {
+                                command = Some(AppCommand::SaveProfile { profile });
+                                next_mode = Some(ProfilesScreenMode::List);
+                            }
+                            Err(()) => {
+                                draft.error = Some(
+                                    "Enter a valid name, host, numeric port, and username."
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        next_mode = Some(ProfilesScreenMode::List);
+                    }
+                });
+            });
+        }
+        ProfilesScreenMode::ConfirmDelete {
+            identifier,
+            references,
+        } => {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading("Delete profile?");
+                ui.label(format!("This will permanently delete \"{identifier}\"."));
+                if *references > 0 {
+                    ui.colored_label(
+                        theme::STATUS_ERROR,
+                        format!(
+                            "{references} saved workspace tab{} currently launch{} from this profile and will block deletion until removed.",
+                            if *references == 1 { "" } else { "s" },
+                            if *references == 1 { "s" } else { "" },
+                        ),
+                    );
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Delete").clicked() {
+                        command = Some(AppCommand::DeleteProfile {
+                            identifier: identifier.clone(),
+                        });
+                        next_mode = Some(ProfilesScreenMode::List);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        next_mode = Some(ProfilesScreenMode::List);
+                    }
+                });
+            });
+        }
+    }
+    if let Some(mode) = next_mode {
+        state.mode = mode;
+    }
+
+    ui.data_mut(|data| data.insert_temp(state_id, state));
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2362,5 +2707,109 @@ mod tests {
         };
         assert_eq!(*tab, tab_id);
         assert_eq!(password, "typed-test-password");
+    }
+
+    struct ProfilesHarnessState {
+        tab_id: TabId,
+        configuration: festerm_config::Configuration,
+        command: Option<AppCommand>,
+    }
+
+    fn profiles_harness(
+        configuration: festerm_config::Configuration,
+    ) -> Harness<'static, ProfilesHarnessState> {
+        Harness::builder()
+            .with_size(egui::vec2(560.0, 640.0))
+            .build_ui_state(
+                |ui, state: &mut ProfilesHarnessState| {
+                    if let Some(command) = show_profiles(ui, state.tab_id, &state.configuration) {
+                        state.command = Some(command);
+                    }
+                },
+                ProfilesHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration,
+                    command: None,
+                },
+            )
+    }
+
+    #[test]
+    fn profiles_list_shows_no_profiles_saved_yet_when_empty() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        assert!(harness.query_by_label("No profiles saved yet.").is_some());
+    }
+
+    #[test]
+    fn profiles_new_local_profile_flow_returns_a_save_profile_command() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+
+        harness
+            .get_by_label("Name (lowercase letters, digits, hyphens)")
+            .focus();
+        harness
+            .get_by_label("Name (lowercase letters, digits, hyphens)")
+            .type_text("dev-shell");
+        harness.run();
+        harness.get_by_label("Executable").focus();
+        harness.get_by_label("Executable").type_text("/bin/zsh");
+        harness.run();
+
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile {
+            profile: Profile::Local(local),
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("saving a valid local profile draft must return a SaveProfile command");
+        };
+        assert_eq!(local.identifier(), "dev-shell");
+    }
+
+    #[test]
+    fn profiles_new_local_profile_flow_reports_an_error_for_an_empty_name() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert!(harness.state().command.is_none());
+        assert!(harness
+            .query_by_label(
+                "Enter a valid name (lowercase letters, digits, hyphens) and a non-empty executable."
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn profiles_delete_flow_returns_a_delete_profile_command() {
+        let profile = Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        harness.get_by_label("Delete").click();
+        harness.run();
+        assert!(harness.query_by_label("Delete profile?").is_some());
+
+        harness.get_by_label("Delete").click();
+        harness.run();
+
+        let Some(AppCommand::DeleteProfile { identifier }) = harness.state().command.as_ref()
+        else {
+            panic!("confirming deletion must return a DeleteProfile command");
+        };
+        assert_eq!(identifier, "dev-shell");
     }
 }

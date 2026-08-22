@@ -790,6 +790,7 @@ fn local_profile_secondary(profile: &LocalProfile) -> Option<String> {
 pub enum TabContent {
     Launcher,
     Settings,
+    Profiles,
     SshAuthenticationRequired(SshAuthenticationRequiredTab),
     Session(Box<SessionTab>),
 }
@@ -810,6 +811,9 @@ pub enum AppCommand {
     OpenLauncher,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
+    /// Opens (or focuses) the singleton Profiles management application
+    /// surface.
+    OpenProfiles,
     /// Explicitly asks the composition root to reload the configuration
     /// selected at startup. The path stays outside `AppState`; a successful
     /// candidate is installed through [`AppState::replace_configuration`].
@@ -904,6 +908,21 @@ pub enum AppCommand {
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
     ResetInterfaceSettings,
+    /// Creates or edits a profile (docs/gui-design.md "Profile editing").
+    /// Both are the same upsert-by-identifier write; the composition root
+    /// (`FesTermApp::screen_command`) fully intercepts this to persist
+    /// through the configuration reloader, mirroring `StoreSshPassword` —
+    /// it never reaches `AppState::dispatch`.
+    SaveProfile {
+        profile: festerm_config::Profile,
+    },
+    /// Deletes a profile the user has explicitly confirmed, after any
+    /// workspace-tab references have been reported
+    /// (`Configuration::workspace_tab_references`). Fully intercepted by the
+    /// composition root like `SaveProfile`.
+    DeleteProfile {
+        identifier: String,
+    },
 }
 
 /// A one-shot password value awaiting native-store insertion.
@@ -1023,6 +1042,7 @@ impl AppState {
             let content = match workspace_tab {
                 WorkspaceTab::Launcher(_) => TabContent::Launcher,
                 WorkspaceTab::Settings(_) => TabContent::Settings,
+                WorkspaceTab::Profiles(_) => TabContent::Profiles,
                 WorkspaceTab::LocalSession(tab) => {
                     let local = configuration
                         .profile(tab.profile_id())
@@ -1097,6 +1117,7 @@ impl AppState {
             let workspace_tab = match &tab.content {
                 TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
                 TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
+                TabContent::Profiles => Some(WorkspaceTab::profiles(identifier.clone())?),
                 TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
                     identifier.clone(),
                     ssh.profile.identifier(),
@@ -1175,6 +1196,7 @@ impl AppState {
                 TabContent::Session(session) => Some(session.as_mut()),
                 TabContent::Launcher
                 | TabContent::Settings
+                | TabContent::Profiles
                 | TabContent::SshAuthenticationRequired(_) => None,
             })
     }
@@ -1194,6 +1216,7 @@ impl AppState {
             TabContent::Session(session) => Some(session.terminal.dimensions()),
             TabContent::Launcher
             | TabContent::Settings
+            | TabContent::Profiles
             | TabContent::SshAuthenticationRequired(_) => None,
         })
     }
@@ -1208,6 +1231,7 @@ impl AppState {
                 TabContent::Session(session) => Some(session.as_mut()),
                 TabContent::Launcher
                 | TabContent::Settings
+                | TabContent::Profiles
                 | TabContent::SshAuthenticationRequired(_) => None,
             })
     }
@@ -1236,6 +1260,7 @@ impl AppState {
         match command {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
+            AppCommand::OpenProfiles => self.open_profiles(),
             // The composition root owns the private selected file location;
             // it validates a candidate before calling `replace_configuration`.
             AppCommand::ReloadConfiguration | AppCommand::SaveWorkspace => {}
@@ -1284,6 +1309,11 @@ impl AppState {
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
                 self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
             }
+            // The composition root fully intercepts these before dispatch to
+            // persist through the configuration reloader (mirroring
+            // `StoreSshPassword`); they never reach this match with real
+            // work to do here.
+            AppCommand::SaveProfile { .. } | AppCommand::DeleteProfile { .. } => {}
         }
         // The Inspector follows session chips, but it is not a global panel
         // for Launcher, Settings, or authentication forms.
@@ -1326,6 +1356,25 @@ impl AppState {
         self.tabs.push(Tab {
             id,
             content: TabContent::Settings,
+        });
+        self.active = id;
+    }
+
+    fn open_profiles(&mut self) {
+        // Profiles is a singleton application surface with its own chip,
+        // like Settings.
+        if let Some(existing) = self
+            .tabs
+            .iter()
+            .find(|tab| matches!(tab.content, TabContent::Profiles))
+        {
+            self.active = existing.id;
+            return;
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::Profiles,
         });
         self.active = id;
     }
@@ -2196,6 +2245,27 @@ mod tests {
         state.dispatch(AppCommand::OpenSettings, &context);
         assert_eq!(state.tabs().len(), 2, "Settings is a singleton chip");
         assert_eq!(state.active(), settings_id);
+    }
+
+    #[test]
+    fn open_profiles_is_a_singleton_and_reactivates_the_existing_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+
+        state.dispatch(AppCommand::OpenProfiles, &context);
+        assert_eq!(state.tabs().len(), 2);
+        let profiles_id = state.active();
+        assert!(matches!(state.active_tab().content, TabContent::Profiles));
+
+        // Switch away, then request Profiles again: it must reactivate the
+        // same tab rather than creating a second one.
+        let launcher_id = launcher_ids(&state)[0];
+        state.dispatch(AppCommand::ActivateTab(launcher_id), &context);
+        assert_eq!(state.active(), launcher_id);
+
+        state.dispatch(AppCommand::OpenProfiles, &context);
+        assert_eq!(state.tabs().len(), 2, "Profiles is a singleton chip");
+        assert_eq!(state.active(), profiles_id);
     }
 
     #[test]

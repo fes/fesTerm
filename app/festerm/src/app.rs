@@ -409,6 +409,7 @@ impl FesTermApp {
         let close_label = match self.state.active_tab().content {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
+            TabContent::Profiles => "Close Profiles",
             TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => "Close Session",
         };
         self.native_menu.update(
@@ -763,6 +764,48 @@ impl FesTermApp {
         self.configuration_status = status;
     }
 
+    /// Creates or edits a profile from the Profiles surface (both are the
+    /// same upsert-by-identifier write, `docs/gui-design.md` "Profile
+    /// editing"). The in-memory configuration only changes after the atomic
+    /// file write succeeds, matching every other explicit-save path here.
+    fn save_profile(&mut self, profile: festerm_config::Profile) {
+        let replacement = match self.state.configuration().with_profile(profile) {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status = ConfigurationStartupStatus::ProfileSaveFailure(
+                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                );
+                return;
+            }
+        };
+        let status = self.configuration_reloader.save_profile(&replacement);
+        if matches!(status, ConfigurationStartupStatus::ProfileSaved) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
+    /// Deletes a profile the user has already confirmed in the Profiles
+    /// surface. `Configuration::without_profile` itself rejects deletion of
+    /// a profile still referenced by a saved workspace tab, surfacing that
+    /// as an ordinary save failure rather than silently orphaning the tab.
+    fn delete_profile(&mut self, identifier: &str) {
+        let replacement = match self.state.configuration().without_profile(identifier) {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status = ConfigurationStartupStatus::ProfileDeleteFailure(
+                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                );
+                return;
+            }
+        };
+        let status = self.configuration_reloader.delete_profile(&replacement);
+        if matches!(status, ConfigurationStartupStatus::ProfileDeleted) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
     /// Applies the reset-interface-settings policy shared by chrome, the
     /// command palette, and shortcuts: nothing to confirm when settings
     /// already equal defaults, otherwise a destructive-adjacent confirmation
@@ -1112,6 +1155,9 @@ impl FesTermApp {
                 ChromeAction::OpenSettings => {
                     self.state.dispatch(AppCommand::OpenSettings, context)
                 }
+                ChromeAction::OpenProfiles => {
+                    self.state.dispatch(AppCommand::OpenProfiles, context)
+                }
                 ChromeAction::ToggleInspector => self.toggle_inspector_from_current_focus(context),
                 ChromeAction::TogglePalette => self.palette.toggle(),
                 ChromeAction::ToggleChipLayout => {
@@ -1206,6 +1252,7 @@ impl FesTermApp {
         const ABOUT: u64 = 10;
         const RESET_TERMINAL: u64 = 11;
         const CLEAR_TERMINAL_HISTORY: u64 = 12;
+        const OPEN_PROFILES: u64 = 13;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -1225,6 +1272,11 @@ impl FesTermApp {
                 id: OPEN_SETTINGS,
                 label: "Open Settings".to_owned(),
                 hint: ApplicationShortcut::Settings.label().map(str::to_owned),
+            },
+            PaletteItem {
+                id: OPEN_PROFILES,
+                label: "Open Profiles".to_owned(),
+                hint: None,
             },
             PaletteItem {
                 id: ABOUT,
@@ -1288,6 +1340,7 @@ impl FesTermApp {
             label: match &self.state.active_tab().content {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
+                TabContent::Profiles => "Close Profiles".to_owned(),
                 TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => {
                     "Close Session…".to_owned()
                 }
@@ -1298,6 +1351,7 @@ impl FesTermApp {
             let (label, hint) = match &tab.content {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
+                TabContent::Profiles => ("Profiles".to_owned(), None),
                 TabContent::SshAuthenticationRequired(tab) => (
                     tab.profile.identifier().to_owned(),
                     Some(format!(
@@ -1353,6 +1407,7 @@ impl FesTermApp {
             }
             11 => self.reset_active_terminal(context),
             12 => self.clear_active_terminal_history(context),
+            13 => self.state.dispatch(AppCommand::OpenProfiles, context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -1662,6 +1717,11 @@ impl FesTermApp {
                         Some("Application".to_owned()),
                         ChipStatus::Neutral,
                     ),
+                    TabContent::Profiles => (
+                        "Profiles".to_owned(),
+                        Some("Application".to_owned()),
+                        ChipStatus::Neutral,
+                    ),
                     TabContent::SshAuthenticationRequired(tab) => (
                         tab.profile.identifier().to_owned(),
                         Some(format!(
@@ -1791,6 +1851,7 @@ impl FesTermApp {
         let (dimensions, system, status, status_label) = match &self.state.active_tab().content {
             TabContent::Launcher
             | TabContent::Settings
+            | TabContent::Profiles
             | TabContent::SshAuthenticationRequired(_) => (None, None, ChipStatus::Neutral, ""),
             TabContent::Session(session) => {
                 let status = session.chip_status();
@@ -2202,6 +2263,10 @@ impl FesTermApp {
                         secure_storage_status,
                     );
                 }
+                TabContent::Profiles => {
+                    screen_command =
+                        screens::show_profiles(ui, active_tab_id, self.state.configuration());
+                }
                 TabContent::SshAuthenticationRequired(tab) => {
                     screen_command = screens::show_ssh_authentication_required(
                         ui,
@@ -2302,6 +2367,8 @@ impl FesTermApp {
                     options,
                     &ui.ctx().clone(),
                 ),
+                AppCommand::SaveProfile { profile } => self.save_profile(profile),
+                AppCommand::DeleteProfile { identifier } => self.delete_profile(&identifier),
                 AppCommand::CloseTab(id) => {
                     self.request_close_tab(id, &ui.ctx().clone());
                 }

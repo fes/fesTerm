@@ -194,6 +194,7 @@ pub enum ChromeAction {
     Close(ChipId),
     NewTab,
     OpenSettings,
+    OpenProfiles,
     ToggleInspector,
     /// Emitted by the search-icon control; mirrors the `Ctrl+Shift+P`
     /// shortcut precedent (`app.rs::handle_shortcuts`) by asking the caller
@@ -579,6 +580,10 @@ fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     Popup::menu(&response).show(|ui| {
         if ui.button("Open Settings").clicked() {
             actions.push(ChromeAction::OpenSettings);
+            ui.close();
+        }
+        if ui.button("Open Profiles").clicked() {
+            actions.push(ChromeAction::OpenProfiles);
             ui.close();
         }
         if ui.button("Toggle chip layout").clicked() {

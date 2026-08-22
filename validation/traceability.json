@@ -621,14 +621,18 @@
       "decisions": [
         "ADR-0002"
       ],
-      "automated_tests": [],
+      "automated_tests": [
+        "open_profiles_is_a_singleton_and_reactivates_the_existing_tab",
+        "profiles_list_shows_no_profiles_saved_yet_when_empty",
+        "profiles_new_local_profile_flow_returns_a_save_profile_command",
+        "profiles_new_local_profile_flow_reports_an_error_for_an_empty_name",
+        "profiles_delete_flow_returns_a_delete_profile_command"
+      ],
       "manual_scenarios": [
         "CP-05"
       ],
-      "status": "deferred",
-      "prerequisites": [
-        "Profile editor UI"
-      ]
+      "status": "automated",
+      "prerequisites": []
     },
     {
       "id": "workspaces",
