@@ -799,10 +799,16 @@ and resolves the default preference tracked in issue #24. Optional wrapping
 remains available for users who value simultaneous session visibility more
 than terminal height.
 
+In single-row mode, chips first compact (shrink proportionally toward a
+minimum width, mirroring a browser tab strip) as the row gets crowded;
+horizontal scrolling only takes over once chips have compacted as far as
+they will go and still don't fit (`crates/festerm-ui-egui/src/chrome.rs`'s
+`shrink_to_fit_single_row`).
+
 The design must remain usable with many sessions. The implementation should support:
 
 - compact chip width and sensible truncation;
-- a default single-row mode with horizontal scrolling;
+- a default single-row mode that first shrinks chips to fit, then falls back to horizontal scrolling;
 - an optional multi-row wrapped-chip mode for wide displays;
 - keyboard switching that follows a predictable logical order independent of visual wrapping;
 - a searchable session switcher keyed primarily by stable identity; and

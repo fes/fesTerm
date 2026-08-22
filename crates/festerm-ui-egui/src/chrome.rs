@@ -329,7 +329,25 @@ pub fn show(
             let max_chip_row_width =
                 (ui.available_width() - TRAILING_CONTROLS_RESERVED_WIDTH).max(0.0);
             ui.set_max_width(max_chip_row_width);
-            let chip_row = |ui: &mut Ui| {
+            let forced_widths = if matches!(layout, ChipLayout::SingleRowScroll) {
+                let natural_widths: Vec<f32> = chips
+                    .iter()
+                    .map(|chip| {
+                        ui.ctx()
+                            .data_mut(|d| d.get_temp::<Vec2>(chip_widget_id(chip.id)))
+                            .map(|size| size.x)
+                            .unwrap_or(CHIP_MIN_WIDTH)
+                    })
+                    .collect();
+                shrink_to_fit_single_row(
+                    &natural_widths,
+                    max_chip_row_width,
+                    ui.spacing().item_spacing.x,
+                )
+            } else {
+                None
+            };
+            let mut chip_row = |ui: &mut Ui, forced_widths: Option<&[f32]>| {
                 for (index, chip) in chips.iter().enumerate() {
                     show_chip(
                         ui,
@@ -337,6 +355,7 @@ pub fn show(
                         chip.id == active,
                         index > 0,
                         index + 1 < chips.len(),
+                        forced_widths.map(|widths| widths[index]),
                         &mut actions,
                     );
                 }
@@ -347,14 +366,28 @@ pub fn show(
             };
             match layout {
                 ChipLayout::Wrap => {
-                    ui.horizontal_wrapped(chip_row);
+                    ui.horizontal_wrapped(|ui| chip_row(ui, None));
                 }
-                ChipLayout::SingleRowScroll => {
-                    ScrollArea::horizontal()
-                        .id_salt("chip_row_scroll")
-                        .max_width(max_chip_row_width)
-                        .show(ui, |ui| ui.horizontal(chip_row));
-                }
+                ChipLayout::SingleRowScroll => match forced_widths {
+                    // Chips still fit on one row, whether at their natural
+                    // widths or compacted to `shrink_to_fit_single_row`'s
+                    // narrower ones: render plain (no scroll area), mirroring
+                    // a browser tab strip that shrinks tabs before ever
+                    // introducing a scrollbar.
+                    Some(widths) => {
+                        ui.horizontal(|ui| chip_row(ui, Some(&widths)));
+                    }
+                    // Even fully compacted to `CHIP_MIN_WIDTH`, the chips
+                    // don't fit: fall back to a horizontally scrollable row
+                    // at natural widths, same as before this shrinking
+                    // behavior existed.
+                    None => {
+                        ScrollArea::horizontal()
+                            .id_salt("chip_row_scroll")
+                            .max_width(max_chip_row_width)
+                            .show(ui, |ui| ui.horizontal(|ui| chip_row(ui, None)));
+                    }
+                },
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -611,6 +644,56 @@ fn chip_widget_id(id: ChipId) -> Id {
     Id::new("chrome_chip").with(id.0)
 }
 
+/// Fixed-width companions painted in the chip row after the last chip: the
+/// trailing "+" new-tab control (`paint_new_chip_button`, a `CHIP_HEIGHT`
+/// square) and the small strip past it that accepts an end-of-row drag
+/// release (`end_of_row_drop_target`, 24px).
+const CHIP_ROW_TRAILING_CONTROLS_WIDTH: f32 = CHIP_HEIGHT + 24.0;
+
+/// Computes each chip's width for a single-row chip layout, mimicking a
+/// browser tab strip's "shrink before scroll" behavior
+/// (`docs/gui-design.md` "Tab overflow and wrapping"): while every chip
+/// already fits the row at its own natural (content-driven) width, this
+/// returns those natural widths unchanged. Once they no longer fit, every
+/// chip's width shrinks by the same proportion (preserving each chip's
+/// *relative* size against its neighbors) down to `CHIP_MIN_WIDTH`, rather
+/// than immediately handing the row off to a scrollbar.
+///
+/// Returns `None` once even every chip shrunk to `CHIP_MIN_WIDTH` still
+/// doesn't leave enough room; the caller then falls back to a horizontally
+/// scrollable row at natural widths.
+fn shrink_to_fit_single_row(
+    natural_widths: &[f32],
+    available_width: f32,
+    item_spacing: f32,
+) -> Option<Vec<f32>> {
+    let count = natural_widths.len();
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    // One spacing gap between each pair of chips, plus one more before the
+    // trailing "+" control that always follows the last chip.
+    let spacing_total = item_spacing * count as f32;
+    let available_for_chips =
+        (available_width - CHIP_ROW_TRAILING_CONTROLS_WIDTH - spacing_total).max(0.0);
+    let natural_total: f32 = natural_widths.iter().sum();
+    if natural_total <= available_for_chips {
+        return Some(natural_widths.to_vec());
+    }
+    let min_total = CHIP_MIN_WIDTH * count as f32;
+    if min_total > available_for_chips || natural_total <= 0.0 {
+        return None;
+    }
+    let scale = available_for_chips / natural_total;
+    Some(
+        natural_widths
+            .iter()
+            .map(|&width| (width * scale).max(CHIP_MIN_WIDTH))
+            .collect(),
+    )
+}
+
+
 /// Ephemeral, UI-only rename buffer key: whether `chip_id` currently has an
 /// in-progress rename edit, and its current (uncommitted) text. Not part of
 /// `ChipViewModel` because this module is pure presentation
@@ -626,6 +709,7 @@ fn show_chip(
     active: bool,
     can_move_left: bool,
     can_move_right: bool,
+    forced_width: Option<f32>,
     actions: &mut Vec<ChromeAction>,
 ) {
     let chip_id = chip_widget_id(chip.id);
@@ -633,6 +717,11 @@ fn show_chip(
     let cached_size = ctx
         .data_mut(|d| d.get_temp::<Vec2>(chip_id))
         .unwrap_or_else(|| vec2(CHIP_MIN_WIDTH, CHIP_HEIGHT));
+    // While the row is compacting chips to fit (`shrink_to_fit_single_row`),
+    // the caller forces a narrower width than this chip's own cached
+    // natural size; text inside still truncates to whatever width it's
+    // actually given (`paint_chip_primary`), same as at full width.
+    let bg_size = vec2(forced_width.unwrap_or(cached_size.x), CHIP_HEIGHT);
 
     if ctx.is_being_dragged(chip_id) {
         // Currently being dragged: keep the payload alive, reserve the
@@ -670,7 +759,7 @@ fn show_chip(
         return;
     }
 
-    let (_, bg_rect) = ui.allocate_space(cached_size);
+    let (_, bg_rect) = ui.allocate_space(bg_size);
     // Interacting the whole chip's background footprint *before* its inner
     // content is added registers it first in this frame's widget order.
     // egui resolves overlapping widgets by giving a later-registered widget
@@ -709,7 +798,15 @@ fn show_chip(
             .clamp(CHIP_MIN_WIDTH, CHIP_MAX_WIDTH),
         CHIP_HEIGHT,
     );
-    ctx.data_mut(|d| d.insert_temp(chip_id, clamped_size));
+    // While compacted (`forced_width` is `Some`), the content is laid out
+    // into a narrower rect than it actually wants, so `content_response`
+    // reflects the *shrunk* footprint, not this chip's true natural size.
+    // Skip overwriting the cache in that case so the row can still measure
+    // (and grow back toward) each chip's natural width once more room frees
+    // up, e.g. after closing another tab.
+    if forced_width.is_none() {
+        ctx.data_mut(|d| d.insert_temp(chip_id, clamped_size));
+    }
 
     if bg_response.clicked() {
         actions.push(ChromeAction::Activate(chip.id));
@@ -1353,6 +1450,101 @@ mod tests {
                  ({search_rect:?})"
             );
         }
+    }
+
+    #[test]
+    fn single_row_layout_shrinks_chips_before_falling_back_to_a_scrollbar() {
+        // Regression test for the Chrome-style "shrink before scroll"
+        // behavior: with enough chips that their natural widths overflow
+        // the row but still fit once compacted to `CHIP_MIN_WIDTH`, every
+        // chip must stay visible on the single row (no chip's rect pushed
+        // outside the window by a scroll offset), narrower than it would
+        // render alone.
+        let chips: Vec<ChipViewModel> = (1..=4)
+            .map(|id| {
+                chip(
+                    id,
+                    &format!("workspace-session-number-{id}-long-descriptive-name"),
+                )
+            })
+            .collect();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .with_step_dt(0.01)
+            .build_ui_state(
+                |ui, state: &mut ChromeHarnessState| {
+                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
+                    state.observed.extend(actions);
+                },
+                ChromeHarnessState {
+                    chips,
+                    active: ChipId(1),
+                    layout: ChipLayout::SingleRowScroll,
+                    observed: Vec::new(),
+                },
+            );
+        // A chip's *natural* width is only known once its content has been
+        // measured at an unconstrained size, which the first frame's
+        // (uncached) default width doesn't provide; a second frame lets
+        // `shrink_to_fit_single_row` see each chip's real cached natural
+        // width and act on it.
+        harness.run();
+        harness.run();
+
+        let window_right = 900.0;
+        for id in 1..=4 {
+            let label = format!("workspace-session-number-{id}-long-descriptive-name chip");
+            let chip_rect = harness.get_by_label(&label).rect();
+            assert!(
+                chip_rect.right() <= window_right,
+                "expected {label}'s rect ({chip_rect:?}) to stay within the \
+                 {window_right}-wide window instead of overflowing into a \
+                 scrolled-away area"
+            );
+            assert!(
+                chip_rect.width() < CHIP_MAX_WIDTH,
+                "expected {label} to have shrunk below its natural max width \
+                 ({chip_rect:?}) once compacted to fit the row"
+            );
+        }
+    }
+
+    #[test]
+    fn shrink_to_fit_single_row_keeps_natural_widths_when_they_already_fit() {
+        let natural = vec![150.0, 160.0, 140.0];
+        let widths = shrink_to_fit_single_row(&natural, 900.0, 8.0)
+            .expect("ample room must not fall back to scrolling");
+        assert_eq!(widths, natural);
+    }
+
+    #[test]
+    fn shrink_to_fit_single_row_compacts_proportionally_until_it_fits() {
+        let natural = vec![220.0, 220.0, 220.0, 220.0];
+        let available = 700.0;
+        let widths = shrink_to_fit_single_row(&natural, available, 8.0)
+            .expect("room for every chip at CHIP_MIN_WIDTH must not fall back to scrolling");
+
+        assert_eq!(widths.len(), natural.len());
+        for width in &widths {
+            assert!(
+                (CHIP_MIN_WIDTH..220.0).contains(width),
+                "expected each shrunk width ({width}) to sit between the \
+                 minimum and its unshrunk natural width"
+            );
+        }
+        let spacing_total = 8.0 * natural.len() as f32;
+        let used = widths.iter().sum::<f32>() + spacing_total + CHIP_ROW_TRAILING_CONTROLS_WIDTH;
+        assert!(
+            used <= available + 0.01,
+            "shrunk widths ({widths:?}) must still fit within {available}"
+        );
+    }
+
+    #[test]
+    fn shrink_to_fit_single_row_gives_up_and_signals_scrolling_when_even_the_minimum_does_not_fit()
+    {
+        let natural = vec![220.0, 220.0, 220.0, 220.0, 220.0, 220.0, 220.0, 220.0];
+        assert_eq!(shrink_to_fit_single_row(&natural, 200.0, 8.0), None);
     }
 
     #[test]
