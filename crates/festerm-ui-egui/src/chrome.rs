@@ -491,14 +491,21 @@ fn paint_maximize_icon(ui: &mut Ui, maximized: bool) {
 fn paint_close_icon(ui: &mut Ui) {
     let size = 22.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Close"));
+    // Distinct from a chip's own close control's "Close" label
+    // (`paint_close_button`): both can be present in the same frame on
+    // non-macOS platforms (custom titlebar), and an ambiguous shared label
+    // made `harness.get_by_label("Close")` match either one nondeterministically
+    // in headless tests (`chip_secondary_line_stays_clear_of_the_close_button`
+    // failed only on Linux CI, where this icon - skipped on macOS in favor of
+    // native traffic lights - is also painted).
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Close window"));
     let color = if response.hovered() {
         CHROME_CLOSE_HOVER
     } else {
         CHROME_ICON_COLOR
     };
     icon::paint(ui.painter(), Icon::Close, rect.shrink(3.0), color);
-    let response = response.on_hover_text("Close");
+    let response = response.on_hover_text("Close window");
     if response.clicked() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
