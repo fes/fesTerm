@@ -200,8 +200,6 @@ pub enum ChromeAction {
     /// shortcut precedent (`app.rs::handle_shortcuts`) by asking the caller
     /// to toggle its transient, chrome-external command-palette overlay.
     TogglePalette,
-    /// Emitted from the overflow menu's "Toggle chip layout" entry.
-    ToggleChipLayout,
     /// Emitted by drag-and-drop: `moved` should be relocated to sit
     /// immediately before `before` (or at the end of the row if `None`).
     /// Reordering only changes chip position; it must preserve the moved
@@ -584,10 +582,6 @@ fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
         }
         if ui.button("Open Profiles").clicked() {
             actions.push(ChromeAction::OpenProfiles);
-            ui.close();
-        }
-        if ui.button("Toggle chip layout").clicked() {
-            actions.push(ChromeAction::ToggleChipLayout);
             ui.close();
         }
     });
@@ -1481,26 +1475,6 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::OpenSettings));
-    }
-
-    #[test]
-    fn overflow_menu_chip_layout_entry_emits_a_toggle_chip_layout_action() {
-        let mut harness = harness(ChromeHarnessState {
-            chips: vec![chip(1, "one")],
-            active: ChipId(1),
-            layout: ChipLayout::Wrap,
-            observed: Vec::new(),
-        });
-
-        harness.get_by_label("More actions").click();
-        harness.run();
-        harness.get_by_label("Toggle chip layout").click();
-        harness.run();
-
-        assert!(harness
-            .state()
-            .observed
-            .contains(&ChromeAction::ToggleChipLayout));
     }
 
     #[test]

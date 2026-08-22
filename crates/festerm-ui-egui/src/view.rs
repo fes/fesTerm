@@ -248,6 +248,15 @@ impl TerminalView {
         self.set_font_size_points(DEFAULT_TERMINAL_FONT_SIZE)
     }
 
+    /// Text currently highlighted by this session's selection, if any. Used
+    /// by the command palette's "Copy" entry so it can copy the same text a
+    /// keyboard/OS copy shortcut would (`route_egui_events`'s
+    /// `egui::Event::Copy` handling), without duplicating the selection
+    /// logic.
+    pub fn selected_text(&self, terminal: &Terminal) -> Option<String> {
+        selection_text(TerminalSnapshot::from_terminal(terminal), &self.selection)
+    }
+
     fn set_font_size_points(&mut self, requested: f32) -> bool {
         let size = requested.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE);
         if (size - self.fonts.size_points).abs() < f32::EPSILON {
@@ -988,5 +997,29 @@ mod history_overlay_tests {
             history.offset_rows <= rows_after,
             "an anchored offset must clamp to retained history after eviction"
         );
+    }
+
+    #[test]
+    fn selected_text_returns_none_without_an_active_selection() {
+        let dimensions = festerm_core::Dimensions::new(8, 1).expect("8x1 is a valid terminal size");
+        let terminal = Terminal::new(dimensions).expect("valid terminal");
+        let view = TerminalView::default();
+
+        assert_eq!(view.selected_text(&terminal), None);
+    }
+
+    #[test]
+    fn selected_text_returns_the_highlighted_text() {
+        let dimensions = festerm_core::Dimensions::new(8, 1).expect("8x1 is a valid terminal size");
+        let mut terminal = Terminal::new(dimensions).expect("valid terminal");
+        terminal.ingest(b"selected");
+        let mut view = TerminalView::default();
+        view.selection
+            .begin(crate::geometry::CellPosition { column: 0, row: 0 });
+        view.selection
+            .extend(crate::geometry::CellPosition { column: 3, row: 0 });
+        view.selection.finish();
+
+        assert_eq!(view.selected_text(&terminal), Some("sele".to_owned()));
     }
 }

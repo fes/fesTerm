@@ -1252,55 +1252,107 @@ pub fn show_settings(
     status_bar_visible: bool,
     configuration_status: ConfigurationStartupStatus,
     secure_storage_status: Option<&str>,
+    command_palette_shortcut: &str,
 ) -> Option<AppCommand> {
     let mut command = None;
-    ui.vertical(|ui| {
-        ui.add_space(24.0);
-        ui.heading("Settings");
-        ui.label("Configuration is never written automatically.");
-        let configuration_message = configuration_status.settings_message();
-        if configuration_status.is_problem() {
-            ui.colored_label(egui::Color32::from_rgb(220, 150, 80), configuration_message);
-        } else {
-            ui.label(configuration_message);
-        }
-        if ui.button("Reload configuration").clicked() {
-            command = Some(AppCommand::ReloadConfiguration);
-        }
-        if ui.button("Save workspace").clicked() {
-            command = Some(AppCommand::SaveWorkspace);
-        }
-        if let Some(status) = secure_storage_status {
-            ui.add_space(8.0);
-            ui.label("Native secure storage");
-            ui.colored_label(egui::Color32::from_rgb(220, 150, 80), status);
-        }
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(12.0);
-        let wrap = matches!(chip_layout, ChipLayout::Wrap);
-        let label = if wrap {
-            "Chip layout: wrap onto multiple rows"
-        } else {
-            "Chip layout: single row (scroll to see more)"
-        };
-        if ui.button(label).clicked() {
-            command = Some(AppCommand::ToggleChipLayout);
-        }
-        let status_bar_label = if status_bar_visible {
-            "Status bar: shown"
-        } else {
-            "Status bar: hidden"
-        };
-        if ui.button(status_bar_label).clicked() {
-            command = Some(AppCommand::ToggleStatusBar);
-        }
-        ui.label("Chip layout and status bar visibility are saved automatically.");
-        if ui.button("Reset interface settings to defaults").clicked() {
-            command = Some(AppCommand::ResetInterfaceSettings);
-        }
+    ui.horizontal(|ui| {
+        ui.add_space(26.0);
+        ui.vertical(|ui| {
+            ui.add_space(24.0);
+            ui.heading("Settings");
+            ui.add_space(2.0);
+            ssh_paragraph(ui, "Configuration is never written automatically.");
+            ui.add_space(16.0);
+
+            settings_card(ui, "Configuration", |ui| {
+                let configuration_message = configuration_status.settings_message();
+                if configuration_status.is_problem() {
+                    ui.colored_label(theme::STATUS_ERROR, configuration_message);
+                } else {
+                    ssh_paragraph(ui, configuration_message);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Reload configuration").clicked() {
+                        command = Some(AppCommand::ReloadConfiguration);
+                    }
+                    if ui.button("Save workspace").clicked() {
+                        command = Some(AppCommand::SaveWorkspace);
+                    }
+                });
+                if let Some(status) = secure_storage_status {
+                    ui.add_space(10.0);
+                    ssh_section_heading(ui, "Native secure storage");
+                    ui.colored_label(theme::STATUS_ERROR, status);
+                }
+            });
+
+            ui.add_space(12.0);
+
+            settings_card(ui, "Interface", |ui| {
+                let wrap = matches!(chip_layout, ChipLayout::Wrap);
+                let label = if wrap {
+                    "Chip layout: wrap onto multiple rows"
+                } else {
+                    "Chip layout: single row (compact, then scroll)"
+                };
+                if ui.button(label).clicked() {
+                    command = Some(AppCommand::ToggleChipLayout);
+                }
+                ui.add_space(6.0);
+                let status_bar_label = if status_bar_visible {
+                    "Status bar: shown"
+                } else {
+                    "Status bar: hidden"
+                };
+                if ui.button(status_bar_label).clicked() {
+                    command = Some(AppCommand::ToggleStatusBar);
+                }
+                ui.add_space(8.0);
+                ssh_paragraph(
+                    ui,
+                    "Chip layout and status bar visibility are saved automatically.",
+                );
+                ui.add_space(10.0);
+                if ui.button("Reset interface settings to defaults").clicked() {
+                    command = Some(AppCommand::ResetInterfaceSettings);
+                }
+            });
+
+            ui.add_space(12.0);
+
+            settings_card(ui, "Keyboard", |ui| {
+                ui.horizontal(|ui| {
+                    ssh_paragraph(ui, "Command palette");
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new(command_palette_shortcut)
+                            .size(12.0)
+                            .color(theme::TEXT_MUTED),
+                    );
+                });
+            });
+        });
     });
     command
+}
+
+/// A titled card matching the launcher/profile-editor "quiet section" visual
+/// language (`ssh_section_heading` + a bordered, rounded surface), so
+/// Settings groups related controls the same way the rest of the app does
+/// instead of a flat, plain list of buttons.
+fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .fill(theme::SURFACE_TAB_INACTIVE)
+        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(420.0);
+            ssh_section_heading(ui, title);
+            ui.add_space(6.0);
+            body(ui);
+        });
 }
 
 /// One row's stable identifying summary in the Profiles list, without
@@ -2177,6 +2229,7 @@ mod tests {
                         true,
                         ConfigurationStartupStatus::Loaded,
                         None,
+                        "Cmd+Shift+P",
                     ) {
                         state.command = Some(command);
                     }
@@ -2211,6 +2264,7 @@ mod tests {
                         true,
                         ConfigurationStartupStatus::Loaded,
                         None,
+                        "Cmd+Shift+P",
                     ) {
                         state.command = Some(command);
                     }

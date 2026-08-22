@@ -1295,10 +1295,6 @@ impl FesTermApp {
                 }
                 ChromeAction::ToggleInspector => self.toggle_inspector_from_current_focus(context),
                 ChromeAction::TogglePalette => self.palette.toggle(),
-                ChromeAction::ToggleChipLayout => {
-                    self.state.dispatch(AppCommand::ToggleChipLayout, context);
-                    self.persist_interface_settings();
-                }
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
                         self.state.dispatch(AppCommand::ActivateTab(id), context);
@@ -1386,6 +1382,8 @@ impl FesTermApp {
         const ABOUT: u64 = 10;
         const RESET_TERMINAL: u64 = 11;
         const CLEAR_TERMINAL_HISTORY: u64 = 12;
+        const COPY: u64 = 13;
+        const PASTE: u64 = 14;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -1463,6 +1461,33 @@ impl FesTermApp {
                     shortcut_label: None,
                 },
                 PaletteItem {
+                    id: COPY,
+                    label: "Copy".to_owned(),
+                    // Handled by egui's built-in clipboard shortcut, which
+                    // binds to Cmd/Ctrl+C regardless of platform (unlike the
+                    // app-level `ApplicationShortcut`s, which shift to
+                    // Ctrl+Shift on Windows/Linux to leave Ctrl+C free for
+                    // terminal interrupt).
+                    hint: Some(if cfg!(target_os = "macos") {
+                        "Cmd+C".to_owned()
+                    } else {
+                        "Ctrl+C".to_owned()
+                    }),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: PASTE,
+                    label: "Paste".to_owned(),
+                    hint: Some(if cfg!(target_os = "macos") {
+                        "Cmd+V".to_owned()
+                    } else {
+                        "Ctrl+V".to_owned()
+                    }),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
                     hint: None,
@@ -1488,7 +1513,7 @@ impl FesTermApp {
                     "Close Session…".to_owned()
                 }
             },
-            hint: None,
+            hint: ApplicationShortcut::CloseActiveSurface.label().map(str::to_owned),
             is_tab: false,
             shortcut_label: None,
         });
@@ -1553,6 +1578,8 @@ impl FesTermApp {
             }
             11 => self.reset_active_terminal(context),
             12 => self.clear_active_terminal_history(context),
+            13 => self.copy_active_selection(context),
+            14 => self.paste_into_active_session(context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -1698,6 +1725,35 @@ impl FesTermApp {
             Instant::now() + Duration::from_millis(1_500),
         ));
         self.restore_active_terminal_focus();
+        context.request_repaint();
+    }
+
+    /// Copies the active session's current selection to the system
+    /// clipboard, mirroring what pressing the OS copy shortcut
+    /// (`egui::Event::Copy`, handled in `route_egui_events`) would do while
+    /// the terminal has focus and text is selected.
+    fn copy_active_selection(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        if let Some(text) = session.view.selected_text(&session.terminal) {
+            context.copy_text(text);
+        }
+        self.restore_active_terminal_focus();
+        context.request_repaint();
+    }
+
+    /// Requests the OS deliver the clipboard's contents as a paste event,
+    /// which the existing `egui::Event::Paste` handling in
+    /// `route_egui_events` then routes into the focused terminal, the same
+    /// path the OS paste shortcut uses.
+    fn paste_into_active_session(&mut self, context: &egui::Context) {
+        if !matches!(self.state.active_tab().content, TabContent::Session(_)) {
+            return;
+        }
+        self.restore_active_terminal_focus();
+        context.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
         context.request_repaint();
     }
 
@@ -2425,6 +2481,9 @@ impl FesTermApp {
                         self.state.status_bar_visible(),
                         self.configuration_status,
                         secure_storage_status,
+                        ApplicationShortcut::CommandPalette
+                            .label()
+                            .unwrap_or("(unbound)"),
                     );
                 }
                 TabContent::Profiles => {
@@ -2892,6 +2951,65 @@ mod tests {
                 .font_size_points(),
             14.0
         );
+    }
+
+    #[test]
+    fn close_copy_and_paste_palette_entries_show_their_keystrokes() {
+        let context = egui::Context::default();
+        let (app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        let items = app.palette_items();
+
+        let close = items
+            .iter()
+            .find(|item| item.label == "Close Session…")
+            .expect("a live session tab has a close entry");
+        assert_eq!(
+            close.hint.as_deref(),
+            ApplicationShortcut::CloseActiveSurface.label()
+        );
+
+        let copy = items
+            .iter()
+            .find(|item| item.label == "Copy")
+            .expect("a session tab offers a Copy entry");
+        assert_eq!(
+            copy.hint.as_deref(),
+            Some(if cfg!(target_os = "macos") {
+                "Cmd+C"
+            } else {
+                "Ctrl+C"
+            })
+        );
+
+        let paste = items
+            .iter()
+            .find(|item| item.label == "Paste")
+            .expect("a session tab offers a Paste entry");
+        assert_eq!(
+            paste.hint.as_deref(),
+            Some(if cfg!(target_os = "macos") {
+                "Cmd+V"
+            } else {
+                "Ctrl+V"
+            })
+        );
+    }
+
+    #[test]
+    fn paste_palette_command_requests_an_os_clipboard_paste() {
+        const PASTE: u64 = 14;
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+
+        app.dispatch_palette_selection(PASTE, &context);
+        context.viewport(|viewport| {
+            assert!(
+                viewport
+                    .commands
+                    .contains(&egui::ViewportCommand::RequestPaste),
+                "selecting Paste must ask the OS to deliver clipboard contents"
+            );
+        });
     }
 
     #[test]
