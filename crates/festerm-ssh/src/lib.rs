@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
+use festerm_secret_store::{SecretBytes, SecretReference, SecretStore, SecretStoreError};
 use festerm_session::{
     noop_session_event_notifier, FlowDirection, Session, SessionError, SessionErrorKind,
     SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
@@ -92,6 +92,7 @@ pub enum SshAuthentication {
     Password(SshPassword),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(SshPrivateKey),
+    StoredPrivateKey(StoredPrivateKeyAuthentication),
     /// No credential is supplied upfront. The worker connects and verifies
     /// the host key first (exactly as it would for any other credential),
     /// then requests a password from the application only once the
@@ -130,6 +131,22 @@ impl SshAuthentication {
         })
     }
 
+    /// Selects a private key + optional passphrase held by the platform
+    /// native secure store, encoded together by
+    /// [`encode_stored_private_key`].
+    ///
+    /// The reference is copied only into the SSH worker's authentication
+    /// source. Its secret is resolved and parsed there immediately before
+    /// each authentication attempt; neither the UI nor the connection
+    /// profile can retrieve it. This mirrors [`Self::stored_password`] but
+    /// for private-key material instead of a password.
+    pub fn stored_private_key(store: Arc<dyn SecretStore>, reference: &SecretReference) -> Self {
+        Self::StoredPrivateKey(StoredPrivateKeyAuthentication {
+            store,
+            reference: reference.duplicate_for_transport(),
+        })
+    }
+
     /// Selects public-key authentication for this session.
     ///
     /// `private_key` is moved directly to the worker. An explicit reconnect
@@ -152,6 +169,9 @@ impl SshAuthentication {
             Self::Password(password) => WorkerAuthentication::Password(password.password),
             Self::StoredPassword(password) => WorkerAuthentication::StoredPassword(password),
             Self::PublicKey(private_key) => WorkerAuthentication::PublicKey(private_key.key),
+            Self::StoredPrivateKey(private_key) => {
+                WorkerAuthentication::StoredPrivateKey(private_key)
+            }
             Self::Interactive => WorkerAuthentication::Interactive,
         }
     }
@@ -165,6 +185,9 @@ impl fmt::Debug for SshAuthentication {
                 formatter.write_str("SshAuthentication::StoredPassword([REDACTED])")
             }
             Self::PublicKey(_) => formatter.write_str("SshAuthentication::PublicKey([REDACTED])"),
+            Self::StoredPrivateKey(_) => {
+                formatter.write_str("SshAuthentication::StoredPrivateKey([REDACTED])")
+            }
             Self::Interactive => formatter.write_str("SshAuthentication::Interactive"),
         }
     }
@@ -186,6 +209,122 @@ pub struct SshPassword {
 pub struct StoredPasswordAuthentication {
     store: Arc<dyn SecretStore>,
     reference: SecretReference,
+}
+
+/// Opaque native-store private-key source consumed only by the SSH worker.
+///
+/// It intentionally has no accessors or `Debug` implementation. The stored
+/// bytes are constrained to SSH public-key authentication by
+/// [`SshAuthentication::stored_private_key`] and are encoded/decoded by
+/// [`encode_stored_private_key`]/[`decode_stored_private_key`].
+pub struct StoredPrivateKeyAuthentication {
+    store: Arc<dyn SecretStore>,
+    reference: SecretReference,
+}
+
+/// Encodes an OpenSSH private key and its optional passphrase into one
+/// [`SecretBytes`] blob for storage under a single [`SecretReference`].
+///
+/// Format: a 4-byte little-endian passphrase length, followed by the raw
+/// passphrase bytes (empty when there is no passphrase), followed by the
+/// OpenSSH private-key text. A length prefix (rather than a delimiter byte)
+/// is used so the key text's own bytes never need to be constrained.
+pub fn encode_stored_private_key(key_text: &str, passphrase: Option<&str>) -> SecretBytes {
+    let passphrase = passphrase.unwrap_or("");
+    let mut bytes = Vec::with_capacity(4 + passphrase.len() + key_text.len());
+    bytes.extend_from_slice(&(passphrase.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(passphrase.as_bytes());
+    bytes.extend_from_slice(key_text.as_bytes());
+    SecretBytes::copy_from_slice(&bytes)
+}
+
+fn decode_stored_private_key(
+    bytes: &[u8],
+) -> Result<(String, String), StoredPrivateKeyResolutionError> {
+    if bytes.len() < 4 {
+        return Err(StoredPrivateKeyResolutionError::InvalidEncoding);
+    }
+    let (length_prefix, remainder) = bytes.split_at(4);
+    let passphrase_length =
+        u32::from_le_bytes(length_prefix.try_into().expect("checked length")) as usize;
+    if remainder.len() < passphrase_length {
+        return Err(StoredPrivateKeyResolutionError::InvalidEncoding);
+    }
+    let (passphrase, key_text) = remainder.split_at(passphrase_length);
+    let passphrase = std::str::from_utf8(passphrase)
+        .map_err(|_| StoredPrivateKeyResolutionError::InvalidEncoding)?
+        .to_owned();
+    let key_text = std::str::from_utf8(key_text)
+        .map_err(|_| StoredPrivateKeyResolutionError::InvalidEncoding)?
+        .to_owned();
+    Ok((key_text, passphrase))
+}
+
+/// Content-free failures while resolving a native stored SSH private key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoredPrivateKeyResolutionError {
+    Missing,
+    LockedOrUnavailable,
+    BackendFailure,
+    InvalidEncoding,
+    InvalidKey,
+}
+
+impl StoredPrivateKeyResolutionError {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::Missing => {
+                "stored SSH private key is missing; replace it for this saved profile and try again"
+            }
+            Self::LockedOrUnavailable => {
+                "native secure storage is locked or unavailable; unlock it and try again"
+            }
+            Self::BackendFailure => {
+                "native secure storage could not read the stored SSH private key; try again or replace it"
+            }
+            Self::InvalidEncoding | Self::InvalidKey => {
+                "stored SSH private key could not be read; replace it for this saved profile and try again"
+            }
+        }
+    }
+}
+
+impl fmt::Display for StoredPrivateKeyResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl std::error::Error for StoredPrivateKeyResolutionError {}
+
+fn resolve_stored_private_key(
+    authentication: &StoredPrivateKeyAuthentication,
+) -> Result<Arc<russh::keys::PrivateKey>, StoredPrivateKeyResolutionError> {
+    let secret = authentication
+        .store
+        .get(&authentication.reference)
+        .map_err(|error| match error {
+            SecretStoreError::Missing => StoredPrivateKeyResolutionError::Missing,
+            SecretStoreError::LockedOrUnavailable | SecretStoreError::Unsupported => {
+                StoredPrivateKeyResolutionError::LockedOrUnavailable
+            }
+            SecretStoreError::BackendFailure | SecretStoreError::InvalidReference => {
+                StoredPrivateKeyResolutionError::BackendFailure
+            }
+        })?;
+    let (key_text, passphrase) = secret.with_bytes(decode_stored_private_key)?;
+    let parsed = if passphrase.is_empty() {
+        SshPrivateKey::from_openssh(key_text.as_bytes())
+    } else {
+        SshPrivateKey::from_openssh(key_text.as_bytes()).or_else(|_| {
+            SshPrivateKey::from_encrypted_openssh(
+                key_text.as_bytes(),
+                SshKeyPassphrase::new(passphrase),
+            )
+        })
+    }
+    .map_err(|_| StoredPrivateKeyResolutionError::InvalidKey)?;
+    Ok(parsed.key)
 }
 
 impl fmt::Debug for SshPassword {
@@ -310,6 +449,7 @@ enum WorkerAuthentication {
     Password(String),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(Arc<russh::keys::PrivateKey>),
+    StoredPrivateKey(StoredPrivateKeyAuthentication),
     Interactive,
 }
 
@@ -3548,6 +3688,50 @@ async fn establish_connection(
             )
             .await
         }
+        WorkerAuthentication::StoredPrivateKey(authentication) => {
+            // Resolve and parse only after the transport and host-key gate
+            // are ready, immediately before public-key authentication on
+            // this worker (mirrors `StoredPassword` above).
+            let private_key = match resolve_stored_private_key(authentication) {
+                Ok(private_key) => private_key,
+                Err(error) => {
+                    return ConnectionAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        error.message(),
+                    );
+                }
+            };
+            let hash_algorithm = match wait_for_ssh_operation(
+                handle.best_supported_rsa_hash(),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+            {
+                WorkerWait::Completed(Ok(hash_algorithm)) => hash_algorithm.flatten(),
+                WorkerWait::Completed(Err(_)) => {
+                    return ConnectionAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        "SSH public-key authentication could not select a signature algorithm",
+                    );
+                }
+                WorkerWait::Shutdown => {
+                    let _ = stop_handle(handle, shared).await;
+                    return ConnectionAttempt::Shutdown;
+                }
+            };
+            wait_for_ssh_operation(
+                handle.authenticate_publickey(
+                    profile.username(),
+                    russh::keys::PrivateKeyWithHashAlg::new(private_key, hash_algorithm),
+                ),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
         WorkerAuthentication::Interactive => {
             // No credential was supplied upfront: the host key has already
             // been verified above (via `check_server_key`, exactly like any
@@ -4398,6 +4582,79 @@ mod tests {
         .expect_err("unstored reference must be missing");
 
         assert_eq!(error, StoredPasswordResolutionError::Missing);
+        assert!(error.to_string().contains("replace"));
+        assert!(!error.to_string().contains(&reference.to_persisted_string()));
+    }
+
+    fn generated_private_key_text() -> String {
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate test SSH key");
+        key.to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .expect("could not encode test SSH key")
+            .to_string()
+    }
+
+    #[test]
+    fn stored_private_key_authentication_resolves_only_through_the_worker_source() {
+        let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let key_text = generated_private_key_text();
+        let secret = encode_stored_private_key(&key_text, None);
+        let reference = store
+            .put(&secret)
+            .expect("memory store accepts test private key");
+        let authentication = SshAuthentication::stored_private_key(Arc::clone(&store), &reference);
+
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::StoredPrivateKey([REDACTED])"
+        );
+        assert!(!format!("{authentication:?}").contains(&key_text));
+        assert!(!format!("{authentication:?}").contains(&reference.to_persisted_string()));
+
+        let WorkerAuthentication::StoredPrivateKey(source) =
+            authentication.into_worker_authentication()
+        else {
+            panic!("stored private key must retain the worker-only source");
+        };
+        assert!(resolve_stored_private_key(&source).is_ok());
+    }
+
+    #[test]
+    fn stored_private_key_round_trips_with_a_passphrase() {
+        let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let mut random = russh::keys::key::safe_rng();
+        let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
+            .expect("could not generate test SSH key");
+        let encrypted = key
+            .encrypt(&mut random, "correct horse battery staple")
+            .expect("could not encrypt test SSH key")
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .expect("could not encode encrypted test SSH key");
+        let secret = encode_stored_private_key(&encrypted, Some("correct horse battery staple"));
+        let reference = store
+            .put(&secret)
+            .expect("memory store accepts test private key");
+        let authentication = SshAuthentication::stored_private_key(store, &reference);
+        let WorkerAuthentication::StoredPrivateKey(source) =
+            authentication.into_worker_authentication()
+        else {
+            panic!("stored private key must retain the worker-only source");
+        };
+        assert!(resolve_stored_private_key(&source).is_ok());
+    }
+
+    #[test]
+    fn stored_private_key_resolution_errors_are_actionable_and_redacted() {
+        let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let reference = SecretReference::generate();
+        let error = resolve_stored_private_key(&StoredPrivateKeyAuthentication {
+            store,
+            reference: reference.duplicate_for_transport(),
+        })
+        .expect_err("unstored reference must be missing");
+
+        assert_eq!(error, StoredPrivateKeyResolutionError::Missing);
         assert!(error.to_string().contains("replace"));
         assert!(!error.to_string().contains(&reference.to_persisted_string()));
     }

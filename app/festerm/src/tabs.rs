@@ -878,6 +878,15 @@ pub enum AppCommand {
         profile_id: String,
         password: PasswordToStore,
     },
+    /// Requests that the composition root store or replace a private-key
+    /// credential (with an optional passphrase) for an existing configured
+    /// SSH profile from the Profiles editor. Mirrors
+    /// `StoreProfilePassword`, but for certificate/private-key
+    /// authentication instead of a password.
+    StoreProfilePrivateKey {
+        profile_id: String,
+        private_key: PrivateKeyToStore,
+    },
     /// Resolves the displayed host-key request for one specific SSH tab.
     ///
     /// `AcceptAndPersist` (ADR 0020) additionally requires the composition
@@ -949,6 +958,15 @@ pub enum AppCommand {
     DeleteProfile {
         identifier: String,
     },
+    /// Reorders a saved profile via drag-and-drop on the Profiles surface
+    /// (`Configuration::with_reordered_profiles`), reflected in the
+    /// Launcher's own profile ordering too since both read
+    /// `Configuration::profiles` in document order. Fully intercepted by the
+    /// composition root like `SaveProfile`.
+    ReorderProfiles {
+        moved: String,
+        before: Option<String>,
+    },
 }
 
 /// A one-shot password value awaiting native-store insertion.
@@ -970,6 +988,35 @@ impl PasswordToStore {
 impl std::fmt::Debug for PasswordToStore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("PasswordToStore([REDACTED])")
+    }
+}
+
+/// A one-shot private key + optional passphrase awaiting native-store
+/// insertion.
+///
+/// It has no public getter and redacts `Debug`, so application commands remain
+/// safe to inspect in UI tests and diagnostics.
+pub struct PrivateKeyToStore {
+    key_text: String,
+    passphrase: Option<String>,
+}
+
+impl PrivateKeyToStore {
+    pub(crate) fn new(key_text: String, passphrase: Option<String>) -> Self {
+        Self {
+            key_text,
+            passphrase,
+        }
+    }
+
+    pub(crate) fn into_secret_bytes(self) -> SecretBytes {
+        festerm_ssh::encode_stored_private_key(&self.key_text, self.passphrase.as_deref())
+    }
+}
+
+impl std::fmt::Debug for PrivateKeyToStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PrivateKeyToStore([REDACTED])")
     }
 }
 
@@ -1312,6 +1359,7 @@ impl AppState {
             AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StoreSshPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
+            | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. } => {}
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
@@ -1351,7 +1399,9 @@ impl AppState {
             // persist through the configuration reloader (mirroring
             // `StoreSshPassword`); they never reach this match with real
             // work to do here.
-            AppCommand::SaveProfile { .. } | AppCommand::DeleteProfile { .. } => {}
+            AppCommand::SaveProfile { .. }
+            | AppCommand::DeleteProfile { .. }
+            | AppCommand::ReorderProfiles { .. } => {}
         }
         // The Inspector follows session chips, but it is not a global panel
         // for Launcher, Settings, or authentication forms.
@@ -1531,8 +1581,10 @@ impl AppState {
     }
 
     /// Resolves only profile metadata on the application path and hands the
-    /// opaque password source to `festerm-ssh`; secret retrieval remains in
-    /// that transport's worker immediately before authentication.
+    /// opaque credential source to `festerm-ssh`; secret retrieval remains
+    /// in that transport's worker immediately before authentication. Uses
+    /// password or public-key authentication depending on the profile's
+    /// stored `credential_kind`.
     pub fn start_stored_password_ssh_profile(
         &mut self,
         profile_id: &str,
@@ -1553,12 +1605,15 @@ impl AppState {
         let Ok(connection_profile) = profile.to_connection_profile() else {
             return false;
         };
-        self.execute_ssh_session(
-            connection_profile,
-            SshAuthentication::stored_password(store, reference),
-            options,
-            context,
-        );
+        let authentication = match profile.credential_kind() {
+            festerm_config::CredentialKind::Password => {
+                SshAuthentication::stored_password(store, reference)
+            }
+            festerm_config::CredentialKind::PrivateKey => {
+                SshAuthentication::stored_private_key(store, reference)
+            }
+        };
+        self.execute_ssh_session(connection_profile, authentication, options, context);
         true
     }
 

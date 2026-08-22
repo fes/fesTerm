@@ -7,7 +7,7 @@
 //! the single command-handling path.
 
 use eframe::egui::{self, vec2, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
-use festerm_config::{PersistenceConfiguration, Profile, SshProfileConfiguration};
+use festerm_config::{CredentialKind, PersistenceConfiguration, Profile, SshProfileConfiguration};
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
     HostIdentity, ReconnectPolicy, RecoveryPolicy, SessionStrategy, SshAuthentication,
@@ -16,12 +16,13 @@ use festerm_ssh::{
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
 use crate::configuration_startup::ConfigurationStartupStatus;
-use crate::tabs::{AppCommand, PasswordToStore, TabId};
+use crate::tabs::{AppCommand, PasswordToStore, PrivateKeyToStore, TabId};
 
 /// One selectable launch option in the Launcher list: the fixed default
 /// local shell, or a saved local/SSH profile.
 enum LauncherItemKind<'a> {
     LocalDefault,
+    NewSsh,
     LocalProfile(&'a str),
     SshProfile(&'a str),
 }
@@ -35,18 +36,24 @@ struct LauncherItem<'a> {
 impl LauncherItem<'_> {
     fn profile_id(&self) -> Option<&str> {
         match self.kind {
-            LauncherItemKind::LocalDefault => None,
+            LauncherItemKind::LocalDefault | LauncherItemKind::NewSsh => None,
             LauncherItemKind::LocalProfile(id) | LauncherItemKind::SshProfile(id) => Some(id),
         }
     }
 
     fn remote(&self) -> bool {
-        matches!(self.kind, LauncherItemKind::SshProfile(_))
+        matches!(
+            self.kind,
+            LauncherItemKind::NewSsh | LauncherItemKind::SshProfile(_)
+        )
     }
 
     fn command(&self) -> AppCommand {
         match self.kind {
             LauncherItemKind::LocalDefault => AppCommand::StartLocalSession,
+            LauncherItemKind::NewSsh => {
+                unreachable!("the New SSH Connection item opens the SSH form, not an AppCommand")
+            }
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
@@ -865,11 +872,22 @@ pub fn show_launcher(
     native_store_available: bool,
     secure_storage_status: Option<&str>,
 ) -> Option<AppCommand> {
-    let mut items = vec![LauncherItem {
-        label: "Local Shell".to_owned(),
-        description: "Default shell on this computer".to_owned(),
-        kind: LauncherItemKind::LocalDefault,
-    }];
+    let mut items = vec![
+        LauncherItem {
+            label: "Local Shell".to_owned(),
+            description: "Default shell on this computer".to_owned(),
+            kind: LauncherItemKind::LocalDefault,
+        },
+        LauncherItem {
+            label: "SSH".to_owned(),
+            description: "Connect to a remote host".to_owned(),
+            kind: LauncherItemKind::NewSsh,
+        },
+    ];
+    // Saved profiles are listed last, after the two fixed "new session"
+    // entries above, with a subtle separator (rendered when painting the
+    // list below) marking where they start.
+    let profiles_start = items.len();
     items.extend(
         profiles
             .iter()
@@ -898,7 +916,7 @@ pub fn show_launcher(
 
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
-    state.selected = state.selected.min(items.len());
+    state.selected = state.selected.min(items.len().saturating_sub(1));
 
     if state.ssh_open {
         let mut command = None;
@@ -947,10 +965,10 @@ pub fn show_launcher(
                 || (i.key_pressed(egui::Key::Tab) && i.modifiers.shift)
         });
     if cycle_forward {
-        state.selected = (state.selected + 1) % (items.len() + 1);
+        state.selected = (state.selected + 1) % items.len();
     }
     if cycle_backward {
-        state.selected = (state.selected + items.len()) % (items.len() + 1);
+        state.selected = (state.selected + items.len() - 1) % items.len();
     }
     let launch_via_keyboard = !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
@@ -978,6 +996,11 @@ pub fn show_launcher(
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for (index, item) in items.iter().enumerate() {
+                    if index == profiles_start && profiles_start < items.len() {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                    }
                     let (response, edit_response) = show_launcher_choice(
                         ui,
                         &item.label,
@@ -994,23 +1017,14 @@ pub fn show_launcher(
                                 .to_owned(),
                         });
                     } else if response.clicked() {
-                        command = Some(item.command());
+                        if matches!(item.kind, LauncherItemKind::NewSsh) {
+                            state.ssh_open = true;
+                            state.ssh.focus_username = true;
+                        } else {
+                            command = Some(item.command());
+                        }
                     }
                     ui.add_space(12.0);
-                }
-                if show_launcher_choice(
-                    ui,
-                    "SSH",
-                    "Connect to a remote host",
-                    state.selected == items.len(),
-                    true,
-                    false,
-                )
-                .0
-                .clicked()
-                {
-                    state.ssh_open = true;
-                    state.ssh.focus_username = true;
                 }
             });
         });
@@ -1021,7 +1035,7 @@ pub fn show_launcher(
     });
 
     if command.is_none() && launch_via_keyboard {
-        if state.selected == items.len() {
+        if matches!(items[state.selected].kind, LauncherItemKind::NewSsh) {
             state.ssh_open = true;
             state.ssh.focus_username = true;
         } else {
@@ -1396,13 +1410,30 @@ struct SshProfileDraft {
     host: String,
     port: String,
     username: String,
+    /// Which credential kind the editor's authentication section is
+    /// currently showing entry fields for. Independent of
+    /// `stored_credential_kind`, which reflects what is actually saved —
+    /// switching this radio only changes which fields are visible/active
+    /// until "Save password"/"Save private key" is clicked.
+    auth_method: SshAuthenticationMethod,
     /// Transient plaintext password entry for "remember/replace password"
     /// in the profile editor (item 5: relocated here from the launcher's
     /// live-connect form). Never persisted to disk directly — only ever
     /// sent to the composition root's secret store worker via
     /// `AppCommand::StoreProfilePassword` and cleared immediately after.
     password: String,
+    /// Transient OpenSSH private-key text for "remember/replace private
+    /// key" in the profile editor. Like `password`, never persisted
+    /// directly — only ever sent to the composition root's secret store
+    /// worker via `AppCommand::StoreProfilePrivateKey` and cleared
+    /// immediately after.
+    private_key: String,
+    /// Transient optional passphrase for `private_key`, cleared alongside it.
+    key_passphrase: String,
     has_stored_credential: bool,
+    /// Which kind of credential is actually stored for this profile.
+    /// Meaningless unless `has_stored_credential` is true.
+    stored_credential_kind: CredentialKind,
     error: Option<String>,
 }
 
@@ -1417,8 +1448,12 @@ impl Default for SshProfileDraft {
             host: String::new(),
             port: SshLauncherForm::DEFAULT_PORT.to_string(),
             username: String::new(),
+            auth_method: SshAuthenticationMethod::Password,
             password: String::new(),
+            private_key: String::new(),
+            key_passphrase: String::new(),
             has_stored_credential: false,
+            stored_credential_kind: CredentialKind::Password,
             error: None,
         }
     }
@@ -1426,14 +1461,22 @@ impl Default for SshProfileDraft {
 
 impl SshProfileDraft {
     fn from_profile(ssh: &SshProfileConfiguration) -> Self {
+        let stored_credential_kind = ssh.credential_kind();
         Self {
             original_id: Some(ssh.identifier().to_owned()),
             name: ssh.identifier().to_owned(),
             host: ssh.host().to_owned(),
             port: ssh.port().to_string(),
             username: ssh.username().to_owned(),
+            auth_method: match stored_credential_kind {
+                CredentialKind::Password => SshAuthenticationMethod::Password,
+                CredentialKind::PrivateKey => SshAuthenticationMethod::PrivateKey,
+            },
             password: String::new(),
+            private_key: String::new(),
+            key_passphrase: String::new(),
             has_stored_credential: ssh.credential_reference().is_some(),
+            stored_credential_kind,
             error: None,
         }
     }
@@ -1585,6 +1628,9 @@ pub fn show_profiles(
     }
 
     let mut next_mode = None;
+    ui.horizontal(|ui| {
+        ui.add_space(26.0);
+        ui.vertical(|ui| {
     match &mut state.mode {
         ProfilesScreenMode::List => {
             ui.vertical(|ui| {
@@ -1610,68 +1656,124 @@ pub fn show_profiles(
                 for profile in configuration.profiles() {
                     let (kind, name, description) = profile_summary(profile);
                     ui.add_space(8.0);
-                    egui::Frame::new()
-                        .fill(theme::SURFACE_TAB_INACTIVE)
-                        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-                        .corner_radius(8.0)
-                        .inner_margin(egui::Margin::symmetric(14, 10))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(egui::RichText::new(&name).strong());
-                                    ui.label(
-                                        egui::RichText::new(format!("{kind} · {description}"))
+                    // Drag-and-drop reorder (`Configuration::with_reordered_profiles`),
+                    // reflected in the Launcher's own profile ordering too.
+                    // Only the chip frame itself is a drag source, matching
+                    // the chrome chip row's press-and-hold-anywhere-on-the-
+                    // card convention; the Connect/Edit/Duplicate/Delete
+                    // buttons sit outside it and are unaffected.
+                    let drag_id = egui::Id::new("profile_reorder_source").with(&name);
+                    let mut row_rect = None;
+                    ui.horizontal(|ui| {
+                        let drag_response = ui.dnd_drag_source(drag_id, name.clone(), |ui| {
+                            egui::Frame::new()
+                                .fill(theme::SURFACE_TAB_INACTIVE)
+                                .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                .corner_radius(8.0)
+                                .inner_margin(egui::Margin::symmetric(14, 10))
+                                .show(ui, |ui| {
+                                    ui.set_width(220.0);
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new(&name).strong());
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{kind} · {description}"
+                                            ))
                                             .size(11.0)
                                             .color(theme::TEXT_SECONDARY),
-                                    );
+                                        );
+                                    });
                                 });
-                                if ui.button("Connect").clicked() {
-                                    command = Some(match profile {
-                                        Profile::Local(_) => {
-                                            AppCommand::StartConfiguredLocalProfile {
-                                                profile_id: name.clone(),
-                                            }
-                                        }
-                                        Profile::Ssh(_) => AppCommand::StartConfiguredSshProfile {
-                                            profile_id: name.clone(),
-                                        },
-                                    });
+                        });
+                        row_rect = Some(drag_response.response.rect);
+                        ui.add_space(8.0);
+                        if ui.button("Connect").clicked() {
+                            command = Some(match profile {
+                                Profile::Local(_) => AppCommand::StartConfiguredLocalProfile {
+                                    profile_id: name.clone(),
+                                },
+                                Profile::Ssh(_) => AppCommand::StartConfiguredSshProfile {
+                                    profile_id: name.clone(),
+                                },
+                            });
+                        }
+                        if ui.button("Edit").clicked() {
+                            next_mode = Some(match profile {
+                                Profile::Local(local) => ProfilesScreenMode::EditLocal(
+                                    LocalProfileDraft::from_profile(local),
+                                ),
+                                Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
+                                    SshProfileDraft::from_profile(ssh),
+                                ),
+                            });
+                        }
+                        if ui.button("Duplicate").clicked() {
+                            let duplicate_name = format!("{name}-copy");
+                            next_mode = Some(match profile {
+                                Profile::Local(local) => {
+                                    let mut draft = LocalProfileDraft::from_profile(local);
+                                    draft.original_id = None;
+                                    draft.name = duplicate_name;
+                                    ProfilesScreenMode::EditLocal(draft)
                                 }
-                                if ui.button("Edit").clicked() {
-                                    next_mode = Some(match profile {
-                                        Profile::Local(local) => ProfilesScreenMode::EditLocal(
-                                            LocalProfileDraft::from_profile(local),
-                                        ),
-                                        Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
-                                            SshProfileDraft::from_profile(ssh),
-                                        ),
-                                    });
-                                }
-                                if ui.button("Duplicate").clicked() {
-                                    let duplicate_name = format!("{name}-copy");
-                                    next_mode = Some(match profile {
-                                        Profile::Local(local) => {
-                                            let mut draft = LocalProfileDraft::from_profile(local);
-                                            draft.original_id = None;
-                                            draft.name = duplicate_name;
-                                            ProfilesScreenMode::EditLocal(draft)
-                                        }
-                                        Profile::Ssh(ssh) => {
-                                            let mut draft = SshProfileDraft::from_profile(ssh);
-                                            draft.original_id = None;
-                                            draft.name = duplicate_name;
-                                            ProfilesScreenMode::EditSsh(draft)
-                                        }
-                                    });
-                                }
-                                if ui.button("Delete").clicked() {
-                                    next_mode = Some(ProfilesScreenMode::ConfirmDelete {
-                                        identifier: name.clone(),
-                                        references: configuration.workspace_tab_references(&name),
-                                    });
+                                Profile::Ssh(ssh) => {
+                                    let mut draft = SshProfileDraft::from_profile(ssh);
+                                    draft.original_id = None;
+                                    draft.name = duplicate_name;
+                                    ProfilesScreenMode::EditSsh(draft)
                                 }
                             });
-                        });
+                        }
+                        if ui.button("Delete").clicked() {
+                            next_mode = Some(ProfilesScreenMode::ConfirmDelete {
+                                identifier: name.clone(),
+                                references: configuration.workspace_tab_references(&name),
+                            });
+                        }
+                    });
+                    // Only commit the reorder when the drag is released over
+                    // this row (not continuously while hovering): each
+                    // reorder is persisted to disk immediately
+                    // (`ConfigurationReloader::reorder_profiles`), so
+                    // dispatching on every hovered frame during a drag would
+                    // write the configuration file dozens of times per
+                    // second.
+                    if let Some(rect) = row_rect {
+                        if let Some(dragged) = egui::DragAndDrop::payload::<String>(ui.ctx()) {
+                            let released = ui.input(|i| i.pointer.any_released());
+                            if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+                                if *dragged != name && released && rect.contains(pointer_pos) {
+                                    command = Some(AppCommand::ReorderProfiles {
+                                        moved: (*dragged).clone(),
+                                        before: Some(name.clone()),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                // A trailing drop target lets a drag be released past the
+                // last profile row to move it to the end of the list.
+                if !configuration.profiles().is_empty() {
+                    let (end_rect, _) =
+                        ui.allocate_exact_size(vec2(220.0, 12.0), Sense::hover());
+                    if let Some(dragged) = egui::DragAndDrop::payload::<String>(ui.ctx()) {
+                        let released = ui.input(|i| i.pointer.any_released());
+                        if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+                            if released
+                                && configuration
+                                    .profiles()
+                                    .last()
+                                    .is_some_and(|last| last.identifier() != dragged.as_str())
+                                && end_rect.contains(pointer_pos)
+                            {
+                                command = Some(AppCommand::ReorderProfiles {
+                                    moved: (*dragged).clone(),
+                                    before: None,
+                                });
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -1692,13 +1794,7 @@ pub fn show_profiles(
                     .show(ui, |ui| {
                         ui.set_width(340.0);
                         ssh_section_heading(ui, "Profile");
-                        profile_text_edit(
-                            ui,
-                            tab_id,
-                            "name",
-                            "Name (lowercase letters, digits, hyphens)",
-                            &mut draft.name,
-                        );
+                        profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name);
                         local_executable_field(
                             ui,
                             profiles_state_id(tab_id).with("executable_autocomplete"),
@@ -1732,8 +1828,7 @@ pub fn show_profiles(
                                     }
                                     Err(_) => {
                                         draft.error = Some(
-                                            "Enter a valid name (lowercase letters, digits, hyphens) and a non-empty executable."
-                                                .to_owned(),
+                                            "Enter a name and a non-empty executable.".to_owned(),
                                         );
                                     }
                                 }
@@ -1766,7 +1861,7 @@ pub fn show_profiles(
                             ui,
                             tab_id,
                             "name",
-                            "Name (lowercase letters, digits, hyphens)",
+                            "Name",
                             &mut draft.name,
                         );
                         profile_text_edit(ui, tab_id, "username", "Username", &mut draft.username);
@@ -1775,34 +1870,109 @@ pub fn show_profiles(
                         if let Some(profile_id) = draft.original_id.clone() {
                             ui.add_space(10.0);
                             ssh_section_heading(ui, "Authentication");
-                            ssh_paragraph(
-                                ui,
-                                if draft.has_stored_credential {
-                                    "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
-                                } else {
-                                    "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
-                                },
-                            );
+                            ui.horizontal(|ui| {
+                                ui.radio_value(
+                                    &mut draft.auth_method,
+                                    SshAuthenticationMethod::Password,
+                                    "Password authentication",
+                                );
+                                ui.radio_value(
+                                    &mut draft.auth_method,
+                                    SshAuthenticationMethod::PrivateKey,
+                                    "Private-key authentication",
+                                );
+                            });
                             ui.add_space(4.0);
-                            profile_password_edit(
-                                ui,
-                                tab_id,
-                                "password",
-                                "Password",
-                                &mut draft.password,
-                            );
-                            ui.add_space(4.0);
-                            if ui
-                                .add_enabled(!draft.password.is_empty(), egui::Button::new("Save password"))
-                                .clicked()
-                            {
-                                command = Some(AppCommand::StoreProfilePassword {
-                                    profile_id,
-                                    password: PasswordToStore::new(std::mem::take(
+                            match draft.auth_method {
+                                SshAuthenticationMethod::Password => {
+                                    ssh_paragraph(
+                                        ui,
+                                        if draft.has_stored_credential
+                                            && draft.stored_credential_kind
+                                                == CredentialKind::Password
+                                        {
+                                            "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                        } else {
+                                            "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
+                                        },
+                                    );
+                                    ui.add_space(4.0);
+                                    profile_password_edit(
+                                        ui,
+                                        tab_id,
+                                        "password",
+                                        "Password",
                                         &mut draft.password,
-                                    )),
-                                });
-                                draft.has_stored_credential = true;
+                                    );
+                                    ui.add_space(4.0);
+                                    if ui
+                                        .add_enabled(
+                                            !draft.password.is_empty(),
+                                            egui::Button::new("Save password"),
+                                        )
+                                        .clicked()
+                                    {
+                                        command = Some(AppCommand::StoreProfilePassword {
+                                            profile_id,
+                                            password: PasswordToStore::new(std::mem::take(
+                                                &mut draft.password,
+                                            )),
+                                        });
+                                        draft.has_stored_credential = true;
+                                        draft.stored_credential_kind = CredentialKind::Password;
+                                    }
+                                }
+                                SshAuthenticationMethod::PrivateKey => {
+                                    ssh_paragraph(
+                                        ui,
+                                        if draft.has_stored_credential
+                                            && draft.stored_credential_kind
+                                                == CredentialKind::PrivateKey
+                                        {
+                                            "A private key is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                        } else {
+                                            "Enter an OpenSSH private key to remember it in native secure storage."
+                                        },
+                                    );
+                                    ui.add_space(4.0);
+                                    ssh_multiline_secret_text_edit(
+                                        ui,
+                                        tab_id,
+                                        "private_key",
+                                        "OpenSSH private key",
+                                        &mut draft.private_key,
+                                    );
+                                    profile_password_edit(
+                                        ui,
+                                        tab_id,
+                                        "key_passphrase",
+                                        "Key passphrase (optional)",
+                                        &mut draft.key_passphrase,
+                                    );
+                                    ui.add_space(4.0);
+                                    if ui
+                                        .add_enabled(
+                                            !draft.private_key.trim().is_empty(),
+                                            egui::Button::new("Save private key"),
+                                        )
+                                        .clicked()
+                                    {
+                                        let passphrase = if draft.key_passphrase.is_empty() {
+                                            None
+                                        } else {
+                                            Some(std::mem::take(&mut draft.key_passphrase))
+                                        };
+                                        command = Some(AppCommand::StoreProfilePrivateKey {
+                                            profile_id,
+                                            private_key: PrivateKeyToStore::new(
+                                                std::mem::take(&mut draft.private_key),
+                                                passphrase,
+                                            ),
+                                        });
+                                        draft.has_stored_credential = true;
+                                        draft.stored_credential_kind = CredentialKind::PrivateKey;
+                                    }
+                                }
                             }
                         }
                         if let Some(error) = &draft.error {
@@ -1858,13 +2028,12 @@ pub fn show_profiles(
                         });
                         next_mode = Some(ProfilesScreenMode::List);
                     }
-                    if ui.button("Cancel").clicked() {
-                        next_mode = Some(ProfilesScreenMode::List);
-                    }
                 });
             });
         }
     }
+        });
+    });
     if let Some(mode) = next_mode {
         state.mode = mode;
     }
@@ -2435,6 +2604,35 @@ mod tests {
     }
 
     #[test]
+    fn saved_profiles_are_listed_after_local_shell_and_new_ssh_connection() {
+        let profiles = vec![
+            Profile::local("development", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        let local_shell_top = harness
+            .get_by_label("Local Shell — Default shell on this computer")
+            .rect()
+            .top();
+        let ssh_top = harness
+            .get_by_label("SSH — Connect to a remote host")
+            .rect()
+            .top();
+        let profile_top = harness
+            .get_by_label("development — Saved local profile")
+            .rect()
+            .top();
+
+        assert!(
+            local_shell_top < ssh_top && ssh_top < profile_top,
+            "expected Local Shell, then New SSH Connection, then saved profiles, got tops: \
+             {local_shell_top}, {ssh_top}, {profile_top}"
+        );
+    }
+
+    #[test]
     fn local_profile_is_keyboard_accessible_and_returns_a_typed_command() {
         let profiles = vec![
             Profile::local("development", "cargo", vec!["run".to_owned()], None)
@@ -2446,6 +2644,8 @@ mod tests {
         assert!(harness
             .query_by_label("development — Saved local profile")
             .is_some());
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
         harness.key_press(egui::Key::Enter);
@@ -2945,6 +3145,82 @@ mod tests {
     }
 
     #[test]
+    fn dragging_a_profile_card_onto_another_reorders_it() {
+        let profiles = vec![
+            Profile::local("alpha", "sh", Vec::new(), None).unwrap(),
+            Profile::local("beta", "sh", Vec::new(), None).unwrap(),
+            Profile::local("gamma", "sh", Vec::new(), None).unwrap(),
+        ];
+        let configuration = festerm_config::Configuration::new(profiles).unwrap();
+        let mut harness = profiles_harness(configuration);
+        harness.run();
+
+        let from = harness.get_by_label("alpha").rect().center();
+        let to = harness.get_by_label("gamma").rect().center();
+
+        harness.drag_at(from);
+        harness.run();
+        let steps = 8;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            harness.hover_at(from + (to - from) * t);
+            harness.run();
+        }
+        harness.drop_at(to);
+        harness.run();
+
+        assert!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::ReorderProfiles {
+                    ref moved,
+                    ref before,
+                }) if moved == "alpha" && before.as_deref() == Some("gamma")
+            ),
+            "observed command: {:?}",
+            harness.state().command
+        );
+    }
+
+    #[test]
+    fn dragging_a_profile_card_past_the_last_row_moves_it_to_the_end() {
+        let profiles = vec![
+            Profile::local("alpha", "sh", Vec::new(), None).unwrap(),
+            Profile::local("beta", "sh", Vec::new(), None).unwrap(),
+        ];
+        let configuration = festerm_config::Configuration::new(profiles).unwrap();
+        let mut harness = profiles_harness(configuration);
+        harness.run();
+
+        let from = harness.get_by_label("alpha").rect().center();
+        let beta_rect = harness.get_by_label("beta").rect();
+        let to = beta_rect.center() + egui::vec2(0.0, beta_rect.height() * 3.0);
+
+        harness.drag_at(from);
+        harness.run();
+        let steps = 8;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            harness.hover_at(from + (to - from) * t);
+            harness.run();
+        }
+        harness.drop_at(to);
+        harness.run();
+
+        assert!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::ReorderProfiles {
+                    ref moved,
+                    ref before,
+                }) if moved == "alpha" && before.is_none()
+            ),
+            "observed command: {:?}",
+            harness.state().command
+        );
+    }
+
+    #[test]
     fn profiles_list_shows_no_profiles_saved_yet_when_empty() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
@@ -2960,12 +3236,8 @@ mod tests {
         harness.get_by_label("New Local Profile").click();
         harness.run();
 
-        harness
-            .get_by_label("Name (lowercase letters, digits, hyphens)")
-            .focus();
-        harness
-            .get_by_label("Name (lowercase letters, digits, hyphens)")
-            .type_text("dev-shell");
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text("dev-shell");
         harness.run();
         harness.get_by_label("Executable").focus();
         harness.get_by_label("Executable").type_text("/bin/zsh");
@@ -2996,9 +3268,7 @@ mod tests {
 
         assert!(harness.state().command.is_none());
         assert!(harness
-            .query_by_label(
-                "Enter a valid name (lowercase letters, digits, hyphens) and a non-empty executable."
-            )
+            .query_by_label("Enter a name and a non-empty executable.")
             .is_some());
     }
 
@@ -3104,6 +3374,52 @@ mod tests {
             harness.state().command.as_ref()
         else {
             panic!("clicking Save password must return a StoreProfilePassword command");
+        };
+        assert_eq!(profile_id, "prod");
+    }
+
+    #[test]
+    fn ssh_profile_editor_offers_a_private_key_field_that_dispatches_store_profile_private_key() {
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        harness.get_by_label("Edit").click();
+        harness.run();
+        assert!(harness.query_by_label("Edit SSH Profile").is_some());
+
+        harness.get_by_label("Private-key authentication").click();
+        harness.run();
+        assert!(harness
+            .query_by_label("Enter an OpenSSH private key to remember it in native secure storage.")
+            .is_some());
+        // Switching methods must not surface the password-authentication
+        // fields at the same time.
+        assert!(harness.query_by_label("Password").is_none());
+
+        harness.get_by_label("OpenSSH private key").focus();
+        harness.get_by_label("OpenSSH private key").type_text(
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----",
+        );
+        harness.run();
+
+        harness.get_by_label("Save private key").click();
+        harness.run();
+
+        let Some(AppCommand::StoreProfilePrivateKey { profile_id, .. }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("clicking Save private key must return a StoreProfilePrivateKey command");
         };
         assert_eq!(profile_id, "prod");
     }

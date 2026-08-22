@@ -1049,7 +1049,9 @@ validation message rather than field-specific errors. Delete asks for
 confirmation and, when the profile is still referenced by a saved workspace
 tab, reports the reference count and blocks the deletion (the same
 `UnknownWorkspaceProfileReference` validation workspaces already enforce)
-until the tab is removed or repointed.
+until the tab is removed or repointed. Rows can be dragged to reorder them;
+the new order persists to configuration immediately and the Launcher's saved
+profiles follow the same order.
 
 ## Settings
 

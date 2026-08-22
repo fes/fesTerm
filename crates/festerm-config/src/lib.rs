@@ -103,15 +103,16 @@ impl Configuration {
     }
 
     /// Returns a complete replacement with one SSH profile's native stored
-    /// password reference changed.
+    /// credential reference changed.
     ///
-    /// `credential_id` is intentionally limited to the M8 SSH-password
-    /// credential slice. It must not name a private key, passphrase, agent,
-    /// key file, trust record, or arbitrary secret.
-    pub fn with_ssh_password_credential(
+    /// `credential_id` is intentionally limited to the M8 SSH-password/M-cert
+    /// credential slice tracked by `kind`. It must not name a passphrase,
+    /// agent, key file, trust record, or arbitrary secret.
+    pub fn with_ssh_credential(
         &self,
         identifier: &str,
         credential_reference: SecretReference,
+        kind: CredentialKind,
     ) -> Result<Self, ConfigError> {
         let mut replacement = self.clone();
         let profile = replacement
@@ -125,6 +126,7 @@ impl Configuration {
             ));
         };
         profile.credential_id = Some(CredentialReference::new(credential_reference));
+        profile.credential_kind = kind;
         replacement.validate()?;
         Ok(replacement)
     }
@@ -143,6 +145,47 @@ impl Configuration {
             .profiles
             .retain(|existing| existing.identifier() != profile.identifier());
         replacement.profiles.push(profile);
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns a complete replacement with the profile named `moved`
+    /// relocated to just before the profile named `before`, or to the end of
+    /// the list when `before` is `None` (`docs/gui-design.md` "Profile
+    /// reordering" - the Profiles surface's drag-to-reorder, reflected in
+    /// the Launcher's own profile ordering since both read
+    /// [`Self::profiles`] in document order).
+    ///
+    /// An unknown `moved` identifier, an unknown `before` identifier (which
+    /// moves to the end instead), or `moved == before` are all treated as
+    /// no-ops rather than errors, mirroring the tab-reorder convention this
+    /// is modeled on.
+    pub fn with_reordered_profiles(
+        &self,
+        moved: &str,
+        before: Option<&str>,
+    ) -> Result<Self, ConfigError> {
+        if before == Some(moved) {
+            return Ok(self.clone());
+        }
+        let mut replacement = self.clone();
+        let Some(index) = replacement
+            .profiles
+            .iter()
+            .position(|profile| profile.identifier() == moved)
+        else {
+            return Ok(replacement);
+        };
+        let profile = replacement.profiles.remove(index);
+        let insert_at = match before {
+            Some(before_id) => replacement
+                .profiles
+                .iter()
+                .position(|profile| profile.identifier() == before_id)
+                .unwrap_or(replacement.profiles.len()),
+            None => replacement.profiles.len(),
+        };
+        replacement.profiles.insert(insert_at, profile);
         replacement.validate()?;
         Ok(replacement)
     }
@@ -870,6 +913,7 @@ impl Profile {
             initial_columns,
             initial_rows,
             credential_id: None,
+            credential_kind: CredentialKind::default(),
             persistence: None,
         });
         profile.validate()?;
@@ -881,8 +925,20 @@ impl Profile {
     /// This accepts only the validated reference type, so callers cannot put a
     /// raw identifier or a secret value into profile metadata.
     pub fn with_credential_reference(
+        self,
+        credential_reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        self.with_credential_reference_kind(credential_reference, CredentialKind::Password)
+    }
+
+    /// Associates an SSH profile with an opaque native-store credential
+    /// reference of the given kind (password or private key). This is the
+    /// general form of [`Self::with_credential_reference`], which always
+    /// uses [`CredentialKind::Password`].
+    pub fn with_credential_reference_kind(
         mut self,
         credential_reference: SecretReference,
+        kind: CredentialKind,
     ) -> Result<Self, ConfigError> {
         let Self::Ssh(profile) = &mut self else {
             return Err(ConfigError::new(
@@ -890,6 +946,7 @@ impl Profile {
             ));
         };
         profile.credential_id = Some(CredentialReference::new(credential_reference));
+        profile.credential_kind = kind;
         self.validate()?;
         Ok(self)
     }
@@ -1080,6 +1137,17 @@ impl LocalProfileConfiguration {
     }
 }
 
+/// Distinguishes the kind of secret a profile's native-store credential
+/// reference points at, so a stored credential is resolved with the right
+/// authentication method instead of always being treated as a password.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialKind {
+    #[default]
+    Password,
+    PrivateKey,
+}
+
 /// Secret-free metadata for a native SSH connection.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1097,8 +1165,14 @@ pub struct SshProfileConfiguration {
     initial_rows: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential_id: Option<CredentialReference>,
+    #[serde(default, skip_serializing_if = "is_default_credential_kind")]
+    credential_kind: CredentialKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     persistence: Option<PersistenceConfiguration>,
+}
+
+fn is_default_credential_kind(kind: &CredentialKind) -> bool {
+    *kind == CredentialKind::default()
 }
 
 impl SshProfileConfiguration {
@@ -1141,6 +1215,13 @@ impl SshProfileConfiguration {
         self.credential_id
             .as_ref()
             .map(CredentialReference::as_secret_reference)
+    }
+
+    /// Returns which kind of secret the stored credential reference (if
+    /// any) points at. Meaningless when [`Self::credential_reference`] is
+    /// `None`.
+    pub const fn credential_kind(&self) -> CredentialKind {
+        self.credential_kind
     }
 
     /// Returns this profile's configured durable-session provider and name,
@@ -1294,14 +1375,10 @@ const fn default_rows() -> u16 {
 }
 
 fn validate_identifier(identifier: &str) -> Result<(), ConfigError> {
-    let mut bytes = identifier.bytes();
-    let Some(first) = bytes.next() else {
-        return Err(ConfigError::new(ConfigErrorKind::InvalidProfileIdentifier));
-    };
-    if identifier.len() > 64
-        || !first.is_ascii_lowercase()
-        || !bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        || identifier.ends_with('-')
+    if identifier.is_empty()
+        || identifier.chars().count() > 200
+        || contains_control_character(identifier)
+        || identifier.trim() != identifier
     {
         return Err(ConfigError::new(ConfigErrorKind::InvalidProfileIdentifier));
     }
@@ -1383,6 +1460,19 @@ fn inspect_table_for_secret_material(
             };
             SecretReference::parse(reference)
                 .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidCredentialReference))?;
+            continue;
+        }
+        if key == "credential_kind" && allow_credential_id {
+            let toml::Value::String(kind) = value else {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::InvalidCredentialReference,
+                ));
+            };
+            if kind != "password" && kind != "private_key" {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::InvalidCredentialReference,
+                ));
+            }
             continue;
         }
         if is_secret_bearing_key(key) {
@@ -1522,7 +1612,7 @@ impl fmt::Display for ConfigError {
                 "configuration contains password or private-key material; keep credentials outside TOML",
             ),
             ConfigErrorKind::InvalidProfileIdentifier => formatter.write_str(
-                "profiles[].id must be 1-64 lowercase ASCII letters, digits, or internal hyphens",
+                "profiles[].id must be a non-empty, control-character-free string of at most 200 characters with no leading or trailing whitespace",
             ),
             ConfigErrorKind::DuplicateProfileIdentifier => {
                 formatter.write_str("profiles[].id values must be unique")
@@ -1555,7 +1645,7 @@ impl fmt::Display for ConfigError {
                 formatter.write_str("workspace metadata must contain at least one tab")
             }
             ConfigErrorKind::InvalidWorkspaceTabIdentifier => formatter.write_str(
-                "workspace tab IDs must be 1-64 lowercase ASCII letters, digits, or internal hyphens",
+                "workspace tab IDs must be a non-empty, control-character-free string of at most 200 characters with no leading or trailing whitespace",
             ),
             ConfigErrorKind::DuplicateWorkspaceTabIdentifier => {
                 formatter.write_str("workspace tab IDs must be unique")
@@ -2087,7 +2177,7 @@ id = "settings"
         let reference = SecretReference::parse(CREDENTIAL_REFERENCE).expect("reference is valid");
 
         let replacement = original
-            .with_ssh_password_credential("production", reference)
+            .with_ssh_credential("production", reference, CredentialKind::Password)
             .expect("SSH credential replacement is valid");
 
         assert!(original
@@ -2226,6 +2316,89 @@ sha256_fingerprint = "{fingerprint}"
         let edited_profile = edited.profile("development").unwrap().as_local().unwrap();
         assert_eq!(edited_profile.executable(), "zsh");
         assert_eq!(edited_profile.arguments(), ["-l"]);
+    }
+
+    #[test]
+    fn with_reordered_profiles_moves_a_profile_before_a_target_identifier() {
+        let configuration = Configuration::new(vec![
+            Profile::local("one", "sh", Vec::new(), None).unwrap(),
+            Profile::local("two", "sh", Vec::new(), None).unwrap(),
+            Profile::local("three", "sh", Vec::new(), None).unwrap(),
+        ])
+        .expect("three local profiles are valid");
+
+        let reordered = configuration
+            .with_reordered_profiles("three", Some("one"))
+            .expect("reordering never invalidates the document");
+
+        let identifiers: Vec<&str> = reordered
+            .profiles()
+            .iter()
+            .map(Profile::identifier)
+            .collect();
+        assert_eq!(identifiers, ["three", "one", "two"]);
+        // The original document is untouched (immutable-replacement pattern).
+        assert_eq!(
+            configuration
+                .profiles()
+                .iter()
+                .map(Profile::identifier)
+                .collect::<Vec<_>>(),
+            ["one", "two", "three"]
+        );
+    }
+
+    #[test]
+    fn with_reordered_profiles_moves_to_the_end_when_before_is_none() {
+        let configuration = Configuration::new(vec![
+            Profile::local("one", "sh", Vec::new(), None).unwrap(),
+            Profile::local("two", "sh", Vec::new(), None).unwrap(),
+        ])
+        .expect("two local profiles are valid");
+
+        let reordered = configuration
+            .with_reordered_profiles("one", None)
+            .expect("reordering never invalidates the document");
+
+        let identifiers: Vec<&str> = reordered
+            .profiles()
+            .iter()
+            .map(Profile::identifier)
+            .collect();
+        assert_eq!(identifiers, ["two", "one"]);
+    }
+
+    #[test]
+    fn with_reordered_profiles_ignores_an_unknown_moved_id_or_moving_before_itself() {
+        let configuration = Configuration::new(vec![
+            Profile::local("one", "sh", Vec::new(), None).unwrap(),
+            Profile::local("two", "sh", Vec::new(), None).unwrap(),
+        ])
+        .expect("two local profiles are valid");
+
+        let unknown_moved = configuration
+            .with_reordered_profiles("missing", Some("one"))
+            .expect("an unknown moved id is a no-op, not an error");
+        assert_eq!(
+            unknown_moved
+                .profiles()
+                .iter()
+                .map(Profile::identifier)
+                .collect::<Vec<_>>(),
+            ["one", "two"]
+        );
+
+        let before_itself = configuration
+            .with_reordered_profiles("one", Some("one"))
+            .expect("moving before itself is a no-op, not an error");
+        assert_eq!(
+            before_itself
+                .profiles()
+                .iter()
+                .map(Profile::identifier)
+                .collect::<Vec<_>>(),
+            ["one", "two"]
+        );
     }
 
     #[test]
@@ -2578,7 +2751,7 @@ schema_version = 1
 
 [[profiles]]
 kind = "local"
-id = "Not-valid"
+id = ""
 executable = "sh"
 "#,
         )
@@ -2820,7 +2993,7 @@ id = "launcher"
     #[test]
     fn constructors_cannot_create_invalid_profiles() {
         assert_eq!(
-            Profile::local("bad id", "sh", Vec::new(), None)
+            Profile::local("", "sh", Vec::new(), None)
                 .unwrap_err()
                 .kind(),
             ConfigErrorKind::InvalidProfileIdentifier
@@ -2877,6 +3050,56 @@ id = "launcher"
         let loaded = Configuration::load_from_path(&path).unwrap();
         assert!(loaded.profiles()[0].credential_reference().is_some());
         assert_eq!(loaded, configuration);
+    }
+
+    #[test]
+    fn stored_private_key_credential_kind_saves_loads_and_defaults_to_password() {
+        let directory = TestDirectory::new();
+        let path = directory.path().join("profiles.toml");
+        let configuration = Configuration::new(vec![Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference_kind(
+            SecretReference::parse(CREDENTIAL_REFERENCE).unwrap(),
+            CredentialKind::PrivateKey,
+        )
+        .unwrap()])
+        .unwrap();
+
+        configuration.save_to_path(&path).unwrap();
+
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("credential_kind = \"private_key\""));
+        let loaded = Configuration::load_from_path(&path).unwrap();
+        let ssh = loaded.profiles()[0].as_ssh().unwrap();
+        assert_eq!(ssh.credential_kind(), CredentialKind::PrivateKey);
+        assert_eq!(loaded, configuration);
+
+        // Existing saved profiles that predate `credential_kind` must still
+        // load and default to Password, not fail or silently misclassify.
+        let legacy = format!(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "legacy"
+host = "example.test"
+username = "alice"
+credential_id = "{CREDENTIAL_REFERENCE}"
+"#
+        );
+        fs::write(&path, legacy).unwrap();
+        let loaded = Configuration::load_from_path(&path).unwrap();
+        let ssh = loaded.profiles()[0].as_ssh().unwrap();
+        assert_eq!(ssh.credential_kind(), CredentialKind::Password);
     }
 
     #[test]

@@ -40,6 +40,8 @@ pub(crate) enum ConfigurationStartupStatus {
     ProfileSaveFailure(ConfigurationLoadFailure),
     ProfileDeleted,
     ProfileDeleteFailure(ConfigurationLoadFailure),
+    ProfilesReordered,
+    ProfilesReorderFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
@@ -130,6 +132,10 @@ impl ConfigurationStartupStatus {
             Self::ProfileDeleteFailure(_) => {
                 "The profile was not deleted because configuration could not be written."
             }
+            Self::ProfilesReordered => "Profile order was saved.",
+            Self::ProfilesReorderFailure(_) => {
+                "Profile order was not saved because configuration could not be written. The previous order remains active."
+            }
         }
     }
 
@@ -144,6 +150,7 @@ impl ConfigurationStartupStatus {
                 | Self::KnownHostTrustSaveFailure(_)
                 | Self::ProfileSaveFailure(_)
                 | Self::ProfileDeleteFailure(_)
+                | Self::ProfilesReorderFailure(_)
         )
     }
 }
@@ -327,6 +334,19 @@ impl ConfigurationReloader {
         match self.save_configuration(configuration) {
             Ok(()) => ConfigurationStartupStatus::ProfileDeleted,
             Err(failure) => ConfigurationStartupStatus::ProfileDeleteFailure(failure),
+        }
+    }
+
+    /// Saves an already validated complete replacement immediately after a
+    /// drag-to-reorder gesture on the Profiles surface
+    /// (`Configuration::with_reordered_profiles`).
+    pub(crate) fn reorder_profiles(
+        &self,
+        configuration: &Configuration,
+    ) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::ProfilesReordered,
+            Err(failure) => ConfigurationStartupStatus::ProfilesReorderFailure(failure),
         }
     }
 

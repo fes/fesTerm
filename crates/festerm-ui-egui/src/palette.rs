@@ -173,7 +173,18 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
                                         rect,
                                         ui.visuals().text_color(),
                                     );
-                                    ui.selectable_label(highlighted, text)
+                                    // `add_sized` with the remaining
+                                    // available width (rather than a plain
+                                    // `ui.selectable_label`, which only
+                                    // claims its own text width) makes the
+                                    // hover/selection highlight span the
+                                    // rest of the row, matching every other
+                                    // palette entry instead of stopping
+                                    // right after the label text.
+                                    ui.add_sized(
+                                        egui::vec2(ui.available_width(), 0.0),
+                                        egui::Button::selectable(highlighted, text),
+                                    )
                                 })
                                 .inner
                             } else {
@@ -312,6 +323,36 @@ mod tests {
         harness.run();
 
         assert_eq!(harness.state().decision, Some(Some(2)));
+    }
+
+    #[test]
+    fn a_tab_row_highlights_across_its_whole_width_not_just_its_label() {
+        use egui_kittest::kittest::Queryable as _;
+
+        let mut palette = PaletteState::default();
+        palette.open();
+        let mut harness = harness(PaletteHarnessState {
+            palette,
+            items: vec![PaletteItem {
+                id: 1,
+                label: "x".to_owned(),
+                hint: None,
+                is_tab: true,
+            }],
+            decision: None,
+        });
+        harness.run();
+
+        // The row's selectable widget must claim close to the popup's full
+        // interior width (not just its one-character label), so hovering
+        // or clicking anywhere across the row — like every non-tab palette
+        // action — highlights and activates it.
+        let row = harness.get_by_label("x");
+        assert!(
+            row.rect().width() > 300.0,
+            "tab row must fill the row width, got {}",
+            row.rect().width()
+        );
     }
 
     #[test]

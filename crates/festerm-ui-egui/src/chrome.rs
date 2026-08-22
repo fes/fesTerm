@@ -721,6 +721,19 @@ fn show_chip(
         actions.push(ChromeAction::Activate(chip.id));
     }
 
+    // Double-clicking anywhere on the chip (including the title label,
+    // which senses only hover so it doesn't compete with `bg_response` for
+    // click/drag priority - see `paint_chip_primary`) starts a rename,
+    // unless a rename is already in progress.
+    let rename_id = rename_buffer_id(chip.id);
+    let already_editing = ui.data(|d| d.get_temp::<String>(rename_id)).is_some();
+    if chip.renamable && !already_editing && bg_response.double_clicked() {
+        ui.data_mut(|d| d.insert_temp(rename_id, chip.primary.clone()));
+        actions.push(ChromeAction::RenameStarted {
+            restore_focus: None,
+        });
+    }
+
     // Use raw pointer geometry for the secondary click so the menu covers the
     // complete chip, including label/status/close child widgets, without
     // placing a final invisible response above those controls and stealing
@@ -1005,24 +1018,27 @@ fn paint_chip_primary(
         }
     } else {
         let label = RichText::new(&chip.primary).color(CHIP_PRIMARY_TEXT);
-        let label_response = ui.add(
+        // Deliberately `Sense::hover()` only (no click/drag), matching the
+        // secondary line below: the chip's own `bg_response` (covering the
+        // whole chip footprint, including this label's pixels) is the sole
+        // widget that senses click-and-drag here. Giving this label its own
+        // `Sense::click()` used to let it win the *click* half of egui's
+        // hit-test tie-break (it's registered on top of `bg_response`),
+        // which could leave a press-and-drag started on the title text
+        // attributed to whichever drag-sensing widget the hit-test fell
+        // back to next - sometimes the row's own native-window-drag region
+        // instead of the chip's reorder drag - rather than reliably
+        // reordering the chip the same way starting a drag on the
+        // secondary line already did. Activation and rename-start are
+        // instead driven entirely by `bg_response` in `show_chip`.
+        ui.add(
             egui::Label::new(label)
-                .sense(Sense::click())
                 // See the secondary-line label above: this is clickable
                 // navigation chrome, not selectable text, so the hover
                 // cursor should read as a plain arrow, not an I-beam.
                 .selectable(false)
                 .truncate(),
         );
-        if label_response.clicked() {
-            actions.push(ChromeAction::Activate(chip.id));
-        }
-        if chip.renamable && label_response.double_clicked() {
-            ui.data_mut(|d| d.insert_temp(rename_id, chip.primary.clone()));
-            actions.push(ChromeAction::RenameStarted {
-                restore_focus: None,
-            });
-        }
     }
 }
 
@@ -1538,6 +1554,66 @@ mod tests {
         harness.drop_at(to);
         harness.run();
 
+        assert!(
+            harness.state().observed.iter().any(|action| matches!(
+                action,
+                ChromeAction::Reorder {
+                    moved: ChipId(1),
+                    before: Some(ChipId(3)),
+                }
+            )),
+            "observed actions: {:?}",
+            harness.state().observed
+        );
+    }
+
+    #[test]
+    fn dragging_from_the_title_label_reorders_instead_of_moving_the_window() {
+        // Regression test: pressing on the chip's *title* text used to be
+        // able to fall through the label's own `Sense::click()` widget to
+        // the chrome row's native-window-drag region instead of the chip's
+        // own reorder-drag, unlike starting the same drag from the
+        // secondary line or the chip's padding, which always worked
+        // (`dragging_one_chip_onto_another_emits_a_reorder_action`). The
+        // title label now senses only hover, so `bg_response` uncontested
+        // owns both click and drag over its pixels too.
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two"), chip(3, "three")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        let from = harness.get_by_label("one").rect().center();
+        let to_rect = harness.get_by_label("three chip").rect();
+        let to = to_rect.left_center() + egui::vec2(3.0, 0.0);
+
+        harness.drag_at(from);
+        harness.run();
+        let mut start_drag_sent = harness.output().viewport_output.values().any(|vp| {
+            vp.commands
+                .iter()
+                .any(|cmd| matches!(cmd, egui::ViewportCommand::StartDrag))
+        });
+        let steps = 8;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            harness.hover_at(from + (to - from) * t);
+            harness.run();
+            start_drag_sent |= harness.output().viewport_output.values().any(|vp| {
+                vp.commands
+                    .iter()
+                    .any(|cmd| matches!(cmd, egui::ViewportCommand::StartDrag))
+            });
+        }
+        harness.drop_at(to);
+        harness.run();
+
+        assert!(
+            !start_drag_sent,
+            "dragging from the title label should never move the native window"
+        );
         assert!(
             harness.state().observed.iter().any(|action| matches!(
                 action,

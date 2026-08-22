@@ -806,6 +806,31 @@ impl FesTermApp {
         self.configuration_status = status;
     }
 
+    /// Reorders a saved profile after a drag-to-reorder gesture on the
+    /// Profiles surface (`Configuration::with_reordered_profiles`); the
+    /// Launcher's own profile ordering reflects this immediately since both
+    /// surfaces read the same persisted `Configuration::profiles` order.
+    fn reorder_profiles(&mut self, moved: &str, before: Option<&str>) {
+        let replacement = match self
+            .state
+            .configuration()
+            .with_reordered_profiles(moved, before)
+        {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status = ConfigurationStartupStatus::ProfilesReorderFailure(
+                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                );
+                return;
+            }
+        };
+        let status = self.configuration_reloader.reorder_profiles(&replacement);
+        if matches!(status, ConfigurationStartupStatus::ProfilesReordered) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
     /// Applies the reset-interface-settings policy shared by chrome, the
     /// command palette, and shortcuts: nothing to confirm when settings
     /// already equal defaults, otherwise a destructive-adjacent confirmation
@@ -960,6 +985,48 @@ impl FesTermApp {
         launch_after_store: bool,
         context: &egui::Context,
     ) {
+        self.store_credential_for_profile(
+            profile_id,
+            festerm_config::CredentialKind::Password,
+            move || password.into_secret_bytes(),
+            options,
+            launch_after_store,
+            context,
+        );
+    }
+
+    fn store_private_key_for_profile(
+        &mut self,
+        profile_id: String,
+        private_key: crate::tabs::PrivateKeyToStore,
+        options: festerm_ssh::SshSessionOptions,
+        launch_after_store: bool,
+        context: &egui::Context,
+    ) {
+        self.store_credential_for_profile(
+            profile_id,
+            festerm_config::CredentialKind::PrivateKey,
+            move || private_key.into_secret_bytes(),
+            options,
+            launch_after_store,
+            context,
+        );
+    }
+
+    /// Shared background-worker storage path for both password and
+    /// private-key profile credentials: the secret is converted to
+    /// [`SecretBytes`] only inside the spawned worker thread and never
+    /// touches the UI thread, mirroring the existing password-only
+    /// implementation this replaces.
+    fn store_credential_for_profile(
+        &mut self,
+        profile_id: String,
+        credential_kind: festerm_config::CredentialKind,
+        make_secret: impl FnOnce() -> festerm_secret_store::SecretBytes + Send + 'static,
+        options: festerm_ssh::SshSessionOptions,
+        launch_after_store: bool,
+        context: &egui::Context,
+    ) {
         let Ok(store) = self.secret_store.as_ref() else {
             self.secure_storage_feedback = self
                 .secret_store
@@ -971,16 +1038,16 @@ impl FesTermApp {
         };
         if self.overlays.pending_password_store.is_some() {
             self.secure_storage_feedback =
-                Some("A saved SSH password update is already in progress. Please wait.");
+                Some("A saved SSH credential update is already in progress. Please wait.");
             return;
         }
         let store = Arc::clone(store);
         let worker_store = Arc::clone(&store);
         let (sender, receiver) = mpsc::sync_channel(1);
         match thread::Builder::new()
-            .name("festerm-store-ssh-password".to_owned())
+            .name("festerm-store-ssh-credential".to_owned())
             .spawn(move || {
-                let secret = password.into_secret_bytes();
+                let secret = make_secret();
                 let _ = sender.send(worker_store.put(&secret));
             }) {
             Ok(_) => {
@@ -990,14 +1057,15 @@ impl FesTermApp {
                     options,
                     store,
                     launch_after_store,
+                    credential_kind,
                 });
                 self.secure_storage_feedback =
-                    Some("Saving SSH password in native secure storage…");
+                    Some("Saving SSH credential in native secure storage…");
                 context.request_repaint();
             }
             Err(_) => {
                 self.secure_storage_feedback = Some(
-                    "Native secure storage could not start a password-save worker. Try again.",
+                    "Native secure storage could not start a credential-save worker. Try again.",
                 );
             }
         }
@@ -1015,9 +1083,10 @@ impl FesTermApp {
                     .profile(&pending.profile_id)
                     .and_then(festerm_config::Profile::credential_reference)
                     .map(festerm_secret_store::SecretReference::duplicate_for_transport);
-                let replacement = self.state.configuration().with_ssh_password_credential(
+                let replacement = self.state.configuration().with_ssh_credential(
                     &pending.profile_id,
                     reference.duplicate_for_transport(),
+                    pending.credential_kind,
                 );
                 let saved = replacement.as_ref().ok().and_then(|configuration| {
                     self.configuration_reloader
@@ -1030,12 +1099,12 @@ impl FesTermApp {
                     self.configuration_status = ConfigurationStartupStatus::PasswordCredentialSaved;
                     self.secure_storage_feedback = match previous_reference {
                         Some(previous) => match pending.store.delete(&previous) {
-                            Ok(_) => Some("SSH password saved in native secure storage."),
+                            Ok(_) => Some("SSH credential saved in native secure storage."),
                             Err(_) => Some(
-                                "SSH password saved, but the previous native password could not be removed.",
+                                "SSH credential saved, but the previous native secret could not be removed.",
                             ),
                         },
-                        None => Some("SSH password saved in native secure storage."),
+                        None => Some("SSH credential saved in native secure storage."),
                     };
                     if pending.launch_after_store {
                         self.start_stored_password_profile_with_options(
@@ -1052,10 +1121,10 @@ impl FesTermApp {
                         );
                     self.secure_storage_feedback = match cleanup {
                         Ok(_) => Some(
-                            "SSH password was not linked because configuration could not be saved; the new native secret was removed.",
+                            "SSH credential was not linked because configuration could not be saved; the new native secret was removed.",
                         ),
                         Err(_) => Some(
-                            "SSH password was not linked because configuration could not be saved; native-secret cleanup also failed.",
+                            "SSH credential was not linked because configuration could not be saved; native-secret cleanup also failed.",
                         ),
                     };
                 }
@@ -1266,7 +1335,6 @@ impl FesTermApp {
     /// by stable identity").
     fn palette_items(&self) -> Vec<PaletteItem> {
         const NEW_LAUNCHER_TAB: u64 = 1;
-        const OPEN_SETTINGS: u64 = 2;
         const START_LOCAL_SESSION: u64 = 3;
         const TOGGLE_INSPECTOR: u64 = 4;
         const CLOSE_ACTIVE_TAB: u64 = 5;
@@ -1277,7 +1345,6 @@ impl FesTermApp {
         const ABOUT: u64 = 10;
         const RESET_TERMINAL: u64 = 11;
         const CLEAR_TERMINAL_HISTORY: u64 = 12;
-        const OPEN_PROFILES: u64 = 13;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -1292,18 +1359,6 @@ impl FesTermApp {
             PaletteItem {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
-                hint: None,
-                is_tab: false,
-            },
-            PaletteItem {
-                id: OPEN_SETTINGS,
-                label: "Open Settings".to_owned(),
-                hint: ApplicationShortcut::Settings.label().map(str::to_owned),
-                is_tab: false,
-            },
-            PaletteItem {
-                id: OPEN_PROFILES,
-                label: "Open Profiles".to_owned(),
                 hint: None,
                 is_tab: false,
             },
@@ -1422,7 +1477,6 @@ impl FesTermApp {
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
         match id {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
-            2 => self.state.dispatch(AppCommand::OpenSettings, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
             4 => {
                 // The palette closes as its command is selected, so its text
@@ -1446,7 +1500,6 @@ impl FesTermApp {
             }
             11 => self.reset_active_terminal(context),
             12 => self.clear_active_terminal_history(context),
-            13 => self.state.dispatch(AppCommand::OpenProfiles, context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -2425,8 +2478,21 @@ impl FesTermApp {
                     false,
                     &ui.ctx().clone(),
                 ),
+                AppCommand::StoreProfilePrivateKey {
+                    profile_id,
+                    private_key,
+                } => self.store_private_key_for_profile(
+                    profile_id,
+                    private_key,
+                    festerm_ssh::SshSessionOptions::new(),
+                    false,
+                    &ui.ctx().clone(),
+                ),
                 AppCommand::SaveProfile { profile } => self.save_profile(profile),
                 AppCommand::DeleteProfile { identifier } => self.delete_profile(&identifier),
+                AppCommand::ReorderProfiles { moved, before } => {
+                    self.reorder_profiles(&moved, before.as_deref());
+                }
                 AppCommand::CloseTab(id) => {
                     self.request_close_tab(id, &ui.ctx().clone());
                 }
@@ -3711,13 +3777,6 @@ mod tests {
                 .and_then(|item| item.hint.as_deref()),
             Some("Cmd+T")
         );
-        assert_eq!(
-            items
-                .iter()
-                .find(|item| item.label == "Open Settings")
-                .and_then(|item| item.hint.as_deref()),
-            Some("Cmd+,")
-        );
     }
 
     #[test]
@@ -3824,20 +3883,12 @@ mod tests {
         let mut harness = harness();
         harness.run();
 
-        harness.key_press_modifiers(
-            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-            egui::Key::P,
-        );
+        // Settings is opened via its shortcut (Cmd+,), not the command
+        // palette: `Open Settings`/`Open Profiles` were removed from the
+        // palette since both are already reachable from the three-dot menu
+        // or by closing the tab's X.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
         harness.run();
-        assert!(harness.state().palette.is_open());
-
-        let settings_label = ApplicationShortcut::Settings.label().map_or_else(
-            || "Open Settings".to_owned(),
-            |hint| format!("Open Settings  \u{2014}  {hint}"),
-        );
-        harness.get_by_label(&settings_label).click();
-        harness.run();
-        assert!(!harness.state().palette.is_open());
         let settings_tab = harness.state().state.active();
         assert!(matches!(
             harness.state().state.active_tab().content,
@@ -3849,10 +3900,12 @@ mod tests {
             egui::Key::P,
         );
         harness.run();
+        assert!(harness.state().palette.is_open());
         harness
             .get_by_role_and_label(accesskit::Role::Button, "Launcher")
             .click();
         harness.run();
+        assert!(!harness.state().palette.is_open());
 
         assert_ne!(harness.state().state.active(), settings_tab);
         assert!(matches!(
