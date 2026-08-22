@@ -3883,11 +3883,15 @@ mod tests {
         let mut harness = harness();
         harness.run();
 
-        // Settings is opened via its shortcut (Cmd+,), not the command
-        // palette: `Open Settings`/`Open Profiles` were removed from the
-        // palette since both are already reachable from the three-dot menu
-        // or by closing the tab's X.
-        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Comma);
+        // Settings is opened directly here (rather than via the command
+        // palette or its macOS-only Cmd+, shortcut) since `Open Settings`/
+        // `Open Profiles` were removed from the palette as both are already
+        // reachable from the three-dot menu or by closing the tab's X.
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenSettings, &context);
         harness.run();
         let settings_tab = harness.state().state.active();
         assert!(matches!(
