@@ -54,6 +54,12 @@ pub struct StatusBarContent<'a> {
     /// the chip row's status dot.
     pub status: ChipStatus,
     pub status_label: &'a str,
+    /// The active session's same sanitized secondary display value normally
+    /// shown on its chip, relocated here only while the **Show session
+    /// details in chips** preference is off (`docs/gui-design.md` "Show
+    /// session details in chips"). Sits after dimensions/locality and before
+    /// the right-aligned state; never shown alongside chip secondary text.
+    pub detail: Option<&'a str>,
 }
 
 /// Renders the bottom status bar band.
@@ -83,6 +89,9 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
             }
             if let Some(system) = content.system {
                 ui.label(RichText::new(system).small().color(STATUS_BAR_TEXT_DIM));
+            }
+            if let Some(detail) = content.detail {
+                ui.label(RichText::new(detail).small().color(STATUS_BAR_TEXT_DIM));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
@@ -128,6 +137,7 @@ mod tests {
                         system: Some("Local · Windows"),
                         status: ChipStatus::Connected,
                         status_label: "Running",
+                        detail: None,
                     },
                 );
             });
@@ -149,11 +159,35 @@ mod tests {
                         system: None,
                         status: ChipStatus::Neutral,
                         status_label: "",
+                        detail: None,
                     },
                 );
             });
         harness.run();
         assert!(harness.query_by_label("Running").is_none());
         assert!(harness.query_by_label("80×24").is_none());
+    }
+
+    #[test]
+    fn status_bar_shows_the_relocated_detail_between_system_and_status() {
+        // `docs/gui-design.md` "Show session details in chips": while chips
+        // are compact, the active session's detail relocates here, sitting
+        // after dimensions/locality and before the right-aligned state.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 60.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    StatusBarContent {
+                        dimensions: Some("80×24"),
+                        system: Some("Local · macOS"),
+                        status: ChipStatus::Connected,
+                        status_label: "Running",
+                        detail: Some("cargo test — fesTerm"),
+                    },
+                );
+            });
+        harness.run();
+        assert!(harness.query_by_label("cargo test — fesTerm").is_some());
     }
 }

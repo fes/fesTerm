@@ -477,6 +477,8 @@ pub struct InterfaceSettings {
     chip_layout: ChipLayoutPreference,
     #[serde(default = "default_status_bar_visible")]
     status_bar_visible: bool,
+    #[serde(default = "default_show_session_details")]
+    show_session_details: bool,
 }
 
 impl InterfaceSettings {
@@ -485,12 +487,18 @@ impl InterfaceSettings {
     pub const DEFAULT: Self = Self {
         chip_layout: ChipLayoutPreference::SingleRowScroll,
         status_bar_visible: true,
+        show_session_details: true,
     };
 
-    pub const fn new(chip_layout: ChipLayoutPreference, status_bar_visible: bool) -> Self {
+    pub const fn new(
+        chip_layout: ChipLayoutPreference,
+        status_bar_visible: bool,
+        show_session_details: bool,
+    ) -> Self {
         Self {
             chip_layout,
             status_bar_visible,
+            show_session_details,
         }
     }
 
@@ -500,6 +508,10 @@ impl InterfaceSettings {
 
     pub const fn status_bar_visible(self) -> bool {
         self.status_bar_visible
+    }
+
+    pub const fn show_session_details(self) -> bool {
+        self.show_session_details
     }
 
     fn is_default(&self) -> bool {
@@ -514,6 +526,10 @@ impl Default for InterfaceSettings {
 }
 
 const fn default_status_bar_visible() -> bool {
+    true
+}
+
+const fn default_show_session_details() -> bool {
     true
 }
 
@@ -3298,7 +3314,11 @@ schema_version = 99
     #[test]
     fn non_default_interface_settings_round_trip_through_toml() {
         let configuration = Configuration::empty()
-            .with_interface_settings(InterfaceSettings::new(ChipLayoutPreference::Wrap, false))
+            .with_interface_settings(InterfaceSettings::new(
+                ChipLayoutPreference::Wrap,
+                false,
+                true,
+            ))
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -3307,7 +3327,7 @@ schema_version = 99
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
         assert_eq!(
             configuration.interface_settings(),
-            InterfaceSettings::new(ChipLayoutPreference::Wrap, false)
+            InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true)
         );
     }
 
@@ -3335,7 +3355,11 @@ schema_version = 99
     #[test]
     fn with_workspace_preserves_previously_saved_interface_settings() {
         let configuration = Configuration::empty()
-            .with_interface_settings(InterfaceSettings::new(ChipLayoutPreference::Wrap, false))
+            .with_interface_settings(InterfaceSettings::new(
+                ChipLayoutPreference::Wrap,
+                false,
+                true,
+            ))
             .unwrap();
         let workspace =
             WorkspaceConfiguration::new(vec![WorkspaceTab::launcher("launcher").unwrap()], None)
@@ -3345,7 +3369,7 @@ schema_version = 99
 
         assert_eq!(
             replacement.interface_settings(),
-            InterfaceSettings::new(ChipLayoutPreference::Wrap, false)
+            InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true)
         );
     }
 

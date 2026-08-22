@@ -1,14 +1,15 @@
 # Configuration Foundation
 
 `festerm-config` owns versioned, strict TOML parsing, explicit file I/O, and
-in-memory transactional reload state. It also owns a metadata-only workspace
+in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
-to the Launcher. Settings can explicitly save a fresh workspace snapshot while
-preserving the manually authored profiles. It also saves the two Settings
-interface preferences (chip layout, status bar visibility) automatically as
-they change; see "Interface settings" below. File watching, profile editing,
-and saved SSH autoconnect are intentionally not part of this slice.
+to the Launcher. Workspace state (the open tab list, its order, and the active
+tab), the three Settings interface preferences (chip layout, status bar
+visibility, session details in chips), known-host trust decisions, and
+profile CRUD all save automatically the moment they change - there is no
+manual save/reload action anywhere in Settings. File watching (reacting to
+edits made outside the running app) is intentionally not part of this slice.
 
 ## Startup discovery
 
@@ -25,17 +26,13 @@ Diagnostics never expose the selected path or source TOML.
 
 A missing configuration file is normal and starts fesTerm with
 `Configuration::empty()`. An unreadable or invalid file also leaves the app
-running with an empty configuration, while Settings explains the action needed.
-Settings offers an explicit **Reload configuration** action that reads the
-same location selected during startup. It validates a complete replacement
-before applying it. A valid replacement affects only future Launcher choices;
-it does not stop or reconfigure existing sessions. A missing file replaces the
-active configuration with `Configuration::empty()`. An unreadable, invalid, or
-unavailable selected location retains the last known configuration and shows a
-content-free actionable diagnostic. There is no file watching, polling, or
-configuration editing, and no automatic persistence of profiles or workspace
-metadata. The two interface preferences described below are the sole,
-deliberately scoped exception: they are written through automatically.
+running with an empty configuration, while Settings explains the action
+needed (restarting fesTerm, e.g. after fixing the file by hand). There is no
+in-app "Reload configuration" action: fesTerm does not watch, poll, or re-read
+the selected location while running, so external edits only take effect on
+the next startup. It also never edits, renames, or repairs a file that is
+unavailable or invalid - it starts from safe defaults for that run instead and
+leaves the on-disk file untouched.
 
 ## Schema version 1
 
@@ -135,21 +132,20 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table holds two lightweight, non-destructive UI
+The optional `[settings]` table holds three lightweight, non-destructive UI
 preferences: `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
-`"single-row-scroll"`) and `status_bar_visible` (default `true`). Both mirror
-the current Settings toggles for chip wrapping and the bottom status bar.
+`"single-row-scroll"`), `status_bar_visible` (default `true`), and
+`show_session_details` (default `true`). All three mirror the current
+Settings toggles for chip wrapping, the bottom status bar, and session
+detail visibility on chips.
 
-Unlike profiles and workspace metadata, `[settings]` is a deliberate, narrowly
-scoped exception to the no-auto-save principle above: fesTerm writes the whole
-configuration document through immediately whenever either toggle changes (or
-after an explicit Settings **Reset interface settings to defaults** action),
-using the same selected startup location and atomic replacement path as
-**Save workspace**. The in-memory UI change always applies immediately
-regardless of whether the write succeeds; a failed write only means the
-change will not survive a restart, and Settings shows a content-free
-diagnostic in that case. This exception applies only to these two fields —
-profiles and workspace metadata remain fully manual.
+fesTerm writes the whole configuration document through immediately whenever
+either toggle changes (or after an explicit Settings **Reset interface
+settings to defaults** action), using the same selected startup location and
+atomic replacement path as workspace and profile saves. The in-memory UI
+change always applies immediately regardless of whether the write succeeds; a
+failed write only means the change will not survive a restart, and Settings
+shows a content-free diagnostic in that case.
 
 `[settings]` is omitted entirely from a saved document while both fields are
 at their defaults, so a configuration that has never customized these
@@ -181,21 +177,24 @@ private-key authentication; host trust is requested anew when needed. No
 credentials, key material, connection/channel, process state, or host trust
 is persisted or recreated.
 
-Settings has an explicit **Save workspace** action. It snapshots only the
-restorable metadata described above in current tab order: Launcher, Settings,
-authentication-required restored SSH profile surfaces, and sessions launched
-from configured local profiles. It omits default/ad-hoc local sessions and
-live SSH sessions. If nothing is eligible, it saves one Launcher descriptor.
-The saved focus is always a captured descriptor (or the first descriptor when
-the active tab was omitted). Workspace descriptor IDs are fresh deterministic
-metadata, never runtime `TabId`s.
+Workspace state saves automatically the moment the open tab list, its order,
+or the active tab changes - there is no manual "Save workspace" action. Each
+save snapshots only the restorable metadata described above in current tab
+order: Launcher, Settings, authentication-required restored SSH profile
+surfaces, and sessions launched from configured local profiles. It omits
+default/ad-hoc local sessions and live SSH sessions. If nothing is eligible, it
+saves one Launcher descriptor. The saved focus is always a captured descriptor
+(or the first descriptor when the active tab was omitted). Workspace
+descriptor IDs are fresh deterministic metadata, never runtime `TabId`s.
 
 Saving preserves the existing profile list, enables `workspace_enabled`, and
 uses the selected startup configuration source atomically. It is the only
-operation that may create a missing native configuration directory; an explicit
-`FESTERM_CONFIG_PATH` override never has its parent created. Profile editing
-remains manual. fesTerm does not auto-save, watch the file, or persist secure
-storage/trust data.
+kind of save that may create a missing native configuration directory; an
+explicit `FESTERM_CONFIG_PATH` override never has its parent created. Profile
+editing (create, update, delete, reorder) also saves automatically on each
+change, the same way. fesTerm still never watches the file or reacts to edits
+made outside the running app, and it never persists secure storage/trust
+material into this TOML.
 
 ## Secret boundary and reload behavior
 

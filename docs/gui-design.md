@@ -1095,13 +1095,17 @@ Reset appears beside a changed setting at the narrowest useful scope.
 
 The current configuration implementation also earns a compact
 **Configuration** section. It identifies whether defaults or a valid selected
-source are active without exposing a sensitive path, shows a content-free
-diagnostic when loading failed, and provides explicit **Reload configuration**.
-When a workspace is configured, **Save workspace** is an explicit metadata-only
-write that preserves manually authored profiles. These are real configuration
-actions, not duplicate preference Apply/Save controls. No file watching,
-automatic saving, configuration editor, or credential-storage control is
-implied; ADR 0015 owns the reload contract.
+source are active without exposing a sensitive path, and shows a content-free
+diagnostic when loading failed. Workspace state (the open tab list, its order,
+and the active tab) saves and restores automatically: every tab-list mutation
+(opening, closing, reordering, or activating a tab) triggers a write-through
+save on the next frame, mirroring how interface settings and profile CRUD
+already save immediately on every change. There is no manual **Reload
+configuration** or **Save workspace** action for the user to remember to
+invoke, and Settings does not describe persistence with reload/save language;
+ADR 0015 owns the startup/reload contract that this automatic behavior relies
+on. No file watching, configuration editor, or credential-storage control is
+implied.
 
 There is initially no sidebar, settings search, theme selector, font selector,
 empty category, or general Reset control. Keyboard Shortcuts does not masquerade

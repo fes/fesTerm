@@ -991,49 +991,76 @@ pub fn show_launcher(
             });
         });
         ui.add_space(23.0);
-        ui.horizontal(|ui| {
-            ui.add_space(26.0);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for (index, item) in items.iter().enumerate() {
-                    if index == profiles_start && profiles_start < items.len() {
-                        ui.add_space(8.0);
-                        // Matches the 26px left inset applied above so the
-                        // divider reads as evenly padded on both sides
-                        // instead of running flush to the pane's right edge.
-                        let separator_width = (ui.available_width() - 26.0).max(0.0);
-                        ui.scope(|ui| {
-                            ui.set_width(separator_width);
-                            ui.separator();
+        // Bound the item list's height to the room actually left above the
+        // status bar and scroll instead of letting it silently run past the
+        // window edge when there are enough saved profiles to overflow: an
+        // unbounded list previously had entries -- and their edit icons --
+        // clipped by the window/viewport boundary instead of scrolling into
+        // view. Uses the same status-bar-aware `scope_builder` + `ScrollArea`
+        // technique as the Settings and SSH profile editor panels.
+        let panel_top = ui.cursor().top();
+        let mut viewport_bottom = ui.ctx().content_rect().bottom();
+        if let Some(status_bar) =
+            egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("status_bar"))
+        {
+            viewport_bottom = viewport_bottom.min(status_bar.outer_rect.top());
+        }
+        let available_height = (viewport_bottom - panel_top).max(0.0);
+        let scroll_rect = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(ui.available_width(), available_height),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(available_height)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(26.0);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (index, item) in items.iter().enumerate() {
+                                if index == profiles_start && profiles_start < items.len() {
+                                    ui.add_space(8.0);
+                                    // Matches the 26px left inset applied above so the
+                                    // divider reads as evenly padded on both sides
+                                    // instead of running flush to the pane's right edge.
+                                    let separator_width = (ui.available_width() - 26.0).max(0.0);
+                                    ui.scope(|ui| {
+                                        ui.set_width(separator_width);
+                                        ui.separator();
+                                    });
+                                    ui.add_space(8.0);
+                                }
+                                let (response, edit_response) = show_launcher_choice(
+                                    ui,
+                                    &item.label,
+                                    &item.description,
+                                    index == state.selected,
+                                    item.remote(),
+                                    item.profile_id().is_some(),
+                                );
+                                if edit_response.is_some_and(|edit| edit.clicked()) {
+                                    command = Some(AppCommand::OpenProfileEditor {
+                                        identifier: item
+                                            .profile_id()
+                                            .expect(
+                                                "editable launcher items always carry a profile id",
+                                            )
+                                            .to_owned(),
+                                    });
+                                } else if response.clicked() {
+                                    if matches!(item.kind, LauncherItemKind::NewSsh) {
+                                        state.ssh_open = true;
+                                        state.ssh.focus_username = true;
+                                    } else {
+                                        command = Some(item.command());
+                                    }
+                                }
+                                ui.add_space(12.0);
+                            }
                         });
-                        ui.add_space(8.0);
-                    }
-                    let (response, edit_response) = show_launcher_choice(
-                        ui,
-                        &item.label,
-                        &item.description,
-                        index == state.selected,
-                        item.remote(),
-                        item.profile_id().is_some(),
-                    );
-                    if edit_response.is_some_and(|edit| edit.clicked()) {
-                        command = Some(AppCommand::OpenProfileEditor {
-                            identifier: item
-                                .profile_id()
-                                .expect("editable launcher items always carry a profile id")
-                                .to_owned(),
-                        });
-                    } else if response.clicked() {
-                        if matches!(item.kind, LauncherItemKind::NewSsh) {
-                            state.ssh_open = true;
-                            state.ssh.focus_username = true;
-                        } else {
-                            command = Some(item.command());
-                        }
-                    }
-                    ui.add_space(12.0);
-                }
-            });
+                    });
+                });
         });
         if let Some(status) = secure_storage_status {
             ui.add_space(8.0);
@@ -1239,17 +1266,18 @@ pub fn show_ssh_live_password_prompt(
 
 /// Renders the Settings application surface.
 ///
-/// `chip_layout` and `status_bar_visible` reflect the current interface
-/// preferences (`docs/gui-design.md` "Wrapping must remain user-configurable").
-/// Unlike profiles/workspace metadata, these two preferences are saved
-/// automatically by the composition root as soon as they change; there is no
-/// separate explicit save step for them. Returns commands for Settings
-/// actions; the application composition root owns configuration I/O and
-/// applies successful replacements to `AppState`.
+/// `chip_layout`, `status_bar_visible`, and `show_session_details` reflect
+/// the current interface preferences (`docs/gui-design.md` "Wrapping must
+/// remain user-configurable"). Unlike profiles/workspace metadata, these
+/// preferences are saved automatically by the composition root as soon as
+/// they change; there is no separate explicit save step for them. Returns
+/// commands for Settings actions; the application composition root owns
+/// configuration I/O and applies successful replacements to `AppState`.
 pub fn show_settings(
     ui: &mut Ui,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
+    show_session_details: bool,
     configuration_status: ConfigurationStartupStatus,
     secure_storage_status: Option<&str>,
     command_palette_shortcut: &str,
@@ -1257,81 +1285,107 @@ pub fn show_settings(
     let mut command = None;
     ui.horizontal(|ui| {
         ui.add_space(26.0);
-        ui.vertical(|ui| {
-            ui.add_space(24.0);
-            ui.heading("Settings");
-            ui.add_space(2.0);
-            ssh_paragraph(ui, "Configuration is never written automatically.");
-            ui.add_space(16.0);
+        // Bound Settings' own height to whatever room is actually left
+        // above the status bar (queried from its persisted panel state,
+        // the same technique the SSH profile editor panel uses): the
+        // card-based layout is taller than the old flat button list, and
+        // without this it can paint straight into - or past - the status
+        // bar instead of stopping short of it.
+        let panel_top = ui.cursor().top();
+        let mut viewport_bottom = ui.ctx().content_rect().bottom();
+        if let Some(status_bar) =
+            egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("status_bar"))
+        {
+            viewport_bottom = viewport_bottom.min(status_bar.outer_rect.top());
+        }
+        let available_height = (viewport_bottom - panel_top).max(0.0);
+        // `ScrollArea` computes its own available space via
+        // `ui.available_rect_before_wrap()`. Handing it a `ui` whose
+        // `max_rect` isn't already a real, bounded rect (as is the case
+        // here, directly inside a `ui.horizontal`) leads to a degenerate
+        // sizing pass that -- besides being wrong for layout -- also
+        // breaks click routing for widgets painted via `egui::Frame`
+        // inside the scroll area. Giving the scroll area its own child
+        // `Ui` with an explicit, non-degenerate `max_rect` (the same
+        // technique the SSH profile editor uses) avoids both problems.
+        let scroll_rect = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(ui.available_width(), available_height),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(available_height)
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.add_space(24.0);
+                        ui.heading("Settings");
+                        ui.add_space(2.0);
 
-            settings_card(ui, "Configuration", |ui| {
-                let configuration_message = configuration_status.settings_message();
-                if configuration_status.is_problem() {
-                    ui.colored_label(theme::STATUS_ERROR, configuration_message);
-                } else {
-                    ssh_paragraph(ui, configuration_message);
-                }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Reload configuration").clicked() {
-                        command = Some(AppCommand::ReloadConfiguration);
-                    }
-                    if ui.button("Save workspace").clicked() {
-                        command = Some(AppCommand::SaveWorkspace);
-                    }
+                        settings_card(ui, "Configuration", |ui| {
+                            let configuration_message = configuration_status.settings_message();
+                            if configuration_status.is_problem() {
+                                ui.colored_label(theme::STATUS_ERROR, configuration_message);
+                            } else {
+                                ssh_paragraph(ui, configuration_message);
+                            }
+                            if let Some(status) = secure_storage_status {
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Native secure storage");
+                                ui.colored_label(theme::STATUS_ERROR, status);
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Interface", |ui| {
+                            let wrap = matches!(chip_layout, ChipLayout::Wrap);
+                            let label = if wrap {
+                                "Chip layout: wrap onto multiple rows"
+                            } else {
+                                "Chip layout: single row (compact, then scroll)"
+                            };
+                            if ui.button(label).clicked() {
+                                command = Some(AppCommand::ToggleChipLayout);
+                            }
+                            ui.add_space(6.0);
+                            let status_bar_label = if status_bar_visible {
+                                "Status bar: shown"
+                            } else {
+                                "Status bar: hidden"
+                            };
+                            if ui.button(status_bar_label).clicked() {
+                                command = Some(AppCommand::ToggleStatusBar);
+                            }
+                            ui.add_space(6.0);
+                            let session_details_label = if show_session_details {
+                                "Session details in chips: shown"
+                            } else {
+                                "Session details in chips: hidden (moved to status bar)"
+                            };
+                            if ui.button(session_details_label).clicked() {
+                                command = Some(AppCommand::ToggleShowSessionDetails);
+                            }
+                            ui.add_space(10.0);
+                            if ui.button("Reset interface settings to defaults").clicked() {
+                                command = Some(AppCommand::ResetInterfaceSettings);
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Keyboard", |ui| {
+                            ui.horizontal(|ui| {
+                                ssh_paragraph(ui, "Command palette");
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new(command_palette_shortcut)
+                                        .size(12.0)
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            });
+                        });
+                    });
                 });
-                if let Some(status) = secure_storage_status {
-                    ui.add_space(10.0);
-                    ssh_section_heading(ui, "Native secure storage");
-                    ui.colored_label(theme::STATUS_ERROR, status);
-                }
-            });
-
-            ui.add_space(12.0);
-
-            settings_card(ui, "Interface", |ui| {
-                let wrap = matches!(chip_layout, ChipLayout::Wrap);
-                let label = if wrap {
-                    "Chip layout: wrap onto multiple rows"
-                } else {
-                    "Chip layout: single row (compact, then scroll)"
-                };
-                if ui.button(label).clicked() {
-                    command = Some(AppCommand::ToggleChipLayout);
-                }
-                ui.add_space(6.0);
-                let status_bar_label = if status_bar_visible {
-                    "Status bar: shown"
-                } else {
-                    "Status bar: hidden"
-                };
-                if ui.button(status_bar_label).clicked() {
-                    command = Some(AppCommand::ToggleStatusBar);
-                }
-                ui.add_space(8.0);
-                ssh_paragraph(
-                    ui,
-                    "Chip layout and status bar visibility are saved automatically.",
-                );
-                ui.add_space(10.0);
-                if ui.button("Reset interface settings to defaults").clicked() {
-                    command = Some(AppCommand::ResetInterfaceSettings);
-                }
-            });
-
-            ui.add_space(12.0);
-
-            settings_card(ui, "Keyboard", |ui| {
-                ui.horizontal(|ui| {
-                    ssh_paragraph(ui, "Command palette");
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new(command_palette_shortcut)
-                            .size(12.0)
-                            .color(theme::TEXT_MUTED),
-                    );
-                });
-            });
         });
     });
     command
@@ -1348,7 +1402,6 @@ fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
-            ui.set_width(420.0);
             ssh_section_heading(ui, title);
             ui.add_space(6.0);
             body(ui);
@@ -2212,20 +2265,19 @@ mod tests {
             )
     }
 
-    #[test]
-    fn settings_reload_control_returns_the_reload_command() {
-        #[derive(Default)]
-        struct SettingsHarnessState {
-            command: Option<AppCommand>,
-        }
+    struct SettingsHarnessState {
+        command: Option<AppCommand>,
+    }
 
-        let mut harness = Harness::builder()
+    fn settings_harness() -> Harness<'static, SettingsHarnessState> {
+        Harness::builder()
             .with_size(egui::vec2(520.0, 360.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
                         ui,
                         ChipLayout::Wrap,
+                        true,
                         true,
                         ConfigurationStartupStatus::Loaded,
                         None,
@@ -2234,33 +2286,72 @@ mod tests {
                         state.command = Some(command);
                     }
                 },
-                SettingsHarnessState::default(),
-            );
+                SettingsHarnessState { command: None },
+            )
+    }
+
+    #[test]
+    fn settings_has_no_manual_reload_or_save_controls() {
+        // Regression test: Settings used to offer explicit "Reload
+        // configuration"/"Save workspace" buttons; configuration now
+        // save/restores automatically, so neither control (nor their
+        // explanatory copy) should be present any more.
+        let mut harness = settings_harness();
         harness.run();
 
-        harness.get_by_label("Reload configuration").click();
+        assert!(harness.query_by_label("Reload configuration").is_none());
+        assert!(harness.query_by_label("Save workspace").is_none());
+        assert!(harness
+            .query_by_label("Configuration is never written automatically.")
+            .is_none());
+        assert!(harness
+            .query_by_label("Chip layout and status bar visibility are saved automatically.")
+            .is_none());
+    }
+
+    #[test]
+    fn settings_toggle_chip_layout_control_returns_the_toggle_command() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        harness
+            .get_by_label("Chip layout: wrap onto multiple rows")
+            .click();
         harness.run();
 
         assert!(matches!(
             harness.state().command,
-            Some(AppCommand::ReloadConfiguration)
+            Some(AppCommand::ToggleChipLayout)
         ));
     }
 
     #[test]
-    fn settings_save_workspace_control_returns_the_save_command() {
-        #[derive(Default)]
-        struct SettingsHarnessState {
-            command: Option<AppCommand>,
-        }
-
+    fn settings_panel_does_not_overlap_a_visible_bottom_status_bar() {
+        // Regression test: the card-based Settings redesign is taller than
+        // the old flat button list, so without a status-bar-aware height
+        // clamp (mirroring the SSH profile editor panel's), its content
+        // could paint into - or past - the bottom status bar strip. The
+        // window here is tall enough for all of Settings' content to fit
+        // without needing to scroll, so every widget's rect should stay
+        // above the status bar; a shorter window would legitimately push
+        // some content below the fold (inside the scrollable area) without
+        // that being a bug, which a naive per-widget position check can't
+        // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 360.0))
+            .with_size(egui::vec2(520.0, 600.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
+                    egui::Panel::bottom("status_bar")
+                        .resizable(false)
+                        .show_separator_line(false)
+                        .show(ui, |ui| {
+                            ui.set_min_height(24.0);
+                            ui.set_max_height(24.0);
+                        });
                     if let Some(command) = show_settings(
                         ui,
                         ChipLayout::Wrap,
+                        true,
                         true,
                         ConfigurationStartupStatus::Loaded,
                         None,
@@ -2269,17 +2360,21 @@ mod tests {
                         state.command = Some(command);
                     }
                 },
-                SettingsHarnessState::default(),
+                SettingsHarnessState { command: None },
             );
         harness.run();
-
-        harness.get_by_label("Save workspace").click();
         harness.run();
 
-        assert!(matches!(
-            harness.state().command,
-            Some(AppCommand::SaveWorkspace)
-        ));
+        let status_bar_top =
+            egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("status_bar"))
+                .expect("status bar panel state should be recorded")
+                .outer_rect
+                .top();
+        let command_palette_rect = harness.get_by_label("Command palette").rect();
+        assert!(
+            command_palette_rect.max.y <= status_bar_top,
+            "Settings content must stay above the status bar rather than overlapping it"
+        );
     }
 
     fn enter_text(harness: &mut Harness<'static, LauncherHarnessState>, label: &str, text: &str) {
@@ -2847,6 +2942,98 @@ mod tests {
             harness.state().command,
             Some(AppCommand::StartConfiguredSshProfile { ref profile_id })
                 if profile_id == "production"
+        ));
+    }
+
+    #[test]
+    fn clicking_a_saved_profiles_edit_icon_opens_its_editor_instead_of_launching() {
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test profile is valid");
+        let mut harness = harness_with_profiles(vec![profile]);
+        harness.run();
+
+        harness.get_by_label("Edit production").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::OpenProfileEditor { ref identifier })
+                if identifier == "production"
+        ));
+    }
+
+    #[test]
+    fn launcher_list_stays_above_a_visible_status_bar_without_clipping_saved_profiles() {
+        // Regression test: the item list previously had no height bound at
+        // all, so saved profiles (and their edit icons) could silently run
+        // into -- or past -- the bottom status bar instead of the list
+        // staying above it (or scrolling, once there's too much content to
+        // fit).
+        let profiles: Vec<Profile> = (0..2)
+            .map(|i| {
+                Profile::ssh(
+                    format!("host-{i}"),
+                    "ssh.example.test",
+                    22,
+                    "deploy",
+                    "xterm-256color",
+                    100,
+                    40,
+                )
+                .expect("test profile is valid")
+            })
+            .collect();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 500.0))
+            .build_ui_state(
+                |ui, state: &mut LauncherHarnessState| {
+                    egui::Panel::bottom("status_bar")
+                        .resizable(false)
+                        .show_separator_line(false)
+                        .show(ui, |ui| {
+                            ui.set_min_height(24.0);
+                            ui.set_max_height(24.0);
+                        });
+                    if let Some(command) =
+                        show_launcher(ui, state.tab_id, &state.profiles, true, None)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                LauncherHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    profiles,
+                    command: None,
+                },
+            );
+        harness.run();
+        harness.run();
+
+        let status_bar_top =
+            egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("status_bar"))
+                .expect("status bar panel state should be recorded")
+                .outer_rect
+                .top();
+        let last_edit_rect = harness.get_by_label("Edit host-1").rect();
+        assert!(
+            last_edit_rect.max.y <= status_bar_top,
+            "saved profile edit icons must stay above the status bar rather than overlapping it"
+        );
+
+        harness.get_by_label("Edit host-1").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::OpenProfileEditor { ref identifier })
+                if identifier == "host-1"
         ));
     }
 

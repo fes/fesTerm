@@ -15,7 +15,7 @@ pub(crate) enum ConfigurationLoadFailure {
     NativeLocationUnavailable,
 }
 
-/// Content-free outcome of selecting, loading, or explicitly reloading
+/// Content-free outcome of selecting, loading, or automatically saving
 /// configuration.
 ///
 /// This deliberately retains neither the selected path nor source TOML. The
@@ -25,9 +25,6 @@ pub(crate) enum ConfigurationStartupStatus {
     Loaded,
     Missing,
     InitialFailure(ConfigurationLoadFailure),
-    Reloaded,
-    ReloadedMissing,
-    ReloadFailure(ConfigurationLoadFailure),
     WorkspaceSaved,
     WorkspaceSaveFailure(ConfigurationLoadFailure),
     PasswordCredentialSaved,
@@ -48,40 +45,22 @@ impl ConfigurationStartupStatus {
     pub(crate) const fn settings_message(self) -> &'static str {
         match self {
             Self::Loaded => {
-                "Configuration was loaded at startup. Reload configuration to apply later edits."
+                "Configuration was loaded at startup. Changes made in fesTerm save automatically; edit the file directly and restart fesTerm to pick up external changes."
             }
             Self::Missing => {
                 "No configuration file was found at startup. fesTerm is using its defaults and will not create one automatically."
             }
             Self::InitialFailure(ConfigurationLoadFailure::Invalid) => {
-                "Configuration was ignored at startup because it is invalid. Fix it, then use Reload configuration."
+                "Configuration was ignored at startup because it is invalid. Fix it, then restart fesTerm."
             }
             Self::InitialFailure(ConfigurationLoadFailure::Unreadable) => {
-                "Configuration could not be read at startup. Check that it is readable, then use Reload configuration."
+                "Configuration could not be read at startup. Check that it is readable, then restart fesTerm."
             }
             Self::InitialFailure(ConfigurationLoadFailure::OverrideUnavailable) => {
                 "FESTERM_CONFIG_PATH could not be used. Set it to a non-empty Unicode file path, then restart fesTerm."
             }
             Self::InitialFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
                 "The native configuration location is unavailable. Set FESTERM_CONFIG_PATH to a Unicode file path, then restart fesTerm."
-            }
-            Self::Reloaded => {
-                "Configuration was reloaded. Future Launcher choices use it; existing sessions are unchanged."
-            }
-            Self::ReloadedMissing => {
-                "Configuration file is missing. fesTerm is using its defaults; existing sessions are unchanged."
-            }
-            Self::ReloadFailure(ConfigurationLoadFailure::Invalid) => {
-                "Configuration was not reloaded because it is invalid. The previous configuration remains active; fix it and try again."
-            }
-            Self::ReloadFailure(ConfigurationLoadFailure::Unreadable) => {
-                "Configuration was not reloaded because it could not be read. The previous configuration remains active; check access and try again."
-            }
-            Self::ReloadFailure(ConfigurationLoadFailure::OverrideUnavailable) => {
-                "Configuration was not reloaded because FESTERM_CONFIG_PATH is unavailable. The previous configuration remains active; set it to a non-empty Unicode path and restart fesTerm."
-            }
-            Self::ReloadFailure(ConfigurationLoadFailure::NativeLocationUnavailable) => {
-                "Configuration was not reloaded because its location is unavailable. The previous configuration remains active; set FESTERM_CONFIG_PATH and restart fesTerm."
             }
             Self::WorkspaceSaved => {
                 "Workspace metadata was saved. Only restorable tab order, focus, and configured profile references were written."
@@ -143,7 +122,6 @@ impl ConfigurationStartupStatus {
         matches!(
             self,
             Self::InitialFailure(_)
-                | Self::ReloadFailure(_)
                 | Self::WorkspaceSaveFailure(_)
                 | Self::PasswordCredentialSaveFailure(_)
                 | Self::InterfaceSettingsSaveFailure(_)
@@ -184,11 +162,13 @@ struct SelectedConfigurationPath {
     native_directory: Option<PathBuf>,
 }
 
-/// Private retained source for an explicit, user-triggered reload or save.
+/// Private retained source for startup loading and fesTerm's own automatic
+/// writes (workspace, interface settings, profiles, host-key trust).
 ///
 /// Its path is intentionally inaccessible outside this module. It performs no
-/// watching, polling, or logging; writes occur only through
-/// [`Self::save_workspace`] after an explicit Settings action.
+/// watching, polling, or logging of external edits; writes occur only when
+/// fesTerm itself changes something worth persisting, via
+/// [`Self::save_workspace`] and its sibling `save_*` methods.
 pub(crate) struct ConfigurationReloader {
     selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
 }
@@ -219,33 +199,6 @@ impl ConfigurationReloader {
         Self::from_source_selection(Err(ConfigurationLoadFailure::NativeLocationUnavailable))
     }
 
-    /// Loads one complete candidate from the already-selected location.
-    ///
-    /// `Some` is returned only for a valid replacement or a normal missing
-    /// file (which deliberately replaces the configuration with defaults).
-    /// All other outcomes retain the caller's active configuration.
-    pub(crate) fn reload(&self) -> (Option<Configuration>, ConfigurationStartupStatus) {
-        let path = match &self.selected_path {
-            Ok(selected) => &selected.path,
-            Err(failure) => {
-                return (None, ConfigurationStartupStatus::ReloadFailure(*failure));
-            }
-        };
-        match Configuration::load_from_path(path) {
-            Ok(configuration) => (Some(configuration), ConfigurationStartupStatus::Reloaded),
-            Err(error) => match error.kind() {
-                ConfigurationFileErrorKind::MissingFile => (
-                    Some(Configuration::empty()),
-                    ConfigurationStartupStatus::ReloadedMissing,
-                ),
-                kind => (
-                    None,
-                    ConfigurationStartupStatus::ReloadFailure(failure_from_file_error(kind)),
-                ),
-            },
-        }
-    }
-
     fn initial_load(&self) -> (Configuration, ConfigurationStartupStatus) {
         let path = match &self.selected_path {
             Ok(selected) => &selected.path,
@@ -270,8 +223,10 @@ impl ConfigurationReloader {
         }
     }
 
-    /// Saves an already validated complete replacement only after an explicit
-    /// Settings action. For the native source alone, a missing final config
+    /// Saves an already validated complete replacement automatically whenever
+    /// the open tab list, its order, or the active tab changes (see
+    /// `AppState::take_workspace_dirty`), with no explicit user action
+    /// required. For the native source alone, a missing final config
     /// directory may be created with normal user/default permissions; no
     /// override directory and no configuration file is created otherwise.
     pub(crate) fn save_workspace(
@@ -285,10 +240,10 @@ impl ConfigurationReloader {
     }
 
     /// Saves an already validated complete replacement immediately after a
-    /// Settings toggle or reset. Unlike [`Self::save_workspace`], this is
-    /// triggered automatically by the application rather than by an explicit
-    /// user save action, matching the "applies immediately" design of the
-    /// interface-preference toggles it supports.
+    /// Settings toggle or reset, matching the "applies immediately" design of
+    /// the interface-preference toggles it supports (the same automatic,
+    /// no-explicit-action pattern [`Self::save_workspace`] uses for tab-list
+    /// changes).
     pub(crate) fn save_interface_settings(
         &self,
         configuration: &Configuration,
@@ -301,9 +256,8 @@ impl ConfigurationReloader {
 
     /// Saves an already validated complete replacement immediately after the
     /// user accepts and remembers a host key from the host-key prompt (ADR
-    /// 0020), mirroring [`Self::save_interface_settings`]'s "applies
-    /// immediately" trigger rather than [`Self::save_workspace`]'s explicit
-    /// Settings action.
+    /// 0020), the same automatic, no-explicit-action trigger
+    /// [`Self::save_interface_settings`] and [`Self::save_workspace`] use.
     pub(crate) fn save_known_host_trust(
         &self,
         configuration: &Configuration,
@@ -582,98 +536,6 @@ mod tests {
         );
         assert_eq!(configuration, Configuration::empty());
         assert!(!diagnostic.contains(directory.path().to_string_lossy().as_ref()));
-    }
-
-    #[test]
-    fn reload_valid_configuration_replaces_the_complete_candidate() {
-        let directory = TestDirectory::new();
-        let path = directory.file("config.toml");
-        fs::write(
-            &path,
-            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"old\"\nexecutable = \"/bin/sh\"\n",
-        )
-        .expect("initial test configuration can be written");
-        let startup = load_from_path(&path);
-        let (active, _, reloader) = startup.into_parts();
-
-        fs::write(
-            &path,
-            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"new\"\nexecutable = \"/bin/sh\"\n",
-        )
-        .expect("replacement test configuration can be written");
-        let (replacement, status) = reloader.reload();
-
-        assert_eq!(status, ConfigurationStartupStatus::Reloaded);
-        assert_eq!(
-            active
-                .profile("old")
-                .map(festerm_config::Profile::identifier),
-            Some("old")
-        );
-        assert_eq!(
-            replacement
-                .as_ref()
-                .and_then(|configuration| configuration.profile("new"))
-                .map(festerm_config::Profile::identifier),
-            Some("new")
-        );
-    }
-
-    #[test]
-    fn invalid_reload_retains_the_last_known_configuration() {
-        let directory = TestDirectory::new();
-        let path = directory.file("config.toml");
-        fs::write(
-            &path,
-            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"working\"\nexecutable = \"/bin/sh\"\n",
-        )
-        .expect("initial test configuration can be written");
-        let startup = load_from_path(&path);
-        let (active, _, reloader) = startup.into_parts();
-
-        let source_toml = "schema_version = [private source TOML]";
-        fs::write(&path, source_toml).expect("invalid replacement can be written");
-        let (replacement, status) = reloader.reload();
-        let diagnostic = status.settings_message();
-
-        assert_eq!(
-            status,
-            ConfigurationStartupStatus::ReloadFailure(ConfigurationLoadFailure::Invalid)
-        );
-        assert!(replacement.is_none());
-        assert_eq!(
-            active
-                .profile("working")
-                .map(festerm_config::Profile::identifier),
-            Some("working")
-        );
-        assert!(!diagnostic.contains(source_toml));
-        assert!(!diagnostic.contains(path.to_string_lossy().as_ref()));
-    }
-
-    #[test]
-    fn missing_reload_replaces_configuration_with_defaults() {
-        let directory = TestDirectory::new();
-        let path = directory.file("config.toml");
-        fs::write(
-            &path,
-            "schema_version = 1\n\n[[profiles]]\nkind = \"local\"\nid = \"working\"\nexecutable = \"/bin/sh\"\n",
-        )
-        .expect("initial test configuration can be written");
-        let startup = load_from_path(&path);
-        let (active, _, reloader) = startup.into_parts();
-
-        fs::remove_file(&path).expect("test configuration can be removed");
-        let (replacement, status) = reloader.reload();
-
-        assert_eq!(status, ConfigurationStartupStatus::ReloadedMissing);
-        assert_eq!(
-            active
-                .profile("working")
-                .map(festerm_config::Profile::identifier),
-            Some("working")
-        );
-        assert_eq!(replacement, Some(Configuration::empty()));
     }
 
     #[test]

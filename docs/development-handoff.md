@@ -20,24 +20,26 @@ configuration location (`com.fes.fesTerm`) or the explicit
 `FESTERM_CONFIG_PATH` support/test override. Missing configuration starts with
 defaults and creates nothing. Invalid or unreadable configuration also starts
 with defaults, and Settings provides a content-free actionable diagnostic.
-Settings can explicitly reload the same selected file: valid changes affect
-future Launcher choices only, missing files switch to defaults, and invalid or
-unreadable candidates retain the active configuration. When manually authored
-configuration enables a workspace, its ordered Launcher, Settings, and
-local-session entries restore at startup instead of the default local shell;
-local entries create fresh PTYs from their profiles. Saved SSH entries restore
-in place as an **SSH authentication required** surface with destination
-metadata pre-filled, but never connect without fresh transient authentication.
-Runtime tab IDs are new for each launch, and no terminal output, process,
-credential/key, channel, or host-trust state is restored. No configuration is
-watched, edited, auto-saved, or written automatically. Settings can explicitly
-**Save workspace** metadata to the same selected source, preserving the
-manually authored profiles. It saves only ordered Launcher/Settings surfaces,
-restored SSH authentication-required profile surfaces, and configured-local
-profile tabs; default, ad-hoc, and live SSH sessions are omitted. Existing saved SSH
-profiles can explicitly store or use a password: TOML receives only an opaque
-reference, native storage is used only on a background worker, and password
-resolution occurs immediately before SSH authentication. The
+There is no in-app reload action; fesTerm re-reads the selected location only
+on the next startup. When manually authored configuration enables a
+workspace, its ordered Launcher, Settings, and local-session entries restore
+at startup instead of the default local shell; local entries create fresh
+PTYs from their profiles. Saved SSH entries restore in place as an **SSH
+authentication required** surface with destination metadata pre-filled, but
+never connect without fresh transient authentication. Runtime tab IDs are new
+for each launch, and no terminal output, process, credential/key, channel, or
+host-trust state is restored. No configuration is watched or edited by
+fesTerm from outside the app. Workspace metadata, profiles (create, update,
+delete, reorder), and the two Settings interface preferences all save
+automatically to the same selected source the moment they change - there is
+no manual reload/save action anywhere in Settings. Workspace saves preserve
+the manually authored profiles and cover only ordered Launcher/Settings
+surfaces, restored SSH authentication-required profile surfaces, and
+configured-local profile tabs; default, ad-hoc, and live SSH sessions are
+omitted. Existing saved SSH profiles can explicitly store or use a password:
+TOML receives only an opaque reference, native storage is used only on a
+background worker, and password resolution occurs immediately before SSH
+authentication. The
 `festerm-secret-store` foundation uses macOS Keychain, Windows Credential
 Manager, and Linux Secret Service over the logged-in session D-Bus (including
 KWallet only through Secret Service integration). A locked or unavailable

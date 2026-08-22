@@ -820,13 +820,6 @@ pub enum AppCommand {
     OpenProfileEditor {
         identifier: String,
     },
-    /// Explicitly asks the composition root to reload the configuration
-    /// selected at startup. The path stays outside `AppState`; a successful
-    /// candidate is installed through [`AppState::replace_configuration`].
-    ReloadConfiguration,
-    /// Explicitly saves a fresh metadata-only workspace snapshot through the
-    /// composition root's private selected configuration source.
-    SaveWorkspace,
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
@@ -939,6 +932,11 @@ pub enum AppCommand {
     /// "Contextual status region" / "the status bar should be configurable
     /// on/off").
     ToggleStatusBar,
+    /// Toggles whether chips show their secondary detail line
+    /// (`docs/gui-design.md` "Show session details in chips"). When off,
+    /// every chip is a compact single-line chip and the active session's
+    /// detail relocates to the status bar instead.
+    ToggleShowSessionDetails,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1046,12 +1044,21 @@ pub struct AppState {
     inspector_open: bool,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
+    show_session_details: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
     /// via `take_pending_profile_edit`, since the Profiles surface's own
     /// per-tab UI state lives in `egui`'s `ui.data`, not here.
     pending_profile_edit: Option<String>,
+    /// Set whenever a tab-list mutation (open/close/reorder/rename/activate)
+    /// changes what `capture_workspace_configuration` would produce, so the
+    /// composition root can autosave the workspace without every invocation
+    /// surface (chip row, palette, shortcuts, launcher) needing its own
+    /// explicit "Save workspace" call (`docs/gui-design.md`
+    /// "Configuration": save/restore is automatic, not a manual action).
+    /// Consumed once per frame via `take_workspace_dirty`.
+    workspace_dirty: bool,
 }
 
 impl AppState {
@@ -1071,7 +1078,9 @@ impl AppState {
             inspector_open: false,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
+            show_session_details: settings.show_session_details(),
             pending_profile_edit: None,
+            workspace_dirty: false,
         }
     }
 
@@ -1099,7 +1108,9 @@ impl AppState {
             inspector_open: false,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
+            show_session_details: settings.show_session_details(),
             pending_profile_edit: None,
+            workspace_dirty: false,
         };
         (state, id)
     }
@@ -1158,7 +1169,9 @@ impl AppState {
             inspector_open: false,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
+            show_session_details: settings.show_session_details(),
             pending_profile_edit: None,
+            workspace_dirty: false,
         }
     }
 
@@ -1244,13 +1257,18 @@ impl AppState {
         self.status_bar_visible
     }
 
-    /// Returns the current chip-layout and status-bar preferences as a
-    /// persistable value, for the composition root to write through after a
-    /// toggle or reset.
+    pub const fn show_session_details(&self) -> bool {
+        self.show_session_details
+    }
+
+    /// Returns the current chip-layout, status-bar, and session-detail
+    /// preferences as a persistable value, for the composition root to write
+    /// through after a toggle or reset.
     pub const fn interface_settings(&self) -> InterfaceSettings {
         InterfaceSettings::new(
             chip_layout_to_preference(self.chip_layout),
             self.status_bar_visible,
+            self.show_session_details,
         )
     }
 
@@ -1344,9 +1362,6 @@ impl AppState {
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
             AppCommand::OpenProfileEditor { identifier } => self.open_profile_editor(identifier),
-            // The composition root owns the private selected file location;
-            // it validates a candidate before calling `replace_configuration`.
-            AppCommand::ReloadConfiguration | AppCommand::SaveWorkspace => {}
             AppCommand::StartLocalSession => self.start_local_session(context),
             AppCommand::StartConfiguredLocalProfile { profile_id } => {
                 self.start_configured_local_profile(&profile_id, context)
@@ -1390,10 +1405,14 @@ impl AppState {
             AppCommand::ToggleStatusBar => {
                 self.status_bar_visible = !self.status_bar_visible;
             }
+            AppCommand::ToggleShowSessionDetails => {
+                self.show_session_details = !self.show_session_details;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
                 self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
+                self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -1420,6 +1439,7 @@ impl AppState {
             .find(|tab| matches!(tab.content, TabContent::Launcher))
         {
             self.active = existing.id;
+            self.workspace_dirty = true;
             return;
         }
         let id = TabId::next();
@@ -1428,6 +1448,7 @@ impl AppState {
             content: TabContent::Launcher,
         });
         self.active = id;
+        self.workspace_dirty = true;
     }
 
     fn open_settings(&mut self) {
@@ -1438,6 +1459,7 @@ impl AppState {
             .find(|tab| matches!(tab.content, TabContent::Settings))
         {
             self.active = existing.id;
+            self.workspace_dirty = true;
             return;
         }
         let id = TabId::next();
@@ -1446,6 +1468,7 @@ impl AppState {
             content: TabContent::Settings,
         });
         self.active = id;
+        self.workspace_dirty = true;
     }
 
     fn open_profiles(&mut self) {
@@ -1457,6 +1480,7 @@ impl AppState {
             .find(|tab| matches!(tab.content, TabContent::Profiles))
         {
             self.active = existing.id;
+            self.workspace_dirty = true;
             return;
         }
         let id = TabId::next();
@@ -1465,6 +1489,7 @@ impl AppState {
             content: TabContent::Profiles,
         });
         self.active = id;
+        self.workspace_dirty = true;
     }
 
     /// Opens (or focuses) the Profiles surface and marks `identifier` to be
@@ -1481,6 +1506,14 @@ impl AppState {
     /// cannot read `AppState` directly.
     pub fn take_pending_profile_edit(&mut self) -> Option<String> {
         self.pending_profile_edit.take()
+    }
+
+    /// One-shot consumption of the workspace-dirty flag set by any
+    /// tab-list mutation, so the composition root can autosave the
+    /// workspace exactly once per frame that actually changed it, instead
+    /// of on every frame or requiring a manual Save action.
+    pub fn take_workspace_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.workspace_dirty)
     }
 
     fn start_local_session(&mut self, context: &egui::Context) {
@@ -1644,6 +1677,7 @@ impl AppState {
     }
 
     fn place_session(&mut self, session: SessionTab) {
+        self.workspace_dirty = true;
         // Starting a session from the active Launcher or restored
         // authentication-required tab replaces that surface in place (same
         // position, same identity) rather than leaving it behind alongside
@@ -1724,6 +1758,7 @@ impl AppState {
     fn activate(&mut self, id: TabId) {
         if self.tabs.iter().any(|tab| tab.id == id) {
             self.active = id;
+            self.workspace_dirty = true;
         }
     }
 
@@ -1741,6 +1776,7 @@ impl AppState {
         }
         let next = (index as i64 + delta).rem_euclid(len) as usize;
         self.active = self.tabs[next].id;
+        self.workspace_dirty = true;
     }
 
     /// Relocates `moved` to sit immediately before `before` (or at the end of
@@ -1765,6 +1801,7 @@ impl AppState {
             None => self.tabs.len(),
         };
         self.tabs.insert(insert_at, tab);
+        self.workspace_dirty = true;
     }
 
     /// Moves a tab one place without changing which tab is active. Invalid ids
@@ -1778,6 +1815,7 @@ impl AppState {
             return;
         }
         self.tabs.swap(from, to as usize);
+        self.workspace_dirty = true;
     }
 
     /// Renames the session tab's stable primary identity (label). A no-op
@@ -1802,6 +1840,7 @@ impl AppState {
             return;
         };
         let removed = self.tabs.remove(index);
+        self.workspace_dirty = true;
         if let TabContent::Session(session) = removed.content {
             session.controller.shutdown();
         }
@@ -2529,6 +2568,30 @@ mod tests {
 
         state.dispatch(AppCommand::ToggleStatusBar, &context);
         assert!(state.status_bar_visible());
+    }
+
+    #[test]
+    fn toggle_show_session_details_flips_visibility_and_defaults_to_shown() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(state.show_session_details());
+
+        state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
+        assert!(!state.show_session_details());
+
+        state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
+        assert!(state.show_session_details());
+    }
+
+    #[test]
+    fn reset_interface_settings_also_restores_show_session_details() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::ToggleShowSessionDetails, &context);
+        assert!(!state.show_session_details());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(state.show_session_details());
     }
 
     #[test]

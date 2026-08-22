@@ -14,7 +14,7 @@
 
 use egui::{
     emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order, Popup,
-    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
+    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, WidgetInfo, WidgetType,
 };
 
 use crate::{icon, icon::Icon, theme};
@@ -249,7 +249,30 @@ pub fn show(
     inspector_open: bool,
     inspector_available: bool,
     layout: ChipLayout,
+    show_session_details: bool,
 ) -> Vec<ChromeAction> {
+    // Compact chips (`docs/gui-design.md` "Show session details in chips"):
+    // when the preference is off, every chip is a single-line chip - the
+    // secondary detail line never paints or affects chip width - and the
+    // active session's same detail relocates to the status bar instead
+    // (handled by the caller, which still has the original `chips` values).
+    let suppressed_chips;
+    let chips: &[ChipViewModel] = if show_session_details {
+        chips
+    } else {
+        suppressed_chips = chips
+            .iter()
+            .map(|chip| ChipViewModel {
+                id: chip.id,
+                primary: chip.primary.clone(),
+                secondary: None,
+                status: chip.status,
+                closable: chip.closable,
+                renamable: chip.renamable,
+            })
+            .collect::<Vec<_>>();
+        &suppressed_chips
+    };
     let mut actions = Vec::new();
     // Paint the full inset-inclusive row first. This uses the same surface as
     // the terminal below, making the frameless chrome and terminal one visual
@@ -332,12 +355,7 @@ pub fn show(
             let forced_widths = if matches!(layout, ChipLayout::SingleRowScroll) {
                 let natural_widths: Vec<f32> = chips
                     .iter()
-                    .map(|chip| {
-                        ui.ctx()
-                            .data_mut(|d| d.get_temp::<Vec2>(chip_widget_id(chip.id)))
-                            .map(|size| size.x)
-                            .unwrap_or(CHIP_MIN_WIDTH)
-                    })
+                    .map(|chip| natural_chip_width(ui, chip, chip.id == active))
                     .collect();
                 shrink_to_fit_single_row(
                     &natural_widths,
@@ -550,7 +568,7 @@ fn paint_close_icon(ui: &mut Ui) {
 /// this frame.
 fn paint_search_icon(ui: &mut Ui) -> bool {
     let shortcut = if cfg!(target_os = "macos") {
-        "Cmd+Shift+P"
+        "\u{2318}+Shift+P"
     } else {
         "Ctrl+Shift+P"
     };
@@ -693,7 +711,6 @@ fn shrink_to_fit_single_row(
     )
 }
 
-
 /// Ephemeral, UI-only rename buffer key: whether `chip_id` currently has an
 /// in-progress rename edit, and its current (uncommitted) text. Not part of
 /// `ChipViewModel` because this module is pure presentation
@@ -701,6 +718,75 @@ fn shrink_to_fit_single_row(
 /// `ChromeAction::Rename`.
 fn rename_buffer_id(id: ChipId) -> Id {
     Id::new("chrome_chip_rename").with(id.0)
+}
+
+/// Measures a chip's true content-driven width directly from its text,
+/// independent of whatever rect it's actually painted into.
+///
+/// This exists because `paint_chip` used to be measured *after* painting it
+/// into a rect the caller already chose (`content_response.rect`, which is
+/// just `ui.max_rect()` - the imposed rect, echoed straight back, not the
+/// label's actual desired size). That made a chip's cached "natural" width
+/// a no-op feedback loop: whatever width it was given is exactly the width
+/// it reported back, so a chip could never discover it wanted to be wider
+/// than whatever it happened to start at - including its very first frame,
+/// which defaulted to `CHIP_MIN_WIDTH` before a real width was ever cached.
+/// In practice every chip appeared permanently stuck at `CHIP_MIN_WIDTH`
+/// and the Chrome-style "shrink before scroll" row always had nothing to
+/// shrink from. Measuring the text directly (mirroring `paint_chip`'s own
+/// insets/spacing) sidesteps the chicken-and-egg problem entirely.
+fn natural_chip_width(ui: &Ui, chip: &ChipViewModel, show_close: bool) -> f32 {
+    let ctx = ui.ctx();
+    let style = ui.style();
+    let body_font = style
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .cloned()
+        .unwrap_or_else(egui::FontId::default);
+    let small_font = style
+        .text_styles
+        .get(&egui::TextStyle::Small)
+        .cloned()
+        .unwrap_or_else(|| egui::FontId::proportional(10.0));
+
+    const LEFT_INSET: f32 = 8.0;
+    const RIGHT_PADDING: f32 = 8.0;
+    const DOT_DIAMETER: f32 = 8.0;
+    const DOT_LABEL_SPACING: f32 = 6.0;
+    // `CLOSE_INSET` + `CLOSE_SIZE` from `paint_chip`'s close-button layout.
+    const CLOSE_RESERVED: f32 = 24.0;
+
+    let primary_width = ctx.fonts_mut(|f| {
+        f.layout_no_wrap(chip.primary.clone(), body_font, Color32::WHITE)
+            .size()
+            .x
+    });
+    let mut primary_line = LEFT_INSET + primary_width;
+    if !matches!(chip.status, ChipStatus::Neutral) {
+        primary_line += DOT_DIAMETER + DOT_LABEL_SPACING;
+    }
+
+    let mut width: f32 = primary_line;
+    if let Some(secondary) = &chip.secondary {
+        let secondary_width = ctx.fonts_mut(|f| {
+            f.layout_no_wrap(secondary.clone(), small_font, Color32::WHITE)
+                .size()
+                .x
+        });
+        let indent = if matches!(chip.status, ChipStatus::Neutral) {
+            8.0
+        } else {
+            22.0
+        };
+        width = width.max(indent + secondary_width);
+    }
+
+    width += RIGHT_PADDING;
+    if show_close {
+        width += CLOSE_RESERVED;
+    }
+
+    width.clamp(CHIP_MIN_WIDTH, CHIP_MAX_WIDTH)
 }
 
 fn show_chip(
@@ -714,14 +800,15 @@ fn show_chip(
 ) {
     let chip_id = chip_widget_id(chip.id);
     let ctx = ui.ctx().clone();
-    let cached_size = ctx
-        .data_mut(|d| d.get_temp::<Vec2>(chip_id))
-        .unwrap_or_else(|| vec2(CHIP_MIN_WIDTH, CHIP_HEIGHT));
+    // The chip's true content-driven width, measured directly from its text
+    // (see `natural_chip_width`'s doc comment for why this can't be
+    // discovered by measuring the *painted* chip's response rect instead).
+    let natural_size = vec2(natural_chip_width(ui, chip, active), CHIP_HEIGHT);
     // While the row is compacting chips to fit (`shrink_to_fit_single_row`),
-    // the caller forces a narrower width than this chip's own cached
-    // natural size; text inside still truncates to whatever width it's
-    // actually given (`paint_chip_primary`), same as at full width.
-    let bg_size = vec2(forced_width.unwrap_or(cached_size.x), CHIP_HEIGHT);
+    // the caller forces a narrower width than this chip's own natural size;
+    // text inside still truncates to whatever width it's actually given
+    // (`paint_chip_primary`), same as at full width.
+    let bg_size = vec2(forced_width.unwrap_or(natural_size.x), CHIP_HEIGHT);
 
     if ctx.is_being_dragged(chip_id) {
         // Currently being dragged: keep the payload alive, reserve the
@@ -731,7 +818,7 @@ fn show_chip(
         // `Ui::dnd_drag_source` does natively for its wrapped content.
         DragAndDrop::set_payload(&ctx, chip.id);
 
-        let (_, ghost_rect) = ui.allocate_space(cached_size);
+        let (_, ghost_rect) = ui.allocate_space(natural_size);
         ui.painter().rect_stroke(
             ghost_rect,
             4.0,
@@ -781,7 +868,7 @@ fn show_chip(
     let show_close = active;
     let hovered = bg_response.hovered();
     let mut content_ui = ui.new_child(UiBuilder::new().max_rect(bg_rect));
-    let content_response = paint_chip(
+    paint_chip(
         &mut content_ui,
         chip,
         active,
@@ -790,23 +877,6 @@ fn show_chip(
         chip_id,
         actions,
     );
-    let clamped_size = vec2(
-        content_response
-            .rect
-            .size()
-            .x
-            .clamp(CHIP_MIN_WIDTH, CHIP_MAX_WIDTH),
-        CHIP_HEIGHT,
-    );
-    // While compacted (`forced_width` is `Some`), the content is laid out
-    // into a narrower rect than it actually wants, so `content_response`
-    // reflects the *shrunk* footprint, not this chip's true natural size.
-    // Skip overwriting the cache in that case so the row can still measure
-    // (and grow back toward) each chip's natural width once more room frees
-    // up, e.g. after closing another tab.
-    if forced_width.is_none() {
-        ctx.data_mut(|d| d.insert_temp(chip_id, clamped_size));
-    }
 
     if bg_response.clicked() {
         actions.push(ChromeAction::Activate(chip.id));
@@ -1239,7 +1309,15 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        true,
+                    );
                     state.observed.extend(actions);
                 },
                 state,
@@ -1378,7 +1456,15 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        true,
+                    );
                     state.observed.extend(actions);
                     // Mirrors `app.rs`'s `ui_content`, which adds
                     // `ui.separator()` immediately after `chrome::show`.
@@ -1424,7 +1510,15 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        true,
+                    );
                     state.observed.extend(actions);
                 },
                 ChromeHarnessState {
@@ -1473,7 +1567,15 @@ mod tests {
             .with_step_dt(0.01)
             .build_ui_state(
                 |ui, state: &mut ChromeHarnessState| {
-                    let actions = show(ui, &state.chips, state.active, false, true, state.layout);
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        true,
+                    );
                     state.observed.extend(actions);
                 },
                 ChromeHarnessState {
@@ -1483,12 +1585,9 @@ mod tests {
                     observed: Vec::new(),
                 },
             );
-        // A chip's *natural* width is only known once its content has been
-        // measured at an unconstrained size, which the first frame's
-        // (uncached) default width doesn't provide; a second frame lets
-        // `shrink_to_fit_single_row` see each chip's real cached natural
-        // width and act on it.
-        harness.run();
+        // A chip's *natural* width is now measured directly from its text
+        // (`natural_chip_width`), independent of whatever it was rendered
+        // at previously, so a single frame is enough to see it correctly.
         harness.run();
 
         let window_right = 900.0;
@@ -1507,6 +1606,34 @@ mod tests {
                  ({chip_rect:?}) once compacted to fit the row"
             );
         }
+    }
+
+    #[test]
+    fn a_single_wide_chip_renders_at_its_natural_width_not_stuck_at_the_minimum() {
+        // Regression test: `paint_chip`'s response used to just echo back
+        // whatever rect it was given, so a chip's cached "natural" width
+        // could never grow past `CHIP_MIN_WIDTH` (its uncached default) -
+        // see `natural_chip_width`'s doc comment. With ample room and a
+        // single long-labeled chip, it must render wider than the minimum.
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(
+                1,
+                "a-very-long-session-label-that-should-need-more-than-min-width",
+            )],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        let chip_rect = harness
+            .get_by_label("a-very-long-session-label-that-should-need-more-than-min-width chip")
+            .rect();
+        assert!(
+            chip_rect.width() > CHIP_MIN_WIDTH,
+            "expected the chip's natural width ({chip_rect:?}) to exceed \
+             CHIP_MIN_WIDTH ({CHIP_MIN_WIDTH}) instead of being stuck at it"
+        );
     }
 
     #[test]
@@ -1585,6 +1712,68 @@ mod tests {
             .state()
             .observed
             .contains(&ChromeAction::Close(ChipId(2))));
+    }
+
+    #[test]
+    fn hiding_session_details_suppresses_every_chip_secondary_line() {
+        // Regression test for `docs/gui-design.md` "Show session details in
+        // chips": turning the preference off must hide the secondary detail
+        // line on every chip (not just the active one), even though the
+        // caller's own `ChipViewModel`s still carry `secondary` values.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[
+                        ChipViewModel {
+                            secondary: Some("Launcher".to_owned()),
+                            ..chip(1, "one")
+                        },
+                        ChipViewModel {
+                            secondary: Some("Local · macOS".to_owned()),
+                            ..chip(2, "two")
+                        },
+                    ],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::Wrap,
+                    false,
+                );
+            });
+        harness.run();
+
+        assert!(harness.query_by_label("Launcher").is_none());
+        assert!(harness.query_by_label("Local · macOS").is_none());
+        assert!(harness.query_by_label("one").is_some());
+        assert!(harness.query_by_label("two").is_some());
+    }
+
+    #[test]
+    fn showing_session_details_still_paints_every_chip_secondary_line() {
+        // Companion to the test above: the default (on) preference must
+        // keep painting secondary text exactly as before this preference
+        // existed.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[ChipViewModel {
+                        secondary: Some("Launcher".to_owned()),
+                        ..chip(1, "one")
+                    }],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::Wrap,
+                    true,
+                );
+            });
+        harness.run();
+
+        assert!(harness.query_by_label("Launcher").is_some());
     }
 
     #[test]

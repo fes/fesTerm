@@ -99,19 +99,19 @@ impl ApplicationShortcut {
 
     const fn label(self) -> Option<&'static str> {
         match self {
-            Self::CommandPalette if cfg!(target_os = "macos") => Some("Cmd+Shift+P"),
+            Self::CommandPalette if cfg!(target_os = "macos") => Some("\u{2318}+Shift+P"),
             Self::CommandPalette => Some("Ctrl+Shift+P"),
-            Self::NewSession if cfg!(target_os = "macos") => Some("Cmd+T"),
+            Self::NewSession if cfg!(target_os = "macos") => Some("\u{2318}+T"),
             Self::NewSession => Some("Ctrl+Shift+T"),
-            Self::CloseActiveSurface if cfg!(target_os = "macos") => Some("Cmd+W"),
+            Self::CloseActiveSurface if cfg!(target_os = "macos") => Some("\u{2318}+W"),
             Self::CloseActiveSurface => Some("Ctrl+Shift+W"),
             Self::NextSession => Some("Ctrl+Tab"),
             Self::PreviousSession => Some("Ctrl+Shift+Tab"),
-            Self::Settings if cfg!(target_os = "macos") => Some("Cmd+,"),
+            Self::Settings if cfg!(target_os = "macos") => Some("\u{2318}+,"),
             Self::Settings => None,
-            Self::ZoomOut if cfg!(target_os = "macos") => Some("Cmd+-"),
+            Self::ZoomOut if cfg!(target_os = "macos") => Some("\u{2318}+-"),
             Self::ZoomOut => Some("Ctrl+-"),
-            Self::ZoomReset if cfg!(target_os = "macos") => Some("Cmd+0"),
+            Self::ZoomReset if cfg!(target_os = "macos") => Some("\u{2318}+0"),
             Self::ZoomReset => Some("Ctrl+0"),
         }
     }
@@ -150,14 +150,14 @@ fn quick_switch_key(index: usize) -> Option<egui::Key> {
 }
 
 /// Pre-formatted display text for the Nth (0-based) quick-switch slot (e.g.
-/// `"\u{2318}1"`), or `None` past `MAX_QUICK_SWITCH_TABS`.
+/// `"\u{2318} 1"`), or `None` past `MAX_QUICK_SWITCH_TABS`.
 fn quick_switch_label(index: usize) -> Option<String> {
     if index >= MAX_QUICK_SWITCH_TABS {
         return None;
     }
     let n = index + 1;
     Some(if cfg!(target_os = "macos") {
-        format!("\u{2318}{n}")
+        format!("\u{2318} {n}")
     } else {
         format!("Ctrl+{n}")
     })
@@ -702,20 +702,10 @@ impl FesTermApp {
         }
     }
 
-    /// Handles the only user-triggered configuration I/O. The reloader keeps
-    /// the selected path private; `AppState` receives a complete immutable
-    /// replacement only after successful validation. Session state is not
-    /// involved, so existing transports continue unchanged.
-    fn reload_configuration(&mut self) {
-        let (replacement, status) = self.configuration_reloader.reload();
-        if let Some(configuration) = replacement {
-            self.state.replace_configuration(configuration);
-        }
-        self.configuration_status = status;
-    }
-
-    /// Captures a metadata-only workspace and saves it only for an explicit
-    /// Settings action. The current configuration changes only after the
+    /// Captures a metadata-only workspace snapshot and saves it immediately
+    /// (`docs/gui-design.md` "Configuration": open/closed tabs, their order,
+    /// and the active tab autosave on every change - there is no manual
+    /// Save action). The current configuration changes only after the
     /// atomic file replacement has succeeded.
     fn save_workspace(&mut self) {
         let replacement = match self.state.capture_workspace_configuration() {
@@ -808,7 +798,7 @@ impl FesTermApp {
     /// Creates or edits a profile from the Profiles surface (both are the
     /// same upsert-by-identifier write, `docs/gui-design.md` "Profile
     /// editing"). The in-memory configuration only changes after the atomic
-    /// file write succeeds, matching every other explicit-save path here.
+    /// file write succeeds, matching every other automatic-save path here.
     fn save_profile(&mut self, profile: festerm_config::Profile) {
         let replacement = match self.state.configuration().with_profile(profile) {
             Ok(replacement) => replacement,
@@ -1403,13 +1393,6 @@ impl FesTermApp {
                 is_tab: false,
                 shortcut_label: None,
             },
-            PaletteItem {
-                id: ABOUT,
-                label: "About fesTerm".to_owned(),
-                hint: None,
-                is_tab: false,
-                shortcut_label: None,
-            },
         ];
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
             items.push(PaletteItem {
@@ -1439,7 +1422,7 @@ impl FesTermApp {
                     id: ZOOM_IN,
                     label: "Zoom In".to_owned(),
                     hint: Some(if cfg!(target_os = "macos") {
-                        "Cmd++".to_owned()
+                        "\u{2318}++".to_owned()
                     } else {
                         "Ctrl++".to_owned()
                     }),
@@ -1469,7 +1452,7 @@ impl FesTermApp {
                     // Ctrl+Shift on Windows/Linux to leave Ctrl+C free for
                     // terminal interrupt).
                     hint: Some(if cfg!(target_os = "macos") {
-                        "Cmd+C".to_owned()
+                        "\u{2318}+C".to_owned()
                     } else {
                         "Ctrl+C".to_owned()
                     }),
@@ -1480,7 +1463,7 @@ impl FesTermApp {
                     id: PASTE,
                     label: "Paste".to_owned(),
                     hint: Some(if cfg!(target_os = "macos") {
-                        "Cmd+V".to_owned()
+                        "\u{2318}+V".to_owned()
                     } else {
                         "Ctrl+V".to_owned()
                     }),
@@ -1513,7 +1496,9 @@ impl FesTermApp {
                     "Close Session…".to_owned()
                 }
             },
-            hint: ApplicationShortcut::CloseActiveSurface.label().map(str::to_owned),
+            hint: ApplicationShortcut::CloseActiveSurface
+                .label()
+                .map(str::to_owned),
             is_tab: false,
             shortcut_label: None,
         });
@@ -1546,6 +1531,16 @@ impl FesTermApp {
                 shortcut_label: quick_switch_label(index),
             });
         }
+        // "About fesTerm" is deliberately the very last entry, after every
+        // tab, so the palette's action items (which people reach for far
+        // more often) aren't pushed down by it.
+        items.push(PaletteItem {
+            id: ABOUT,
+            label: "About fesTerm".to_owned(),
+            hint: None,
+            is_tab: false,
+            shortcut_label: None,
+        });
         items
     }
 
@@ -2068,21 +2063,39 @@ impl FesTermApp {
     /// this footer shows only sourced grid/locality facts and transport state.
     /// Application surfaces keep the same 24 px geometry with empty content.
     fn show_status_bar(&self, ui: &mut egui::Ui) {
-        let (dimensions, system, status, status_label) = match &self.state.active_tab().content {
-            TabContent::Launcher
-            | TabContent::Settings
-            | TabContent::Profiles
-            | TabContent::SshAuthenticationRequired(_) => (None, None, ChipStatus::Neutral, ""),
-            TabContent::Session(session) => {
-                let status = session.chip_status();
-                (
-                    session.view.dimensions_label(),
-                    Some(session.system_label()),
-                    status,
-                    session.status_bar_label(),
-                )
-            }
-        };
+        let show_session_details = self.state.show_session_details();
+        let (dimensions, system, status, status_label, detail) =
+            match &self.state.active_tab().content {
+                TabContent::Launcher
+                | TabContent::Settings
+                | TabContent::Profiles
+                | TabContent::SshAuthenticationRequired(_) => {
+                    (None, None, ChipStatus::Neutral, "", None)
+                }
+                TabContent::Session(session) => {
+                    let status = session.chip_status();
+                    // Only relocate the detail here while chips are compact
+                    // (`docs/gui-design.md` "Show session details in
+                    // chips"): when chips already show it, repeating it in
+                    // the status bar would duplicate stable session
+                    // identity/title instead of merely relocating it.
+                    let detail = (!show_session_details)
+                        .then(|| {
+                            let dynamic_title = session.terminal.title();
+                            (!dynamic_title.is_empty())
+                                .then(|| Self::display_secondary(dynamic_title))
+                                .or_else(|| session.launch_secondary.clone())
+                        })
+                        .flatten();
+                    (
+                        session.view.dimensions_label(),
+                        Some(session.system_label()),
+                        status,
+                        session.status_bar_label(),
+                        detail,
+                    )
+                }
+            };
         egui::Panel::bottom("status_bar")
             .resizable(false)
             .show_separator_line(false)
@@ -2095,6 +2108,7 @@ impl FesTermApp {
                         system,
                         status,
                         status_label,
+                        detail: detail.as_deref(),
                     },
                 );
             });
@@ -2404,6 +2418,7 @@ impl FesTermApp {
                 inspector_open,
                 inspector_available,
                 self.state.chip_layout(),
+                self.state.show_session_details(),
             );
             self.dispatch_chrome_actions(actions, &ui.ctx().clone());
         }
@@ -2479,6 +2494,7 @@ impl FesTermApp {
                         ui,
                         chip_layout,
                         self.state.status_bar_visible(),
+                        self.state.show_session_details(),
                         self.configuration_status,
                         secure_storage_status,
                         ApplicationShortcut::CommandPalette
@@ -2580,8 +2596,6 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
-                AppCommand::ReloadConfiguration => self.reload_configuration(),
-                AppCommand::SaveWorkspace => self.save_workspace(),
                 AppCommand::StartStoredPasswordSshProfile { profile_id } => {
                     self.start_stored_password_profile(profile_id, &ui.ctx().clone());
                 }
@@ -2627,7 +2641,9 @@ impl FesTermApp {
                 AppCommand::CloseTab(id) => {
                     self.request_close_tab(id, &ui.ctx().clone());
                 }
-                command @ (AppCommand::ToggleChipLayout | AppCommand::ToggleStatusBar) => {
+                command @ (AppCommand::ToggleChipLayout
+                | AppCommand::ToggleStatusBar
+                | AppCommand::ToggleShowSessionDetails) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     self.persist_interface_settings();
@@ -2673,6 +2689,14 @@ impl FesTermApp {
         self.show_about(ui.ctx(), about_escape);
 
         self.show_transient_notice(ui.ctx());
+
+        // Autosave the workspace exactly once per frame that actually
+        // changed it (`docs/gui-design.md` "Configuration": open/closed
+        // tabs, their order, and the active tab save/restore automatically
+        // - there is no manual Save action for this).
+        if self.state.take_workspace_dirty() {
+            self.save_workspace();
+        }
 
         if self.native_smoke.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(10));
@@ -2915,6 +2939,18 @@ mod tests {
     }
 
     #[test]
+    fn about_festerm_is_always_the_last_palette_entry() {
+        let context = egui::Context::default();
+        let (app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        let items = app.palette_items();
+        assert_eq!(
+            items.last().map(|item| item.label.as_str()),
+            Some("About fesTerm"),
+            "About fesTerm must sort after every tab and action entry"
+        );
+    }
+
+    #[test]
     fn zoom_palette_commands_change_only_the_active_session_and_reset() {
         let context = egui::Context::default();
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
@@ -2975,7 +3011,7 @@ mod tests {
         assert_eq!(
             copy.hint.as_deref(),
             Some(if cfg!(target_os = "macos") {
-                "Cmd+C"
+                "\u{2318}+C"
             } else {
                 "Ctrl+C"
             })
@@ -2988,7 +3024,7 @@ mod tests {
         assert_eq!(
             paste.hint.as_deref(),
             Some(if cfg!(target_os = "macos") {
-                "Cmd+V"
+                "\u{2318}+V"
             } else {
                 "Ctrl+V"
             })
@@ -3890,6 +3926,42 @@ mod tests {
     }
 
     #[test]
+    fn workspace_autosaves_after_a_tab_mutating_frame_with_no_manual_save_action() {
+        // Regression test: Settings used to require an explicit "Save
+        // workspace" button; the workspace now saves itself automatically
+        // whenever a frame changes the tab list (`AppState::workspace_dirty`
+        // / `take_workspace_dirty`), so opening a new tab alone - with no
+        // Settings action at all - must persist it to disk.
+        let configuration = Configuration::empty();
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-workspace-autosave-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+
+        app.state.dispatch(AppCommand::StartLocalSession, &context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 400.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        assert_eq!(
+            harness.state().configuration_status,
+            ConfigurationStartupStatus::WorkspaceSaved
+        );
+        assert!(
+            path.exists(),
+            "starting a session should autosave the workspace without a manual Save action"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn failed_workspace_save_retains_configuration_without_path_or_content_leakage() {
         let configuration = Configuration::empty();
         let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
@@ -3965,7 +4037,7 @@ mod tests {
                 .iter()
                 .find(|item| item.label == "New Session…")
                 .and_then(|item| item.hint.as_deref()),
-            Some("Cmd+T")
+            Some("\u{2318}+T")
         );
     }
 
@@ -4098,7 +4170,7 @@ mod tests {
         // The Launcher tab is first, so it carries the "⌘1" quick-switch
         // label shown in `palette_items` alongside its title.
         harness
-            .get_by_role_and_label(accesskit::Role::Button, "\u{2318}1   Launcher")
+            .get_by_role_and_label(accesskit::Role::Button, "\u{2318} 1   Launcher")
             .click();
         harness.run();
         assert!(!harness.state().palette.is_open());
