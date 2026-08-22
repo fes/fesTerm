@@ -14,411 +14,929 @@
     "docs/ui-test-plan.md"
   ],
   "legacy_adrs_without_validation_impact": [
-    "ADR-0001", "ADR-0002", "ADR-0003", "ADR-0004", "ADR-0005",
-    "ADR-0006", "ADR-0007", "ADR-0008", "ADR-0009", "ADR-0010",
-    "ADR-0011", "ADR-0012", "ADR-0013", "ADR-0014", "ADR-0015",
-    "ADR-0016", "ADR-0017"
+    "ADR-0001",
+    "ADR-0002",
+    "ADR-0003",
+    "ADR-0004",
+    "ADR-0005",
+    "ADR-0006",
+    "ADR-0007",
+    "ADR-0008",
+    "ADR-0009",
+    "ADR-0010",
+    "ADR-0011",
+    "ADR-0012",
+    "ADR-0013",
+    "ADR-0014",
+    "ADR-0015",
+    "ADR-0016",
+    "ADR-0017"
   ],
   "coverage": [
     {
       "id": "root-lifecycle",
-      "edges": ["ROOT-*"],
-      "requirements": ["docs/gui-design.md#root-application-states"],
-      "decisions": ["ADR-0014"],
-      "automated_tests": ["default_configuration_starts_at_the_launcher", "closing_the_final_restored_ssh_surface_returns_to_the_launcher"],
-      "manual_scenarios": ["AS-01", "AS-02", "AS-05"],
+      "edges": [
+        "ROOT-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#root-application-states"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "default_configuration_starts_at_the_launcher",
+        "closing_the_final_restored_ssh_surface_returns_to_the_launcher"
+      ],
+      "manual_scenarios": [
+        "AS-01",
+        "AS-02",
+        "AS-05"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "launcher",
-      "edges": ["LAUNCH-*"],
-      "requirements": ["docs/gui-design.md#session-launcher"],
-      "decisions": ["ADR-0014", "ADR-0018"],
-      "automated_tests": ["platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end", "ssh_form_returns_a_typed_password_command_with_default_port", "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell"],
-      "manual_scenarios": ["AS-01", "AS-02"],
+      "edges": [
+        "LAUNCH-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-launcher"
+      ],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0018"
+      ],
+      "automated_tests": [
+        "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
+        "ssh_form_returns_a_typed_password_command_with_default_port",
+        "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell"
+      ],
+      "manual_scenarios": [
+        "AS-01",
+        "AS-02"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "local-session",
-      "edges": ["LOCAL-*"],
-      "requirements": ["docs/gui-design.md#local-session"],
-      "decisions": ["ADR-0014"],
-      "automated_tests": ["unix_pty_smoke_flow_with_test_child_and_issue3_resizes", "ssh_startup_failure_uses_the_existing_no_session_fallback"],
-      "manual_scenarios": ["TI-01", "TI-07"],
+      "edges": [
+        "LOCAL-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#local-session"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "unix_pty_smoke_flow_with_test_child_and_issue3_resizes",
+        "ssh_startup_failure_uses_the_existing_no_session_fallback"
+      ],
+      "manual_scenarios": [
+        "TI-01",
+        "TI-07"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "ssh-trust",
-      "edges": ["TRUST-*"],
-      "requirements": ["docs/gui-design.md#host-key-verification"],
-      "decisions": ["ADR-0013", "ADR-0019"],
-      "automated_tests": ["canonical_host_port_preserves_ssh_destination_boundaries", "host_key_resolution_failure_is_visible_in_session_status", "a_pending_host_key_prompt_and_a_pending_password_prompt_can_coexist_on_the_controller"],
-      "manual_scenarios": ["TI-07"],
+      "edges": [
+        "TRUST-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#host-key-verification"
+      ],
+      "decisions": [
+        "ADR-0013",
+        "ADR-0019",
+        "ADR-0020"
+      ],
+      "automated_tests": [
+        "canonical_host_port_preserves_ssh_destination_boundaries",
+        "host_key_resolution_failure_is_visible_in_session_status",
+        "a_pending_host_key_prompt_and_a_pending_password_prompt_can_coexist_on_the_controller",
+        "handler_silently_accepts_a_matching_known_host_fingerprint",
+        "handler_flags_a_mismatched_known_host_fingerprint_as_a_changed_key_warning",
+        "records_upserts_and_revokes_a_known_host_trust_entry",
+        "known_host_trust_round_trips_through_toml_and_rejects_invalid_entries",
+        "host_key_prompt_ui_accepts_and_remembers_a_first_seen_host_on_a_key",
+        "changed_host_key_prompt_ui_requires_typing_yes_to_replace_trust",
+        "changed_host_key_prompt_ui_accepts_and_persists_only_after_typing_the_literal_word_yes",
+        "host_key_trust_decisions_map_onto_the_ssh_transport_decisions_including_persistence"
+      ],
+      "manual_scenarios": [
+        "TI-07"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "ssh-authentication",
-      "edges": ["AUTH-*"],
-      "requirements": ["docs/gui-design.md#authentication"],
-      "decisions": ["ADR-0016", "ADR-0019"],
-      "automated_tests": ["ssh_form_submit_clears_the_transient_password", "saved_ssh_password_form_returns_a_redacted_store_command", "interactive_ssh_command_replaces_the_active_launcher_in_place", "a_plain_typed_password_session_retains_full_reconnect_retry_state", "ssh_live_password_prompt_shows_the_ssh_style_prompt_line", "ssh_live_password_prompt_submits_a_typed_password_on_enter", "password_prompt_crosses_the_session_boundary_and_clears_once_resolved", "password_gate_rejects_missing_timeout_cancel_and_invalid_resolutions", "stale_password_decision_cannot_resolve_a_later_prompt", "password_prompt_is_rejected_when_the_bounded_event_queue_is_full", "controlled_openssh_interactive_password_interoperability"],
-      "manual_scenarios": ["TI-07", "CP-03"],
+      "edges": [
+        "AUTH-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#authentication"
+      ],
+      "decisions": [
+        "ADR-0016",
+        "ADR-0019"
+      ],
+      "automated_tests": [
+        "ssh_form_submit_clears_the_transient_password",
+        "saved_ssh_password_form_returns_a_redacted_store_command",
+        "interactive_ssh_command_replaces_the_active_launcher_in_place",
+        "a_plain_typed_password_session_retains_full_reconnect_retry_state",
+        "ssh_live_password_prompt_shows_the_ssh_style_prompt_line",
+        "ssh_live_password_prompt_submits_a_typed_password_on_enter",
+        "password_prompt_crosses_the_session_boundary_and_clears_once_resolved",
+        "password_gate_rejects_missing_timeout_cancel_and_invalid_resolutions",
+        "stale_password_decision_cannot_resolve_a_later_prompt",
+        "password_prompt_is_rejected_when_the_bounded_event_queue_is_full",
+        "controlled_openssh_interactive_password_interoperability"
+      ],
+      "manual_scenarios": [
+        "TI-07",
+        "CP-03"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "ssh-lifecycle",
-      "edges": ["SSH-*"],
-      "requirements": ["docs/gui-design.md#ssh-session-creation", "docs/gui-design.md#reconnect-presentation"],
-      "decisions": ["ADR-0013", "ADR-0017", "ADR-0018"],
-      "automated_tests": ["restored_ssh_tab_requires_fresh_authentication_without_starting_a_session", "application_advances_lifecycle_generation_at_reconnect_boundary", "reconnect_options_default_to_manual_plain_shell_recovery", "reconnect_request_is_limited_to_running_sessions"],
-      "manual_scenarios": ["TI-07"],
+      "edges": [
+        "SSH-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#ssh-session-creation",
+        "docs/gui-design.md#reconnect-presentation"
+      ],
+      "decisions": [
+        "ADR-0013",
+        "ADR-0017",
+        "ADR-0018"
+      ],
+      "automated_tests": [
+        "restored_ssh_tab_requires_fresh_authentication_without_starting_a_session",
+        "application_advances_lifecycle_generation_at_reconnect_boundary",
+        "reconnect_options_default_to_manual_plain_shell_recovery",
+        "reconnect_request_is_limited_to_running_sessions"
+      ],
+      "manual_scenarios": [
+        "TI-07"
+      ],
       "status": "partial",
-      "prerequisites": ["generation-boundary presentation remains incomplete"]
+      "prerequisites": [
+        "generation-boundary presentation remains incomplete"
+      ]
     },
     {
       "id": "serial",
-      "edges": ["SERIAL-*"],
-      "requirements": ["docs/gui-design.md#serial-session-creation"],
+      "edges": [
+        "SERIAL-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#serial-session-creation"
+      ],
       "decisions": [],
       "automated_tests": [],
-      "manual_scenarios": ["CP-04"],
+      "manual_scenarios": [
+        "CP-04"
+      ],
       "status": "deferred",
-      "prerequisites": ["Serial backend and owned UI"]
+      "prerequisites": [
+        "Serial backend and owned UI"
+      ]
     },
     {
       "id": "session-chips",
-      "edges": ["CHIP-*"],
-      "requirements": ["docs/gui-design.md#independent-session-chips"],
-      "decisions": ["ADR-0014"],
-      "automated_tests": ["chip_context_menu_targets_inactive_chip_without_activating_it", "dragging_one_chip_onto_another_emits_a_reorder_action", "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape"],
-      "manual_scenarios": ["AS-03", "AS-09"],
+      "edges": [
+        "CHIP-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#independent-session-chips"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "chip_context_menu_targets_inactive_chip_without_activating_it",
+        "dragging_one_chip_onto_another_emits_a_reorder_action",
+        "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape"
+      ],
+      "manual_scenarios": [
+        "AS-03",
+        "AS-09"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "native-window",
-      "edges": ["WIN-*"],
-      "requirements": ["docs/gui-design.md#window-chrome-integrated-title-bar-controls", "docs/gui-design.md#responsive-and-narrow-window-behavior"],
-      "decisions": ["ADR-0007"],
-      "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window", "viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes", "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface"],
-      "manual_scenarios": ["NP-01", "NP-02", "CP-09"],
+      "edges": [
+        "WIN-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#window-chrome-integrated-title-bar-controls",
+        "docs/gui-design.md#responsive-and-narrow-window-behavior"
+      ],
+      "decisions": [
+        "ADR-0007"
+      ],
+      "automated_tests": [
+        "chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window",
+        "viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes",
+        "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface"
+      ],
+      "manual_scenarios": [
+        "NP-01",
+        "NP-02",
+        "CP-09"
+      ],
       "status": "partial",
-      "prerequisites": ["update, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent"]
+      "prerequisites": [
+        "update, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent"
+      ]
     },
     {
       "id": "platform-menus",
-      "edges": ["MENU-*"],
-      "requirements": ["docs/gui-design.md#platform-application-menus"],
-      "decisions": ["ADR-0007"],
-      "automated_tests": ["platform_close_tab_shortcut_closes_the_active_tab_end_to_end"],
-      "manual_scenarios": ["NP-03"],
+      "edges": [
+        "MENU-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#platform-application-menus"
+      ],
+      "decisions": [
+        "ADR-0007"
+      ],
+      "automated_tests": [
+        "platform_close_tab_shortcut_closes_the_active_tab_end_to_end"
+      ],
+      "manual_scenarios": [
+        "NP-03"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "command-palette",
-      "edges": ["PAL-*"],
-      "requirements": ["docs/gui-design.md#command-palette-and-session-switcher"],
+      "edges": [
+        "PAL-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#command-palette-and-session-switcher"
+      ],
       "decisions": [],
-      "automated_tests": ["command_palette_selection_activates_the_chosen_tab_end_to_end", "escape_dismisses_without_a_selection"],
-      "manual_scenarios": ["AS-04"],
+      "automated_tests": [
+        "command_palette_selection_activates_the_chosen_tab_end_to_end",
+        "escape_dismisses_without_a_selection"
+      ],
+      "manual_scenarios": [
+        "AS-04"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "keyboard",
-      "edges": ["KEY-*"],
-      "requirements": ["docs/gui-design.md#keyboard"],
+      "edges": [
+        "KEY-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#keyboard"
+      ],
       "decisions": [],
-      "automated_tests": ["platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end", "routing_uses_core_paste_and_focus_modes"],
-      "manual_scenarios": ["AS-04", "TI-02"],
+      "automated_tests": [
+        "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
+        "routing_uses_core_paste_and_focus_modes"
+      ],
+      "manual_scenarios": [
+        "AS-04",
+        "TI-02"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "terminal-interaction",
-      "edges": ["TERM-*"],
-      "requirements": ["docs/gui-design.md#reserved-local-input-and-clipboard", "docs/gui-design.md#terminal-selection"],
-      "decisions": ["ADR-0012"],
-      "automated_tests": ["terminal_context_menu_intercepts_local_right_click_without_pty_input", "terminal_context_menu_exposes_copy_for_selection_without_clearing_it", "selection_expands_continuations_and_copies_leading_text"],
-      "manual_scenarios": ["TI-01", "TI-02", "TI-03"],
+      "edges": [
+        "TERM-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#reserved-local-input-and-clipboard",
+        "docs/gui-design.md#terminal-selection"
+      ],
+      "decisions": [
+        "ADR-0012"
+      ],
+      "automated_tests": [
+        "terminal_context_menu_intercepts_local_right_click_without_pty_input",
+        "terminal_context_menu_exposes_copy_for_selection_without_clearing_it",
+        "selection_expands_continuations_and_copies_leading_text"
+      ],
+      "manual_scenarios": [
+        "TI-01",
+        "TI-02",
+        "TI-03"
+      ],
       "status": "partial",
-      "prerequisites": ["IME and complete selection semantics remain platform/capability work"]
+      "prerequisites": [
+        "IME and complete selection semantics remain platform/capability work"
+      ]
     },
     {
       "id": "paste-safety",
-      "edges": ["PASTE-*"],
-      "requirements": ["docs/gui-design.md#paste-safety"],
+      "edges": [
+        "PASTE-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#paste-safety"
+      ],
       "decisions": [],
-      "automated_tests": ["paste_policy_normalizes_endings_and_counts_trailing_lines_exactly", "paste_preview_is_bounded_and_escapes_non_whitespace_controls", "deferred_paste_requests_preserve_multiplicity_for_application_policy"],
-      "manual_scenarios": ["PS-01", "PS-02", "PS-03", "PS-04", "PS-05", "PS-06", "PS-07", "PS-08", "PS-09", "PS-10"],
+      "automated_tests": [
+        "paste_policy_normalizes_endings_and_counts_trailing_lines_exactly",
+        "paste_preview_is_bounded_and_escapes_non_whitespace_controls",
+        "deferred_paste_requests_preserve_multiplicity_for_application_policy"
+      ],
+      "manual_scenarios": [
+        "PS-01",
+        "PS-02",
+        "PS-03",
+        "PS-04",
+        "PS-05",
+        "PS-06",
+        "PS-07",
+        "PS-08",
+        "PS-09",
+        "PS-10"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "drag-drop",
-      "edges": ["DROP-*"],
-      "requirements": ["docs/gui-design.md#drag-and-drop-input"],
+      "edges": [
+        "DROP-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#drag-and-drop-input"
+      ],
       "decisions": [],
       "automated_tests": [],
-      "manual_scenarios": ["CP-05"],
+      "manual_scenarios": [
+        "CP-05"
+      ],
       "status": "deferred",
-      "prerequisites": ["Plain-text and file-path drop input"]
+      "prerequisites": [
+        "Plain-text and file-path drop input"
+      ]
     },
     {
       "id": "history",
-      "edges": ["HIST-*"],
-      "requirements": ["docs/gui-design.md#scrollback-and-follow-output"],
-      "decisions": ["ADR-0017"],
-      "automated_tests": ["history_snapshot_projects_retained_rows_without_moving_the_live_cursor", "local_wheel_anchors_history_and_ctrl_end_resumes_following", "scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width"],
-      "manual_scenarios": ["TI-04", "TI-05"],
+      "edges": [
+        "HIST-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#scrollback-and-follow-output"
+      ],
+      "decisions": [
+        "ADR-0017"
+      ],
+      "automated_tests": [
+        "history_snapshot_projects_retained_rows_without_moving_the_live_cursor",
+        "local_wheel_anchors_history_and_ctrl_end_resumes_following",
+        "scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width"
+      ],
+      "manual_scenarios": [
+        "TI-04",
+        "TI-05"
+      ],
       "status": "partial",
-      "prerequisites": ["reflow, eviction, and disconnected-history completion"]
+      "prerequisites": [
+        "reflow, eviction, and disconnected-history completion"
+      ]
     },
     {
       "id": "terminal-search",
-      "edges": ["SEARCH-*"],
-      "requirements": ["docs/gui-design.md#terminal-content-search"],
-      "decisions": ["ADR-0017"],
+      "edges": [
+        "SEARCH-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#terminal-content-search"
+      ],
+      "decisions": [
+        "ADR-0017"
+      ],
       "automated_tests": [],
-      "manual_scenarios": ["CP-05"],
+      "manual_scenarios": [
+        "CP-05"
+      ],
       "status": "deferred",
-      "prerequisites": ["Terminal-content search implementation"]
+      "prerequisites": [
+        "Terminal-content search implementation"
+      ]
     },
     {
       "id": "generation-boundaries",
-      "edges": ["GEN-*"],
-      "requirements": ["docs/gui-design.md#reconnect-presentation"],
-      "decisions": ["ADR-0017"],
+      "edges": [
+        "GEN-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#reconnect-presentation"
+      ],
+      "decisions": [
+        "ADR-0017"
+      ],
       "automated_tests": [],
-      "manual_scenarios": ["TI-05", "TI-07"],
+      "manual_scenarios": [
+        "TI-05",
+        "TI-07"
+      ],
       "status": "deferred",
-      "prerequisites": ["Reconnect/relaunch/reopen retained-generation presentation"]
+      "prerequisites": [
+        "Reconnect/relaunch/reopen retained-generation presentation"
+      ]
     },
     {
       "id": "inspector",
-      "edges": ["INSP-*"],
-      "requirements": ["docs/gui-design.md#session-inspector"],
-      "decisions": ["ADR-0014"],
-      "automated_tests": ["session_inspector_opens_without_resizing_and_escape_restores_terminal_mode", "inspector_consumes_the_first_uncovered_terminal_click"],
-      "manual_scenarios": ["TI-06"],
+      "edges": [
+        "INSP-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-inspector"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "session_inspector_opens_without_resizing_and_escape_restores_terminal_mode",
+        "inspector_consumes_the_first_uncovered_terminal_click"
+      ],
+      "manual_scenarios": [
+        "TI-06"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "diagnostics",
-      "edges": ["DIAG-*"],
-      "requirements": ["docs/gui-design.md#diagnostic-content"],
-      "decisions": ["ADR-0009"],
-      "automated_tests": ["headless_harness_drives_terminal_view_input_resize_and_diagnostics"],
-      "manual_scenarios": ["TI-06"],
+      "edges": [
+        "DIAG-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#diagnostic-content"
+      ],
+      "decisions": [
+        "ADR-0009"
+      ],
+      "automated_tests": [
+        "headless_harness_drives_terminal_view_input_resize_and_diagnostics"
+      ],
+      "manual_scenarios": [
+        "TI-06"
+      ],
       "status": "partial",
-      "prerequisites": ["event emphasis and complete redacted Copy Details"]
+      "prerequisites": [
+        "event emphasis and complete redacted Copy Details"
+      ]
     },
     {
       "id": "errors",
-      "edges": ["ERR-*"],
-      "requirements": ["docs/gui-design.md#error-presentation"],
+      "edges": [
+        "ERR-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#error-presentation"
+      ],
       "decisions": [],
-      "automated_tests": ["invalid_configuration_is_ignored_with_a_content_free_diagnostic", "ssh_startup_failure_uses_the_existing_no_session_fallback"],
-      "manual_scenarios": ["TI-07"],
+      "automated_tests": [
+        "invalid_configuration_is_ignored_with_a_content_free_diagnostic",
+        "ssh_startup_failure_uses_the_existing_no_session_fallback"
+      ],
+      "manual_scenarios": [
+        "TI-07"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "status",
-      "edges": ["STATUS-*"],
-      "requirements": ["docs/gui-design.md#contextual-status-region", "docs/gui-design.md#bottom-status-bar"],
+      "edges": [
+        "STATUS-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#contextual-status-region",
+        "docs/gui-design.md#bottom-status-bar"
+      ],
       "decisions": [],
-      "automated_tests": ["status_bar_renders_left_and_right_text", "status_bar_omits_status_label_and_dot_when_neutral"],
-      "manual_scenarios": ["NP-05", "AS-09"],
+      "automated_tests": [
+        "status_bar_renders_left_and_right_text",
+        "status_bar_omits_status_label_and_dot_when_neutral"
+      ],
+      "manual_scenarios": [
+        "NP-05",
+        "AS-09"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "bell-attention",
-      "edges": ["BELL-*"],
-      "requirements": ["docs/gui-design.md#bell-and-attention"],
+      "edges": [
+        "BELL-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#bell-and-attention"
+      ],
       "decisions": [],
-      "automated_tests": ["reconnecting_and_auth_required_each_show_an_overlay"],
-      "manual_scenarios": ["NP-05"],
+      "automated_tests": [
+        "reconnecting_and_auth_required_each_show_an_overlay"
+      ],
+      "manual_scenarios": [
+        "NP-05"
+      ],
       "status": "partial",
-      "prerequisites": ["bell-specific attention presentation"]
+      "prerequisites": [
+        "bell-specific attention presentation"
+      ]
     },
     {
       "id": "settings",
-      "edges": ["SET-*"],
-      "requirements": ["docs/gui-design.md#settings"],
-      "decisions": ["ADR-0015"],
-      "automated_tests": ["toggle_chip_layout_flips_between_wrap_and_single_row_scroll", "toggle_status_bar_flips_visibility_and_defaults_to_shown"],
-      "manual_scenarios": ["AS-02", "AS-09", "CP-01"],
+      "edges": [
+        "SET-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#settings"
+      ],
+      "decisions": [
+        "ADR-0015"
+      ],
+      "automated_tests": [
+        "toggle_chip_layout_flips_between_wrap_and_single_row_scroll",
+        "toggle_status_bar_flips_visibility_and_defaults_to_shown"
+      ],
+      "manual_scenarios": [
+        "AS-02",
+        "AS-09",
+        "CP-01"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "configuration-recovery",
-      "edges": ["CONF-*"],
-      "requirements": ["docs/gui-design.md#configuration-recovery"],
-      "decisions": ["ADR-0015"],
-      "automated_tests": ["invalid_reload_retains_the_last_known_configuration", "failed_workspace_save_is_content_free"],
-      "manual_scenarios": ["CP-01"],
+      "edges": [
+        "CONF-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#configuration-recovery"
+      ],
+      "decisions": [
+        "ADR-0015"
+      ],
+      "automated_tests": [
+        "invalid_reload_retains_the_last_known_configuration",
+        "failed_workspace_save_is_content_free"
+      ],
+      "manual_scenarios": [
+        "CP-01"
+      ],
       "status": "partial",
-      "prerequisites": ["full recovery and unsaved-close surfaces"]
+      "prerequisites": [
+        "full recovery and unsaved-close surfaces"
+      ]
     },
     {
       "id": "profiles",
-      "edges": ["PROF-*"],
-      "requirements": ["docs/gui-design.md#profile-editing"],
-      "decisions": ["ADR-0002"],
+      "edges": [
+        "PROF-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#profile-editing"
+      ],
+      "decisions": [
+        "ADR-0002"
+      ],
       "automated_tests": [],
-      "manual_scenarios": ["CP-05"],
+      "manual_scenarios": [
+        "CP-05"
+      ],
       "status": "deferred",
-      "prerequisites": ["Profile editor UI"]
+      "prerequisites": [
+        "Profile editor UI"
+      ]
     },
     {
       "id": "workspaces",
-      "edges": ["WORK-*"],
-      "requirements": ["docs/gui-design.md#workspace-workflow"],
-      "decisions": ["ADR-0002", "ADR-0015"],
-      "automated_tests": ["workspace_restoration_recreates_ordered_fresh_local_tabs_and_focus", "workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions"],
-      "manual_scenarios": ["CP-02"],
+      "edges": [
+        "WORK-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#workspace-workflow"
+      ],
+      "decisions": [
+        "ADR-0002",
+        "ADR-0015"
+      ],
+      "automated_tests": [
+        "workspace_restoration_recreates_ordered_fresh_local_tabs_and_focus",
+        "workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions"
+      ],
+      "manual_scenarios": [
+        "CP-02"
+      ],
       "status": "partial",
-      "prerequisites": ["complete mixed-result restoration UI"]
+      "prerequisites": [
+        "complete mixed-result restoration UI"
+      ]
     },
     {
       "id": "typography",
-      "edges": ["TYPE-*"],
-      "requirements": ["docs/gui-design.md#terminal-typography", "docs/gui-design.md#typography-roles"],
-      "decisions": ["ADR-0012"],
-      "automated_tests": ["wide_cells_use_one_two_column_paint_and_selection_span", "bundled_terminal_faces_lead_independent_fallback_chains", "terminal_attributes_select_real_bundled_faces"],
-      "manual_scenarios": ["NP-05"],
+      "edges": [
+        "TYPE-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#terminal-typography",
+        "docs/gui-design.md#typography-roles"
+      ],
+      "decisions": [
+        "ADR-0012"
+      ],
+      "automated_tests": [
+        "wide_cells_use_one_two_column_paint_and_selection_span",
+        "bundled_terminal_faces_lead_independent_fallback_chains",
+        "terminal_attributes_select_real_bundled_faces"
+      ],
+      "manual_scenarios": [
+        "NP-05"
+      ],
       "status": "partial",
-      "prerequisites": ["native JetBrains Mono fallback/DPI review and bundled application font"]
+      "prerequisites": [
+        "native JetBrains Mono fallback/DPI review and bundled application font"
+      ]
     },
     {
       "id": "zoom",
-      "edges": ["ZOOM-*"],
-      "requirements": ["docs/gui-design.md#user-control"],
-      "decisions": ["ADR-0012"],
-      "automated_tests": ["terminal_zoom_is_session_local_bounded_and_resettable", "zoom_palette_commands_change_only_the_active_session_and_reset"],
-      "manual_scenarios": ["CP-07"],
+      "edges": [
+        "ZOOM-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#user-control"
+      ],
+      "decisions": [
+        "ADR-0012"
+      ],
+      "automated_tests": [
+        "terminal_zoom_is_session_local_bounded_and_resettable",
+        "zoom_palette_commands_change_only_the_active_session_and_reset"
+      ],
+      "manual_scenarios": [
+        "CP-07"
+      ],
       "status": "partial",
-      "prerequisites": ["native DPI, anchor-preservation, and resize-coalescing evidence"]
+      "prerequisites": [
+        "native DPI, anchor-preservation, and resize-coalescing evidence"
+      ]
     },
     {
       "id": "terminal-schemes",
-      "edges": ["SCHEME-*"],
-      "requirements": ["docs/gui-design.md#terminal-color-schemes"],
+      "edges": [
+        "SCHEME-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#terminal-color-schemes"
+      ],
       "decisions": [],
       "automated_tests": [],
-      "manual_scenarios": ["CP-05"],
+      "manual_scenarios": [
+        "CP-05"
+      ],
       "status": "deferred",
-      "prerequisites": ["Multiple complete terminal color schemes"]
+      "prerequisites": [
+        "Multiple complete terminal color schemes"
+      ]
     },
     {
       "id": "cursor",
-      "edges": ["CURSOR-*"],
-      "requirements": ["docs/gui-design.md#cursor-appearance"],
-      "decisions": ["ADR-0012"],
-      "automated_tests": ["headless_harness_drives_terminal_view_input_resize_and_diagnostics"],
-      "manual_scenarios": ["NP-05"],
+      "edges": [
+        "CURSOR-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#cursor-appearance"
+      ],
+      "decisions": [
+        "ADR-0012"
+      ],
+      "automated_tests": [
+        "headless_harness_drives_terminal_view_input_resize_and_diagnostics"
+      ],
+      "manual_scenarios": [
+        "NP-05"
+      ],
       "status": "partial",
-      "prerequisites": ["native blink/focus appearance evidence"]
+      "prerequisites": [
+        "native blink/focus appearance evidence"
+      ]
     },
     {
       "id": "focus-mode",
-      "edges": ["FOCUS-*"],
-      "requirements": ["docs/gui-design.md#fullscreen-and-focus-mode"],
+      "edges": [
+        "FOCUS-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#fullscreen-and-focus-mode"
+      ],
       "decisions": [],
-      "automated_tests": ["focus_mode_is_explicit_terminal_only_and_escape_does_not_exit"],
-      "manual_scenarios": ["CP-08"],
+      "automated_tests": [
+        "focus_mode_is_explicit_terminal_only_and_escape_does_not_exit"
+      ],
+      "manual_scenarios": [
+        "CP-08"
+      ],
       "status": "partial",
-      "prerequisites": ["native window-control, focus, accessibility, and overlay evidence"]
+      "prerequisites": [
+        "native window-control, focus, accessibility, and overlay evidence"
+      ]
     },
     {
       "id": "session-close",
-      "edges": ["CLOSE-*"],
-      "requirements": ["docs/gui-design.md#closing-sessions-and-quitting"],
-      "decisions": ["ADR-0014"],
-      "automated_tests": ["live_close_confirmation_is_safe_by_default_and_confirmed_deliberately", "escape_cancels_live_close_without_closing_session"],
-      "manual_scenarios": ["AS-05", "AS-06", "AS-07"],
+      "edges": [
+        "CLOSE-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#closing-sessions-and-quitting"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "live_close_confirmation_is_safe_by_default_and_confirmed_deliberately",
+        "escape_cancels_live_close_without_closing_session"
+      ],
+      "manual_scenarios": [
+        "AS-05",
+        "AS-06",
+        "AS-07"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "transport-stop",
-      "edges": ["STOP-*"],
-      "requirements": ["docs/gui-design.md#session-inspector", "docs/gui-design.md#closing-sessions-and-quitting"],
-      "decisions": ["ADR-0014", "ADR-0017"],
-      "automated_tests": ["clicking_a_chip_close_button_emits_a_close_action"],
-      "manual_scenarios": ["TI-06"],
+      "edges": [
+        "STOP-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-inspector",
+        "docs/gui-design.md#closing-sessions-and-quitting"
+      ],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0017"
+      ],
+      "automated_tests": [
+        "clicking_a_chip_close_button_emits_a_close_action"
+      ],
+      "manual_scenarios": [
+        "TI-06"
+      ],
       "status": "partial",
-      "prerequisites": ["read-only-history-preserving Stop/Disconnect/Close Port actions"]
+      "prerequisites": [
+        "read-only-history-preserving Stop/Disconnect/Close Port actions"
+      ]
     },
     {
       "id": "aggregate-quit",
-      "edges": ["QUIT-*"],
-      "requirements": ["docs/gui-design.md#closing-sessions-and-quitting"],
-      "decisions": ["ADR-0014"],
+      "edges": [
+        "QUIT-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#closing-sessions-and-quitting"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
       "automated_tests": [],
-      "manual_scenarios": ["AS-08"],
+      "manual_scenarios": [
+        "AS-08"
+      ],
       "status": "deferred",
-      "prerequisites": ["Aggregate window/application quit confirmation"]
+      "prerequisites": [
+        "Aggregate window/application quit confirmation"
+      ]
     },
     {
       "id": "accessibility",
-      "edges": ["A11Y-*"],
-      "requirements": ["docs/gui-design.md#accessibility"],
+      "edges": [
+        "A11Y-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#accessibility"
+      ],
       "decisions": [],
-      "automated_tests": ["terminal_view_claims_keyboard_focus_on_its_first_frame_without_a_click"],
-      "manual_scenarios": ["NP-04", "NP-06"],
+      "automated_tests": [
+        "terminal_view_claims_keyboard_focus_on_its_first_frame_without_a_click"
+      ],
+      "manual_scenarios": [
+        "NP-04",
+        "NP-06"
+      ],
       "status": "partial",
-      "prerequisites": ["native UIA, Accessibility, and AT-SPI evidence"]
+      "prerequisites": [
+        "native UIA, Accessibility, and AT-SPI evidence"
+      ]
     },
     {
       "id": "privacy",
-      "edges": ["PRIV-*"],
-      "requirements": ["docs/gui-design.md#privacy-outside-the-terminal-viewport"],
-      "decisions": ["ADR-0003", "ADR-0016"],
-      "automated_tests": ["rejects_secret_fields_and_values_without_echoing_them", "failed_workspace_save_retains_configuration_without_path_or_content_leakage"],
-      "manual_scenarios": ["NP-03", "CP-02", "CP-03"],
+      "edges": [
+        "PRIV-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#privacy-outside-the-terminal-viewport"
+      ],
+      "decisions": [
+        "ADR-0003",
+        "ADR-0016"
+      ],
+      "automated_tests": [
+        "rejects_secret_fields_and_values_without_echoing_them",
+        "failed_workspace_save_retains_configuration_without_path_or_content_leakage"
+      ],
+      "manual_scenarios": [
+        "NP-03",
+        "CP-02",
+        "CP-03"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "visual-language",
-      "edges": ["VIS-*"],
-      "requirements": ["docs/gui-design.md#visual-language"],
-      "decisions": ["ADR-0007"],
-      "automated_tests": ["chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window", "semantic_inventory_has_one_variant_per_canonical_source"],
-      "manual_scenarios": ["NP-05", "AS-09"],
+      "edges": [
+        "VIS-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#visual-language"
+      ],
+      "decisions": [
+        "ADR-0007"
+      ],
+      "automated_tests": [
+        "chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window",
+        "semantic_inventory_has_one_variant_per_canonical_source"
+      ],
+      "manual_scenarios": [
+        "NP-05",
+        "AS-09"
+      ],
       "status": "partial",
-      "prerequisites": ["native cross-platform visual evidence"]
+      "prerequisites": [
+        "native cross-platform visual evidence"
+      ]
     },
     {
       "id": "negative-scope",
-      "edges": ["NON-*"],
-      "requirements": ["docs/gui-design.md#product-posture"],
-      "decisions": ["ADR-0010", "ADR-0014"],
-      "automated_tests": ["default_configuration_starts_at_the_launcher"],
-      "manual_scenarios": ["AS-01", "NP-05"],
+      "edges": [
+        "NON-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#product-posture"
+      ],
+      "decisions": [
+        "ADR-0010",
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "default_configuration_starts_at_the_launcher"
+      ],
+      "manual_scenarios": [
+        "AS-01",
+        "NP-05"
+      ],
       "status": "partial",
       "prerequisites": []
     },
     {
       "id": "markdown-viewing",
-      "edges": ["MD-*"],
-      "requirements": ["docs/gui-design.md#deferred-native-markdown-viewing"],
+      "edges": [
+        "MD-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#deferred-native-markdown-viewing"
+      ],
       "decisions": [],
       "automated_tests": [],
-      "manual_scenarios": ["CP-06"],
+      "manual_scenarios": [
+        "CP-06"
+      ],
       "status": "deferred",
-      "prerequisites": ["Complete Local, SSH, and Serial capabilities and UI; explicit product/security design decision"]
+      "prerequisites": [
+        "Complete Local, SSH, and Serial capabilities and UI; explicit product/security design decision"
+      ]
     }
   ]
 }

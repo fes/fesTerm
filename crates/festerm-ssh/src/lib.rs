@@ -756,6 +756,7 @@ impl std::error::Error for RecoveryPolicyError {}
 pub struct SshSessionOptions {
     strategy: SessionStrategy,
     recovery: RecoveryPolicy,
+    known_host_fingerprint: Option<String>,
 }
 
 impl SshSessionOptions {
@@ -766,6 +767,7 @@ impl SshSessionOptions {
         Self {
             strategy: SessionStrategy::PlainShell,
             recovery: RecoveryPolicy::Manual,
+            known_host_fingerprint: None,
         }
     }
 
@@ -780,7 +782,23 @@ impl SshSessionOptions {
         {
             return Err(RecoveryPolicyError);
         }
-        Ok(Self { strategy, recovery })
+        Ok(Self {
+            strategy,
+            recovery,
+            known_host_fingerprint: None,
+        })
+    }
+
+    /// Attaches a persistent-trust-store fingerprint the application already
+    /// has on file for this destination (ADR 0020). When the server presents
+    /// this exact fingerprint, the worker accepts it without prompting,
+    /// mirroring `ssh`'s own already-in-`known_hosts` behavior; when it
+    /// presents any other fingerprint, the worker still prompts, but flags
+    /// the request as a changed-key warning rather than a first-seen host.
+    #[must_use]
+    pub fn with_known_host_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
+        self.known_host_fingerprint = Some(fingerprint.into());
+        self
     }
 
     /// Returns the session strategy in effect.
@@ -797,6 +815,12 @@ impl SshSessionOptions {
         }
     }
 
+    /// Returns the persistent-trust-store fingerprint attached to these
+    /// options, if any (ADR 0020).
+    pub fn known_host_fingerprint(&self) -> Option<&str> {
+        self.known_host_fingerprint.as_deref()
+    }
+
     /// Builds options for `strategy` with manual-only recovery.
     ///
     /// Manual recovery is always valid for any [`SessionStrategy`] (ADR
@@ -809,6 +833,7 @@ impl SshSessionOptions {
         Self {
             strategy,
             recovery: RecoveryPolicy::Manual,
+            known_host_fingerprint: None,
         }
     }
 }
@@ -2577,6 +2602,7 @@ impl SshWorkerFoundation {
             &self.shared,
             &self.host_key_gate,
             sha256_fingerprint,
+            None,
         )
     }
 
@@ -2601,12 +2627,16 @@ fn request_host_key_verification(
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
     sha256_fingerprint: &str,
+    previously_trusted_fingerprint: Option<&str>,
 ) -> Result<HostKeyDecisionWaiter, HostKeyVerificationRequestError> {
     if !is_sha256_fingerprint(sha256_fingerprint) {
         return Err(HostKeyVerificationRequestError::InvalidFingerprint);
     }
-    let prompt =
+    let mut prompt =
         festerm_session::HostKeyPrompt::new(identity.host(), identity.port(), sha256_fingerprint);
+    if let Some(previous) = previously_trusted_fingerprint {
+        prompt = prompt.with_previously_trusted_fingerprint(previous);
+    }
     let waiter = host_key_gate
         .begin(prompt.clone())
         .map_err(HostKeyVerificationRequestError::Resolution)?;
@@ -2621,8 +2651,11 @@ fn request_host_key_verification(
     }
 }
 
-#[allow(dead_code)]
-fn is_sha256_fingerprint(fingerprint: &str) -> bool {
+/// Validates the canonical `SHA256:<base64>` fingerprint format this crate
+/// emits and expects, without asserting the fingerprint names a specific
+/// key. Exposed so callers that persist trusted fingerprints (outside this
+/// crate's own worker/host-key-gate path) can validate them the same way.
+pub fn is_sha256_fingerprint(fingerprint: &str) -> bool {
     let Some(encoded) = fingerprint.strip_prefix("SHA256:") else {
         return false;
     };
@@ -2833,6 +2866,7 @@ impl SshSession {
                             authentication,
                             options.strategy(),
                             options.reconnect_policy(),
+                            options.known_host_fingerprint().map(str::to_owned),
                             shared,
                             command_receiver,
                             worker_host_key_gate,
@@ -2994,6 +3028,11 @@ struct SshClientHandler {
     shared: Arc<WorkerShared>,
     host_key_gate: Arc<HostKeyDecisionGate>,
     host_key_rejected: Arc<AtomicBool>,
+    /// A persistent-trust-store fingerprint already on file for this
+    /// destination (ADR 0020), if any. An exact match is accepted silently,
+    /// mirroring `ssh`'s own already-in-`known_hosts` behavior; any other
+    /// presented key still prompts, flagged as a changed-key warning.
+    expected_fingerprint: Option<String>,
 }
 
 impl russh::client::Handler for SshClientHandler {
@@ -3004,11 +3043,20 @@ impl russh::client::Handler for SshClientHandler {
         server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
         let fingerprint = sha256_fingerprint(server_public_key);
+        if self
+            .expected_fingerprint
+            .as_deref()
+            .is_some_and(|expected| expected == fingerprint)
+        {
+            return Ok(true);
+        }
+        let previously_trusted = self.expected_fingerprint.as_deref();
         let waiter = match request_host_key_verification(
             &self.identity,
             &self.shared,
             &self.host_key_gate,
             &fingerprint,
+            previously_trusted,
         ) {
             Ok(waiter) => waiter,
             Err(_) => {
@@ -3041,6 +3089,7 @@ async fn ssh_worker(
     authentication: SshAuthentication,
     strategy: SessionStrategy,
     reconnect_policy: Option<ReconnectPolicy>,
+    known_host_fingerprint: Option<String>,
     shared: Arc<WorkerShared>,
     command_receiver: WorkerCommandReceiver,
     host_key_gate: Arc<HostKeyDecisionGate>,
@@ -3066,6 +3115,7 @@ async fn ssh_worker(
             &profile,
             &authentication,
             &strategy,
+            known_host_fingerprint.as_deref(),
             &shared,
             &command_receiver,
             &host_key_gate,
@@ -3367,10 +3417,12 @@ async fn wait_for_reconnect_delay(
 
 /// Establishes one fresh transport. Every invocation creates a new handler;
 /// its host-key callback begins a new gate sequence and emits a new prompt.
+#[allow(clippy::too_many_arguments)]
 async fn establish_connection(
     profile: &SshConnectionProfile,
     authentication: &WorkerAuthentication,
     strategy: &SessionStrategy,
+    known_host_fingerprint: Option<&str>,
     shared: &Arc<WorkerShared>,
     command_receiver: &WorkerCommandReceiver,
     host_key_gate: &Arc<HostKeyDecisionGate>,
@@ -3389,6 +3441,7 @@ async fn establish_connection(
         shared: Arc::clone(shared),
         host_key_gate: Arc::clone(host_key_gate),
         host_key_rejected: Arc::clone(&host_key_rejected),
+        expected_fingerprint: known_host_fingerprint.map(str::to_owned),
     };
     let connection = russh::client::connect(
         config,
@@ -5426,6 +5479,7 @@ mod tests {
                 shared,
                 host_key_gate: gate,
                 host_key_rejected: Arc::new(AtomicBool::new(false)),
+                expected_fingerprint: None,
             };
             runtime
                 .block_on(handler.check_server_key(&public_key))
@@ -5450,6 +5504,100 @@ mod tests {
             .resolve(&prompt, HostTrustDecision::AcceptAndPersist)
             .unwrap();
         assert!(callback.join().unwrap());
+    }
+
+    #[test]
+    fn handler_silently_accepts_a_matching_known_host_fingerprint() {
+        let (worker, _receiver, _resolver, _) = SshWorkerFoundation::new(profile());
+        let public_key = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
+        )
+        .unwrap();
+        let identity = worker.profile.identity.clone();
+        let shared = Arc::clone(&worker.shared);
+        let gate = Arc::clone(&worker.host_key_gate);
+        let mut handler = SshClientHandler {
+            identity,
+            shared,
+            host_key_gate: gate,
+            host_key_rejected: Arc::new(AtomicBool::new(false)),
+            expected_fingerprint: Some(
+                "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ".to_owned(),
+            ),
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let accepted = runtime
+            .block_on(handler.check_server_key(&public_key))
+            .unwrap();
+
+        assert!(
+            accepted,
+            "a matching known-host fingerprint must be accepted"
+        );
+        loop {
+            match worker.try_recv_event() {
+                Ok(SessionEvent::HostKeyVerification(_)) => {
+                    panic!("a matching known-host fingerprint must never prompt")
+                }
+                Ok(_) => continue,
+                Err(SessionTryReceiveError::Empty | SessionTryReceiveError::Closed) => break,
+            }
+        }
+    }
+
+    #[test]
+    fn handler_flags_a_mismatched_known_host_fingerprint_as_a_changed_key_warning() {
+        let (worker, _receiver, resolver, _) = SshWorkerFoundation::new(profile());
+        let public_key = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
+        )
+        .unwrap();
+        let identity = worker.profile.identity.clone();
+        let shared = Arc::clone(&worker.shared);
+        let gate = Arc::clone(&worker.host_key_gate);
+        let callback = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            let mut handler = SshClientHandler {
+                identity,
+                shared,
+                host_key_gate: gate,
+                host_key_rejected: Arc::new(AtomicBool::new(false)),
+                expected_fingerprint: Some("SHA256:previouslyTrustedButDifferent".to_owned()),
+            };
+            runtime
+                .block_on(handler.check_server_key(&public_key))
+                .unwrap()
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let prompt = loop {
+            match worker.try_recv_event() {
+                Ok(SessionEvent::HostKeyVerification(prompt)) => break prompt,
+                Ok(_) | Err(SessionTryReceiveError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "host-key callback did not prompt"
+                    );
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(SessionTryReceiveError::Closed) => panic!("host-key callback closed early"),
+            }
+        };
+        assert!(prompt.is_key_change());
+        assert_eq!(
+            prompt.previously_trusted_fingerprint(),
+            Some("SHA256:previouslyTrustedButDifferent")
+        );
+        resolver
+            .resolve(&prompt, HostTrustDecision::Reject)
+            .unwrap();
+        assert!(!callback.join().unwrap());
     }
 
     #[test]

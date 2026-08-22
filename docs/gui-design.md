@@ -960,17 +960,24 @@ confirm the fingerprint through a trusted source.
 For a previously unknown host, the implemented surface
 (`app/festerm/src/app.rs`'s `show_host_key_prompt_ui`) shows `ssh`'s own
 `Are you sure you want to continue connecting (yes/no)? [y/N] ` line with a
-blinking terminal cursor and captures `y`/`n`/Escape directly from the
+blinking terminal cursor and captures `y`/`n`/`a`/Escape directly from the
 keyboard — no Reject/Accept Once buttons, matching the "feel" of answering a
 real terminal prompt. `y` accepts the connection for this attempt only;
-`n`/Escape rejects it and returns to destination entry with non-secret fields
-retained. Persistent trust and an accept-and-store action remain absent until
-M8 owns appropriate storage.
+`a` accepts it and persists the fingerprint non-secretly in configuration
+(ADR 0020), so a future connection to this exact host:port skips the prompt
+entirely, mirroring `ssh`'s own `known_hosts`; `n`/Escape rejects it and
+returns to destination entry with non-secret fields retained.
 
-A changed previously trusted key is a separate high-severity state showing
-both expected and presented fingerprints. It offers Cancel Connection and a
-trust-record review path, but no ordinary Accept Once action. Replacing
-established trust must require a deliberate trust-management workflow.
+A changed previously trusted key (`show_changed_host_key_prompt_ui`) is a
+separate high-severity state showing both the previously trusted and
+newly presented fingerprints. It never offers an ordinary Accept Once: the
+only way to proceed is to type the literal word `yes` and press Enter, which
+replaces the stored trust record and continues; Escape, or Enter with
+anything else typed, cancels and returns to destination entry. Typed
+characters are echoed here (unlike the password prompt) since they are not
+secret, and this is a deliberate, visible act. Replacing established trust
+always requires this explicit typed override; there is no plain
+Accept-Once path for a changed key.
 Switching tabs remains allowed while either decision is pending; closing the
 chip cancels the attempt. Keyboard focus begins on the safe rejection/cancel
 action rather than acceptance.

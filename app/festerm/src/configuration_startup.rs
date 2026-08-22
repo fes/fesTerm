@@ -34,6 +34,8 @@ pub(crate) enum ConfigurationStartupStatus {
     PasswordCredentialSaveFailure(ConfigurationLoadFailure),
     InterfaceSettingsSaved,
     InterfaceSettingsSaveFailure(ConfigurationLoadFailure),
+    KnownHostTrustSaved,
+    KnownHostTrustSaveFailure(ConfigurationLoadFailure),
 }
 
 impl ConfigurationStartupStatus {
@@ -105,6 +107,12 @@ impl ConfigurationStartupStatus {
             Self::InterfaceSettingsSaveFailure(_) => {
                 "Interface settings apply now but could not be saved, so they will not persist across restart."
             }
+            Self::KnownHostTrustSaved => {
+                "This host key was saved as trusted and will be accepted automatically next time."
+            }
+            Self::KnownHostTrustSaveFailure(_) => {
+                "This host key was accepted for now, but could not be saved as trusted; it will prompt again next time."
+            }
         }
     }
 
@@ -116,6 +124,7 @@ impl ConfigurationStartupStatus {
                 | Self::WorkspaceSaveFailure(_)
                 | Self::PasswordCredentialSaveFailure(_)
                 | Self::InterfaceSettingsSaveFailure(_)
+                | Self::KnownHostTrustSaveFailure(_)
         )
     }
 }
@@ -261,6 +270,21 @@ impl ConfigurationReloader {
         match self.save_configuration(configuration) {
             Ok(()) => ConfigurationStartupStatus::InterfaceSettingsSaved,
             Err(failure) => ConfigurationStartupStatus::InterfaceSettingsSaveFailure(failure),
+        }
+    }
+
+    /// Saves an already validated complete replacement immediately after the
+    /// user accepts and remembers a host key from the host-key prompt (ADR
+    /// 0020), mirroring [`Self::save_interface_settings`]'s "applies
+    /// immediately" trigger rather than [`Self::save_workspace`]'s explicit
+    /// Settings action.
+    pub(crate) fn save_known_host_trust(
+        &self,
+        configuration: &Configuration,
+    ) -> ConfigurationStartupStatus {
+        match self.save_configuration(configuration) {
+            Ok(()) => ConfigurationStartupStatus::KnownHostTrustSaved,
+            Err(failure) => ConfigurationStartupStatus::KnownHostTrustSaveFailure(failure),
         }
     }
 

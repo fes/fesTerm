@@ -87,14 +87,19 @@ pub enum ApplicationSession {
     Ssh(SshSession),
 }
 
-/// The only host-key decisions exposed by the application during M7.
+/// The host-key decisions exposed by the application (ADR 0020).
 ///
-/// Persistent trust is deliberately not representable until M8 storage owns
-/// its policy and secure persistence boundary.
+/// `AcceptAndPersist` accepts the current connection exactly like
+/// `AcceptOnce` at the SSH transport (`festerm-ssh` already treats both
+/// identically for one connection); the durable trust-record write itself
+/// is a composition-root concern (secret-store-adjacent, needs the
+/// configuration reloader) and is intercepted in `FesTermApp::screen_command`
+/// rather than handled inside `AppState::dispatch`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HostKeyTrustDecision {
     Reject,
     AcceptOnce,
+    AcceptAndPersist,
 }
 
 impl From<HostKeyTrustDecision> for HostTrustDecision {
@@ -102,6 +107,7 @@ impl From<HostKeyTrustDecision> for HostTrustDecision {
         match value {
             HostKeyTrustDecision::Reject => Self::Reject,
             HostKeyTrustDecision::AcceptOnce => Self::AcceptOnce,
+            HostKeyTrustDecision::AcceptAndPersist => Self::AcceptAndPersist,
         }
     }
 }
@@ -843,7 +849,14 @@ pub enum AppCommand {
         options: SshSessionOptions,
     },
     /// Resolves the displayed host-key request for one specific SSH tab.
-    /// This command intentionally has no persistent-trust variant.
+    ///
+    /// `AcceptAndPersist` (ADR 0020) additionally requires the composition
+    /// root to write a durable trust record before this command reaches
+    /// `AppState::dispatch`, mirroring how `StoreSshPassword` needs the
+    /// configuration reloader; `FesTermApp::screen_command` reads the
+    /// pending prompt and persists it first, then still routes this command
+    /// through `AppState::dispatch` unchanged so the SSH-level decision is
+    /// resolved identically to `AcceptOnce`.
     ResolveHostKeyTrust {
         tab: TabId,
         decision: HostKeyTrustDecision,
@@ -1345,6 +1358,18 @@ impl AppState {
         options: SshSessionOptions,
         context: &egui::Context,
     ) {
+        // Consulted here rather than in the SSH backend so every launch path
+        // (Quick Connect, Advanced form, a configured profile, or a stored-
+        // password profile) benefits uniformly from a persisted trust
+        // record (ADR 0020), including ad-hoc Quick Connect destinations
+        // that have no saved profile at all.
+        let options = match self
+            .configuration
+            .known_host_fingerprint(profile.identity().host(), profile.identity().port())
+        {
+            Some(fingerprint) => options.with_known_host_fingerprint(fingerprint),
+            None => options,
+        };
         // A brand-new `StartSshSession` command (Quick Connect, Advanced
         // form, or a configured profile) always begins a fresh retry
         // episode. The bounded reprompt loop for an in-connection password
@@ -1968,7 +1993,7 @@ mod tests {
     }
 
     #[test]
-    fn application_host_key_decisions_cannot_request_persistence() {
+    fn host_key_trust_decisions_map_onto_the_ssh_transport_decisions_including_persistence() {
         assert_eq!(
             HostTrustDecision::from(HostKeyTrustDecision::Reject),
             HostTrustDecision::Reject
@@ -1976,6 +2001,14 @@ mod tests {
         assert_eq!(
             HostTrustDecision::from(HostKeyTrustDecision::AcceptOnce),
             HostTrustDecision::AcceptOnce
+        );
+        // ADR 0020: the durable trust-record write is a composition-root
+        // concern intercepted in `FesTermApp::screen_command`, but the
+        // SSH-transport-level decision this maps onto is identical to
+        // `AcceptOnce` for the current connection either way.
+        assert_eq!(
+            HostTrustDecision::from(HostKeyTrustDecision::AcceptAndPersist),
+            HostTrustDecision::AcceptAndPersist
         );
     }
 

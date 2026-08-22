@@ -721,6 +721,48 @@ impl FesTermApp {
         self.configuration_status = status;
     }
 
+    /// Persists the host key currently displayed for `tab` as trusted (ADR
+    /// 0020), reading the pending prompt before any dispatch can clear it.
+    /// The current in-memory configuration is only replaced after the
+    /// atomic file write succeeds, matching [`Self::save_workspace`]'s
+    /// commit-only-on-success rule; the SSH-level accept proceeds
+    /// regardless, since a save failure only means this host will prompt
+    /// again on a future connection rather than being remembered.
+    fn persist_known_host_trust(&mut self, tab: TabId) {
+        let Some(prompt) = self
+            .state
+            .session_tab_mut(tab)
+            .and_then(|session| session.host_key_prompt())
+        else {
+            return;
+        };
+        let host = prompt.host().to_owned();
+        let port = prompt.port();
+        let fingerprint = prompt.sha256_fingerprint().to_owned();
+        let replacement =
+            match self
+                .state
+                .configuration()
+                .with_known_host_trust(&host, port, &fingerprint)
+            {
+                Ok(replacement) => replacement,
+                Err(_) => {
+                    self.configuration_status =
+                        ConfigurationStartupStatus::KnownHostTrustSaveFailure(
+                            crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                        );
+                    return;
+                }
+            };
+        let status = self
+            .configuration_reloader
+            .save_known_host_trust(&replacement);
+        if matches!(status, ConfigurationStartupStatus::KnownHostTrustSaved) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
     /// Applies the reset-interface-settings policy shared by chrome, the
     /// command palette, and shortcuts: nothing to confirm when settings
     /// already equal defaults, otherwise a destructive-adjacent confirmation
@@ -1791,6 +1833,9 @@ impl FesTermApp {
         tab_id: TabId,
         prompt: &HostKeyPrompt,
     ) -> Option<AppCommand> {
+        if prompt.is_key_change() {
+            return Self::show_changed_host_key_prompt_ui(ui, tab_id, prompt);
+        }
         if !festerm_ui_egui::terminal_fonts_installed(ui.ctx()) {
             // Mirrors `TerminalView`'s own guard: the named terminal font
             // family only becomes usable after egui rebuilds its atlas at
@@ -1832,6 +1877,11 @@ impl FesTermApp {
                         theme::TEXT_PRIMARY,
                     ));
                 });
+                ui.add_space(4.0);
+                ui.label(mono(
+                    "Press 'a' to accept and remember this host for future connections.".to_owned(),
+                    theme::TEXT_SECONDARY,
+                ));
             });
 
         // Keyboard-driven, matching the "feel" of a real pty prompt: no
@@ -1841,12 +1891,148 @@ impl FesTermApp {
         ui.ctx().input_mut(|input| {
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Y) {
                 decision = Some(HostKeyTrustDecision::AcceptOnce);
+            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::A) {
+                decision = Some(HostKeyTrustDecision::AcceptAndPersist);
             } else if input.consume_key(egui::Modifiers::NONE, egui::Key::N)
                 || input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
             {
                 decision = Some(HostKeyTrustDecision::Reject);
             }
         });
+
+        decision.map(|decision| AppCommand::ResolveHostKeyTrust {
+            tab: tab_id,
+            decision,
+        })
+    }
+
+    /// The changed-key warning path (ADR 0020, `docs/gui-action-graph.md`
+    /// `TRUST-04`): a persistent trust record already names a different
+    /// fingerprint for this host, so this never offers an ordinary
+    /// low-friction Accept Once. The only way to proceed is to type the
+    /// literal word `yes` and press Enter, mirroring the raw, unechoed
+    /// keystroke capture used by the live SSH password prompt but echoing
+    /// what is typed here (it is not secret) so the deliberate act is
+    /// visible. Anything else, or Escape, cancels the connection.
+    fn show_changed_host_key_prompt_ui(
+        ui: &mut egui::Ui,
+        tab_id: TabId,
+        prompt: &HostKeyPrompt,
+    ) -> Option<AppCommand> {
+        if !festerm_ui_egui::terminal_fonts_installed(ui.ctx()) {
+            festerm_ui_egui::install_terminal_fonts(ui.ctx());
+            ui.ctx().request_repaint();
+            return None;
+        }
+        let host_port = Self::canonical_host_port(prompt.host(), prompt.port());
+        let fingerprint = prompt.sha256_fingerprint();
+        let previous_fingerprint = prompt.previously_trusted_fingerprint().unwrap_or_default();
+        let state_id = ui.id().with(("changed_host_key_prompt", tab_id));
+        let mut typed: String = ui.data_mut(|data| data.get_temp(state_id).unwrap_or_default());
+        let mut decision = None;
+        let font = festerm_ui_egui::terminal_font(festerm_ui_egui::DEFAULT_TERMINAL_FONT_SIZE);
+        let mono = |text: String, color: egui::Color32| {
+            egui::RichText::new(text).font(font.clone()).color(color)
+        };
+
+        egui::Frame::new()
+            .fill(theme::SURFACE_TERMINAL)
+            .inner_margin(egui::Margin::same(16))
+            .show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                ui.label(mono(
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@".to_owned(),
+                    theme::STATUS_ERROR,
+                ));
+                ui.label(mono(
+                    "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @".to_owned(),
+                    theme::STATUS_ERROR,
+                ));
+                ui.label(mono(
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@".to_owned(),
+                    theme::STATUS_ERROR,
+                ));
+                ui.add_space(4.0);
+                ui.label(mono(
+                    format!(
+                        "The key previously trusted for '{host_port}' was {previous_fingerprint}."
+                    ),
+                    theme::TEXT_PRIMARY,
+                ));
+                ui.label(mono(
+                    format!("The server now presents a different key: {fingerprint}."),
+                    theme::TEXT_PRIMARY,
+                ));
+                ui.label(mono(
+                    "This could mean someone is intercepting this connection, or the host's key was legitimately changed.".to_owned(),
+                    theme::TEXT_PRIMARY,
+                ));
+                ui.add_space(4.0);
+                ui.label(mono(
+                    "Type 'yes' and press Enter to replace the trusted key and continue, or press Escape to cancel.".to_owned(),
+                    theme::TEXT_SECONDARY,
+                ));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(mono(format!("> {typed}"), theme::TEXT_PRIMARY));
+                    ui.label(mono(
+                        screens::pty_cursor_glyph(ui).to_owned(),
+                        theme::TEXT_PRIMARY,
+                    ));
+                });
+            });
+
+        let mut submitted = false;
+        let mut cancelled = false;
+        ui.ctx().input_mut(|input| {
+            input.events.retain(|event| match event {
+                egui::Event::Text(text) => {
+                    typed.push_str(text);
+                    false
+                }
+                egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    pressed: true,
+                    ..
+                } => {
+                    typed.pop();
+                    false
+                }
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    ..
+                } => {
+                    submitted = true;
+                    false
+                }
+                egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    ..
+                } => {
+                    cancelled = true;
+                    false
+                }
+                _ => true,
+            });
+        });
+
+        if cancelled {
+            decision = Some(HostKeyTrustDecision::Reject);
+        } else if submitted {
+            decision = Some(if typed.trim() == "yes" {
+                HostKeyTrustDecision::AcceptAndPersist
+            } else {
+                HostKeyTrustDecision::Reject
+            });
+        }
+
+        if decision.is_some() {
+            ui.data_mut(|data| data.remove_temp::<String>(state_id));
+        } else {
+            ui.data_mut(|data| data.insert_temp(state_id, typed));
+        }
 
         decision.map(|decision| AppCommand::ResolveHostKeyTrust {
             tab: tab_id,
@@ -2126,6 +2312,14 @@ impl FesTermApp {
                 }
                 AppCommand::ResetInterfaceSettings => {
                     self.request_reset_interface_settings(&ui.ctx().clone());
+                }
+                AppCommand::ResolveHostKeyTrust { tab, decision } => {
+                    let context = ui.ctx().clone();
+                    if matches!(decision, HostKeyTrustDecision::AcceptAndPersist) {
+                        self.persist_known_host_trust(tab);
+                    }
+                    self.state
+                        .dispatch(AppCommand::ResolveHostKeyTrust { tab, decision }, &context);
                 }
                 command => {
                     let context = ui.ctx().clone();
@@ -2780,6 +2974,142 @@ mod tests {
                 },
                 FesTermApp::for_test_with_configuration(configuration),
             )
+    }
+
+    fn test_host_key_prompt() -> HostKeyPrompt {
+        HostKeyPrompt::new(
+            "ssh.example.test",
+            22,
+            "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ",
+        )
+    }
+
+    #[test]
+    fn host_key_prompt_ui_accepts_and_remembers_a_first_seen_host_on_a_key() {
+        struct PromptHarnessState {
+            prompt: HostKeyPrompt,
+            tab_id: TabId,
+            command: Option<AppCommand>,
+        }
+
+        let tab_id = AppState::for_test().active();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut PromptHarnessState| {
+                    if let Some(command) =
+                        FesTermApp::show_host_key_prompt_ui(ui, state.tab_id, &state.prompt)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                PromptHarnessState {
+                    prompt: test_host_key_prompt(),
+                    tab_id,
+                    command: None,
+                },
+            );
+        harness.run();
+        harness.run();
+
+        harness.key_press(egui::Key::A);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ResolveHostKeyTrust {
+                decision: HostKeyTrustDecision::AcceptAndPersist,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn changed_host_key_prompt_ui_requires_typing_yes_to_replace_trust() {
+        struct PromptHarnessState {
+            prompt: HostKeyPrompt,
+            tab_id: TabId,
+            command: Option<AppCommand>,
+        }
+
+        let tab_id = AppState::for_test().active();
+        let prompt = test_host_key_prompt()
+            .with_previously_trusted_fingerprint("SHA256:previouslyTrustedButDifferent");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut PromptHarnessState| {
+                    if let Some(command) =
+                        FesTermApp::show_host_key_prompt_ui(ui, state.tab_id, &state.prompt)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                PromptHarnessState {
+                    prompt,
+                    tab_id,
+                    command: None,
+                },
+            );
+        harness.run();
+        harness.run();
+
+        // A bare Enter (nothing typed, so not "yes") must reject rather
+        // than offer any low-friction accept for a changed key.
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ResolveHostKeyTrust {
+                decision: HostKeyTrustDecision::Reject,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn changed_host_key_prompt_ui_accepts_and_persists_only_after_typing_the_literal_word_yes() {
+        struct PromptHarnessState {
+            prompt: HostKeyPrompt,
+            tab_id: TabId,
+            command: Option<AppCommand>,
+        }
+
+        let tab_id = AppState::for_test().active();
+        let prompt = test_host_key_prompt()
+            .with_previously_trusted_fingerprint("SHA256:previouslyTrustedButDifferent");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut PromptHarnessState| {
+                    if let Some(command) =
+                        FesTermApp::show_host_key_prompt_ui(ui, state.tab_id, &state.prompt)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                PromptHarnessState {
+                    prompt,
+                    tab_id,
+                    command: None,
+                },
+            );
+        harness.run();
+        harness.run();
+
+        for character in "yes".chars() {
+            harness.event(egui::Event::Text(character.to_string()));
+        }
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ResolveHostKeyTrust {
+                decision: HostKeyTrustDecision::AcceptAndPersist,
+                ..
+            })
+        ));
     }
 
     fn failed_local_profile_harness() -> Harness<'static, FesTermApp> {

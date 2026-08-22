@@ -22,7 +22,8 @@ use festerm_pty::LocalProfile;
 use festerm_secret_store::SecretReference;
 use festerm_session::TerminalSize;
 use festerm_ssh::{
-    HostIdentity, PersistenceProvider, PersistentSessionName, SessionStrategy, SshConnectionProfile,
+    is_sha256_fingerprint, HostIdentity, PersistenceProvider, PersistentSessionName,
+    SessionStrategy, SshConnectionProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +53,8 @@ pub struct Configuration {
     workspace: Option<WorkspaceConfiguration>,
     #[serde(default, skip_serializing_if = "InterfaceSettings::is_default")]
     settings: InterfaceSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    known_hosts: Vec<KnownHostEntry>,
 }
 
 impl Configuration {
@@ -63,6 +66,7 @@ impl Configuration {
             workspace_enabled: false,
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
+            known_hosts: Vec::new(),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -79,6 +83,7 @@ impl Configuration {
             workspace_enabled: true,
             workspace: Some(workspace),
             settings: InterfaceSettings::DEFAULT,
+            known_hosts: Vec::new(),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -92,6 +97,7 @@ impl Configuration {
     pub fn with_workspace(&self, workspace: WorkspaceConfiguration) -> Result<Self, ConfigError> {
         let mut replacement = Self::new_with_workspace(self.profiles.clone(), workspace)?;
         replacement.settings = self.settings;
+        replacement.known_hosts = self.known_hosts.clone();
         replacement.validate()?;
         Ok(replacement)
     }
@@ -123,6 +129,58 @@ impl Configuration {
         Ok(replacement)
     }
 
+    /// Returns a complete replacement recording `fingerprint` as the trusted
+    /// host key for `host:port` (ADR 0020).
+    ///
+    /// An existing record for the same `host:port` is replaced outright;
+    /// there is no silent merge. Host public-key fingerprints are not secret
+    /// material, so this is ordinary configuration state, not a credential.
+    pub fn with_known_host_trust(
+        &self,
+        host: &str,
+        port: u16,
+        fingerprint: &str,
+    ) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        replacement
+            .known_hosts
+            .retain(|entry| !entry.matches(host, port));
+        replacement.known_hosts.push(KnownHostEntry {
+            host: host.to_owned(),
+            port,
+            sha256_fingerprint: fingerprint.to_owned(),
+        });
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Returns a complete replacement with any persistent trust record for
+    /// `host:port` removed (ADR 0020's explicit revocation path).
+    ///
+    /// Infallible once cloned: removing an entry can never introduce a new
+    /// validation failure.
+    pub fn without_known_host(&self, host: &str, port: u16) -> Self {
+        let mut replacement = self.clone();
+        replacement
+            .known_hosts
+            .retain(|entry| !entry.matches(host, port));
+        replacement
+    }
+
+    /// Returns the fingerprint persistently trusted for `host:port`, if any
+    /// (ADR 0020).
+    pub fn known_host_fingerprint(&self, host: &str, port: u16) -> Option<&str> {
+        self.known_hosts
+            .iter()
+            .find(|entry| entry.matches(host, port))
+            .map(|entry| entry.sha256_fingerprint.as_str())
+    }
+
+    /// Returns the metadata-only workspace when persistence is enabled.
+    pub fn workspace(&self) -> Option<&WorkspaceConfiguration> {
+        self.workspace.as_ref()
+    }
+
     /// Returns a complete replacement with these interface settings applied.
     ///
     /// Unlike profiles/workspace metadata, these preferences are intended to
@@ -151,6 +209,7 @@ impl Configuration {
             workspace_enabled: false,
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
+            known_hosts: Vec::new(),
         }
     }
 
@@ -164,6 +223,7 @@ impl Configuration {
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
             settings: raw.settings,
+            known_hosts: raw.known_hosts,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -237,11 +297,6 @@ impl Configuration {
         self.workspace_enabled
     }
 
-    /// Returns the metadata-only workspace when persistence is enabled.
-    pub fn workspace(&self) -> Option<&WorkspaceConfiguration> {
-        self.workspace.as_ref()
-    }
-
     fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(ConfigErrorKind::UnsupportedSchemaVersion));
@@ -256,6 +311,13 @@ impl Configuration {
                 ));
             }
             profile.validate()?;
+        }
+        let mut known_hosts = HashSet::with_capacity(self.known_hosts.len());
+        for entry in &self.known_hosts {
+            entry.validate()?;
+            if !known_hosts.insert((entry.host.as_str(), entry.port)) {
+                return Err(ConfigError::new(ConfigErrorKind::DuplicateKnownHost));
+            }
         }
         match (self.workspace_enabled, &self.workspace) {
             (false, None) => Ok(()),
@@ -281,6 +343,8 @@ struct RawConfiguration {
     workspace: Option<WorkspaceConfiguration>,
     #[serde(default)]
     settings: InterfaceSettings,
+    #[serde(default)]
+    known_hosts: Vec<KnownHostEntry>,
 }
 
 impl<'de> Deserialize<'de> for Configuration {
@@ -295,6 +359,7 @@ impl<'de> Deserialize<'de> for Configuration {
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
             settings: raw.settings,
+            known_hosts: raw.known_hosts,
         };
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)
@@ -816,6 +881,56 @@ impl Profile {
     }
 }
 
+/// A persistently trusted SSH host key record (ADR 0020).
+///
+/// Host public keys and their fingerprints are not secret: this is ordinary
+/// non-secret configuration state, unlike [`CredentialReference`], and is
+/// stored directly in the configuration document rather than a native
+/// secret store. `host`/`port` are stored as plain fields rather than a
+/// [`HostIdentity`] because that type has no `Serialize`/`Deserialize`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KnownHostEntry {
+    host: String,
+    port: u16,
+    sha256_fingerprint: String,
+}
+
+impl KnownHostEntry {
+    /// Returns the SSH host name or numeric address this record trusts.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Returns the SSH port this record trusts.
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Returns the trusted `SHA256:`-prefixed host-key fingerprint.
+    pub fn sha256_fingerprint(&self) -> &str {
+        &self.sha256_fingerprint
+    }
+
+    fn matches(&self, host: &str, port: u16) -> bool {
+        self.host == host && self.port == port
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let identity = HostIdentity::new(&self.host, self.port)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidKnownHost))?;
+        if contains_control_character(identity.host())
+            || contains_secret_bearing_value(identity.host())
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidKnownHost));
+        }
+        if !is_sha256_fingerprint(&self.sha256_fingerprint) {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidKnownHost));
+        }
+        Ok(())
+    }
+}
+
 /// Secret-free metadata for a local PTY launch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1265,6 +1380,8 @@ pub enum ConfigErrorKind {
     UnknownWorkspaceProfileReference,
     WorkspaceProfileKindMismatch,
     UnknownFocusedWorkspaceTab,
+    InvalidKnownHost,
+    DuplicateKnownHost,
     Serialization,
 }
 
@@ -1364,6 +1481,12 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::UnknownFocusedWorkspaceTab => {
                 formatter.write_str("workspace focus must reference a saved tab")
+            }
+            ConfigErrorKind::InvalidKnownHost => formatter.write_str(
+                "known_hosts[] entries must have a valid host, nonzero port, and a canonical SHA256: fingerprint",
+            ),
+            ConfigErrorKind::DuplicateKnownHost => {
+                formatter.write_str("known_hosts[] entries must be unique per host:port")
             }
             ConfigErrorKind::Serialization => {
                 formatter.write_str("configuration could not be serialized")
@@ -1886,6 +2009,92 @@ id = "settings"
             .and_then(Profile::credential_reference)
             .is_some());
         assert!(!format!("{replacement:?}").contains(CREDENTIAL_REFERENCE));
+    }
+
+    #[test]
+    fn records_upserts_and_revokes_a_known_host_trust_entry() {
+        let original = Configuration::empty();
+        let fingerprint = "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ";
+
+        assert!(original
+            .known_host_fingerprint("ssh.example.test", 22)
+            .is_none());
+
+        let trusted = original
+            .with_known_host_trust("ssh.example.test", 22, fingerprint)
+            .expect("known-host trust is valid");
+        assert_eq!(
+            trusted.known_host_fingerprint("ssh.example.test", 22),
+            Some(fingerprint)
+        );
+        // The original document is untouched (immutable-replacement pattern).
+        assert!(original
+            .known_host_fingerprint("ssh.example.test", 22)
+            .is_none());
+
+        let rotated_fingerprint = "SHA256:different0000000000000000000000000000000";
+        let rotated = trusted
+            .with_known_host_trust("ssh.example.test", 22, rotated_fingerprint)
+            .expect("known-host trust replacement is valid");
+        assert_eq!(
+            rotated.known_host_fingerprint("ssh.example.test", 22),
+            Some(rotated_fingerprint)
+        );
+
+        let revoked = rotated.without_known_host("ssh.example.test", 22);
+        assert!(revoked
+            .known_host_fingerprint("ssh.example.test", 22)
+            .is_none());
+    }
+
+    #[test]
+    fn known_host_trust_round_trips_through_toml_and_rejects_invalid_entries() {
+        let fingerprint = "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ";
+        let configuration = Configuration::empty()
+            .with_known_host_trust("ssh.example.test", 2222, fingerprint)
+            .expect("known-host trust is valid");
+        let document = configuration.to_toml().expect("serializes as TOML");
+        assert!(document.contains("known_hosts"));
+
+        let reparsed = Configuration::parse(&document).expect("round trip parses");
+        assert_eq!(
+            reparsed.known_host_fingerprint("ssh.example.test", 2222),
+            Some(fingerprint)
+        );
+
+        let invalid_fingerprint = Configuration::parse(
+            r#"
+schema_version = 1
+
+[[known_hosts]]
+host = "ssh.example.test"
+port = 22
+sha256_fingerprint = "not-a-fingerprint"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            invalid_fingerprint.kind(),
+            ConfigErrorKind::InvalidKnownHost
+        );
+
+        let duplicate = Configuration::parse(&format!(
+            r#"
+schema_version = 1
+
+[[known_hosts]]
+host = "ssh.example.test"
+port = 22
+sha256_fingerprint = "{fingerprint}"
+
+[[known_hosts]]
+host = "ssh.example.test"
+port = 22
+sha256_fingerprint = "{fingerprint}"
+"#
+        ))
+        .unwrap_err();
+        assert_eq!(duplicate.kind(), ConfigErrorKind::DuplicateKnownHost);
     }
 
     #[test]

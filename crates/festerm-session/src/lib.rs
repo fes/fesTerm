@@ -237,11 +237,20 @@ pub enum FlowDirection {
 /// The public key itself remains in the SSH transport. The application may
 /// display this identity and fingerprint, then resolve the request through the
 /// transport-specific session API.
+///
+/// `previously_trusted_fingerprint` is `None` for an ordinary first-seen
+/// host. It is `Some(previous)` only when a persistent trust record already
+/// exists for this host:port and the presented fingerprint does not match
+/// it — a possible host impersonation or a legitimate host-key rotation,
+/// indistinguishable from this boundary alone. The application must treat
+/// this case with materially more friction than a first-seen prompt: it
+/// never offers a plain, low-friction accept for a changed key.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostKeyPrompt {
     host: String,
     port: u16,
     sha256_fingerprint: String,
+    previously_trusted_fingerprint: Option<String>,
 }
 
 impl HostKeyPrompt {
@@ -250,7 +259,17 @@ impl HostKeyPrompt {
             host: host.into(),
             port,
             sha256_fingerprint: sha256_fingerprint.into(),
+            previously_trusted_fingerprint: None,
         }
+    }
+
+    /// Marks this prompt as a changed-key warning: `previous` is the
+    /// fingerprint a persistent trust record already names for this
+    /// host:port, which differs from [`Self::sha256_fingerprint`].
+    #[must_use]
+    pub fn with_previously_trusted_fingerprint(mut self, previous: impl Into<String>) -> Self {
+        self.previously_trusted_fingerprint = Some(previous.into());
+        self
     }
 
     pub fn host(&self) -> &str {
@@ -263,6 +282,19 @@ impl HostKeyPrompt {
 
     pub fn sha256_fingerprint(&self) -> &str {
         &self.sha256_fingerprint
+    }
+
+    /// The fingerprint a persistent trust record already names for this
+    /// host:port, if this prompt is a changed-key warning rather than an
+    /// ordinary first-seen host.
+    pub fn previously_trusted_fingerprint(&self) -> Option<&str> {
+        self.previously_trusted_fingerprint.as_deref()
+    }
+
+    /// Whether this prompt reports a mismatch against an existing persistent
+    /// trust record, rather than an ordinary first-seen host.
+    pub fn is_key_change(&self) -> bool {
+        self.previously_trusted_fingerprint.is_some()
     }
 }
 

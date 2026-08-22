@@ -58,6 +58,7 @@ clipboard data, shell profile, credentials, host, path, or terminal history.
 | `K11 Narrow` | Any applicable checkpoint at `360 × 516` logical px and recorded scale. | Restore `752 × 516` baseline. |
 | `K12 Modal` | A specified close/paste/trust/destructive dialog open with Cancel focused. | Take its safe Cancel/Escape edge, verify zero unintended bytes/effects. |
 | `K13 Serial` | Future virtual loopback or representative adapter fixture. | Close/release port, remove loopback, return `K1`. |
+| `K14 ChangedHostKey` | Disposable SSH fixture whose persisted trust record names a different fingerprint than the one currently presented. | Cancel; restore fixture trust store to its prior single-record state; return to destination or `K1`. |
 
 Every unexpected state has a bounded recovery ladder:
 
@@ -163,8 +164,9 @@ stateDiagram-v2
 | --- | --- | --- | --- | --- | --- |
 | `TRUST-01` | `K7 → K7` | Inspect unknown-host prompt. | Canonical host:port, algorithm, full selectable SHA-256 fingerprint; safe Reject focused; no claim host is safe and no password retained. | `TRUST-02` or `TRUST-03`. | H,V,N,U |
 | `TRUST-02` | `K7 → SshDestination` | Reject, Cancel, or close pending chip. | Attempt stops; destination retains only non-secret fields; no trust record. Closing removes chip under close rules. | Retry with `LAUNCH-05` or Back to `K1`. | P,H,N |
-| `TRUST-03` | `K7 → K8` | Deliberately Accept Once. | Acceptance applies only to this attempt; authentication starts afterward; no persistence claim. | `AUTH-03`. | P,H,N,U |
-| `TRUST-04` | `ChangedKey → ChangedKey/SshDestination` | Fixture presents a changed trusted key. | Both expected/presented fingerprints; high severity; Cancel Connection and review path only—no ordinary Accept Once. | Cancel to destination; reset fixture trust store. | P,H,V,N,U; target |
+| `TRUST-03` | `K7 → K8` | Deliberately Accept Once, or Accept and remember. | Accept Once applies only to this attempt; Accept and remember (ADR 0020) additionally persists the fingerprint non-secretly so future connections to this host skip the prompt entirely. Either way authentication starts afterward. | `AUTH-03`. | P,H,N,U |
+| `TRUST-04` | `K14 → K14/SshDestination` | Fixture presents a changed trusted key. | Both expected/presented fingerprints; high severity; typed literal `yes` plus Enter to replace the trusted key and continue, or Cancel/Escape to review — no ordinary Accept Once (ADR 0020). | Cancel to destination; reset fixture trust store. | P,H,V,N,U |
+| `TRUST-05` | `K7 --TRUST-03(remember)--> K9` (later reconnect) | Reconnect to a host with a remembered trust record. | Presented key matches the persisted fingerprint exactly; no prompt is shown at all, mirroring `ssh`'s own already-in-`known_hosts` behavior. | Reconnect proceeds straight to `K9`/`K8` as appropriate. | P,H,N |
 | `AUTH-01` | `K8 → K8` | Type password; toggle explicit Remember only for eligible saved profile/store. | Masked transient secret; Connect disabled empty; no diagnostics/config/workspace/log retention. | Escape once clears secret. | P,H,N,privacy |
 | `AUTH-02` | `K8 → K9/K8` | Enter/Connect once. | Duplicate submits blocked; field clears after success or failure; failure stays with concise correction; success creates Connected terminal. | Failure: retry/cancel. Success: `SSH-02`. | P,H,N |
 | `AUTH-03` | `K8 → SshDestination` | Escape with empty field, or Cancel attempt. | First Escape clears nonempty secret only; subsequent Escape returns to destination; zero auth bytes after cancel. | Back to `K1` or retry. | H,N |
@@ -462,6 +464,19 @@ K1 --LAUNCH-02/04/05--> K7
    --CLOSE-01/02--> K9
    --SSH-02--> K6
    --CLOSE-04--> K1
+```
+
+### Walk 5a — persisted and changed host-key trust
+
+```text
+K1 --LAUNCH-02/04/05--> K7
+   --TRUST-03(remember)--> K8 --AUTH-02--> K9
+   --SSH-02--> K1 --LAUNCH-05--> (reconnect, TRUST-05, no prompt) --> K9
+```
+
+```text
+K1 --LAUNCH-02/04/05--> K14
+   --TRUST-04(cancel)--> SshDestination
 ```
 
 ### Walk 6 — restore, configuration recovery, and privacy
