@@ -1856,147 +1856,163 @@ pub fn show_profiles(
                     "New SSH Profile"
                 });
                 ui.add_space(16.0);
-                // Private-key authentication adds a tall multiline secret
-                // field; wrapped in a scroll area so Save/Cancel stay
-                // reachable instead of overflowing past the window's bottom
-                // edge on shorter windows. Sized from the actual viewport
-                // (rather than `auto_shrink([false, false])`, which grows to
-                // fill whatever height this deeply nested `horizontal`/
-                // `vertical` layout reports as "available" and could
-                // collapse to a sliver) so it stays compact for a short
-                // form and only starts scrolling once content would
-                // otherwise run past the window's bottom edge.
-                let scroll_max_height = (ui.ctx().content_rect().height() - 220.0).max(240.0);
-                ScrollArea::vertical()
-                    .id_salt((tab_id, "edit_ssh_profile_scroll"))
-                    .max_height(scroll_max_height)
-                    .show(ui, |ui| {
-                        egui::Frame::new()
+                egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE)
                     .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
                     .corner_radius(8.0)
                     .inner_margin(egui::Margin::same(16))
                     .show(ui, |ui| {
                         ui.set_width(340.0);
-                        ssh_section_heading(ui, "Connection");
-                        profile_text_edit(
-                            ui,
-                            tab_id,
-                            "name",
-                            "Name",
-                            &mut draft.name,
-                        );
-                        profile_text_edit(ui, tab_id, "username", "Username", &mut draft.username);
-                        profile_text_edit(ui, tab_id, "host", "Host", &mut draft.host);
-                        profile_text_edit(ui, tab_id, "port", "Port", &mut draft.port);
-                        if let Some(profile_id) = draft.original_id.clone() {
-                            ui.add_space(10.0);
-                            ssh_section_heading(ui, "Authentication");
-                            ui.horizontal(|ui| {
-                                ui.radio_value(
-                                    &mut draft.auth_method,
-                                    SshAuthenticationMethod::Password,
-                                    "Password authentication",
+                        // Private-key authentication adds a tall multiline
+                        // secret field that can otherwise push Save/Cancel
+                        // below the window's bottom edge. Rather than
+                        // wrapping the whole bordered panel in a scroll area
+                        // (which either grows it to fill whatever height the
+                        // surrounding layout happens to report as
+                        // "available" — collapsing it to a sliver in
+                        // practice — or clips the panel's own border), only
+                        // the fields scroll, *inside* the panel; the panel
+                        // itself keeps its natural (small-form) height and
+                        // only grows a scrollbar once content would run past
+                        // the actual window height.
+                        let scroll_max_height =
+                            (ui.ctx().content_rect().height() - 260.0).max(200.0);
+                        ScrollArea::vertical()
+                            .id_salt((tab_id, "edit_ssh_profile_scroll"))
+                            .max_height(scroll_max_height)
+                            .show(ui, |ui| {
+                                ssh_section_heading(ui, "Connection");
+                                profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name);
+                                profile_text_edit(
+                                    ui,
+                                    tab_id,
+                                    "username",
+                                    "Username",
+                                    &mut draft.username,
                                 );
-                                ui.radio_value(
-                                    &mut draft.auth_method,
-                                    SshAuthenticationMethod::PrivateKey,
-                                    "Private-key authentication",
-                                );
-                            });
-                            ui.add_space(4.0);
-                            match draft.auth_method {
-                                SshAuthenticationMethod::Password => {
-                                    ssh_paragraph(
-                                        ui,
-                                        if draft.has_stored_credential
-                                            && draft.stored_credential_kind
-                                                == CredentialKind::Password
-                                        {
-                                            "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
-                                        } else {
-                                            "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
-                                        },
-                                    );
+                                profile_text_edit(ui, tab_id, "host", "Host", &mut draft.host);
+                                profile_text_edit(ui, tab_id, "port", "Port", &mut draft.port);
+                                if let Some(profile_id) = draft.original_id.clone() {
+                                    ui.add_space(10.0);
+                                    ssh_section_heading(ui, "Authentication");
+                                    ui.horizontal(|ui| {
+                                        ui.radio_value(
+                                            &mut draft.auth_method,
+                                            SshAuthenticationMethod::Password,
+                                            "Password authentication",
+                                        );
+                                        ui.radio_value(
+                                            &mut draft.auth_method,
+                                            SshAuthenticationMethod::PrivateKey,
+                                            "Private-key authentication",
+                                        );
+                                    });
                                     ui.add_space(4.0);
-                                    profile_password_edit(
-                                        ui,
-                                        tab_id,
-                                        "password",
-                                        "Password",
-                                        &mut draft.password,
-                                    );
-                                    ui.add_space(4.0);
-                                    if ui
-                                        .add_enabled(
-                                            !draft.password.is_empty(),
-                                            egui::Button::new("Save password"),
-                                        )
-                                        .clicked()
-                                    {
-                                        command = Some(AppCommand::StoreProfilePassword {
-                                            profile_id,
-                                            password: PasswordToStore::new(std::mem::take(
+                                    match draft.auth_method {
+                                        SshAuthenticationMethod::Password => {
+                                            ssh_paragraph(
+                                                ui,
+                                                if draft.has_stored_credential
+                                                    && draft.stored_credential_kind
+                                                        == CredentialKind::Password
+                                                {
+                                                    "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                                } else {
+                                                    "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
+                                                },
+                                            );
+                                            ui.add_space(4.0);
+                                            profile_password_edit(
+                                                ui,
+                                                tab_id,
+                                                "password",
+                                                "Password",
                                                 &mut draft.password,
-                                            )),
-                                        });
-                                        draft.has_stored_credential = true;
-                                        draft.stored_credential_kind = CredentialKind::Password;
+                                            );
+                                            ui.add_space(4.0);
+                                            if ui
+                                                .add_enabled(
+                                                    !draft.password.is_empty(),
+                                                    egui::Button::new("Save password"),
+                                                )
+                                                .clicked()
+                                            {
+                                                command = Some(AppCommand::StoreProfilePassword {
+                                                    profile_id,
+                                                    password: PasswordToStore::new(
+                                                        std::mem::take(&mut draft.password),
+                                                    ),
+                                                });
+                                                draft.has_stored_credential = true;
+                                                draft.stored_credential_kind =
+                                                    CredentialKind::Password;
+                                            }
+                                        }
+                                        SshAuthenticationMethod::PrivateKey => {
+                                            ssh_paragraph(
+                                                ui,
+                                                if draft.has_stored_credential
+                                                    && draft.stored_credential_kind
+                                                        == CredentialKind::PrivateKey
+                                                {
+                                                    "A private key is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                                } else {
+                                                    "Enter an OpenSSH private key to remember it in native secure storage."
+                                                },
+                                            );
+                                            ui.add_space(4.0);
+                                            ssh_multiline_secret_text_edit(
+                                                ui,
+                                                tab_id,
+                                                "private_key",
+                                                "OpenSSH private key",
+                                                &mut draft.private_key,
+                                            );
+                                            profile_password_edit(
+                                                ui,
+                                                tab_id,
+                                                "key_passphrase",
+                                                "Key passphrase (optional)",
+                                                &mut draft.key_passphrase,
+                                            );
+                                            ui.add_space(4.0);
+                                            if ui
+                                                .add_enabled(
+                                                    !draft.private_key.trim().is_empty(),
+                                                    egui::Button::new("Save private key"),
+                                                )
+                                                .clicked()
+                                            {
+                                                let passphrase = if draft.key_passphrase.is_empty()
+                                                {
+                                                    None
+                                                } else {
+                                                    Some(std::mem::take(
+                                                        &mut draft.key_passphrase,
+                                                    ))
+                                                };
+                                                command =
+                                                    Some(AppCommand::StoreProfilePrivateKey {
+                                                        profile_id,
+                                                        private_key: PrivateKeyToStore::new(
+                                                            std::mem::take(
+                                                                &mut draft.private_key,
+                                                            ),
+                                                            passphrase,
+                                                        ),
+                                                    });
+                                                draft.has_stored_credential = true;
+                                                draft.stored_credential_kind =
+                                                    CredentialKind::PrivateKey;
+                                            }
+                                        }
                                     }
                                 }
-                                SshAuthenticationMethod::PrivateKey => {
-                                    ssh_paragraph(
-                                        ui,
-                                        if draft.has_stored_credential
-                                            && draft.stored_credential_kind
-                                                == CredentialKind::PrivateKey
-                                        {
-                                            "A private key is stored in native secure storage for this profile. Enter a new one below to replace it."
-                                        } else {
-                                            "Enter an OpenSSH private key to remember it in native secure storage."
-                                        },
-                                    );
-                                    ui.add_space(4.0);
-                                    ssh_multiline_secret_text_edit(
-                                        ui,
-                                        tab_id,
-                                        "private_key",
-                                        "OpenSSH private key",
-                                        &mut draft.private_key,
-                                    );
-                                    profile_password_edit(
-                                        ui,
-                                        tab_id,
-                                        "key_passphrase",
-                                        "Key passphrase (optional)",
-                                        &mut draft.key_passphrase,
-                                    );
-                                    ui.add_space(4.0);
-                                    if ui
-                                        .add_enabled(
-                                            !draft.private_key.trim().is_empty(),
-                                            egui::Button::new("Save private key"),
-                                        )
-                                        .clicked()
-                                    {
-                                        let passphrase = if draft.key_passphrase.is_empty() {
-                                            None
-                                        } else {
-                                            Some(std::mem::take(&mut draft.key_passphrase))
-                                        };
-                                        command = Some(AppCommand::StoreProfilePrivateKey {
-                                            profile_id,
-                                            private_key: PrivateKeyToStore::new(
-                                                std::mem::take(&mut draft.private_key),
-                                                passphrase,
-                                            ),
-                                        });
-                                        draft.has_stored_credential = true;
-                                        draft.stored_credential_kind = CredentialKind::PrivateKey;
-                                    }
-                                }
-                            }
-                        }
+                            });
+                        // Kept outside the scroll area (but still inside the
+                        // bordered panel) so Save/Cancel — and any error —
+                        // stay pinned and reachable without scrolling, even
+                        // when the fields above are tall enough to scroll.
                         if let Some(error) = &draft.error {
                             ui.add_space(6.0);
                             ui.colored_label(theme::STATUS_ERROR, error);
@@ -2021,7 +2037,6 @@ pub fn show_profiles(
                                 next_mode = Some(ProfilesScreenMode::List);
                             }
                         });
-                    });
                     });
             });
         }
@@ -3356,6 +3371,49 @@ mod tests {
             panic!("confirming deletion must return a DeleteProfile command");
         };
         assert_eq!(identifier, "dev-shell");
+    }
+
+    #[test]
+    fn ssh_profile_editor_panel_stays_compact_instead_of_stretching_to_fill_the_window() {
+        // Regression test for a panel that, when its scroll area filled
+        // "available height" reported by the surrounding layout, either
+        // collapsed to a sliver or stretched to match whatever height that
+        // layout reported — instead of sizing to its own (short) content.
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 900.0))
+            .build_ui_state(
+                |ui, state: &mut ProfilesHarnessState| {
+                    if let Some(command) =
+                        show_profiles(ui, state.tab_id, &state.configuration, None)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                ProfilesHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration: festerm_config::Configuration::new(vec![profile]).unwrap(),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        harness.get_by_label("Edit").click();
+        harness.run();
+
+        // A short connection-details-only form (password auth by default)
+        // should keep "Save" well above a 900px-tall window rather than
+        // stretching the panel to fill it.
+        assert!(harness.get_by_label("Save").rect().max.y < 500.0);
     }
 
     #[test]
