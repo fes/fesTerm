@@ -1874,9 +1874,34 @@ pub fn show_profiles(
                         // the fields scroll, *inside* the panel; the panel
                         // itself keeps its natural (small-form) height and
                         // only grows a scrollbar once content would run past
-                        // the actual window height.
-                        let scroll_max_height =
-                            (ui.ctx().content_rect().height() - 260.0).max(200.0);
+                        // the actual window height. `available_height` here
+                        // (measured inside the frame, after the heading and
+                        // margins above it are already accounted for) is the
+                        // true remaining space in the real window; only the
+                        // Save/Cancel row below still needs to be reserved.
+                        // `available_height()` is unreliable here: this Frame
+                        // auto-sizes to its content, so on the pass that
+                        // decides how tall to make itself its own max_rect
+                        // is degenerate (zero height) -- a chicken-and-egg
+                        // problem for any auto-sizing container in immediate
+                        // mode. Instead, measure the *absolute* remaining
+                        // space in the real viewport: the current cursor's
+                        // vertical position (screen coordinates, valid even
+                        // when max_rect isn't) down to the bottom of the
+                        // window, minus room for the Save/Cancel row below.
+                        let panel_top = ui.cursor().top();
+                        let viewport_bottom = ui.ctx().content_rect().bottom();
+                        let scroll_max_height = (viewport_bottom - panel_top - 56.0).max(120.0);
+                        // `ScrollArea` computes its own available space via
+                        // `ui.available_rect_before_wrap()`, which is
+                        // degenerate (zero height) here because the
+                        // enclosing Frame hasn't settled on its own size
+                        // yet -- an auto-sizing container doesn't know its
+                        // height until after its content is laid out. Force
+                        // the ui to report the real budget we just computed
+                        // so the scroll area only engages once content
+                        // actually needs more room than that.
+                        ui.set_min_height(scroll_max_height);
                         ScrollArea::vertical()
                             .id_salt((tab_id, "edit_ssh_profile_scroll"))
                             .max_height(scroll_max_height)
@@ -2084,7 +2109,10 @@ pub fn show_profiles(
 mod tests {
     use super::*;
     use crate::tabs::AppState;
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness,
+    };
 
     struct LauncherHarnessState {
         tab_id: TabId,
@@ -3414,6 +3442,21 @@ mod tests {
         // should keep "Save" well above a 900px-tall window rather than
         // stretching the panel to fill it.
         assert!(harness.get_by_label("Save").rect().max.y < 500.0);
+        // With ample room, the whole form fits without needing to scroll at
+        // all -- once content doesn't exceed the available height, egui's
+        // default `ScrollBarVisibility::VisibleWhenNeeded` keeps the
+        // scrollbar hidden (it may still exist in the accessibility tree,
+        // just marked hidden).
+        // With ample room, the whole form fits without needing to scroll at
+        // all -- once content doesn't exceed the available height, egui's
+        // default `ScrollBarVisibility::VisibleWhenNeeded` keeps the
+        // scrollbar hidden (it may still exist in the accessibility tree,
+        // just marked hidden).
+        let scroll_bar = harness.query_by_role(accesskit::Role::ScrollBar);
+        assert!(
+            scroll_bar.is_none_or(|node| node.accesskit_node().is_hidden()),
+            "scroll bar should not be visible when the form fits comfortably"
+        );
     }
 
     #[test]
