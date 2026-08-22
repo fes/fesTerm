@@ -1897,12 +1897,22 @@ pub fn show_profiles(
                         // degenerate (zero height) here because the
                         // enclosing Frame hasn't settled on its own size
                         // yet -- an auto-sizing container doesn't know its
-                        // height until after its content is laid out. Force
-                        // the ui to report the real budget we just computed
-                        // so the scroll area only engages once content
-                        // actually needs more room than that.
-                        ui.set_min_height(scroll_max_height);
-                        ScrollArea::vertical()
+                        // height until after its content is laid out. Give
+                        // the scroll area its own child `Ui` with a real
+                        // (non-degenerate) max_rect reflecting the budget we
+                        // just computed, so its internal sizing sees actual
+                        // numbers instead of zero. Unlike `set_min_height`,
+                        // this doesn't force the surrounding Frame to grow:
+                        // the child `Ui`'s *allocated* size still comes from
+                        // what was actually drawn, so the panel keeps
+                        // shrinking to fit short content and only grows a
+                        // scrollbar when content would truly overflow.
+                        let scroll_rect = egui::Rect::from_min_size(
+                            ui.cursor().min,
+                            egui::vec2(ui.available_width(), scroll_max_height),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+                            ScrollArea::vertical()
                             .id_salt((tab_id, "edit_ssh_profile_scroll"))
                             .max_height(scroll_max_height)
                             .show(ui, |ui| {
@@ -2034,6 +2044,7 @@ pub fn show_profiles(
                                     }
                                 }
                             });
+                        });
                         // Kept outside the scroll area (but still inside the
                         // bordered panel) so Save/Cancel — and any error —
                         // stay pinned and reachable without scrolling, even
