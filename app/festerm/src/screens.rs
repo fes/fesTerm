@@ -613,7 +613,7 @@ fn ssh_multiline_secret_text_edit(
                 .id_salt(("launcher_ssh", tab_id, field))
                 .password(true)
                 .desired_width(360.0)
-                .desired_rows(8),
+                .desired_rows(5),
         )
         .labelled_by(label.id)
     })
@@ -1859,10 +1859,17 @@ pub fn show_profiles(
                 // Private-key authentication adds a tall multiline secret
                 // field; wrapped in a scroll area so Save/Cancel stay
                 // reachable instead of overflowing past the window's bottom
-                // edge on shorter windows.
+                // edge on shorter windows. Sized from the actual viewport
+                // (rather than `auto_shrink([false, false])`, which grows to
+                // fill whatever height this deeply nested `horizontal`/
+                // `vertical` layout reports as "available" and could
+                // collapse to a sliver) so it stays compact for a short
+                // form and only starts scrolling once content would
+                // otherwise run past the window's bottom edge.
+                let scroll_max_height = (ui.ctx().content_rect().height() - 220.0).max(240.0);
                 ScrollArea::vertical()
                     .id_salt((tab_id, "edit_ssh_profile_scroll"))
-                    .auto_shrink([false, false])
+                    .max_height(scroll_max_height)
                     .show(ui, |ui| {
                         egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE)
