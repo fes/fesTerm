@@ -299,7 +299,24 @@ fn is_executable_candidate(path: &Path) -> bool {
 
 #[cfg(windows)]
 fn is_executable_candidate(path: &Path) -> bool {
-    path.is_file()
+    // Windows has no execute permission bit; instead an executable is any
+    // file whose extension appears in `PATHEXT` (falling back to the
+    // standard default if the environment variable is unset), mirroring
+    // how `cmd.exe`/`CreateProcess` resolve a bare command name. Without
+    // this check, any same-prefixed file (e.g. `cmd-readme.txt`) would be
+    // offered as a launchable suggestion.
+    if !path.is_file() {
+        return false;
+    }
+    let Some(extension) = path.extension().and_then(OsStr::to_str) else {
+        return false;
+    };
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned());
+    pathext.split(';').any(|candidate| {
+        candidate
+            .trim_start_matches('.')
+            .eq_ignore_ascii_case(extension)
+    })
 }
 
 /// Errors returned while allocating or launching a local PTY session.
@@ -1111,6 +1128,18 @@ mod tests {
         }
     }
 
+    /// Appends the platform's recognized executable extension to a bare
+    /// test fixture name (`.exe` on Windows, where `PATHEXT` — not a
+    /// permission bit — decides whether a file is launchable; unchanged
+    /// elsewhere, where the Unix execute-permission bit already suffices).
+    fn executable_fixture_name(base: &str) -> String {
+        if cfg!(windows) {
+            format!("{base}.exe")
+        } else {
+            base.to_owned()
+        }
+    }
+
     #[test]
     fn path_search_matches_case_insensitive_prefixes_across_directories_and_is_sorted_and_capped() {
         let root = std::env::temp_dir().join(format!(
@@ -1126,9 +1155,11 @@ mod tests {
         std::fs::create_dir_all(&first).expect("test directory can be created");
         std::fs::create_dir_all(&second).expect("test directory can be created");
 
+        let cargo_name = executable_fixture_name("cargo");
+        let cmdlet_name = executable_fixture_name("cmdlet");
         make_executable(&first.join("Cmd.exe"));
-        make_executable(&first.join("cargo"));
-        make_executable(&second.join("cmdlet"));
+        make_executable(&first.join(&cargo_name));
+        make_executable(&second.join(&cmdlet_name));
         // Not executable: must be excluded even though the name matches.
         std::fs::write(second.join("cmd-readme.txt"), b"not executable")
             .expect("test file can be created");
@@ -1137,7 +1168,7 @@ mod tests {
         let matches = search_path_executables_in("cmd", directories, 10);
         assert_eq!(
             matches,
-            vec![first.join("Cmd.exe"), second.join("cmdlet")],
+            vec![first.join("Cmd.exe"), second.join(&cmdlet_name)],
             "matches are case-insensitive-prefix filtered, executable-only, and sorted"
         );
 
