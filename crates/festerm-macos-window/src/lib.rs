@@ -480,3 +480,40 @@ pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, band_center_fro
 
 #[cfg(not(target_os = "macos"))]
 pub fn offset_traffic_lights(_: (), _: f64) {}
+
+/// Disables AppKit's own default window-dragging behavior entirely (both
+/// from the native title bar and from clicking the window background),
+/// leaving 100% of window movement under fesTerm's own explicit
+/// `egui::ViewportCommand::StartDrag` calls
+/// (`festerm_ui_egui::chrome::show`'s row-level drag region).
+///
+/// This matters because `with_decorations(true)` (kept so the native
+/// traffic lights keep working) plus `with_fullsize_content_view(true)`
+/// still leaves a real, if visually blank, native title-bar strip across
+/// the *entire* top of the window - AppKit drags the window from a
+/// press-drag anywhere in that strip by default, before the event ever
+/// reaches egui's own hit-testing. Since fesTerm's chip row paints its
+/// title text inside that same strip, a drag started on a chip's title
+/// used to move the whole window instead of reordering the chip,
+/// regardless of how egui's own widgets resolved the same gesture.
+/// Disabling native movement removes that OS-level shortcut entirely, so
+/// only the explicit drag regions fesTerm itself defines can ever move the
+/// window.
+#[cfg(target_os = "macos")]
+pub fn disable_native_window_movement(ns_view: NonNull<std::ffi::c_void>) {
+    use objc2_app_kit::NSView;
+
+    // SAFETY: winit supplies a live NSView pointer for the root window
+    // handle; this function runs on the main thread while that window is
+    // alive.
+    let ns_view = unsafe { ns_view.cast::<NSView>().as_ref() };
+    let Some(ns_window) = ns_view.window() else {
+        return;
+    };
+    if ns_window.isMovable() {
+        ns_window.setMovable(false);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn disable_native_window_movement(_: ()) {}

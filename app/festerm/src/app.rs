@@ -123,6 +123,46 @@ impl ApplicationShortcut {
     }
 }
 
+/// The first several open tabs, in tab-bar order, get a quick-switch
+/// keystroke (`Cmd+1`..`Cmd+9` on macOS, `Ctrl+1`..`Ctrl+9` elsewhere) that
+/// jumps directly to that tab, mirroring the browser/terminal convention of
+/// numbering only the first nine positions. Shared by `palette_items` (to
+/// display the keystroke) and `handle_shortcuts` (to act on it), so the two
+/// never drift out of sync.
+const MAX_QUICK_SWITCH_TABS: usize = 9;
+
+/// The physical key for the Nth (0-based) quick-switch slot, or `None` past
+/// `MAX_QUICK_SWITCH_TABS`.
+fn quick_switch_key(index: usize) -> Option<egui::Key> {
+    [
+        egui::Key::Num1,
+        egui::Key::Num2,
+        egui::Key::Num3,
+        egui::Key::Num4,
+        egui::Key::Num5,
+        egui::Key::Num6,
+        egui::Key::Num7,
+        egui::Key::Num8,
+        egui::Key::Num9,
+    ]
+    .get(index)
+    .copied()
+}
+
+/// Pre-formatted display text for the Nth (0-based) quick-switch slot (e.g.
+/// `"\u{2318}1"`), or `None` past `MAX_QUICK_SWITCH_TABS`.
+fn quick_switch_label(index: usize) -> Option<String> {
+    if index >= MAX_QUICK_SWITCH_TABS {
+        return None;
+    }
+    let n = index + 1;
+    Some(if cfg!(target_os = "macos") {
+        format!("\u{2318}{n}")
+    } else {
+        format!("Ctrl+{n}")
+    })
+}
+
 /// Composition root.
 ///
 /// `AppState` owns the always-nonempty tab collection and session/command
@@ -372,6 +412,7 @@ impl FesTermApp {
             appkit_handle.ns_view,
             f64::from(festerm_ui_egui::chrome::chrome_band_center_from_top()),
         );
+        festerm_macos_window::disable_native_window_movement(appkit_handle.ns_view);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1355,18 +1396,21 @@ impl FesTermApp {
                 label: "New Session…".to_owned(),
                 hint: ApplicationShortcut::NewSession.label().map(str::to_owned),
                 is_tab: false,
+                shortcut_label: None,
             },
             PaletteItem {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
                 hint: None,
                 is_tab: false,
+                shortcut_label: None,
             },
             PaletteItem {
                 id: ABOUT,
                 label: "About fesTerm".to_owned(),
                 hint: None,
                 is_tab: false,
+                shortcut_label: None,
             },
         ];
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
@@ -1379,6 +1423,7 @@ impl FesTermApp {
                 },
                 hint: None,
                 is_tab: false,
+                shortcut_label: None,
             });
             items.extend([
                 PaletteItem {
@@ -1390,6 +1435,7 @@ impl FesTermApp {
                     },
                     hint: None,
                     is_tab: false,
+                    shortcut_label: None,
                 },
                 PaletteItem {
                     id: ZOOM_IN,
@@ -1400,30 +1446,35 @@ impl FesTermApp {
                         "Ctrl++".to_owned()
                     }),
                     is_tab: false,
+                    shortcut_label: None,
                 },
                 PaletteItem {
                     id: ZOOM_OUT,
                     label: "Zoom Out".to_owned(),
                     hint: ApplicationShortcut::ZoomOut.label().map(str::to_owned),
                     is_tab: false,
+                    shortcut_label: None,
                 },
                 PaletteItem {
                     id: RESET_ZOOM,
                     label: "Reset Zoom".to_owned(),
                     hint: ApplicationShortcut::ZoomReset.label().map(str::to_owned),
                     is_tab: false,
+                    shortcut_label: None,
                 },
                 PaletteItem {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
                     hint: None,
                     is_tab: false,
+                    shortcut_label: None,
                 },
                 PaletteItem {
                     id: CLEAR_TERMINAL_HISTORY,
                     label: "Clear Terminal History".to_owned(),
                     hint: None,
                     is_tab: false,
+                    shortcut_label: None,
                 },
             ]);
         }
@@ -1439,8 +1490,9 @@ impl FesTermApp {
             },
             hint: None,
             is_tab: false,
+            shortcut_label: None,
         });
-        for tab in self.state.tabs() {
+        for (index, tab) in self.state.tabs().iter().enumerate() {
             let (label, hint) = match &tab.content {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
@@ -1466,6 +1518,7 @@ impl FesTermApp {
                 label,
                 hint,
                 is_tab: true,
+                shortcut_label: quick_switch_label(index),
             });
         }
         items
@@ -1524,6 +1577,25 @@ impl FesTermApp {
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
         if open_palette {
             self.palette.toggle();
+        }
+        // Quick-switch to one of the first `MAX_QUICK_SWITCH_TABS` tabs by
+        // position (`Cmd+1`..`Cmd+9`/`Ctrl+1`..`Ctrl+9`), matching the
+        // keystroke shown next to each tab row in the command palette
+        // (`palette_items`). Checked before the palette-open early return
+        // below so the same keystroke works whether or not the palette
+        // happens to be open.
+        for index in 0..MAX_QUICK_SWITCH_TABS {
+            let Some(key) = quick_switch_key(index) else {
+                break;
+            };
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, key)) {
+                if let Some(tab) = self.state.tabs().get(index) {
+                    let target = tab.id;
+                    self.state.dispatch(AppCommand::ActivateTab(target), ctx);
+                }
+                self.palette.close();
+                break;
+            }
         }
         // While the palette is open, it owns Enter/Escape/arrow keys; avoid
         // also acting on tab-management shortcuts this frame.
@@ -3905,8 +3977,10 @@ mod tests {
         );
         harness.run();
         assert!(harness.state().palette.is_open());
+        // The Launcher tab is first, so it carries the "⌘1" quick-switch
+        // label shown in `palette_items` alongside its title.
         harness
-            .get_by_role_and_label(accesskit::Role::Button, "Launcher")
+            .get_by_role_and_label(accesskit::Role::Button, "\u{2318}1   Launcher")
             .click();
         harness.run();
         assert!(!harness.state().palette.is_open());

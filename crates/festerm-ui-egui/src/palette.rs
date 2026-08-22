@@ -16,8 +16,6 @@
 
 use egui::{Context, Id, Key, Modifiers, RichText, ScrollArea, Window};
 
-use crate::icon::{self, Icon};
-
 /// One searchable entry: an application action or an open tab.
 #[derive(Clone, Debug)]
 pub struct PaletteItem {
@@ -31,9 +29,17 @@ pub struct PaletteItem {
     /// short hint. Never the sole identifying text.
     pub hint: Option<String>,
     /// Whether this row activates an open tab rather than running a
-    /// one-shot action. Tab rows paint a small chevron icon instead of an
-    /// "Activate: " text prefix.
+    /// one-shot action.
     pub is_tab: bool,
+    /// Pre-formatted quick-switch keystroke shown before the label (e.g.
+    /// `"\u{2318}1"`), for the first several open tabs. The same keystroke
+    /// also switches directly to that tab outside the palette
+    /// (`app::ApplicationShortcut`-style global handling); this field only
+    /// controls how it is displayed here. Callers format the platform
+    /// modifier glyph/text themselves, matching how `hint` is already
+    /// pre-formatted (e.g. `"Cmd+T"`), so this module stays pure
+    /// presentation.
+    pub shortcut_label: Option<String>,
 }
 
 /// Persistent (frame-to-frame) palette state: open/closed, current query
@@ -155,41 +161,26 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
                     |ui| {
                         for (index, item) in matches.iter().enumerate() {
                             let highlighted = index == state.selected;
+                            let label_with_shortcut = match &item.shortcut_label {
+                                Some(shortcut) => format!("{shortcut}   {}", item.label),
+                                None => item.label.clone(),
+                            };
                             let text = if let Some(hint) = &item.hint {
-                                RichText::new(format!("{}  \u{2014}  {}", item.label, hint))
+                                RichText::new(format!("{label_with_shortcut}  \u{2014}  {hint}"))
                             } else {
-                                RichText::new(&item.label)
+                                RichText::new(&label_with_shortcut)
                             };
                             let text = if highlighted { text.strong() } else { text };
-                            let response = if item.is_tab {
-                                ui.horizontal(|ui| {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(14.0, 14.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    icon::paint(
-                                        ui.painter(),
-                                        Icon::Activate,
-                                        rect,
-                                        ui.visuals().text_color(),
-                                    );
-                                    // `add_sized` with the remaining
-                                    // available width (rather than a plain
-                                    // `ui.selectable_label`, which only
-                                    // claims its own text width) makes the
-                                    // hover/selection highlight span the
-                                    // rest of the row, matching every other
-                                    // palette entry instead of stopping
-                                    // right after the label text.
-                                    ui.add_sized(
-                                        egui::vec2(ui.available_width(), 0.0),
-                                        egui::Button::selectable(highlighted, text),
-                                    )
-                                })
-                                .inner
-                            } else {
-                                ui.selectable_label(highlighted, text)
-                            };
+                            // A plain `ui.selectable_label` (not
+                            // `ui.add_sized`, which forces
+                            // `Layout::centered_and_justified` and would
+                            // center this row's text) inherits this
+                            // `top_down(Align::Min).with_cross_justify`
+                            // layout directly: full row width *and*
+                            // left-aligned text, matching every other
+                            // palette entry (including non-tab rows,
+                            // rendered via this same call).
+                            let response = ui.selectable_label(highlighted, text);
                             if response.clicked() {
                                 decision = Some(Some(item.id));
                             }
@@ -247,6 +238,7 @@ mod tests {
             label: label.to_owned(),
             hint: None,
             is_tab: false,
+            shortcut_label: None,
         }
     }
 
@@ -264,6 +256,7 @@ mod tests {
                 label: "production-db".to_owned(),
                 hint: Some("nvim server.rs".to_owned()),
                 is_tab: false,
+                shortcut_label: None,
             },
             item(2, "Open Settings"),
         ];
@@ -338,6 +331,7 @@ mod tests {
                 label: "x".to_owned(),
                 hint: None,
                 is_tab: true,
+                shortcut_label: None,
             }],
             decision: None,
         });

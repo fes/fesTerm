@@ -6,7 +6,7 @@
 //! and own no session or tab policy themselves; `AppState::dispatch` remains
 //! the single command-handling path.
 
-use eframe::egui::{self, vec2, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
+use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{CredentialKind, PersistenceConfiguration, Profile, SshProfileConfiguration};
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -998,7 +998,14 @@ pub fn show_launcher(
                 for (index, item) in items.iter().enumerate() {
                     if index == profiles_start && profiles_start < items.len() {
                         ui.add_space(8.0);
-                        ui.separator();
+                        // Matches the 26px left inset applied above so the
+                        // divider reads as evenly padded on both sides
+                        // instead of running flush to the pane's right edge.
+                        let separator_width = (ui.available_width() - 26.0).max(0.0);
+                        ui.scope(|ui| {
+                            ui.set_width(separator_width);
+                            ui.separator();
+                        });
                         ui.add_space(8.0);
                     }
                     let (response, edit_response) = show_launcher_choice(
@@ -1849,7 +1856,15 @@ pub fn show_profiles(
                     "New SSH Profile"
                 });
                 ui.add_space(16.0);
-                egui::Frame::new()
+                // Private-key authentication adds a tall multiline secret
+                // field; wrapped in a scroll area so Save/Cancel stay
+                // reachable instead of overflowing past the window's bottom
+                // edge on shorter windows.
+                ScrollArea::vertical()
+                    .id_salt((tab_id, "edit_ssh_profile_scroll"))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE)
                     .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
                     .corner_radius(8.0)
@@ -1999,6 +2014,7 @@ pub fn show_profiles(
                                 next_mode = Some(ProfilesScreenMode::List);
                             }
                         });
+                    });
                     });
             });
         }
@@ -3367,6 +3383,13 @@ mod tests {
         harness.get_by_label("Password").type_text("hunter2");
         harness.run();
 
+        // The password-authentication panel is taller than the harness
+        // viewport (matching the private-key panel that motivated wrapping
+        // this editor in a `ScrollArea`), so "Save password" starts
+        // scrolled out of view; scroll it into view before clicking, same
+        // as a real user would.
+        harness.get_by_label("Save password").scroll_to_me();
+        harness.run();
         harness.get_by_label("Save password").click();
         harness.run();
 
@@ -3398,6 +3421,10 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("Edit SSH Profile").is_some());
 
+        harness
+            .get_by_label("Private-key authentication")
+            .scroll_to_me();
+        harness.run();
         harness.get_by_label("Private-key authentication").click();
         harness.run();
         assert!(harness
@@ -3413,6 +3440,10 @@ mod tests {
         );
         harness.run();
 
+        // As above: the private-key panel is taller than the harness
+        // viewport, so "Save private key" starts scrolled out of view.
+        harness.get_by_label("Save private key").scroll_to_me();
+        harness.run();
         harness.get_by_label("Save private key").click();
         harness.run();
 
