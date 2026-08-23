@@ -55,9 +55,12 @@ These names are illustrative rather than a required Rust API. The implementation
 
 Destructive confirmation remains composition-owned even when the final effect
 is an `AppCommand`. Every close invocation first passes through the same
-application policy: non-live surfaces close immediately, while an owned
+application policy: non-live surfaces close immediately; an owned
 starting/running transport produces a confirmation bound to its typed tab and
-lifecycle generation. Only a revalidated confirmation dispatches `CloseTab`.
+lifecycle generation while **Confirm before closing live sessions** is on,
+and dispatches `CloseTab` immediately when that preference is off. Widgets and
+individual invocation routes never interpret the preference themselves. Only
+a revalidated confirmation dispatches `CloseTab` in the confirming mode.
 Likewise, clipboard delivery remains terminal input, but risky-paste policy is
 owned by the composition root so stable session identity/generation and UI
 focus can be enforced before one ordered paste is returned to the terminal

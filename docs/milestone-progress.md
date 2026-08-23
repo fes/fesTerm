@@ -84,6 +84,70 @@ Two narrow parallel tracks proceeded without changing that acceptance status:
   [#40](https://github.com/fes/fesTerm/issues/40) owns cross-platform
   SSH-agent adapters.
 
+## August 2026 GUI convergence: what the iteration taught us
+
+The integrated chrome and Settings work did not land as one speculative
+redesign. It converged through repeated native use, screenshots, and small
+corrections on 2026-08-22 and 2026-08-23.
+
+The first pass corrected obvious ownership and truth problems: Settings and
+Launcher needed bounded scroll regions, interface settings already autosaved
+and therefore should not pretend that Reload/Save buttons were required, and
+workspace restoration needed a separate explicit off-by-default preference.
+The Settings surface then moved from generic widgets to the visual toggle
+language in the approved mockup. Native inspection exposed details that
+headless correctness did not: missing right padding, a scrollbar painted over
+controls, and a reveal policy that reacted to hovering the whole Settings
+surface instead of only the scrollbar lane. Each report narrowed the behavior
+until Settings matched the terminal scrollbar's interaction model. A
+platform-aware Settings shortcut and visible notation followed once the
+surface itself was stable.
+
+Horizontal chip compaction required a deeper reset. Several local fixes to the
+old proportional shrinker could make chips smaller, but could not satisfy the
+updated design contract. The origin guidance and roomy/compacted/scrolling
+mockups made the missing priority explicit: protect the focused chip, compact
+inactive chips first, and scroll only after their approved minimum is
+exhausted. The implementation was replaced with exact-budget water-filling,
+a 72 px inactive floor, fixed New Session placement, ordered collapse of
+Search and Inspector, active-chip reveal, scroll controls, and drag-edge
+scrolling. Exact-budget and focus-switch tests replaced visual guesswork.
+ADR 0022 now records that algorithm so a future cleanup cannot accidentally
+restore uniform shrinking.
+
+The vertical defects were instructive because the first plausible explanations
+were wrong. Compact one-line title centering was a straightforward content
+layout correction, but missing bottom outlines in the overflow state survived
+experiments with extra chrome height, clip expansion, parent painters, inset
+strokes, and an explicit bottom line. Pixel sampling showed that Settings
+focus looked correct while terminal focus did not, initially suggesting a
+terminal overpaint. Runtime rectangle tracing finally exposed the real
+interaction: egui's scrolling layout shifted compact chips down while the
+terminal panel began at its normal boundary, so later terminal paint erased
+the final two points. Removing the scroll content margin and top-aligning the
+scrolling row fixed the cause. A native screenshot and pixel check then proved
+the bottom outlines were present. The unsuccessful paint workarounds were
+removed rather than retained as unexplained compensation.
+
+The last spacing report revealed a related allocation mistake: New Session was
+correctly outside the viewport for overflow, but the non-scrolling path still
+reserved the whole potential strip and painted the button after that empty
+budget. The final rule is conditional: fixed outside only while scrolling,
+directly adjacent to the last chip otherwise. The same iteration added a
+default-on, persisted **Confirm before closing live sessions** preference.
+Crucially, individual X buttons and menus do not branch on it; every close
+route still converges on the composition-owned policy, which either presents
+the generation-bound confirmation or closes immediately.
+
+The useful process pattern was consistent: treat screenshots as evidence, turn
+the observed geometry into logical coordinates, instrument runtime rectangles
+when pixels and inferred layout disagree, replace the wrong model instead of
+stacking CSS-like compensations, and retain a regression at the exact boundary
+that failed. The less useful pattern was repeated painter-side adjustment
+before proving who owned the final pixels. That sequence is preserved here so
+future chrome work starts with allocation, clip, and layer evidence rather
+than another round of cosmetic offsets.
+
 The process remains evidence-first: implement a narrow behavior, add
 deterministic automation when a stable oracle exists, retain manual evidence
 only where automation cannot prove the outcome, and file an issue for every

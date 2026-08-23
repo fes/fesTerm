@@ -1070,7 +1070,7 @@ navigation appears only once several real categories exist, and categories,
 controls, and one-option selectors with no implemented choice remain absent.
 
 The truthful initial preference surface contains one compact **Interface**
-section with three controls. Related controls are grouped as quiet rows inside
+section with five controls. Related controls are grouped as quiet rows inside
 one section surface, with subtle dividers; separate oversized cards would make
 this small settings surface feel heavier than the terminal chrome it controls.
 
@@ -1086,8 +1086,12 @@ this small settings surface feel heavier than the terminal chrome it controls.
 - **Show status bar** is an on/off switch, on by default, described factually as
   displaying sourced session state, terminal dimensions, and the active
   session detail when compact chips require that relocation.
+- **Confirm before closing live sessions** is an on/off switch, on by default.
+  It applies to every live-session close route through the central application
+  policy. Turning it off closes immediately; it does not alter bounded backend
+  shutdown or the separate aggregate window/quit policy.
 - **Workspace restore** is an on/off switch, off by default (see
-  "Configuration" below): unlike the three toggles above, which always apply
+  "Configuration" below): unlike the four controls above, which always apply
   and save immediately, resurrecting a previous run's open tabs is an
   explicit opt-in.
 
@@ -1133,7 +1137,8 @@ credential, and trust-record edits use their own staged and security-aware
 flows. Closing Settings returns focus to the previously active session and
 never restarts sessions; Settings never lives in the session inspector.
 
-The detail and status-bar switches are independent. Changing detail visibility
+The detail, status-bar, close-confirmation, and workspace switches are
+independent. Changing detail visibility
 does not rewrite a session name, terminal title, profile, or workspace, and it
 does not change the chip width range. A live change produces one coherent
 terminal resize after the chrome height settles; it must not resize once per

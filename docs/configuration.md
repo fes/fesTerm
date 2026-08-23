@@ -5,9 +5,10 @@ in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
 to the Launcher. Workspace state (the open tab list, its order, and the active
-tab), the three Settings interface preferences (chip layout, status bar
-visibility, session details in chips), known-host trust decisions, and
-profile CRUD all save automatically the moment they change - there is no
+tab), the five Settings interface preferences (chip layout, status bar
+visibility, session details in chips, live-session close confirmation, and
+workspace restoration), known-host trust decisions, and profile CRUD all save
+automatically the moment they change - there is no
 manual save/reload action anywhere in Settings. File watching (reacting to
 edits made outside the running app) is intentionally not part of this slice.
 
@@ -87,6 +88,9 @@ id = "settings"
 [settings]
 chip_layout = "single-row-scroll"
 status_bar_visible = true
+show_session_details = true
+confirm_session_close = true
+restore_workspace = false
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
@@ -132,22 +136,24 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table holds three lightweight, non-destructive UI
-preferences: `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
-`"single-row-scroll"`), `status_bar_visible` (default `true`), and
-`show_session_details` (default `true`). All three mirror the current
-Settings toggles for chip wrapping, the bottom status bar, and session
-detail visibility on chips.
+The optional `[settings]` table holds five interface preferences:
+`chip_layout` (`"wrap"` or `"single-row-scroll"`, default
+`"single-row-scroll"`), `status_bar_visible` (default `true`),
+`show_session_details` (default `true`), `confirm_session_close` (default
+`true`), and `restore_workspace` (default `false`). They mirror the current
+Settings controls for chip layout, the bottom status bar, session-detail
+visibility, live-session close confirmation, and explicit workspace
+restoration.
 
 fesTerm writes the whole configuration document through immediately whenever
-either toggle changes (or after an explicit Settings **Reset interface
+one of these controls changes (or after an explicit Settings **Reset interface
 settings to defaults** action), using the same selected startup location and
 atomic replacement path as workspace and profile saves. The in-memory UI
 change always applies immediately regardless of whether the write succeeds; a
 failed write only means the change will not survive a restart, and Settings
 shows a content-free diagnostic in that case.
 
-`[settings]` is omitted entirely from a saved document while both fields are
+`[settings]` is omitted entirely from a saved document while all fields are
 at their defaults, so a configuration that has never customized these
 preferences serializes and reloads identically to one written before this
 table existed. A configuration file without a `[settings]` table parses using

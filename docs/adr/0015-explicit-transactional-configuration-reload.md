@@ -33,11 +33,12 @@ defaults and reports the problem.
 Configuration changes apply prospectively unless a separately documented
 action explicitly recreates live state. Writes fesTerm makes to its own
 configuration source are atomic and immediate: interface preferences
-(chip layout, status-bar visibility, session details in chips), known-host
-trust decisions, profile CRUD (create, update, delete, reorder), and
-workspace state (the open tab list, its order, and the active tab) all save
-automatically as soon as they change, with no separate "Save" action for the
-user to remember to invoke.
+(chip layout, status-bar visibility, session details in chips, live-session
+close confirmation, and explicit workspace restoration), known-host trust
+decisions, profile CRUD (create, update, delete, reorder), and workspace state
+(the open tab list, its order, and the active tab) all save automatically as
+soon as they change, with no separate "Save" action for the user to remember
+to invoke.
 There is no continuous background rewriting independent of an actual change,
 and none of this reads from or reacts to edits made to the file from outside
 the running app. Versioned TOML and ordinary workspace data remain free of

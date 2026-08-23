@@ -222,12 +222,21 @@
         "docs/gui-design.md#independent-session-chips"
       ],
       "decisions": [
-        "ADR-0014"
+        "ADR-0014",
+        "ADR-0022"
       ],
       "automated_tests": [
         "chip_context_menu_targets_inactive_chip_without_activating_it",
         "dragging_one_chip_onto_another_emits_a_reorder_action",
-        "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape"
+        "cancelling_chip_rename_restores_terminal_focus_without_leaking_escape",
+        "single_row_layout_shrinks_chips_before_falling_back_to_a_scrollbar",
+        "focused_chip_priority_is_identical_at_both_vertical_densities",
+        "single_row_compacts_only_inactive_chips_with_water_filling",
+        "single_row_scrolls_only_after_every_inactive_chip_reaches_minimum",
+        "changing_focus_protects_the_new_focused_chip_not_the_old_one",
+        "activating_an_offscreen_chip_scrolls_it_into_view_in_single_row_layout",
+        "scrolling_compact_chips_keep_the_non_scrolling_row_baseline",
+        "non_scrolling_single_row_places_new_session_next_to_last_chip"
       ],
       "manual_scenarios": [
         "AS-03",
@@ -574,11 +583,17 @@
         "docs/gui-design.md#settings"
       ],
       "decisions": [
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0022"
       ],
       "automated_tests": [
         "toggle_chip_layout_flips_between_wrap_and_single_row_scroll",
-        "toggle_status_bar_flips_visibility_and_defaults_to_shown"
+        "toggle_status_bar_flips_visibility_and_defaults_to_shown",
+        "toggle_show_session_details_flips_visibility_and_defaults_to_shown",
+        "toggle_restore_workspace_flips_state_and_resets_to_off",
+        "toggle_close_confirmation_flips_state_and_resets_to_on",
+        "settings_close_confirmation_control_returns_the_toggle_command",
+        "older_settings_tables_default_close_confirmation_to_on"
       ],
       "manual_scenarios": [
         "AS-02",
@@ -600,7 +615,7 @@
         "ADR-0015"
       ],
       "automated_tests": [
-        "invalid_reload_retains_the_last_known_configuration",
+        "invalid_workspace_reload_retains_the_previous_workspace",
         "failed_workspace_save_is_content_free"
       ],
       "manual_scenarios": [
@@ -782,7 +797,8 @@
       ],
       "automated_tests": [
         "live_close_confirmation_is_safe_by_default_and_confirmed_deliberately",
-        "escape_cancels_live_close_without_closing_session"
+        "escape_cancels_live_close_without_closing_session",
+        "disabled_close_confirmation_closes_live_session_immediately"
       ],
       "manual_scenarios": [
         "AS-05",

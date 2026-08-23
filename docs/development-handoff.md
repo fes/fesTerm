@@ -30,9 +30,12 @@ never connect without fresh transient authentication. Runtime tab IDs are new
 for each launch, and no terminal output, process, credential/key, channel, or
 host-trust state is restored. No configuration is watched or edited by
 fesTerm from outside the app. Workspace metadata, profiles (create, update,
-delete, reorder), and the two Settings interface preferences all save
+delete, reorder), and all five Settings interface preferences save
 automatically to the same selected source the moment they change - there is
-no manual reload/save action anywhere in Settings. Workspace saves preserve
+no manual reload/save action anywhere in Settings. Workspace restoration
+remains an explicit off-by-default preference; live-session close confirmation
+remains on by default but can be disabled for consistent immediate close
+behavior across every invocation path. Workspace saves preserve
 the manually authored profiles and cover only ordered Launcher/Settings
 surfaces, restored SSH authentication-required profile surfaces, and
 configured-local profile tabs; default, ad-hoc, and live SSH sessions are
@@ -45,15 +48,21 @@ Manager, and Linux Secret Service over the logged-in session D-Bus (including
 KWallet only through Secret Service integration). A locked or unavailable
 native store remains an actionable condition with no insecure fallback.
 
-Not implemented: configuration profile editing/import UI and persistent trust,
+Not implemented: OpenSSH configuration import,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
-references, OpenSSH-config import UI, scrollback viewport/reflow UI,
-user-visible ligatures, a
-custom GPU renderer, terminfo distribution, and reference-TUI compatibility
-sign-off. M7 supplies transient password and in-memory OpenSSH private-key
-authentication plus bounded opt-in reconnect; encrypted-key passphrases are
-transient in-memory parse inputs, never profile data. Read
-[`milestone-progress.md`](milestone-progress.md) before choosing work.
+references, user-visible ligatures, a custom GPU renderer, terminfo
+distribution, and reference-TUI compatibility sign-off. M7 supplies transient
+password and in-memory OpenSSH private-key authentication plus bounded opt-in
+reconnect; encrypted-key passphrases are transient in-memory parse inputs,
+never profile data. Read [`milestone-progress.md`](milestone-progress.md)
+before choosing work.
+
+The current single-row chrome follows ADR 0022: the focused chip retains its
+natural width, inactive chips compact by water-filling to a 72 px floor, and
+horizontal scrolling begins only after that exact budget is exhausted. New
+Session stays fixed beside the strip during overflow and directly follows the
+last chip when scrolling is unnecessary. Compact and full-density chips use
+the same allocation contract.
 
 ## Bootstrap
 

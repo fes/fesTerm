@@ -202,6 +202,20 @@ omitted, and Move/Rename/Close gestures remain semantic application commands.
 Native menu geometry, clipboard delivery, focus restoration, and platform
 secondary-click conventions remain in `manual-validation.md`.
 
+Chrome allocation tests cover the exact focused-chip-first threshold at both
+vertical densities: the focused chip retains natural width, inactive chips
+water-fill to the 72 px floor, optional controls collapse before scrolling,
+scrolling preserves compact widths and reveals a newly focused chip, and New
+Session has no empty reserved gap when scrolling is unnecessary. Separate
+geometry regressions keep compact titles and Close centered and ensure
+overflowing chips share the scroll-control baseline so terminal paint cannot
+erase their bottom outlines.
+
+Settings/application tests cover the default-on persisted live-close
+confirmation switch, its semantic toggle command, reset behavior, the ordinary
+generation-bound confirmation path, and immediate live-session closure when
+the preference is off.
+
 **Decision: adopted.** [egui_kittest](https://github.com/emilk/egui/tree/main/crates/egui_kittest)
 is a test-only dependency paired with the current released `egui` and
 `eframe` 0.x line. The stable Rust toolchain satisfies its Rust 1.95 minimum.
