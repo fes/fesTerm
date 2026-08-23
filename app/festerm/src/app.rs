@@ -46,7 +46,16 @@ enum ApplicationShortcut {
     CloseActiveSurface,
     NextSession,
     PreviousSession,
+    /// The macOS-only `Cmd+,` "Preferences" convention. Also bound as a
+    /// native `fesTerm` app-menu accelerator
+    /// (`festerm-macos-window`'s `install`), so this egui-level chord is a
+    /// redundant safety net there; it has no non-mac equivalent (comma
+    /// carries no such convention on Windows/Linux).
     Settings,
+    /// A cross-platform, discoverable Settings shortcut that doesn't rely on
+    /// finding the macOS-only app menu or knowing the `Cmd+,` convention -
+    /// this is the one presented in Settings' own Keyboard card.
+    SettingsHotkey,
     ZoomOut,
     ZoomReset,
 }
@@ -92,6 +101,10 @@ impl ApplicationShortcut {
                 Some((egui::Modifiers::COMMAND, egui::Key::Comma))
             }
             Self::Settings => None,
+            Self::SettingsHotkey => Some((
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::S,
+            )),
             Self::ZoomOut => Some((egui::Modifiers::COMMAND, egui::Key::Minus)),
             Self::ZoomReset => Some((egui::Modifiers::COMMAND, egui::Key::Num0)),
         }
@@ -109,6 +122,8 @@ impl ApplicationShortcut {
             Self::PreviousSession => Some("Ctrl+Shift+Tab"),
             Self::Settings if cfg!(target_os = "macos") => Some("\u{2318}+,"),
             Self::Settings => None,
+            Self::SettingsHotkey if cfg!(target_os = "macos") => Some("\u{2318}+Shift+S"),
+            Self::SettingsHotkey => Some("Ctrl+Shift+S"),
             Self::ZoomOut if cfg!(target_os = "macos") => Some("\u{2318}+-"),
             Self::ZoomOut => Some("Ctrl+-"),
             Self::ZoomReset if cfg!(target_os = "macos") => Some("\u{2318}+0"),
@@ -324,6 +339,18 @@ impl FesTermApp {
         configuration_status: ConfigurationStartupStatus,
         secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
     ) -> Self {
+        // Workspace restoration is an explicit opt-in
+        // (`docs/gui-design.md` "Workspace restore"), off by default: any
+        // saved tab list is ignored - and dropped from the in-memory
+        // configuration outright, so it can't resurface later just because
+        // an unrelated settings change gets saved - whenever the preference
+        // reads false, regardless of what a previous run (or an earlier
+        // version of fesTerm, before this preference existed) left on disk.
+        let configuration = if configuration.interface_settings().restore_workspace() {
+            configuration
+        } else {
+            configuration.without_workspace()
+        };
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
@@ -399,7 +426,7 @@ impl FesTermApp {
     /// assumed once at window creation, so it stays correct across a future
     /// runtime chip-height change with no further wiring.
     #[cfg(target_os = "macos")]
-    fn sync_native_window_chrome(frame: &eframe::Frame) {
+    fn sync_native_window_chrome(&self, frame: &eframe::Frame) {
         use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 
         let Ok(window_handle) = frame.window_handle() else {
@@ -410,13 +437,15 @@ impl FesTermApp {
         };
         festerm_macos_window::offset_traffic_lights(
             appkit_handle.ns_view,
-            f64::from(festerm_ui_egui::chrome::chrome_band_center_from_top()),
+            f64::from(festerm_ui_egui::chrome::chrome_band_center_from_top(
+                self.state.show_session_details(),
+            )),
         );
         festerm_macos_window::disable_native_window_movement(appkit_handle.ns_view);
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn sync_native_window_chrome(_frame: &eframe::Frame) {}
+    fn sync_native_window_chrome(&self, _frame: &eframe::Frame) {}
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
         if self.overlays.blocks_terminal_input() {
@@ -462,31 +491,37 @@ impl FesTermApp {
 
     /// Applies the one close policy shared by chrome, shortcuts, the command
     /// palette, native menus, and session overlays. Non-live surfaces close
-    /// immediately; a live transport is bound to an explicit confirmation.
+    /// immediately; a live transport is confirmed when that preference is
+    /// enabled and closes directly otherwise.
     fn request_close_tab(&mut self, id: TabId, context: &egui::Context) {
-        let confirmation = self
-            .state
-            .tabs()
-            .iter()
-            .find(|tab| tab.id == id)
-            .and_then(|tab| {
-                let TabContent::Session(session) = &tab.content else {
-                    return None;
-                };
-                session
-                    .close_requires_confirmation()
-                    .then(|| PendingCloseConfirmation {
-                        tab: id,
-                        identity: session.label.clone(),
-                        consequence: match session.inspector_transport {
-                            InspectorTransport::Local => CloseConsequence::TerminateLocalProcess,
-                            InspectorTransport::Ssh { .. } => CloseConsequence::DisconnectSsh,
-                        },
-                        lifecycle_generation: session.controller.lifecycle_generation(),
-                        restore_tab: self.state.active(),
-                        cancel_focus_requested: false,
-                    })
-            });
+        let confirmation = if self.state.confirm_session_close() {
+            self.state
+                .tabs()
+                .iter()
+                .find(|tab| tab.id == id)
+                .and_then(|tab| {
+                    let TabContent::Session(session) = &tab.content else {
+                        return None;
+                    };
+                    session
+                        .close_requires_confirmation()
+                        .then(|| PendingCloseConfirmation {
+                            tab: id,
+                            identity: session.label.clone(),
+                            consequence: match session.inspector_transport {
+                                InspectorTransport::Local => {
+                                    CloseConsequence::TerminateLocalProcess
+                                }
+                                InspectorTransport::Ssh { .. } => CloseConsequence::DisconnectSsh,
+                            },
+                            lifecycle_generation: session.controller.lifecycle_generation(),
+                            restore_tab: self.state.active(),
+                            cancel_focus_requested: false,
+                        })
+                })
+        } else {
+            None
+        };
         if let Some(confirmation) = confirmation {
             self.palette.close();
             self.overlays.pending_close = Some(confirmation);
@@ -717,6 +752,20 @@ impl FesTermApp {
                 return;
             }
         };
+        let status = self.configuration_reloader.save_workspace(&replacement);
+        if matches!(status, ConfigurationStartupStatus::WorkspaceSaved) {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
+    /// Scrubs any previously saved workspace snapshot from disk after the
+    /// "Workspace restore" preference is turned off (`docs/gui-design.md`
+    /// "Workspace restore"). Infallible on the in-memory side - clearing a
+    /// workspace can never fail validation - so this only reports a status
+    /// if the write-through itself fails.
+    fn clear_saved_workspace(&mut self) {
+        let replacement = self.state.configuration().without_workspace();
         let status = self.configuration_reloader.save_workspace(&replacement);
         if matches!(status, ConfigurationStartupStatus::WorkspaceSaved) {
             self.state.replace_configuration(replacement);
@@ -1628,7 +1677,14 @@ impl FesTermApp {
         let close_tab = ApplicationShortcut::CloseActiveSurface.consume(ctx);
         let next_tab = ApplicationShortcut::NextSession.consume(ctx);
         let previous_tab = ApplicationShortcut::PreviousSession.consume(ctx);
-        let settings = ApplicationShortcut::Settings.consume(ctx);
+        // Both bindings open Settings: the legacy macOS-only `Cmd+,`
+        // convention (also present as a native app-menu accelerator) and the
+        // cross-platform `SettingsHotkey` shown in Settings' own Keyboard
+        // card. Both `consume` calls run unconditionally so neither chord is
+        // ever left un-consumed by short-circuiting.
+        let settings_legacy = ApplicationShortcut::Settings.consume(ctx);
+        let settings_hotkey = ApplicationShortcut::SettingsHotkey.consume(ctx);
+        let settings = settings_legacy || settings_hotkey;
         let zoom_in = matches!(self.state.active_tab().content, TabContent::Session(_))
             && ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus)
@@ -2346,7 +2402,7 @@ impl FesTermApp {
 
 impl eframe::App for FesTermApp {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
-        Self::sync_native_window_chrome(frame);
+        self.sync_native_window_chrome(frame);
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
@@ -2492,12 +2548,17 @@ impl FesTermApp {
                 TabContent::Settings => {
                     screen_command = screens::show_settings(
                         ui,
-                        chip_layout,
-                        self.state.status_bar_visible(),
-                        self.state.show_session_details(),
-                        self.configuration_status,
-                        secure_storage_status,
+                        screens::SettingsViewModel {
+                            chip_layout,
+                            status_bar_visible: self.state.status_bar_visible(),
+                            show_session_details: self.state.show_session_details(),
+                            confirm_session_close: self.state.confirm_session_close(),
+                            restore_workspace: self.state.restore_workspace(),
+                        },
                         ApplicationShortcut::CommandPalette
+                            .label()
+                            .unwrap_or("(unbound)"),
+                        ApplicationShortcut::SettingsHotkey
                             .label()
                             .unwrap_or("(unbound)"),
                     );
@@ -2643,10 +2704,24 @@ impl FesTermApp {
                 }
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
-                | AppCommand::ToggleShowSessionDetails) => {
+                | AppCommand::ToggleShowSessionDetails
+                | AppCommand::ToggleConfirmSessionClose) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     self.persist_interface_settings();
+                }
+                AppCommand::ToggleRestoreWorkspace => {
+                    let context = ui.ctx().clone();
+                    self.state.dispatch(AppCommand::ToggleRestoreWorkspace, &context);
+                    self.persist_interface_settings();
+                    // Turning the preference off scrubs any previously
+                    // saved tab list from disk immediately, rather than
+                    // leaving it dormant until the next unrelated write -
+                    // "explicit" means no stale snapshot can resurface
+                    // later just by re-enabling the toggle.
+                    if !self.state.restore_workspace() {
+                        self.clear_saved_workspace();
+                    }
                 }
                 AppCommand::ResetInterfaceSettings => {
                     self.request_reset_interface_settings(&ui.ctx().clone());
@@ -2691,10 +2766,13 @@ impl FesTermApp {
         self.show_transient_notice(ui.ctx());
 
         // Autosave the workspace exactly once per frame that actually
-        // changed it (`docs/gui-design.md` "Configuration": open/closed
-        // tabs, their order, and the active tab save/restore automatically
-        // - there is no manual Save action for this).
-        if self.state.take_workspace_dirty() {
+        // changed it, but only when the user has explicitly opted into
+        // workspace restore (`docs/gui-design.md` "Workspace restore" -
+        // unlike chip-layout/status-bar preferences, tab contents are not
+        // meant to persist implicitly). `take_workspace_dirty` still runs
+        // every frame regardless, so the flag never piles up while the
+        // preference is off.
+        if self.state.take_workspace_dirty() && self.state.restore_workspace() {
             self.save_workspace();
         }
 
@@ -2900,6 +2978,22 @@ mod tests {
         assert!(matches!(
             harness.state().state.active_tab().content,
             TabContent::Session(_)
+        ));
+    }
+
+    #[test]
+    fn disabled_close_confirmation_closes_live_session_immediately() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .dispatch(AppCommand::ToggleConfirmSessionClose, &context);
+
+        app.request_close_tab(tab, &context);
+
+        assert!(app.overlays.pending_close.is_none());
+        assert!(matches!(
+            app.state.active_tab().content,
+            TabContent::Launcher
         ));
     }
 
@@ -3862,7 +3956,17 @@ mod tests {
             .expect("SSH profile is valid")],
             workspace,
         )
-        .expect("configuration is valid");
+        .expect("configuration is valid")
+        // Workspace restore is off by default; this test exercises the
+        // restore path, so it must opt in explicitly.
+        .with_interface_settings(InterfaceSettings::new(
+            festerm_config::ChipLayoutPreference::SingleRowScroll,
+            true,
+            true,
+            true,
+            true,
+        ))
+        .expect("configuration with restore_workspace enabled is valid");
 
         let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
 
@@ -3886,6 +3990,80 @@ mod tests {
             app.state.active_tab().content,
             TabContent::Launcher
         ));
+    }
+
+    #[test]
+    fn a_saved_workspace_is_ignored_at_startup_when_restore_workspace_is_off() {
+        // Regression test: "Workspace restore" defaults to off, so a
+        // workspace saved by an earlier run (or an older fesTerm build
+        // that always persisted the tab list) must not silently resurface
+        // just because the file still contains one.
+        let workspace = festerm_config::WorkspaceConfiguration::new(
+            vec![festerm_config::WorkspaceTab::settings("settings").expect("settings tab is valid")],
+            Some("settings".to_owned()),
+        )
+        .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(Vec::new(), workspace)
+            .expect("configuration is valid");
+        assert!(!configuration.interface_settings().restore_workspace());
+
+        let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
+
+        assert_eq!(app.state.tabs().len(), 1);
+        assert!(matches!(
+            app.state.active_tab().content,
+            TabContent::Launcher
+        ));
+        assert!(
+            !app.state.configuration().workspace_enabled(),
+            "the stale on-disk workspace must also be dropped from the in-memory \
+             configuration, so it can't resurface via an unrelated settings save"
+        );
+    }
+
+    #[test]
+    fn turning_off_restore_workspace_clears_any_previously_saved_workspace_from_disk() {
+        // Regression test: disabling the explicit "Workspace restore"
+        // preference must scrub the on-disk tab list immediately, not just
+        // stop updating it - otherwise re-enabling the toggle later would
+        // resurrect a stale, forgotten snapshot instead of starting clean.
+        let workspace = festerm_config::WorkspaceConfiguration::new(
+            vec![festerm_config::WorkspaceTab::launcher("launcher").expect("launcher tab is valid")],
+            None,
+        )
+        .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(Vec::new(), workspace)
+            .expect("configuration is valid")
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                true,
+                true,
+                true,
+            ))
+            .expect("configuration with restore_workspace enabled is valid");
+        let mut app = FesTermApp::for_test_with_configuration(configuration);
+        let directory = std::env::current_dir().unwrap().join(format!(
+            ".festerm-app-restore-workspace-toggle-off-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        assert!(app.state.restore_workspace());
+
+        let context = egui::Context::default();
+        app.state
+            .dispatch(AppCommand::ToggleRestoreWorkspace, &context);
+        app.persist_interface_settings();
+        assert!(!app.state.restore_workspace());
+        app.clear_saved_workspace();
+
+        assert!(!app.state.configuration().workspace_enabled());
+        let saved = Configuration::load_from_path(&path).expect("saved configuration loads");
+        assert!(!saved.workspace_enabled());
+        assert!(saved.workspace().is_none());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -3932,7 +4110,17 @@ mod tests {
         // whenever a frame changes the tab list (`AppState::workspace_dirty`
         // / `take_workspace_dirty`), so opening a new tab alone - with no
         // Settings action at all - must persist it to disk.
-        let configuration = Configuration::empty();
+        let configuration = Configuration::empty()
+            // Autosave is now gated on the "Workspace restore" preference;
+            // this test exercises the autosave path, so it must opt in.
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                true,
+                true,
+                true,
+            ))
+            .expect("configuration with restore_workspace enabled is valid");
         let context = egui::Context::default();
         let mut app = FesTermApp::for_test_with_configuration(configuration);
         let directory = std::env::current_dir().unwrap().join(format!(
@@ -4039,6 +4227,26 @@ mod tests {
                 .and_then(|item| item.hint.as_deref()),
             Some("\u{2318}+T")
         );
+    }
+
+    #[test]
+    fn settings_hotkey_opens_settings_on_every_platform() {
+        // Unlike the legacy `Cmd+,` binding (macOS-only), this cross-platform
+        // shortcut works everywhere and is the one presented in Settings'
+        // own Keyboard card.
+        let mut harness = harness();
+        harness.run();
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::S,
+        );
+        harness.run();
+
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
     }
 
     #[test]

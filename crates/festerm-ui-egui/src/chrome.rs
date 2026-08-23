@@ -19,23 +19,49 @@ use egui::{
 
 use crate::{icon, icon::Icon, theme};
 
-/// Chip footprint bounds (`docs/gui-design.md` "Active and inactive tabs"):
-/// chips clip long secondary text with an ellipsis rather than growing
-/// without bound, and never shrink below a minimum that still fits the
-/// status dot, a short label, and (when shown) the close control.
-const CHIP_MIN_WIDTH: f32 = 132.0;
+/// Chip footprint bounds (`docs/gui-design.md` "Single-row allocation
+/// contract"). The focused chip keeps its ordinary minimum because it owns
+/// the stable identity and Close control. Inactive chips may compact much
+/// further before the row starts scrolling.
+const CHIP_FOCUSED_MIN_WIDTH: f32 = 132.0;
+const CHIP_INACTIVE_MIN_WIDTH: f32 = 72.0;
 const CHIP_MAX_WIDTH: f32 = 220.0;
-/// Fixed two-line chip height (primary line + secondary line), independent
-/// of whether a chip currently has secondary text. Trimmed from an earlier
-/// `38.0`: pixel-measurement of a live screenshot showed the two text
-/// lines' own ink plus font leading only need about 30 logical px, so the
-/// remaining ~8px was pure top/bottom breathing room (`ui.add_space` calls
-/// in `paint_chip`) rather than text-adjacent minimum spacing - trimming
-/// just that padding (not the shared `CHROME_TOP_INSET`/`CHROME_SIDE_INSET`,
-/// which also sizes the terminal viewport's border) shrinks the whole top
-/// chrome band without crowding either text line or the 22px window-control
-/// icons that share this row.
-const CHIP_HEIGHT: f32 = 34.0;
+/// Fixed two-line chip height (primary line + secondary line), used row-wide
+/// whenever "Show session details in chips" is on - independent of whether
+/// any one chip currently has secondary text (see `paint_chip`'s doc
+/// comment: a Launcher chip with no secondary line still claims this same
+/// height so every chip in the row lines up evenly). Trimmed from an
+/// earlier `38.0`: pixel-measurement of a live screenshot showed the two
+/// text lines' own ink plus font leading only need about 30 logical px, so
+/// the remaining ~8px was pure top/bottom breathing room (`ui.add_space`
+/// calls in `paint_chip`) rather than text-adjacent minimum spacing -
+/// trimming just that padding (not the shared
+/// `CHROME_TOP_INSET`/`CHROME_SIDE_INSET`, which also sizes the terminal
+/// viewport's border) shrinks the whole top chrome band without crowding
+/// either text line or the 22px window-control icons that share this row.
+const CHIP_HEIGHT_FULL: f32 = 34.0;
+/// Single-line chip height used row-wide once "Show session details in
+/// chips" is off (`docs/gui-design.md` "compact single-line chip"): the
+/// secondary line never paints in that mode (`show`'s `suppressed_chips`),
+/// so the row-wide chip height - and the whole top chrome band above the
+/// terminal, via `CHROME_TOP_INSET + chip_height(..)` - shrinks to match
+/// instead of leaving an empty second line's worth of dead vertical space.
+/// Sized the same way `CHIP_HEIGHT_FULL` was: primary line's own ink/leading
+/// plus the same top/bottom breathing room `paint_chip` reserves for a
+/// single line, without the second line's height or the inter-line gap.
+const CHIP_HEIGHT_COMPACT: f32 = 28.0;
+
+/// The chip row's height for the current "Show session details in chips"
+/// preference: [`CHIP_HEIGHT_FULL`] (two lines) when chips show their
+/// secondary text, or [`CHIP_HEIGHT_COMPACT`] (one line) once that detail
+/// relocates to the status bar instead.
+const fn chip_height(show_session_details: bool) -> f32 {
+    if show_session_details {
+        CHIP_HEIGHT_FULL
+    } else {
+        CHIP_HEIGHT_COMPACT
+    }
+}
 
 // This chrome band defines its own small, fixed color palette rather than
 // pulling from `ui.visuals()` (`docs/gui-design.md`): egui's derived
@@ -92,27 +118,24 @@ const MACOS_TRAFFIC_LIGHTS_RESERVED_WIDTH: f32 = 76.0;
 /// re-applied every frame rather than assumed once from AppKit's default
 /// titlebar placement at window creation — a placement that can drift
 /// across macOS versions and would go stale the moment chip height itself
-/// becomes runtime-configurable (for example, a future narrower
-/// single-line chip preference). Keeping this a plain function of the
-/// current row geometry, called every frame, means that once such a
-/// preference exists, the traffic lights follow it automatically with no
-/// further wiring.
-pub const fn chrome_band_center_from_top() -> f32 {
-    CHROME_TOP_INSET + CHIP_HEIGHT / 2.0
+/// becomes runtime-configurable. Takes the current "Show session details in
+/// chips" preference so it follows the row's actual height
+/// (`CHIP_HEIGHT_FULL` vs `CHIP_HEIGHT_COMPACT`) with no further wiring.
+pub const fn chrome_band_center_from_top(show_session_details: bool) -> f32 {
+    CHROME_TOP_INSET + chip_height(show_session_details) / 2.0
 }
 
-/// Footprint reserved for the trailing icon controls. On macOS the native
-/// traffic lights replace the custom window buttons, leaving only overflow,
-/// panel-toggle, and search controls in this block.
-/// The chip row's own available width is capped to leave this much room
-/// free (`show`), rather than letting the chip row claim the full row width
-/// and only discovering afterward that the icons no longer fit: on a narrow
-/// window that made the icons overlap the chips instead of
-/// wrapping/scrolling around them.
-const TRAILING_CONTROLS_RESERVED_WIDTH: f32 = (if cfg!(target_os = "macos") { 3.0 } else { 6.0 })
-    * 22.0
-    + (if cfg!(target_os = "macos") { 3.0 } else { 6.0 }) * 8.0
-    + CHROME_SIDE_INSET;
+const CHROME_CONTROL_SIZE: f32 = 22.0;
+const CHIP_SCROLL_CONTROL_WIDTH: f32 = 20.0;
+
+/// Space consumed by the controls at the trailing edge of the chrome row.
+/// Search and Inspector are optional at narrow widths; Overflow and native
+/// window controls remain visible.
+const fn trailing_controls_reserved_width(show_search: bool, show_inspector: bool) -> f32 {
+    let platform_controls = if cfg!(target_os = "macos") { 0 } else { 3 };
+    let control_count = platform_controls + 1 + show_search as usize + show_inspector as usize;
+    control_count as f32 * (CHROME_CONTROL_SIZE + 8.0) + CHROME_SIDE_INSET
+}
 
 /// Opaque, content-free chip identity correlated by the application layer to
 /// its own stable tab identifier. It carries no terminal content.
@@ -273,13 +296,18 @@ pub fn show(
             .collect::<Vec<_>>();
         &suppressed_chips
     };
+    let chip_row_height = chip_height(show_session_details);
+    let active_chip_changed_id = Id::new("chrome_chip_row_last_active");
+    let previous_active = ui.data_mut(|data| data.get_temp::<ChipId>(active_chip_changed_id));
+    let active_just_changed = previous_active != Some(active);
+    ui.data_mut(|data| data.insert_temp(active_chip_changed_id, active));
     let mut actions = Vec::new();
     // Paint the full inset-inclusive row first. This uses the same surface as
     // the terminal below, making the frameless chrome and terminal one visual
     // well instead of stacking a separate colored title band above content.
     let band_rect = egui::Rect::from_min_size(
         ui.cursor().min,
-        vec2(ui.available_width(), CHROME_TOP_INSET + CHIP_HEIGHT),
+        vec2(ui.available_width(), CHROME_TOP_INSET + chip_row_height),
     );
     ui.painter().rect_filled(band_rect, 0.0, CHROME_BACKGROUND);
     ui.add_space(CHROME_TOP_INSET);
@@ -295,8 +323,8 @@ pub fn show(
         // `Align::Center` centered within the whole remaining panel height
         // instead, landing visibly off from the chips' own vertical
         // center.
-        ui.set_min_height(CHIP_HEIGHT);
-        ui.set_max_height(CHIP_HEIGHT);
+        ui.set_min_height(chip_row_height);
+        ui.set_max_height(chip_row_height);
         ui.add_space(CHROME_SIDE_INSET);
         if cfg!(target_os = "macos") {
             ui.add_space(MACOS_TRAFFIC_LIGHTS_RESERVED_WIDTH);
@@ -314,7 +342,7 @@ pub fn show(
         // it (mirrors egui's own `custom_window_frame` example).
         let row_band = egui::Rect::from_min_size(
             ui.cursor().min,
-            vec2(ui.available_width(), CHIP_HEIGHT + 6.0),
+            vec2(ui.available_width(), chip_row_height + 6.0),
         );
         let drag_response = ui.interact(
             row_band,
@@ -329,6 +357,65 @@ pub fn show(
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
+        let natural_widths: Vec<f32> = chips
+            .iter()
+            .map(|chip| natural_chip_width(ui, chip, chip.id == active))
+            .collect();
+        let active_index = chips.iter().position(|chip| chip.id == active);
+        let mut show_search = true;
+        let mut show_inspector = inspector_available;
+        let available_row_width = ui.available_width();
+        let fixed_new_session_width = if matches!(layout, ChipLayout::SingleRowScroll) {
+            chip_row_height + 8.0
+        } else {
+            0.0
+        };
+        let mut max_chip_row_width = (available_row_width
+            - trailing_controls_reserved_width(show_search, show_inspector)
+            - fixed_new_session_width)
+            .max(0.0);
+        let mut allocation = allocate_single_row_widths(
+            &natural_widths,
+            active_index,
+            max_chip_row_width,
+            ui.spacing().item_spacing.x,
+        );
+
+        // Optional global controls collapse into Overflow only after inactive
+        // chips have reached minimum width, and before the strip may scroll.
+        if matches!(layout, ChipLayout::SingleRowScroll) && allocation.scrolling {
+            show_search = false;
+            max_chip_row_width = (available_row_width
+                - trailing_controls_reserved_width(show_search, show_inspector)
+                - fixed_new_session_width)
+                .max(0.0);
+            allocation = allocate_single_row_widths(
+                &natural_widths,
+                active_index,
+                max_chip_row_width,
+                ui.spacing().item_spacing.x,
+            );
+        }
+        if matches!(layout, ChipLayout::SingleRowScroll) && allocation.scrolling && show_inspector {
+            show_inspector = false;
+            max_chip_row_width = (available_row_width
+                - trailing_controls_reserved_width(show_search, show_inspector)
+                - fixed_new_session_width)
+                .max(0.0);
+            allocation = allocate_single_row_widths(
+                &natural_widths,
+                active_index,
+                max_chip_row_width,
+                ui.spacing().item_spacing.x,
+            );
+        }
+        let scroll_width_id = Id::new("chrome_chip_row_last_scroll_width");
+        let previous_scroll_width = ui.data_mut(|data| data.get_temp::<f32>(scroll_width_id));
+        let scroll_width_changed =
+            previous_scroll_width.is_none_or(|width| (width - max_chip_row_width).abs() > 0.5);
+        ui.data_mut(|data| data.insert_temp(scroll_width_id, max_chip_row_width));
+        let reveal_active = active_just_changed || (allocation.scrolling && scroll_width_changed);
+
         // Scope the chip row to its own top-aligned sub-layout, rather than
         // changing this whole row's (or `ui.horizontal_top`'s) cross-axis
         // alignment: both alternatives hand the *entire* remaining panel
@@ -342,72 +429,69 @@ pub fn show(
         // while only this narrower sub-block opts into `Align::Min` fixes
         // the chip-row alignment without that regression.
         ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-            // Cap the chip row's own width so it leaves room for the
-            // trailing icon controls painted as this row's next sibling,
-            // rather than claiming the full remaining row width and only
-            // discovering afterward that the icons don't fit: on a narrow
-            // window that made the last chip(s) render underneath the
-            // icons instead of wrapping/scrolling to stay clear of them
-            // (`chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window`).
-            let max_chip_row_width =
-                (ui.available_width() - TRAILING_CONTROLS_RESERVED_WIDTH).max(0.0);
             ui.set_max_width(max_chip_row_width);
-            let forced_widths = if matches!(layout, ChipLayout::SingleRowScroll) {
-                let natural_widths: Vec<f32> = chips
-                    .iter()
-                    .map(|chip| natural_chip_width(ui, chip, chip.id == active))
-                    .collect();
-                shrink_to_fit_single_row(
-                    &natural_widths,
-                    max_chip_row_width,
-                    ui.spacing().item_spacing.x,
-                )
-            } else {
-                None
-            };
-            let mut chip_row = |ui: &mut Ui, forced_widths: Option<&[f32]>| {
-                for (index, chip) in chips.iter().enumerate() {
-                    show_chip(
-                        ui,
-                        chip,
-                        chip.id == active,
-                        index > 0,
-                        index + 1 < chips.len(),
-                        forced_widths.map(|widths| widths[index]),
-                        &mut actions,
-                    );
-                }
-                paint_new_chip_button(ui, &mut actions);
-                // A small strip past the last chip lets a drag be released
-                // (or live-shuffled to) the end of the row.
-                end_of_row_drop_target(ui, &mut actions);
-            };
+            let mut chip_row =
+                |ui: &mut Ui, forced_widths: Option<&[f32]>, include_new_session: bool| {
+                    for (index, chip) in chips.iter().enumerate() {
+                        let is_active = chip.id == active;
+                        show_chip(
+                            ui,
+                            chip,
+                            ChipPresentation {
+                                active: is_active,
+                                can_move_left: index > 0,
+                                can_move_right: index + 1 < chips.len(),
+                                forced_width: forced_widths.map(|widths| widths[index]),
+                                row_height: chip_row_height,
+                                reveal: is_active && reveal_active,
+                            },
+                            &mut actions,
+                        );
+                    }
+                    if include_new_session {
+                        paint_new_chip_button(ui, chip_row_height, &mut actions);
+                    }
+                    // A small strip past the last chip lets a drag be released
+                    // (or live-shuffled to) the end of the row.
+                    end_of_row_drop_target(ui, &mut actions);
+                };
             match layout {
                 ChipLayout::Wrap => {
-                    ui.horizontal_wrapped(|ui| chip_row(ui, None));
+                    ui.horizontal_wrapped(|ui| chip_row(ui, None, true));
                 }
-                ChipLayout::SingleRowScroll => match forced_widths {
-                    // Chips still fit on one row, whether at their natural
-                    // widths or compacted to `shrink_to_fit_single_row`'s
-                    // narrower ones: render plain (no scroll area), mirroring
-                    // a browser tab strip that shrinks tabs before ever
-                    // introducing a scrollbar.
-                    Some(widths) => {
-                        ui.horizontal(|ui| chip_row(ui, Some(&widths)));
+                ChipLayout::SingleRowScroll => {
+                    if allocation.scrolling {
+                        ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            let scroll_left = paint_chip_scroll_control(ui, false, chip_row_height);
+                            let viewport_width =
+                                (max_chip_row_width - 2.0 * CHIP_SCROLL_CONTROL_WIDTH).max(0.0);
+                            let output = ScrollArea::horizontal()
+                                .id_salt("chip_row_scroll")
+                                .max_width(viewport_width)
+                                .max_height(chip_row_height)
+                                .min_scrolled_height(chip_row_height)
+                                .content_margin(0.0)
+                                .scroll_bar_visibility(
+                                    egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                                )
+                                .show(ui, |ui| {
+                                    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                                        chip_row(ui, Some(&allocation.widths), false)
+                                    })
+                                });
+                            let scroll_right = paint_chip_scroll_control(ui, true, chip_row_height);
+                            update_chip_scroll_state(ui, output, scroll_left, scroll_right);
+                        });
+                    } else {
+                        ui.horizontal(|ui| chip_row(ui, Some(&allocation.widths), true));
                     }
-                    // Even fully compacted to `CHIP_MIN_WIDTH`, the chips
-                    // don't fit: fall back to a horizontally scrollable row
-                    // at natural widths, same as before this shrinking
-                    // behavior existed.
-                    None => {
-                        ScrollArea::horizontal()
-                            .id_salt("chip_row_scroll")
-                            .max_width(max_chip_row_width)
-                            .show(ui, |ui| ui.horizontal(|ui| chip_row(ui, None)));
-                    }
-                },
+                }
             }
         });
+        if matches!(layout, ChipLayout::SingleRowScroll) && allocation.scrolling {
+            paint_new_chip_button(ui, chip_row_height, &mut actions);
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.add_space(CHROME_SIDE_INSET);
             if !cfg!(target_os = "macos") {
@@ -416,11 +500,16 @@ pub fn show(
                 paint_maximize_icon(ui, maximized);
                 paint_minimize_icon(ui);
             }
-            paint_overflow_menu(ui, &mut actions);
-            if inspector_available && paint_panel_icon(ui, inspector_open) {
+            paint_overflow_menu(
+                ui,
+                !show_search,
+                inspector_available && !show_inspector,
+                &mut actions,
+            );
+            if show_inspector && paint_panel_icon(ui, inspector_open) {
                 actions.push(ChromeAction::ToggleInspector);
             }
-            if paint_search_icon(ui) {
+            if show_search && paint_search_icon(ui) {
                 actions.push(ChromeAction::TogglePalette);
             }
         });
@@ -447,8 +536,8 @@ pub fn show(
 /// from the chrome row (`AGENTS.md`: no duplicate widget-specific copies
 /// of the same operation) - an earlier full "+ Launcher" chip-style
 /// button duplicated this control and was removed as redundant.
-fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
-    let size = CHIP_HEIGHT;
+fn paint_new_chip_button(ui: &mut Ui, chip_row_height: f32, actions: &mut Vec<ChromeAction>) {
+    let size = chip_row_height;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "New tab"));
     let hovered = response.hovered();
@@ -476,6 +565,77 @@ fn paint_new_chip_button(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let response = response.on_hover_text("New tab");
     if response.clicked() {
         actions.push(ChromeAction::NewTab);
+    }
+}
+
+fn paint_chip_scroll_control(ui: &mut Ui, right: bool, height: f32) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(CHIP_SCROLL_CONTROL_WIDTH, height), Sense::click());
+    let label = if right {
+        "Scroll chips right"
+    } else {
+        "Scroll chips left"
+    };
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    let color = if response.hovered() {
+        CHROME_ICON_COLOR_HOVERED
+    } else {
+        CHROME_ICON_COLOR
+    };
+    let center = rect.center();
+    let direction = if right { 1.0 } else { -1.0 };
+    ui.painter().line_segment(
+        [
+            egui::pos2(center.x - 3.0 * direction, center.y - 5.0),
+            egui::pos2(center.x + 2.0 * direction, center.y),
+        ],
+        Stroke::new(1.5, color),
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(center.x + 2.0 * direction, center.y),
+            egui::pos2(center.x - 3.0 * direction, center.y + 5.0),
+        ],
+        Stroke::new(1.5, color),
+    );
+    response.on_hover_text(label).clicked()
+}
+
+fn update_chip_scroll_state<R>(
+    ui: &Ui,
+    output: egui::scroll_area::ScrollAreaOutput<R>,
+    scroll_left: bool,
+    scroll_right: bool,
+) {
+    let max_offset = (output.content_size.x - output.inner_rect.width()).max(0.0);
+    let mut state = output.state;
+    let page = (output.inner_rect.width() * 0.8).max(CHIP_INACTIVE_MIN_WIDTH);
+    let mut delta = if scroll_left {
+        -page
+    } else if scroll_right {
+        page
+    } else {
+        0.0
+    };
+
+    if DragAndDrop::has_any_payload(ui.ctx()) {
+        if let Some(pointer) = ui.ctx().pointer_interact_pos() {
+            const EDGE_ZONE: f32 = 24.0;
+            const EDGE_STEP: f32 = 10.0;
+            if output.inner_rect.contains(pointer) {
+                if pointer.x <= output.inner_rect.left() + EDGE_ZONE {
+                    delta = -EDGE_STEP;
+                } else if pointer.x >= output.inner_rect.right() - EDGE_ZONE {
+                    delta = EDGE_STEP;
+                }
+            }
+        }
+    }
+
+    if delta != 0.0 {
+        state.offset.x = (state.offset.x + delta).clamp(0.0, max_offset);
+        state.store(ui.ctx(), output.id);
+        ui.ctx().request_repaint();
     }
 }
 
@@ -614,7 +774,12 @@ fn paint_panel_icon(ui: &mut Ui, open: bool) -> bool {
 /// always-visible control (`docs/gui-design.md` "Application chrome and
 /// session context": "remain reachable from the command palette and compact
 /// overflow menu").
-fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
+fn paint_overflow_menu(
+    ui: &mut Ui,
+    include_palette: bool,
+    include_inspector: bool,
+    actions: &mut Vec<ChromeAction>,
+) {
     let size = 22.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "More actions"));
@@ -627,6 +792,17 @@ fn paint_overflow_menu(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     let response = response.on_hover_text("More actions");
 
     Popup::menu(&response).show(|ui| {
+        if include_palette && ui.button("Command palette").clicked() {
+            actions.push(ChromeAction::TogglePalette);
+            ui.close();
+        }
+        if include_inspector && ui.button("Session inspector").clicked() {
+            actions.push(ChromeAction::ToggleInspector);
+            ui.close();
+        }
+        if include_palette || include_inspector {
+            ui.separator();
+        }
         if ui.button("Open Settings").clicked() {
             actions.push(ChromeAction::OpenSettings);
             ui.close();
@@ -662,53 +838,105 @@ fn chip_widget_id(id: ChipId) -> Id {
     Id::new("chrome_chip").with(id.0)
 }
 
-/// Fixed-width companions painted in the chip row after the last chip: the
-/// trailing "+" new-tab control (`paint_new_chip_button`, a `CHIP_HEIGHT`
-/// square) and the small strip past it that accepts an end-of-row drag
-/// release (`end_of_row_drop_target`, 24px).
-const CHIP_ROW_TRAILING_CONTROLS_WIDTH: f32 = CHIP_HEIGHT + 24.0;
+/// The drop target remains at the logical end of the scrollable chip strip.
+/// New Session is reserved and painted outside that strip so it cannot scroll
+/// away with inactive chips.
+const fn chip_row_end_target_width() -> f32 {
+    24.0
+}
 
-/// Computes each chip's width for a single-row chip layout, mimicking a
-/// browser tab strip's "shrink before scroll" behavior
-/// (`docs/gui-design.md` "Tab overflow and wrapping"): while every chip
-/// already fits the row at its own natural (content-driven) width, this
-/// returns those natural widths unchanged. Once they no longer fit, every
-/// chip's width shrinks by the same proportion (preserving each chip's
-/// *relative* size against its neighbors) down to `CHIP_MIN_WIDTH`, rather
-/// than immediately handing the row off to a scrollbar.
-///
-/// Returns `None` once even every chip shrunk to `CHIP_MIN_WIDTH` still
-/// doesn't leave enough room; the caller then falls back to a horizontally
-/// scrollable row at natural widths.
-fn shrink_to_fit_single_row(
+#[derive(Debug, PartialEq)]
+struct SingleRowAllocation {
+    widths: Vec<f32>,
+    scrolling: bool,
+}
+
+/// Allocates the focused chip at its natural width, then water-fills the
+/// remaining budget across inactive chips. Once every inactive chip reaches
+/// its minimum, those compact widths are retained inside the scroll area.
+fn allocate_single_row_widths(
     natural_widths: &[f32],
+    active_index: Option<usize>,
     available_width: f32,
     item_spacing: f32,
-) -> Option<Vec<f32>> {
+) -> SingleRowAllocation {
     let count = natural_widths.len();
     if count == 0 {
-        return Some(Vec::new());
+        return SingleRowAllocation {
+            widths: Vec::new(),
+            scrolling: false,
+        };
     }
-    // One spacing gap between each pair of chips, plus one more before the
-    // trailing "+" control that always follows the last chip.
     let spacing_total = item_spacing * count as f32;
     let available_for_chips =
-        (available_width - CHIP_ROW_TRAILING_CONTROLS_WIDTH - spacing_total).max(0.0);
+        (available_width - chip_row_end_target_width() - spacing_total).max(0.0);
     let natural_total: f32 = natural_widths.iter().sum();
     if natural_total <= available_for_chips {
-        return Some(natural_widths.to_vec());
+        return SingleRowAllocation {
+            widths: natural_widths.to_vec(),
+            scrolling: false,
+        };
     }
-    let min_total = CHIP_MIN_WIDTH * count as f32;
-    if min_total > available_for_chips || natural_total <= 0.0 {
-        return None;
-    }
-    let scale = available_for_chips / natural_total;
-    Some(
-        natural_widths
+
+    let focused_width = active_index.and_then(|index| natural_widths.get(index).copied());
+    let inactive_count = count - usize::from(focused_width.is_some());
+    let inactive_budget = (available_for_chips - focused_width.unwrap_or(0.0)).max(0.0);
+    let inactive_minimum_total = CHIP_INACTIVE_MIN_WIDTH * inactive_count as f32;
+    let scrolling = inactive_minimum_total > inactive_budget;
+    if scrolling {
+        let widths = natural_widths
             .iter()
-            .map(|&width| (width * scale).max(CHIP_MIN_WIDTH))
-            .collect(),
-    )
+            .enumerate()
+            .map(|(index, &width)| {
+                if Some(index) == active_index {
+                    width
+                } else {
+                    CHIP_INACTIVE_MIN_WIDTH
+                }
+            })
+            .collect();
+        return SingleRowAllocation {
+            widths,
+            scrolling: true,
+        };
+    }
+
+    let mut low = CHIP_INACTIVE_MIN_WIDTH;
+    let mut high = natural_widths
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| Some(*index) != active_index)
+        .map(|(_, &width)| width)
+        .fold(CHIP_INACTIVE_MIN_WIDTH, f32::max);
+    for _ in 0..32 {
+        let cap = (low + high) / 2.0;
+        let used: f32 = natural_widths
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != active_index)
+            .map(|(_, &width)| width.min(cap).max(CHIP_INACTIVE_MIN_WIDTH))
+            .sum();
+        if used <= inactive_budget {
+            low = cap;
+        } else {
+            high = cap;
+        }
+    }
+    let widths = natural_widths
+        .iter()
+        .enumerate()
+        .map(|(index, &width)| {
+            if Some(index) == active_index {
+                width
+            } else {
+                width.min(low).max(CHIP_INACTIVE_MIN_WIDTH)
+            }
+        })
+        .collect();
+    SingleRowAllocation {
+        widths,
+        scrolling: false,
+    }
 }
 
 /// Ephemeral, UI-only rename buffer key: whether `chip_id` currently has an
@@ -730,8 +958,8 @@ fn rename_buffer_id(id: ChipId) -> Id {
 /// a no-op feedback loop: whatever width it was given is exactly the width
 /// it reported back, so a chip could never discover it wanted to be wider
 /// than whatever it happened to start at - including its very first frame,
-/// which defaulted to `CHIP_MIN_WIDTH` before a real width was ever cached.
-/// In practice every chip appeared permanently stuck at `CHIP_MIN_WIDTH`
+/// which defaulted to the minimum before a real width was ever cached.
+/// In practice every chip appeared permanently stuck at that minimum
 /// and the Chrome-style "shrink before scroll" row always had nothing to
 /// shrink from. Measuring the text directly (mirroring `paint_chip`'s own
 /// insets/spacing) sidesteps the chicken-and-egg problem entirely.
@@ -786,29 +1014,46 @@ fn natural_chip_width(ui: &Ui, chip: &ChipViewModel, show_close: bool) -> f32 {
         width += CLOSE_RESERVED;
     }
 
-    width.clamp(CHIP_MIN_WIDTH, CHIP_MAX_WIDTH)
+    let minimum = if show_close {
+        CHIP_FOCUSED_MIN_WIDTH
+    } else {
+        CHIP_INACTIVE_MIN_WIDTH
+    };
+    width.clamp(minimum, CHIP_MAX_WIDTH)
+}
+
+struct ChipPresentation {
+    active: bool,
+    can_move_left: bool,
+    can_move_right: bool,
+    forced_width: Option<f32>,
+    row_height: f32,
+    reveal: bool,
 }
 
 fn show_chip(
     ui: &mut Ui,
     chip: &ChipViewModel,
-    active: bool,
-    can_move_left: bool,
-    can_move_right: bool,
-    forced_width: Option<f32>,
+    presentation: ChipPresentation,
     actions: &mut Vec<ChromeAction>,
 ) {
+    let ChipPresentation {
+        active,
+        can_move_left,
+        can_move_right,
+        forced_width,
+        row_height,
+        reveal,
+    } = presentation;
     let chip_id = chip_widget_id(chip.id);
     let ctx = ui.ctx().clone();
     // The chip's true content-driven width, measured directly from its text
     // (see `natural_chip_width`'s doc comment for why this can't be
     // discovered by measuring the *painted* chip's response rect instead).
-    let natural_size = vec2(natural_chip_width(ui, chip, active), CHIP_HEIGHT);
-    // While the row is compacting chips to fit (`shrink_to_fit_single_row`),
-    // the caller forces a narrower width than this chip's own natural size;
-    // text inside still truncates to whatever width it's actually given
-    // (`paint_chip_primary`), same as at full width.
-    let bg_size = vec2(forced_width.unwrap_or(natural_size.x), CHIP_HEIGHT);
+    let natural_size = vec2(natural_chip_width(ui, chip, active), row_height);
+    // Inactive chips may be allocated below their natural size; their text
+    // truncates to the width selected by the row allocator.
+    let bg_size = vec2(forced_width.unwrap_or(natural_size.x), row_height);
 
     if ctx.is_being_dragged(chip_id) {
         // Currently being dragged: keep the payload alive, reserve the
@@ -829,13 +1074,18 @@ fn show_chip(
         let layer_id = LayerId::new(Order::Tooltip, chip_id);
         let mut floating_ui =
             ui.new_child(UiBuilder::new().max_rect(ghost_rect).layer_id(layer_id));
+        let chip_painter = floating_ui.painter().clone();
         let content_response = paint_chip(
+            &chip_painter,
             &mut floating_ui,
             chip,
-            active,
-            false,
-            active,
-            chip_id,
+            ChipPaintState {
+                active,
+                hovered: false,
+                show_close: active,
+                chip_id,
+                outer_rect: ghost_rect,
+            },
             actions,
         );
 
@@ -860,6 +1110,18 @@ fn show_chip(
     bg_response.widget_info(|| {
         WidgetInfo::labeled(WidgetType::Other, true, format!("{} chip", chip.primary))
     });
+    // Bring a freshly-activated chip into view (`reveal`, set by the
+    // caller only on the frame its `active` id changed): with
+    // `ChipLayout::SingleRowScroll`, once there's no more room to shrink
+    // chips further, the row falls back to a horizontally scrolling
+    // `ScrollArea` that otherwise starts - and stays - at its initial
+    // offset, leaving a newly created (or newly clicked) chip past the
+    // fold completely invisible until the user manually scrolled to find
+    // it. A no-op outside any scrolling ancestor (`ChipLayout::Wrap`, or
+    // a `SingleRowScroll` row that still fits without scrolling).
+    if reveal {
+        bg_response.scroll_to_me(Some(Align::Center));
+    }
 
     // The close control is a deliberately scarce affordance
     // (`docs/gui-design.md`): only the active chip ever shows it, matching
@@ -867,14 +1129,19 @@ fn show_chip(
     // no close affordance at all, even on hover.
     let show_close = active;
     let hovered = bg_response.hovered();
+    let chip_painter = ui.painter().clone();
     let mut content_ui = ui.new_child(UiBuilder::new().max_rect(bg_rect));
     paint_chip(
+        &chip_painter,
         &mut content_ui,
         chip,
-        active,
-        hovered,
-        show_close,
-        chip_id,
+        ChipPaintState {
+            active,
+            hovered,
+            show_close,
+            chip_id,
+            outer_rect: bg_rect,
+        },
         actions,
     );
 
@@ -1002,15 +1269,28 @@ fn style_context_menu(ui: &mut Ui) {
 /// smaller/muted secondary line carrying transient terminal-provided
 /// metadata (`docs/gui-design.md` "Identity precedence"). Both lines
 /// truncate rather than growing the chip past `CHIP_MAX_WIDTH`.
-fn paint_chip(
-    ui: &mut Ui,
-    chip: &ChipViewModel,
+struct ChipPaintState {
     active: bool,
     hovered: bool,
     show_close: bool,
     chip_id: Id,
+    outer_rect: egui::Rect,
+}
+
+fn paint_chip(
+    painter: &egui::Painter,
+    ui: &mut Ui,
+    chip: &ChipViewModel,
+    state: ChipPaintState,
     actions: &mut Vec<ChromeAction>,
 ) -> egui::Response {
+    let ChipPaintState {
+        active,
+        hovered,
+        show_close,
+        chip_id,
+        outer_rect,
+    } = state;
     let corner_radius = 6;
     // The active chip's fill is the lightest surface in the row (measured
     // against the mockup: selected-chip fill lum ~170, the panel's overall
@@ -1032,22 +1312,27 @@ fn paint_chip(
         Stroke::new(1.0, CHIP_INACTIVE_OUTLINE)
     };
 
-    let outer_rect = ui.max_rect();
-    ui.painter().rect_filled(outer_rect, corner_radius, fill);
-    ui.painter()
-        .rect_stroke(outer_rect, corner_radius, stroke, egui::StrokeKind::Inside);
+    painter.rect_filled(outer_rect, corner_radius, fill);
+    painter.rect_stroke(outer_rect, corner_radius, stroke, egui::StrokeKind::Inside);
 
     // The close control is positioned from the chip's own outer rect
-    // (evenly inset from the top and right edges) rather than flowing
-    // through the primary line's layout: this keeps its position fixed
-    // regardless of label length and avoids the label being pulled
+    // (evenly inset from the right edge, vertically centered) rather than
+    // flowing through the primary line's layout: this keeps its position
+    // fixed regardless of label length and avoids the label being pulled
     // towards the right edge, which a right-to-left sub-layout previously
-    // caused for short labels.
+    // caused for short labels. Centering vertically (rather than a fixed
+    // inset from the top) is what lets it track `outer_rect`'s own height
+    // as chips shrink in compact mode (`CHIP_HEIGHT_COMPACT`) instead of
+    // staying pinned to where the top-inset would have placed it for the
+    // taller two-line chip height.
     const CLOSE_SIZE: f32 = 16.0;
     const CLOSE_INSET: f32 = 8.0;
     let close_rect = if chip.closable && show_close {
         let rect = egui::Rect::from_min_size(
-            outer_rect.right_top() + vec2(-CLOSE_INSET - CLOSE_SIZE, CLOSE_INSET),
+            egui::pos2(
+                outer_rect.right() - CLOSE_INSET - CLOSE_SIZE,
+                outer_rect.center().y - CLOSE_SIZE / 2.0,
+            ),
             vec2(CLOSE_SIZE, CLOSE_SIZE),
         );
         let mut close_ui = ui.new_child(UiBuilder::new().max_rect(rect));
@@ -1059,55 +1344,18 @@ fn paint_chip(
 
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        // The primary line is optically one pixel high. Moving that pixel
-        // from the inter-row gap to the top inset shifts only the status dot
-        // and title; the secondary line keeps its previous y-position.
         ui.spacing_mut().item_spacing.y = 0.0;
-        // Rows would otherwise reserve `interact_size.y` (a button-sized
-        // minimum, ~24px) even for a single line of small text, inflating
-        // the gap between the primary and secondary lines well past what
-        // the text itself needs.
         ui.spacing_mut().interact_size.y = 0.0;
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-        // `Ui::vertical` centers its children horizontally by default; the
-        // mockup left-aligns the chip's content (with a small reserved
-        // strip for the status dot), so lay the two lines out top-down
-        // with `Align::Min` instead.
-        ui.with_layout(Layout::top_down(Align::Min), |ui| {
-            // Claim the chip's full footprint up front: otherwise a chip
-            // with no secondary text (e.g. a Launcher tab) lays out a
-            // shorter content block that then gets vertically *centered*
-            // within the row by the parent chip-row layout, instead of
-            // sitting flush at the top like every other chip.
-            ui.set_min_size(outer_rect.size());
-            ui.add_space(3.0);
-            // Reserve the close button's width (if shown) so both the
-            // primary label and the secondary line truncate before
-            // reaching under it, without otherwise affecting either
-            // line's left-aligned position. Shared across both lines so a
-            // long secondary line (e.g. "Awaiting SSH password") can't run
-            // under the button the way the primary label used to before
-            // this was hoisted out of the primary-only closure below.
-            let reserved = close_rect.map_or(0.0, |rect| outer_rect.right() - rect.left());
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
-                if !matches!(chip.status, ChipStatus::Neutral) {
-                    paint_status_dot(ui, chip.status);
-                }
-
-                let rename_id = rename_buffer_id(chip.id);
-                let editing: Option<String> = ui.data(|d| d.get_temp(rename_id));
-
-                ui.scope(|ui| {
-                    let max_width = (ui.available_width() - reserved).max(0.0);
-                    ui.set_max_width(max_width);
-                    paint_chip_primary(ui, chip, rename_id, editing, actions);
-                });
-            });
-            if let Some(secondary) = &chip.secondary {
+        let reserved = close_rect.map_or(0.0, |rect| outer_rect.right() - rect.left());
+        if let Some(secondary) = &chip.secondary {
+            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                ui.set_min_size(outer_rect.size());
+                ui.add_space(3.0);
                 ui.horizontal(|ui| {
-                    // Indent under the primary line's label (status dot
-                    // width + spacing), not the chip's own left padding.
+                    paint_chip_primary_contents(ui, chip, reserved, actions);
+                });
+                ui.horizontal(|ui| {
                     ui.add_space(if matches!(chip.status, ChipStatus::Neutral) {
                         8.0
                     } else {
@@ -1130,12 +1378,44 @@ fn paint_chip(
                         );
                     });
                 });
-            }
-            ui.add_space(4.0);
-        });
+                ui.add_space(4.0);
+            });
+        } else {
+            let line_height = ui.text_style_height(&egui::TextStyle::Body);
+            let line_rect = egui::Rect::from_center_size(
+                outer_rect.center(),
+                vec2(outer_rect.width(), line_height),
+            );
+            let mut line_ui = ui.new_child(
+                UiBuilder::new()
+                    .max_rect(line_rect)
+                    .layout(Layout::left_to_right(Align::Center)),
+            );
+            paint_chip_primary_contents(&mut line_ui, chip, reserved, actions);
+        }
     });
 
     ui.interact(outer_rect, chip_id.with("content"), Sense::hover())
+}
+
+fn paint_chip_primary_contents(
+    ui: &mut Ui,
+    chip: &ChipViewModel,
+    reserved: f32,
+    actions: &mut Vec<ChromeAction>,
+) {
+    ui.add_space(8.0);
+    if !matches!(chip.status, ChipStatus::Neutral) {
+        paint_status_dot(ui, chip.status);
+    }
+
+    let rename_id = rename_buffer_id(chip.id);
+    let editing: Option<String> = ui.data(|d| d.get_temp(rename_id));
+    ui.scope(|ui| {
+        let max_width = (ui.available_width() - reserved).max(0.0);
+        ui.set_max_width(max_width);
+        paint_chip_primary(ui, chip, rename_id, editing, actions);
+    });
 }
 
 /// Paints the primary-line label or its in-progress rename `TextEdit`,
@@ -1548,12 +1828,6 @@ mod tests {
 
     #[test]
     fn single_row_layout_shrinks_chips_before_falling_back_to_a_scrollbar() {
-        // Regression test for the Chrome-style "shrink before scroll"
-        // behavior: with enough chips that their natural widths overflow
-        // the row but still fit once compacted to `CHIP_MIN_WIDTH`, every
-        // chip must stay visible on the single row (no chip's rect pushed
-        // outside the window by a scroll offset), narrower than it would
-        // render alone.
         let chips: Vec<ChipViewModel> = (1..=4)
             .map(|id| {
                 chip(
@@ -1585,13 +1859,20 @@ mod tests {
                     observed: Vec::new(),
                 },
             );
-        // A chip's *natural* width is now measured directly from its text
-        // (`natural_chip_width`), independent of whatever it was rendered
-        // at previously, so a single frame is enough to see it correctly.
         harness.run();
 
+        let focused_rect = harness
+            .get_by_label("workspace-session-number-1-long-descriptive-name chip")
+            .rect();
+        assert!(
+            (focused_rect.width() - CHIP_MAX_WIDTH).abs() < 0.01,
+            "focused chip must retain its normal width, got {focused_rect:?}"
+        );
+        assert!(harness.query_by_label("Scroll chips left").is_none());
+        assert!(harness.query_by_label("Scroll chips right").is_none());
+
         let window_right = 900.0;
-        for id in 1..=4 {
+        for id in 2..=4 {
             let label = format!("workspace-session-number-{id}-long-descriptive-name chip");
             let chip_rect = harness.get_by_label(&label).rect();
             assert!(
@@ -1601,20 +1882,222 @@ mod tests {
                  scrolled-away area"
             );
             assert!(
-                chip_rect.width() < CHIP_MAX_WIDTH,
-                "expected {label} to have shrunk below its natural max width \
-                 ({chip_rect:?}) once compacted to fit the row"
+                (CHIP_INACTIVE_MIN_WIDTH..CHIP_MAX_WIDTH).contains(&chip_rect.width()),
+                "expected inactive {label} to absorb the shortage without \
+                 reaching overflow, got {chip_rect:?}"
             );
         }
     }
 
     #[test]
+    fn non_scrolling_single_row_places_new_session_next_to_last_chip() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[chip(1, "one"), chip(2, "two"), chip(3, "three")],
+                    ChipId(3),
+                    false,
+                    true,
+                    ChipLayout::SingleRowScroll,
+                    true,
+                );
+            });
+        harness.run();
+
+        assert!(harness.query_by_label("Scroll chips left").is_none());
+        let last_chip = harness.get_by_label("three chip").rect();
+        let new_session = harness.get_by_label("New tab").rect();
+        assert_eq!(new_session.left() - last_chip.right(), 8.0);
+    }
+
+    #[test]
+    fn activating_an_offscreen_chip_scrolls_it_into_view_in_single_row_layout() {
+        let chips: Vec<ChipViewModel> = (1..=12)
+            .map(|id| chip(id, &format!("session-{id}-with-a-long-descriptive-name")))
+            .collect();
+        let window_width = 360.0;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(window_width, 200.0))
+            .with_step_dt(0.01)
+            .build_ui_state(
+                |ui, state: &mut ChromeHarnessState| {
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        true,
+                    );
+                    state.observed.extend(actions);
+                },
+                ChromeHarnessState {
+                    chips,
+                    active: ChipId(1),
+                    layout: ChipLayout::SingleRowScroll,
+                    observed: Vec::new(),
+                },
+            );
+        harness.run();
+
+        // Sanity check this test actually exercises the scroll fallback:
+        // the last chip must start out beyond the window, unreachable
+        // without scrolling.
+        let last_label = "session-12-with-a-long-descriptive-name chip";
+        let before = harness.get_by_label(last_label).rect();
+        assert!(
+            before.left() >= window_width,
+            "expected the last chip to start out past the fold ({before:?}) so this test \
+             actually exercises the scroll-into-view behavior"
+        );
+        assert!(harness.query_by_label("Scroll chips left").is_some());
+        assert!(harness.query_by_label("Scroll chips right").is_some());
+        let first_label = "session-1-with-a-long-descriptive-name chip";
+        let first_before = harness.get_by_label(first_label).rect();
+        harness.get_by_label("Scroll chips right").click();
+        harness.run();
+        harness.run();
+        let first_after = harness.get_by_label(first_label).rect();
+        assert!(
+            first_after.left() < first_before.left(),
+            "right scroll affordance must move chip content left, got \
+             before={first_before:?}, after={first_after:?}"
+        );
+
+        harness.state_mut().active = ChipId(12);
+        // `scroll_to_me` schedules an animated scroll rather than jumping
+        // instantly; a handful of frames lets it settle.
+        for _ in 0..30 {
+            harness.run();
+        }
+
+        let after = harness.get_by_label(last_label).rect();
+        assert!(
+            after.left() >= 0.0 && after.right() <= window_width + 1.0,
+            "expected activating {last_label} to scroll it back into the \
+             {window_width}-wide window, got {after:?}"
+        );
+        assert!(
+            (after.width() - CHIP_MAX_WIDTH).abs() < 0.01,
+            "newly focused chip must expand to its normal width, got {after:?}"
+        );
+        let old_focused = harness
+            .get_by_label("session-1-with-a-long-descriptive-name chip")
+            .rect();
+        assert!(
+            (old_focused.width() - CHIP_INACTIVE_MIN_WIDTH).abs() < 0.01,
+            "scroll fallback must retain the old chip's compacted inactive \
+             width, got {old_focused:?}"
+        );
+    }
+
+    #[test]
+    fn scrolling_compact_chips_keep_the_non_scrolling_row_baseline() {
+        let chips: Vec<ChipViewModel> = (1..=8)
+            .map(|id| chip(id, &format!("session-{id}-with-a-long-descriptive-name")))
+            .collect();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 200.0))
+            .build_ui_state(
+                |ui, state: &mut ChromeHarnessState| {
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        false,
+                    );
+                    state.observed.extend(actions);
+                },
+                ChromeHarnessState {
+                    chips,
+                    active: ChipId(1),
+                    layout: ChipLayout::SingleRowScroll,
+                    observed: Vec::new(),
+                },
+            );
+        harness.run();
+
+        assert!(harness.query_by_label("Scroll chips left").is_some());
+        let chip_rect = harness
+            .get_by_label("session-1-with-a-long-descriptive-name chip")
+            .rect();
+        let scroll_control_rect = harness.get_by_label("Scroll chips left").rect();
+        assert_eq!(chip_rect.height(), CHIP_HEIGHT_COMPACT);
+        assert_eq!(chip_rect.top(), scroll_control_rect.top());
+        assert_eq!(chip_rect.bottom(), scroll_control_rect.bottom());
+    }
+
+    #[test]
+    fn inactive_chips_can_use_the_approved_narrow_natural_width() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two")],
+            active: ChipId(1),
+            layout: ChipLayout::SingleRowScroll,
+            observed: Vec::new(),
+        });
+        harness.run();
+
+        let focused = harness.get_by_label("one chip").rect();
+        let inactive = harness.get_by_label("two chip").rect();
+        assert_eq!(focused.width(), CHIP_FOCUSED_MIN_WIDTH);
+        assert_eq!(inactive.width(), CHIP_INACTIVE_MIN_WIDTH);
+    }
+
+    #[test]
+    fn narrow_single_row_collapses_optional_controls_into_overflow() {
+        let chips = (1..=6)
+            .map(|id| chip(id, &format!("long-session-name-{id}")))
+            .collect();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 200.0))
+            .with_step_dt(0.01)
+            .build_ui_state(
+                |ui, state: &mut ChromeHarnessState| {
+                    let actions = show(
+                        ui,
+                        &state.chips,
+                        state.active,
+                        false,
+                        true,
+                        state.layout,
+                        true,
+                    );
+                    state.observed.extend(actions);
+                },
+                ChromeHarnessState {
+                    chips,
+                    active: ChipId(1),
+                    layout: ChipLayout::SingleRowScroll,
+                    observed: Vec::new(),
+                },
+            );
+        harness.run();
+
+        assert!(harness
+            .query_by_label_contains("Command palette (")
+            .is_none());
+        assert!(harness.query_by_label("Toggle session inspector").is_none());
+        let new_session = harness.get_by_label("New tab").rect();
+        let overflow = harness.get_by_label("More actions").rect();
+        assert!(
+            new_session.left() >= 0.0 && new_session.right() <= overflow.left(),
+            "New Session must remain fixed and visible before Overflow, got \
+             new={new_session:?}, overflow={overflow:?}"
+        );
+        harness.get_by_label("More actions").click();
+        harness.run();
+        assert!(harness.query_by_label("Command palette").is_some());
+        assert!(harness.query_by_label("Session inspector").is_some());
+    }
+
+    #[test]
     fn a_single_wide_chip_renders_at_its_natural_width_not_stuck_at_the_minimum() {
-        // Regression test: `paint_chip`'s response used to just echo back
-        // whatever rect it was given, so a chip's cached "natural" width
-        // could never grow past `CHIP_MIN_WIDTH` (its uncached default) -
-        // see `natural_chip_width`'s doc comment. With ample room and a
-        // single long-labeled chip, it must render wider than the minimum.
         let mut harness = harness(ChromeHarnessState {
             chips: vec![chip(
                 1,
@@ -1630,48 +2113,130 @@ mod tests {
             .get_by_label("a-very-long-session-label-that-should-need-more-than-min-width chip")
             .rect();
         assert!(
-            chip_rect.width() > CHIP_MIN_WIDTH,
+            chip_rect.width() > CHIP_FOCUSED_MIN_WIDTH,
             "expected the chip's natural width ({chip_rect:?}) to exceed \
-             CHIP_MIN_WIDTH ({CHIP_MIN_WIDTH}) instead of being stuck at it"
+             its focused minimum ({CHIP_FOCUSED_MIN_WIDTH})"
         );
     }
 
-    #[test]
-    fn shrink_to_fit_single_row_keeps_natural_widths_when_they_already_fit() {
-        let natural = vec![150.0, 160.0, 140.0];
-        let widths = shrink_to_fit_single_row(&natural, 900.0, 8.0)
-            .expect("ample room must not fall back to scrolling");
-        assert_eq!(widths, natural);
+    fn allocation_for_chip_budget(
+        natural: &[f32],
+        active_index: usize,
+        chip_budget: f32,
+    ) -> SingleRowAllocation {
+        let spacing = 8.0;
+        let available = chip_budget + chip_row_end_target_width() + spacing * natural.len() as f32;
+        allocate_single_row_widths(natural, Some(active_index), available, spacing)
     }
 
     #[test]
-    fn shrink_to_fit_single_row_compacts_proportionally_until_it_fits() {
-        let natural = vec![220.0, 220.0, 220.0, 220.0];
-        let available = 700.0;
-        let widths = shrink_to_fit_single_row(&natural, available, 8.0)
-            .expect("room for every chip at CHIP_MIN_WIDTH must not fall back to scrolling");
+    fn single_row_keeps_natural_widths_when_they_fit() {
+        let natural = vec![184.0, 136.0, 136.0, 80.0];
+        let allocation = allocation_for_chip_budget(&natural, 0, natural.iter().sum());
+        assert_eq!(allocation.widths, natural);
+        assert!(!allocation.scrolling);
+    }
 
-        assert_eq!(widths.len(), natural.len());
-        for width in &widths {
-            assert!(
-                (CHIP_MIN_WIDTH..220.0).contains(width),
-                "expected each shrunk width ({width}) to sit between the \
-                 minimum and its unshrunk natural width"
-            );
+    #[test]
+    fn focused_chip_priority_is_identical_at_both_vertical_densities() {
+        fn widths(show_session_details: bool) -> Vec<f32> {
+            let chips: Vec<_> = (1..=4)
+                .map(|id| {
+                    chip(
+                        id,
+                        &format!("workspace-session-number-{id}-long-descriptive-name"),
+                    )
+                })
+                .collect();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 200.0))
+                .build_ui(move |ui| {
+                    show(
+                        ui,
+                        &chips,
+                        ChipId(1),
+                        false,
+                        true,
+                        ChipLayout::SingleRowScroll,
+                        show_session_details,
+                    );
+                });
+            harness.run();
+            (1..=4)
+                .map(|id| {
+                    harness
+                        .get_by_label(&format!(
+                            "workspace-session-number-{id}-long-descriptive-name chip"
+                        ))
+                        .rect()
+                        .width()
+                })
+                .collect()
         }
-        let spacing_total = 8.0 * natural.len() as f32;
-        let used = widths.iter().sum::<f32>() + spacing_total + CHIP_ROW_TRAILING_CONTROLS_WIDTH;
-        assert!(
-            used <= available + 0.01,
-            "shrunk widths ({widths:?}) must still fit within {available}"
-        );
+
+        for measured in [widths(true), widths(false)] {
+            assert!((measured[0] - CHIP_MAX_WIDTH).abs() < 0.01);
+            assert!(measured[1..].iter().all(|width| *width < CHIP_MAX_WIDTH));
+        }
     }
 
     #[test]
-    fn shrink_to_fit_single_row_gives_up_and_signals_scrolling_when_even_the_minimum_does_not_fit()
-    {
-        let natural = vec![220.0, 220.0, 220.0, 220.0, 220.0, 220.0, 220.0, 220.0];
-        assert_eq!(shrink_to_fit_single_row(&natural, 200.0, 8.0), None);
+    fn single_row_compacts_only_inactive_chips_with_water_filling() {
+        let natural = vec![184.0, 136.0, 136.0, 80.0, 80.0];
+        let allocation = allocation_for_chip_budget(&natural, 0, 184.0 + 84.0 + 84.0 + 80.0 + 80.0);
+
+        assert!(!allocation.scrolling);
+        assert_eq!(allocation.widths[0], 184.0);
+        assert!((allocation.widths[1] - 84.0).abs() < 0.01);
+        assert!((allocation.widths[2] - 84.0).abs() < 0.01);
+        assert_eq!(allocation.widths[3], 80.0);
+        assert_eq!(allocation.widths[4], 80.0);
+    }
+
+    #[test]
+    fn single_row_scrolls_only_after_every_inactive_chip_reaches_minimum() {
+        let natural = vec![184.0, 136.0, 136.0, 80.0, 80.0];
+        let threshold = 184.0 + CHIP_INACTIVE_MIN_WIDTH * 4.0;
+
+        let at_threshold = allocation_for_chip_budget(&natural, 0, threshold);
+        assert!(!at_threshold.scrolling);
+        assert_eq!(at_threshold.widths[0], 184.0);
+        assert!(at_threshold.widths[1..]
+            .iter()
+            .all(|width| (*width - CHIP_INACTIVE_MIN_WIDTH).abs() < 0.01));
+
+        let below_threshold = allocation_for_chip_budget(&natural, 0, threshold - 1.0);
+        assert!(below_threshold.scrolling);
+        assert_eq!(below_threshold.widths[0], 184.0);
+        assert!(below_threshold.widths[1..]
+            .iter()
+            .all(|width| (*width - CHIP_INACTIVE_MIN_WIDTH).abs() < 0.01));
+    }
+
+    #[test]
+    fn changing_focus_protects_the_new_focused_chip_not_the_old_one() {
+        let natural = vec![184.0, 160.0, 136.0, 136.0];
+        let budget = 184.0 + 100.0 * 3.0;
+        let first = allocation_for_chip_budget(&natural, 0, budget);
+        let second = allocation_for_chip_budget(&natural, 1, budget);
+
+        assert_eq!(first.widths[0], 184.0);
+        assert!(first.widths[1] < 160.0);
+        assert_eq!(second.widths[1], 160.0);
+        assert!(second.widths[0] < 184.0);
+    }
+
+    #[test]
+    fn removing_chips_allows_remaining_chips_to_grow_back_to_natural_width() {
+        let crowded = vec![184.0, 160.0, 150.0, 140.0];
+        let budget = 184.0 + 100.0 * 3.0;
+        let before = allocation_for_chip_budget(&crowded, 0, budget);
+        assert!(before.widths[1] < crowded[1]);
+
+        let fewer = vec![184.0, 160.0];
+        let after = allocation_for_chip_budget(&fewer, 0, budget);
+        assert_eq!(after.widths, fewer);
+        assert!(!after.scrolling);
     }
 
     #[test]
@@ -1774,6 +2339,113 @@ mod tests {
         harness.run();
 
         assert!(harness.query_by_label("Launcher").is_some());
+    }
+
+    #[test]
+    fn hiding_session_details_shrinks_chip_height_and_the_chrome_band() {
+        // Regression test: turning "Show session details in chips" off is
+        // meant to yield a narrower top chrome band (a single-line chip
+        // row), not just hide the secondary text while chips keep their
+        // old two-line footprint.
+        fn chip_height_with(show_session_details: bool) -> f32 {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 200.0))
+                .build_ui(|ui| {
+                    show(
+                        ui,
+                        &[chip(1, "one")],
+                        ChipId(1),
+                        false,
+                        true,
+                        ChipLayout::Wrap,
+                        show_session_details,
+                    );
+                });
+            harness.run();
+            harness.get_by_label("one chip").rect().height()
+        }
+
+        let full = chip_height_with(true);
+        let compact = chip_height_with(false);
+        assert!(
+            compact < full,
+            "compact chip height ({compact}) must be shorter than the \
+             two-line height ({full})"
+        );
+        assert_eq!(full, CHIP_HEIGHT_FULL);
+        assert_eq!(compact, CHIP_HEIGHT_COMPACT);
+        assert!(
+            chrome_band_center_from_top(false) < chrome_band_center_from_top(true),
+            "the chrome band's own vertical center must follow the shorter \
+             compact chip row too"
+        );
+    }
+
+    #[test]
+    fn compact_chip_primary_line_is_vertically_centered() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[chip(1, "one")],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::SingleRowScroll,
+                    false,
+                );
+            });
+        harness.run();
+
+        let chip_rect = harness.get_by_label("one chip").rect();
+        let label_rect = harness.get_by_label("one").rect();
+        assert!(
+            (label_rect.center().y - chip_rect.center().y).abs() <= 1.0,
+            "compact title must be vertically centered, got label={label_rect:?}, \
+             chip={chip_rect:?}"
+        );
+    }
+
+    #[test]
+    fn close_button_stays_vertically_centered_in_both_full_and_compact_chip_heights() {
+        // Regression test: the close ("X") button used to be positioned
+        // with a fixed inset from the chip's *top* edge, so it stayed
+        // pinned near the top of the taller two-line chip height even
+        // after the chip shrank to `CHIP_HEIGHT_COMPACT` in single-line
+        // mode - visibly off-center rather than tracking the shorter box.
+        fn close_and_chip_rects(show_session_details: bool) -> (egui::Rect, egui::Rect) {
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 200.0))
+                .build_ui(|ui| {
+                    show(
+                        ui,
+                        &[chip(1, "one")],
+                        ChipId(1),
+                        false,
+                        true,
+                        ChipLayout::Wrap,
+                        show_session_details,
+                    );
+                });
+            harness.run();
+            (
+                harness.get_by_label("Close").rect(),
+                harness.get_by_label("one chip").rect(),
+            )
+        }
+
+        for show_session_details in [true, false] {
+            let (close_rect, chip_rect) = close_and_chip_rects(show_session_details);
+            let close_center = close_rect.center().y;
+            let chip_center = chip_rect.center().y;
+            assert!(
+                (close_center - chip_center).abs() <= 1.0,
+                "close button center ({close_center}) must track the chip's \
+                 own vertical center ({chip_center}) when \
+                 show_session_details={show_session_details}"
+            );
+        }
     }
 
     #[test]

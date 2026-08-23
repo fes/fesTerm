@@ -321,6 +321,17 @@ pub struct SessionController<S: Session> {
     password_prompt: Option<PasswordPrompt>,
     last_resize: Option<TerminalSize>,
     resize_probe: ResizeProbe,
+    /// Whether any resize has ever been requested for this controller. The
+    /// very first resize (immediately after a session is spawned, before the
+    /// PTY has ever been told a size other than its startup default) is sent
+    /// to the backend immediately rather than debounced: the shell has not
+    /// yet had a chance to read the stale startup winsize and draw output
+    /// against it, so there is no drag-flood to protect against, and waiting
+    /// out the debounce only widens the window in which the child can read a
+    /// size that our locally reflowed `Terminal` no longer matches (this
+    /// mismatch is what produced a stray, un-erased row from zsh's
+    /// `PROMPT_EOL_MARK` on the very first local shell).
+    has_requested_resize: bool,
 }
 
 impl<S: Session> SessionController<S> {
@@ -352,6 +363,7 @@ impl<S: Session> SessionController<S> {
             password_prompt: None,
             last_resize: None,
             resize_probe: ResizeProbe::default(),
+            has_requested_resize: false,
         }
     }
 
@@ -379,6 +391,7 @@ impl<S: Session> SessionController<S> {
             password_prompt: None,
             last_resize: None,
             resize_probe: ResizeProbe::default(),
+            has_requested_resize: false,
         }
     }
 
@@ -567,7 +580,16 @@ impl<S: Session> SessionController<S> {
     /// the debounce window whenever the requested size actually changes (a
     /// resize repeated with the same size, e.g. re-observed across frames,
     /// does not push out an already-staged deadline).
+    ///
+    /// The very first resize this controller ever sees skips the debounce
+    /// entirely (see `has_requested_resize`): it is sent immediately.
     fn stage_resize(&mut self, size: TerminalSize) {
+        if !self.has_requested_resize {
+            self.has_requested_resize = true;
+            self.debounced_resize = None;
+            self.try_resize(size);
+            return;
+        }
         if self.debounced_resize.map(|(staged, _)| staged) != Some(size) {
             self.debounced_resize = Some((size, Instant::now()));
         }
@@ -1007,6 +1029,46 @@ mod tests {
         assert_eq!(controller.lifecycle_generation(), 1);
         controller.advance_lifecycle_generation();
         assert_eq!(controller.lifecycle_generation(), 2);
+    }
+
+    /// Regression test: a freshly created session's very first resize (the
+    /// reflow that corrects a new tab's initial 80x24 guess to the window's
+    /// real measured size) must reach the PTY immediately rather than
+    /// waiting out `TERMINAL_RESIZE_DEBOUNCE`. Debouncing that first resize
+    /// left a window in which the newly spawned shell could read the stale
+    /// startup size and draw its first prompt (including zsh's
+    /// `PROMPT_EOL_MARK` fill-and-erase dance) against a width our locally
+    /// reflowed `Terminal` no longer matched, stranding a visible "%" mark
+    /// on its own row instead of it being cleanly self-erased.
+    #[test]
+    fn the_first_resize_of_a_new_session_bypasses_the_debounce() {
+        let session = FakeSession::new([]);
+        let mut controller = SessionController::for_test(session);
+        let dimensions = Dimensions::new(77, 23).unwrap();
+        controller.record_terminal_resize(dimensions);
+        // No sleep, no `flush_pending_resize` call: the resize must already
+        // have been sent to the backend synchronously.
+        let generations = controller.resize_probe().generations();
+        assert_eq!(
+            generations.len(),
+            1,
+            "the first resize must be requested immediately, not staged"
+        );
+
+        // A second resize shortly after (e.g. a live drag continuing) is
+        // still debounced as usual.
+        let redragged = Dimensions::new(80, 24).unwrap();
+        controller.record_terminal_resize(redragged);
+        assert_eq!(
+            controller.resize_probe().generations().len(),
+            1,
+            "a subsequent resize must still wait out the normal debounce"
+        );
+        controller.flush_pending_resize();
+        assert_eq!(controller.resize_probe().generations().len(), 1);
+        std::thread::sleep(TERMINAL_RESIZE_DEBOUNCE);
+        controller.flush_pending_resize();
+        assert_eq!(controller.resize_probe().generations().len(), 2);
     }
 
     #[test]
@@ -1449,8 +1511,11 @@ mod tests {
         }
         assert_eq!(
             controller.resize_probe().requested_generations(),
-            1,
-            "rapid UI resizes must collapse into one settled PTY resize"
+            2,
+            "the drag's very first resize is sent immediately (see \
+             `has_requested_resize`), and the remaining rapid UI resizes \
+             during the drag must still collapse into exactly one settled \
+             PTY resize"
         );
         assert!(
             controller

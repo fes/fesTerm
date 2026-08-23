@@ -937,6 +937,12 @@ pub enum AppCommand {
     /// every chip is a compact single-line chip and the active session's
     /// detail relocates to the status bar instead.
     ToggleShowSessionDetails,
+    /// Toggles whether closing a live session requires confirmation.
+    ToggleConfirmSessionClose,
+    /// Toggles whether the open-tab list and active tab persist across
+    /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
+    /// opt-in, off by default).
+    ToggleRestoreWorkspace,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1045,6 +1051,14 @@ pub struct AppState {
     chip_layout: ChipLayout,
     status_bar_visible: bool,
     show_session_details: bool,
+    confirm_session_close: bool,
+    /// Whether the open-tab list and active tab persist across restarts
+    /// (`docs/gui-design.md` "Workspace restore"). Off by default and,
+    /// unlike the other interface preferences here, deliberately explicit:
+    /// resurrecting a previous session's tabs is a bigger behavioral change
+    /// than a cosmetic chip-layout/status-bar choice, so it needs its own
+    /// opt-in rather than defaulting on.
+    restore_workspace: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1079,6 +1093,8 @@ impl AppState {
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
+            confirm_session_close: settings.confirm_session_close(),
+            restore_workspace: settings.restore_workspace(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1109,6 +1125,8 @@ impl AppState {
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
+            confirm_session_close: settings.confirm_session_close(),
+            restore_workspace: settings.restore_workspace(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1170,6 +1188,8 @@ impl AppState {
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
+            confirm_session_close: settings.confirm_session_close(),
+            restore_workspace: settings.restore_workspace(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1261,6 +1281,14 @@ impl AppState {
         self.show_session_details
     }
 
+    pub const fn confirm_session_close(&self) -> bool {
+        self.confirm_session_close
+    }
+
+    pub const fn restore_workspace(&self) -> bool {
+        self.restore_workspace
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1269,6 +1297,8 @@ impl AppState {
             chip_layout_to_preference(self.chip_layout),
             self.status_bar_visible,
             self.show_session_details,
+            self.confirm_session_close,
+            self.restore_workspace,
         )
     }
 
@@ -1408,11 +1438,19 @@ impl AppState {
             AppCommand::ToggleShowSessionDetails => {
                 self.show_session_details = !self.show_session_details;
             }
+            AppCommand::ToggleConfirmSessionClose => {
+                self.confirm_session_close = !self.confirm_session_close;
+            }
+            AppCommand::ToggleRestoreWorkspace => {
+                self.restore_workspace = !self.restore_workspace;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
                 self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
+                self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
+                self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -2592,6 +2630,32 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert!(state.show_session_details());
+    }
+
+    #[test]
+    fn toggle_restore_workspace_flips_state_and_resets_to_off() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.restore_workspace(), "off by default");
+
+        state.dispatch(AppCommand::ToggleRestoreWorkspace, &context);
+        assert!(state.restore_workspace());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.restore_workspace());
+    }
+
+    #[test]
+    fn toggle_close_confirmation_flips_state_and_resets_to_on() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(state.confirm_session_close(), "on by default");
+
+        state.dispatch(AppCommand::ToggleConfirmSessionClose, &context);
+        assert!(!state.confirm_session_close());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(state.confirm_session_close());
     }
 
     #[test]

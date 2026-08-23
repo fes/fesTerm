@@ -42,6 +42,12 @@ pub(crate) enum ConfigurationStartupStatus {
 }
 
 impl ConfigurationStartupStatus {
+    /// Human-readable diagnostic text for each startup/save status. No
+    /// longer surfaced in the Settings UI (the "Configuration" card was
+    /// removed there), but retained as the basis for regression tests that
+    /// verify these messages never leak file paths or configuration
+    /// content.
+    #[allow(dead_code)]
     pub(crate) const fn settings_message(self) -> &'static str {
         match self {
             Self::Loaded => {
@@ -116,20 +122,6 @@ impl ConfigurationStartupStatus {
                 "Profile order was not saved because configuration could not be written. The previous order remains active."
             }
         }
-    }
-
-    pub(crate) const fn is_problem(self) -> bool {
-        matches!(
-            self,
-            Self::InitialFailure(_)
-                | Self::WorkspaceSaveFailure(_)
-                | Self::PasswordCredentialSaveFailure(_)
-                | Self::InterfaceSettingsSaveFailure(_)
-                | Self::KnownHostTrustSaveFailure(_)
-                | Self::ProfileSaveFailure(_)
-                | Self::ProfileDeleteFailure(_)
-                | Self::ProfilesReorderFailure(_)
-        )
     }
 }
 

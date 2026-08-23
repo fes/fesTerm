@@ -275,6 +275,24 @@ impl Configuration {
         self.workspace.as_ref()
     }
 
+    /// Returns a complete replacement with any saved workspace metadata
+    /// removed and workspace persistence turned back off.
+    ///
+    /// Used when the user turns off the "Workspace restore" preference
+    /// (`docs/gui-design.md` "Workspace restore" - explicit opt-in, not a
+    /// silently-decaying leftover): without this, a previously saved tab
+    /// list would keep sitting on disk, ready to resurface the moment the
+    /// preference is re-enabled even though the user never asked for that
+    /// specific stale snapshot back. Infallible, like
+    /// [`Self::without_known_host`]: clearing a workspace can never
+    /// introduce a new validation failure.
+    pub fn without_workspace(&self) -> Self {
+        let mut replacement = self.clone();
+        replacement.workspace_enabled = false;
+        replacement.workspace = None;
+        replacement
+    }
+
     /// Returns a complete replacement with these interface settings applied.
     ///
     /// Unlike profiles/workspace metadata, these preferences are intended to
@@ -479,6 +497,19 @@ pub struct InterfaceSettings {
     status_bar_visible: bool,
     #[serde(default = "default_show_session_details")]
     show_session_details: bool,
+    /// Whether closing a live session asks for confirmation before
+    /// terminating or disconnecting it. On by default to preserve the safe
+    /// close behavior; users who prefer one-click closing may opt out.
+    #[serde(default = "default_confirm_session_close")]
+    confirm_session_close: bool,
+    /// Whether the open-tab list and active tab persist across restarts.
+    /// Off by default: unlike the other interface preferences here (which
+    /// apply immediately and always autosave), workspace restoration is an
+    /// explicit opt-in (`docs/gui-design.md` "Workspace restore") - tab
+    /// contents are more sensitive/surprising to silently resurrect than a
+    /// chip-layout or status-bar cosmetic choice.
+    #[serde(default, skip_serializing_if = "is_false")]
+    restore_workspace: bool,
 }
 
 impl InterfaceSettings {
@@ -488,17 +519,23 @@ impl InterfaceSettings {
         chip_layout: ChipLayoutPreference::SingleRowScroll,
         status_bar_visible: true,
         show_session_details: true,
+        confirm_session_close: true,
+        restore_workspace: false,
     };
 
     pub const fn new(
         chip_layout: ChipLayoutPreference,
         status_bar_visible: bool,
         show_session_details: bool,
+        confirm_session_close: bool,
+        restore_workspace: bool,
     ) -> Self {
         Self {
             chip_layout,
             status_bar_visible,
             show_session_details,
+            confirm_session_close,
+            restore_workspace,
         }
     }
 
@@ -512,6 +549,14 @@ impl InterfaceSettings {
 
     pub const fn show_session_details(self) -> bool {
         self.show_session_details
+    }
+
+    pub const fn confirm_session_close(self) -> bool {
+        self.confirm_session_close
+    }
+
+    pub const fn restore_workspace(self) -> bool {
+        self.restore_workspace
     }
 
     fn is_default(&self) -> bool {
@@ -530,6 +575,10 @@ const fn default_status_bar_visible() -> bool {
 }
 
 const fn default_show_session_details() -> bool {
+    true
+}
+
+const fn default_confirm_session_close() -> bool {
     true
 }
 
@@ -3318,6 +3367,8 @@ schema_version = 99
                 ChipLayoutPreference::Wrap,
                 false,
                 true,
+                false,
+                true,
             ))
             .unwrap();
 
@@ -3327,7 +3378,7 @@ schema_version = 99
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
         assert_eq!(
             configuration.interface_settings(),
-            InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true)
+            InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true, false, true)
         );
     }
 
@@ -3341,6 +3392,15 @@ schema_version = 99
             configuration.interface_settings(),
             InterfaceSettings::DEFAULT
         );
+    }
+
+    #[test]
+    fn older_settings_tables_default_close_confirmation_to_on() {
+        let document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+
+        let configuration = Configuration::parse(document).unwrap();
+
+        assert!(configuration.interface_settings().confirm_session_close());
     }
 
     #[test]
@@ -3359,6 +3419,8 @@ schema_version = 99
                 ChipLayoutPreference::Wrap,
                 false,
                 true,
+                false,
+                true,
             ))
             .unwrap();
         let workspace =
@@ -3369,8 +3431,36 @@ schema_version = 99
 
         assert_eq!(
             replacement.interface_settings(),
-            InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true)
+            InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true, false, true)
         );
+    }
+
+    #[test]
+    fn without_workspace_clears_saved_tabs_but_keeps_other_configuration_state() {
+        let workspace =
+            WorkspaceConfiguration::new(vec![WorkspaceTab::launcher("launcher").unwrap()], None)
+                .unwrap();
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::new(
+                ChipLayoutPreference::Wrap,
+                false,
+                true,
+                false,
+                true,
+            ))
+            .unwrap()
+            .with_workspace(workspace)
+            .unwrap();
+        assert!(configuration.workspace_enabled());
+        assert!(configuration.workspace().is_some());
+
+        let cleared = configuration.without_workspace();
+
+        assert!(!cleared.workspace_enabled());
+        assert!(cleared.workspace().is_none());
+        // Turning off workspace persistence must not also discard unrelated
+        // settings/profile state.
+        assert_eq!(cleared.interface_settings(), configuration.interface_settings());
     }
 
     struct TestDirectory {

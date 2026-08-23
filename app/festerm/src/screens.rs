@@ -15,7 +15,6 @@ use festerm_ssh::{
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
-use crate::configuration_startup::ConfigurationStartupStatus;
 use crate::tabs::{AppCommand, PasswordToStore, PrivateKeyToStore, TabId};
 
 /// One selectable launch option in the Launcher list: the fixed default
@@ -1273,15 +1272,28 @@ pub fn show_ssh_live_password_prompt(
 /// they change; there is no separate explicit save step for them. Returns
 /// commands for Settings actions; the application composition root owns
 /// configuration I/O and applies successful replacements to `AppState`.
+#[derive(Clone, Copy)]
+pub struct SettingsViewModel {
+    pub chip_layout: ChipLayout,
+    pub status_bar_visible: bool,
+    pub show_session_details: bool,
+    pub confirm_session_close: bool,
+    pub restore_workspace: bool,
+}
+
 pub fn show_settings(
     ui: &mut Ui,
-    chip_layout: ChipLayout,
-    status_bar_visible: bool,
-    show_session_details: bool,
-    configuration_status: ConfigurationStartupStatus,
-    secure_storage_status: Option<&str>,
+    settings: SettingsViewModel,
     command_palette_shortcut: &str,
+    settings_shortcut: &str,
 ) -> Option<AppCommand> {
+    let SettingsViewModel {
+        chip_layout,
+        status_bar_visible,
+        show_session_details,
+        confirm_session_close,
+        restore_workspace,
+    } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
         ui.add_space(26.0);
@@ -1313,57 +1325,98 @@ pub fn show_settings(
             egui::vec2(ui.available_width(), available_height),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+            // egui's default floating scroll style reveals the bar for
+            // *any* hover inside the scroll area's content, not just when
+            // the pointer is actually near the bar - unlike the terminal
+            // view's own history scrollbar, which stays hidden until it's
+            // scrolled away from rest or the pointer is right over it.
+            // Zeroing the "active" (any-content-hover) opacities while
+            // keeping "interact" (hovering/dragging the bar itself) at
+            // full strength reproduces that same narrower reveal condition
+            // here.
+            let mut scroll_style = egui::style::ScrollStyle::floating();
+            scroll_style.active_handle_opacity = 0.0;
+            scroll_style.active_background_opacity = 0.0;
+            ui.spacing_mut().scroll = scroll_style;
             egui::ScrollArea::vertical()
                 .max_height(available_height)
                 .show(ui, |ui| {
+                    // The scroll bar itself belongs to this scroll *frame*,
+                    // not to Settings' own content: it is given its own
+                    // reserved lane on the right, by keeping the cards
+                    // narrower than the frame instead of shrinking the
+                    // frame itself. That way the (invisible until needed)
+                    // scroll bar never has to sit on top of the cards' own
+                    // right edge.
+                    let right_inset = 26.0;
+                    ui.set_max_width((ui.available_width() - right_inset).max(0.0));
                     ui.vertical(|ui| {
                         ui.add_space(24.0);
                         ui.heading("Settings");
                         ui.add_space(2.0);
 
-                        settings_card(ui, "Configuration", |ui| {
-                            let configuration_message = configuration_status.settings_message();
-                            if configuration_status.is_problem() {
-                                ui.colored_label(theme::STATUS_ERROR, configuration_message);
-                            } else {
-                                ssh_paragraph(ui, configuration_message);
-                            }
-                            if let Some(status) = secure_storage_status {
-                                ui.add_space(10.0);
-                                ssh_section_heading(ui, "Native secure storage");
-                                ui.colored_label(theme::STATUS_ERROR, status);
-                            }
-                        });
-
-                        ui.add_space(12.0);
-
                         settings_card(ui, "Interface", |ui| {
-                            let wrap = matches!(chip_layout, ChipLayout::Wrap);
-                            let label = if wrap {
-                                "Chip layout: wrap onto multiple rows"
-                            } else {
-                                "Chip layout: single row (compact, then scroll)"
-                            };
-                            if ui.button(label).clicked() {
+                            if settings_segmented_row(
+                                ui,
+                                "Session chip layout",
+                                "Keep terminal height stable with one scrolling row.",
+                                &[
+                                    ("Single row", !matches!(chip_layout, ChipLayout::Wrap)),
+                                    ("Wrap", matches!(chip_layout, ChipLayout::Wrap)),
+                                ],
+                            )
+                            .is_some()
+                            {
                                 command = Some(AppCommand::ToggleChipLayout);
                             }
-                            ui.add_space(6.0);
-                            let status_bar_label = if status_bar_visible {
-                                "Status bar: shown"
-                            } else {
-                                "Status bar: hidden"
-                            };
-                            if ui.button(status_bar_label).clicked() {
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Show session details in chips",
+                                "Show the terminal title or launch context beneath the \
+                                 session name. Off makes every chip compact and single-line, \
+                                 moving the active session's detail to the status bar.",
+                                show_session_details,
+                            ) {
+                                command = Some(AppCommand::ToggleShowSessionDetails);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Show status bar",
+                                "Display sourced session state, terminal dimensions, and \
+                                 the active session detail when compact chips require it.",
+                                status_bar_visible,
+                            ) {
                                 command = Some(AppCommand::ToggleStatusBar);
                             }
-                            ui.add_space(6.0);
-                            let session_details_label = if show_session_details {
-                                "Session details in chips: shown"
-                            } else {
-                                "Session details in chips: hidden (moved to status bar)"
-                            };
-                            if ui.button(session_details_label).clicked() {
-                                command = Some(AppCommand::ToggleShowSessionDetails);
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Confirm before closing live sessions",
+                                "Ask before terminating a running local process or \
+                                 disconnecting an active remote session.",
+                                confirm_session_close,
+                            ) {
+                                command = Some(AppCommand::ToggleConfirmSessionClose);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Workspace restore",
+                                "Reopen your previously open tabs and the active tab \
+                                 automatically on launch. Off by default.",
+                                restore_workspace,
+                            ) {
+                                command = Some(AppCommand::ToggleRestoreWorkspace);
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
@@ -1379,6 +1432,16 @@ pub fn show_settings(
                                 ui.add_space(8.0);
                                 ui.label(
                                     egui::RichText::new(command_palette_shortcut)
+                                        .size(12.0)
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ssh_paragraph(ui, "Open Settings");
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new(settings_shortcut)
                                         .size(12.0)
                                         .color(theme::TEXT_MUTED),
                                 );
@@ -1406,6 +1469,110 @@ fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
             ui.add_space(6.0);
             body(ui);
         });
+}
+
+/// One labeled on/off preference row: a fixed title and state-independent
+/// description on the left, and a pill-shaped toggle switch on the right
+/// (`docs/images/gui-mockups/settings.png`) - replacing a plain text button
+/// whose entire label used to flip between "shown"/"hidden" copy. Returns
+/// whether the switch was clicked this frame; the caller still owns
+/// dispatching the actual `AppCommand`, matching every other control here.
+fn settings_toggle_row(ui: &mut Ui, title: &str, description: &str, value: bool) -> bool {
+    let mut clicked = false;
+    egui::Sides::new().show(
+        ui,
+        |ui| {
+            // Reserve room for the switch itself (and the `Sides` gap) so
+            // the description wraps at measurement time instead of laying
+            // out as one long unwrapped line that pushes the switch off
+            // the right edge of the card.
+            ui.set_max_width(ui.available_width() - 60.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
+                ssh_paragraph(ui, description);
+            });
+        },
+        |ui| {
+            clicked = toggle_switch(ui, value, title).clicked();
+        },
+    );
+    clicked
+}
+
+/// Painter-drawn pill-shaped toggle switch matching the mockup's on/off
+/// control (`docs/images/gui-mockups/settings.png`): a rounded track that
+/// fills with the accent color when on, and a circular knob that slides to
+/// the matching side - instead of a text button whose whole label changes
+/// between "shown"/"hidden" copy. An explicit accessible label is set (like
+/// `paint_close_button`'s pattern) since the switch has no text of its own
+/// for screen readers or headless-test queries to find.
+fn toggle_switch(ui: &mut Ui, value: bool, accessible_label: &str) -> egui::Response {
+    let desired_size = egui::vec2(40.0, 22.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Checkbox, true, accessible_label));
+
+    if ui.is_rect_visible(rect) {
+        let how_on = ui.ctx().animate_bool(response.id, value);
+        let rounding = rect.height() / 2.0;
+        let track_fill = theme::SURFACE_TAB_INACTIVE.lerp_to_gamma(theme::ACCENT_PRIMARY, how_on);
+        let track_stroke = theme::BORDER_SUBTLE.lerp_to_gamma(theme::ACCENT_PRIMARY, how_on);
+        ui.painter().rect_filled(rect, rounding, track_fill);
+        ui.painter().rect_stroke(
+            rect,
+            rounding,
+            Stroke::new(1.0, track_stroke),
+            egui::StrokeKind::Inside,
+        );
+        let knob_radius = rounding - 3.0;
+        let knob_x = egui::lerp((rect.left() + rounding)..=(rect.right() - rounding), how_on);
+        ui.painter().circle_filled(
+            egui::pos2(knob_x, rect.center().y),
+            knob_radius,
+            egui::Color32::WHITE,
+        );
+    }
+
+    response.on_hover_text(accessible_label)
+}
+
+/// One labeled multi-choice preference row: a fixed title/description on the
+/// left and a segmented button group on the right
+/// (`docs/images/gui-mockups/settings.png`'s "Session chip layout" row),
+/// replacing a single text button whose label flipped to name the *other*
+/// choice. Returns the index of a newly selected (previously inactive)
+/// option; clicking the already-active option is a no-op, matching ordinary
+/// segmented-control behavior.
+fn settings_segmented_row(
+    ui: &mut Ui,
+    title: &str,
+    description: &str,
+    options: &[(&str, bool)],
+) -> Option<usize> {
+    let mut clicked = None;
+    egui::Sides::new().show(
+        ui,
+        |ui| {
+            // Same defensive width reservation as `settings_toggle_row`:
+            // without it, the description can measure as one long
+            // unwrapped line and push the segmented buttons off the right
+            // edge of the card (and out of click range).
+            ui.set_max_width(ui.available_width() - 170.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
+                ssh_paragraph(ui, description);
+            });
+        },
+        |ui| {
+            ui.horizontal(|ui| {
+                for (index, (label, selected)) in options.iter().enumerate() {
+                    if ui.selectable_label(*selected, *label).clicked() && !*selected {
+                        clicked = Some(index);
+                    }
+                }
+            });
+        },
+    );
+    clicked
 }
 
 /// One row's stable identifying summary in the Profiles list, without
@@ -2271,17 +2438,20 @@ mod tests {
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 360.0))
+            .with_size(egui::vec2(520.0, 640.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
                         ui,
-                        ChipLayout::Wrap,
-                        true,
-                        true,
-                        ConfigurationStartupStatus::Loaded,
-                        None,
+                        SettingsViewModel {
+                            chip_layout: ChipLayout::Wrap,
+                            status_bar_visible: true,
+                            show_session_details: true,
+                            confirm_session_close: true,
+                            restore_workspace: false,
+                        },
                         "Cmd+Shift+P",
+                        "Cmd+Shift+S",
                     ) {
                         state.command = Some(command);
                     }
@@ -2310,18 +2480,86 @@ mod tests {
     }
 
     #[test]
+    fn settings_has_no_configuration_card() {
+        // Regression test: the "Configuration" card (startup/save status
+        // copy plus native-secure-storage status) was removed from
+        // Settings; that status is not shown here any more (secure storage
+        // status already surfaces on the Launcher instead).
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness.query_by_label("Configuration").is_none());
+        assert!(harness.query_by_label("Native secure storage").is_none());
+    }
+
+    #[test]
+    fn settings_keyboard_card_shows_the_settings_hotkey() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness.query_by_label("Open Settings").is_some());
+        assert!(harness.query_by_label("Cmd+Shift+S").is_some());
+    }
+
+    #[test]
     fn settings_toggle_chip_layout_control_returns_the_toggle_command() {
         let mut harness = settings_harness();
         harness.run();
 
-        harness
-            .get_by_label("Chip layout: wrap onto multiple rows")
-            .click();
+        // The harness starts in `ChipLayout::Wrap`; clicking the *other*,
+        // currently-inactive segmented option ("Single row") is what
+        // selects a new value. Clicking the already-active "Wrap" option
+        // is a no-op, matching ordinary segmented-control behavior.
+        harness.get_by_label("Single row").click();
         harness.run();
 
         assert!(matches!(
             harness.state().command,
             Some(AppCommand::ToggleChipLayout)
+        ));
+    }
+
+    #[test]
+    fn settings_toggle_restore_workspace_control_returns_the_toggle_command() {
+        // Regression test for the "Workspace restore" preference: off by
+        // default, with its own explicit toggle distinct from the
+        // always-autosaving chip-layout/status-bar/session-detail toggles.
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness
+            .query_by_role_and_label(accesskit::Role::CheckBox, "Workspace restore")
+            .is_some());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Workspace restore")
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleRestoreWorkspace)
+        ));
+    }
+
+    #[test]
+    fn settings_close_confirmation_control_returns_the_toggle_command() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        let label = "Confirm before closing live sessions";
+        assert!(harness
+            .query_by_role_and_label(accesskit::Role::CheckBox, label)
+            .is_some());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, label)
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleConfirmSessionClose)
         ));
     }
 
@@ -2338,7 +2576,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 600.0))
+            .with_size(egui::vec2(520.0, 700.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -2350,12 +2588,15 @@ mod tests {
                         });
                     if let Some(command) = show_settings(
                         ui,
-                        ChipLayout::Wrap,
-                        true,
-                        true,
-                        ConfigurationStartupStatus::Loaded,
-                        None,
+                        SettingsViewModel {
+                            chip_layout: ChipLayout::Wrap,
+                            status_bar_visible: true,
+                            show_session_details: true,
+                            confirm_session_close: true,
+                            restore_workspace: false,
+                        },
                         "Cmd+Shift+P",
+                        "Cmd+Shift+S",
                     ) {
                         state.command = Some(command);
                     }

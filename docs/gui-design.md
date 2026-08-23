@@ -786,7 +786,7 @@ top stack from 50px to 42px without moving the terminal grid toward the chips.
 
 Every chip, active or not, is drawn with a visible border: the active chip's border is `CHIP_ACTIVE_OUTLINE` (1.5px) and inactive chips use `CHIP_INACTIVE_OUTLINE` (1.0px), so the distinction reads clearly without color being the only cue. Each chip is two lines and left-aligned. The approved target places a 16 px semantic session icon with its compact state badge before the stable identity; the second, smaller and muted line holds state text or terminal-provided metadata, indented under the primary label. The current implementation still reserves that leading strip for a standalone 8 px status dot and should migrate to the icon-plus-badge arrangement after semantic icon rendering lands. The close control, shown only on the active chip (never on inactive chips, even on hover), is positioned from the chip's own outer corner — evenly inset from the top and right edges — rather than flowing through the label's layout, so its position stays fixed and the label never shifts to accommodate it. Opening a new Launcher tab is done exclusively through the compact icon-only "New tab" control at the end of the chip row (`AGENTS.md`: no duplicate widget-specific copies of the same operation) — an earlier full chip-styled "+ Launcher" button duplicated this control and was removed as redundant.
 
-Chips without a secondary line (an open Launcher-type tab, which has no secondary terminal metadata) claim the chip's full footprint (`ui.set_min_size(outer_rect.size())`) before laying out their top-down content, rather than letting the shrink-wrapped one-line content block get vertically centered by the surrounding chip-row layout; without this, a one-line chip would render with visibly larger top/bottom padding than its two-line neighbors even though both share the same `CHIP_HEIGHT`.
+Chips without a secondary line (an open Launcher-type tab, which has no secondary terminal metadata) claim the chip's full footprint (`ui.set_min_size(outer_rect.size())`) before laying out their top-down content, rather than letting the shrink-wrapped one-line content block get vertically centered by the surrounding chip-row layout; without this, a one-line chip would render with visibly larger top/bottom padding than its two-line neighbors even though every chip in the row shares the same height (`CHIP_HEIGHT_FULL` when session details are shown, or the shorter `CHIP_HEIGHT_COMPACT` once that preference is off - see "Show session details in chips").
 
 The chip row is scoped to its own narrower top-aligned sub-layout (`Layout::left_to_right(Align::Min)`), rather than the *whole* top-level chrome row switching to `Align::Min`: an `Align::Min` layout at the very top level was tried and reverted, because it handed the full remaining panel height down to the trailing icon controls' own nested `Align::Center` sub-layout, centering the icons roughly mid-window instead of near the top and (in the real app, where the terminal view is painted immediately after the chrome row in the same `Ui`) starving the terminal view of any remaining vertical space. Only the outermost row keeps plain `Align::Center` (`ui.horizontal`); scoping `Align::Min` to just the chip-row sub-block fixes its top-alignment without that regression (`crates/festerm-ui-egui/src/chrome.rs`'s `chrome_row_stays_a_compact_band_even_with_a_tall_available_area` test guards this).
 
@@ -1086,26 +1086,39 @@ this small settings surface feel heavier than the terminal chrome it controls.
 - **Show status bar** is an on/off switch, on by default, described factually as
   displaying sourced session state, terminal dimensions, and the active
   session detail when compact chips require that relocation.
+- **Workspace restore** is an on/off switch, off by default (see
+  "Configuration" below): unlike the three toggles above, which always apply
+  and save immediately, resurrecting a previous run's open tabs is an
+  explicit opt-in.
 
 The two layout choices remain visible rather than hiding a binary decision in a
-selector. Reversible settings apply immediately and require no Apply or Save
-button. Until preference persistence exists, the UI must not imply that these
-session-only preferences persist. Once persistence and default tracking land,
-Reset appears beside a changed setting at the narrowest useful scope.
+selector. Reversible settings apply immediately and save automatically as they
+change; Reset appears beside a changed setting at the narrowest useful scope.
 
 The current configuration implementation also earns a compact
 **Configuration** section. It identifies whether defaults or a valid selected
 source are active without exposing a sensitive path, and shows a content-free
-diagnostic when loading failed. Workspace state (the open tab list, its order,
-and the active tab) saves and restores automatically: every tab-list mutation
-(opening, closing, reordering, or activating a tab) triggers a write-through
-save on the next frame, mirroring how interface settings and profile CRUD
-already save immediately on every change. There is no manual **Reload
-configuration** or **Save workspace** action for the user to remember to
-invoke, and Settings does not describe persistence with reload/save language;
-ADR 0015 owns the startup/reload contract that this automatic behavior relies
-on. No file watching, configuration editor, or credential-storage control is
-implied.
+diagnostic when loading failed. Workspace persistence itself is an explicit,
+off-by-default Settings toggle ("Workspace restore"): unlike chip layout,
+status bar, and session-detail visibility (all of which apply and save
+immediately with no opt-in), resurrecting a previous run's open tabs is a
+bigger behavioral change than a cosmetic preference, so it stays off until the
+user turns it on. While off, fesTerm always starts at the Launcher and neither
+reads nor writes the open tab list, its order, or the active tab - any
+workspace snapshot left over from an earlier run (or an older fesTerm build
+that always persisted it) is dropped rather than silently resurfacing.
+Turning the toggle off also scrubs any already-saved workspace from disk
+immediately, so re-enabling it later starts clean instead of resurrecting a
+forgotten snapshot. Once turned on, workspace state (the open tab list, its
+order, and the active tab) saves and restores automatically: every tab-list
+mutation (opening, closing, reordering, or activating a tab) triggers a
+write-through save on the next frame, mirroring how interface settings and
+profile CRUD already save immediately on every change. There is no manual
+**Reload configuration** or **Save workspace** action for the user to
+remember to invoke, and Settings does not describe persistence with
+reload/save language; ADR 0015 owns the startup/reload contract that this
+automatic behavior relies on. No file watching, configuration editor, or
+credential-storage control is implied.
 
 There is initially no sidebar, settings search, theme selector, font selector,
 empty category, or general Reset control. Keyboard Shortcuts does not masquerade
@@ -1663,6 +1676,7 @@ input. The current platform defaults are:
 | Close active tab | `Ctrl+Shift+W` | `Cmd+W` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` (pending native-convention review) |
 | Command palette / session switcher | `Ctrl+Shift+P` | `Cmd+Shift+P` |
+| Open Settings | `Ctrl+Shift+S` | `Cmd+Shift+S` (also `Cmd+,`, the macOS "Preferences" convention, via the native app menu) |
 | Find in terminal | `Ctrl+Shift+F` | `Cmd+F` target; current implementation remains `Cmd+Shift+F` until search lands |
 | Copy / Paste | `Ctrl+Shift+C` / `Ctrl+Shift+V` | `Cmd+C` / `Cmd+V` |
 | Zoom in / out / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | `Cmd++` / `Cmd+-` / `Cmd+0` |
@@ -1963,8 +1977,11 @@ control it, and focus mode is not initially persisted in workspaces.
 ![Live-session close-confirmation target](images/gui-mockups/close-session-confirmation.png)
 
 Closing Launcher, Settings, or an already exited/disconnected history surface
-is immediate. Closing a live local, SSH, or serial session requires
-confirmation from every invocation path. Its title is `Close “<stable
+is immediate. By default, closing a live local, SSH, or serial session requires
+confirmation from every invocation path. Settings exposes **Confirm before
+closing live sessions** for users who prefer immediate one-click closing; when
+off, every close invocation bypasses this session confirmation consistently.
+When confirmation is enabled, its title is `Close “<stable
 identity>”?`; its body names the exact transport consequence—terminate the
 owned local process, disconnect from the remote host, or close the serial
 port—and states that the session's unsaved terminal history will be discarded.
