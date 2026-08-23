@@ -1,39 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="752" height="168" viewBox="0 0 752 168">
-  <rect width="752" height="168" rx="10" fill="#11161e"/>
-  <g font-family="Inter, Arial, sans-serif">
-    <text x="16" y="24" fill="#e8edf2" font-size="13" font-weight="600">Roomy: natural widths</text>
-    <text x="16" y="42" fill="#788592" font-size="10">The focused chip and inactive chips use their normal widths. No scroll affordance.</text>
-    <g transform="translate(16 57)">
-      <rect width="184" height="42" rx="7" fill="#29333e" stroke="#91a7b8" stroke-width="1.5"/>
-      <rect x="10" y="12" width="16" height="14" rx="3" fill="none" stroke="#e8edf2" stroke-width="1.5"/>
-      <path d="M13 16l4 3-4 3m6 0h4" fill="none" stroke="#e8edf2" stroke-width="1.5" stroke-linecap="round"/>
-      <circle cx="25" cy="11" r="3.2" fill="#4fc17d" stroke="#11161e" stroke-width="1.3"/>
-      <text x="35" y="21" fill="#e8edf2" font-size="12" font-weight="600">production-db</text>
-      <text x="35" y="34" fill="#a7b2bd" font-size="9">focused · normal width</text>
-      <path d="M169 15l7 7m0-7l-7 7" stroke="#a7b2bd" stroke-width="1.4" stroke-linecap="round"/>
-    </g>
-    <g transform="translate(208 57)">
-      <rect width="136" height="42" rx="7" fill="#1a222c" stroke="#35414e"/>
-      <circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><circle cx="17" cy="17" r="2.8" fill="#4fc17d" stroke="#11161e"/>
-      <text x="27" y="20" fill="#d6dde4" font-size="11">dev-shell</text><text x="27" y="33" fill="#788592" font-size="9">inactive</text>
-    </g>
-    <g transform="translate(352 57)">
-      <rect width="136" height="42" rx="7" fill="#1a222c" stroke="#35414e"/>
-      <circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><circle cx="17" cy="17" r="2.8" fill="#4fc17d" stroke="#11161e"/>
-      <text x="27" y="20" fill="#d6dde4" font-size="11">logs-east</text><text x="27" y="33" fill="#788592" font-size="9">inactive</text>
-    </g>
-    <g transform="translate(496 57)">
-      <rect width="80" height="42" rx="7" fill="#1a222c" stroke="#35414e"/>
-      <circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/>
-      <text x="27" y="25" fill="#d6dde4" font-size="11">docs</text>
-    </g>
-    <g fill="none" stroke="#a7b2bd" stroke-width="1.5" stroke-linecap="round">
-      <path d="M607 78h12m-6-6v12"/><circle cx="645" cy="78" r="6"/><path d="M649 82l5 5"/>
-      <circle cx="680" cy="78" r="1.5" fill="#a7b2bd"/><circle cx="687" cy="78" r="1.5" fill="#a7b2bd"/><circle cx="694" cy="78" r="1.5" fill="#a7b2bd"/>
-      <path d="M720 73l10 10m0-10l-10 10"/>
-    </g>
-    <path d="M16 119h560" stroke="#35414e" stroke-dasharray="3 3"/>
-    <text x="16" y="139" fill="#91a7b8" font-size="10">184 px focused</text>
-    <text x="208" y="139" fill="#788592" font-size="10">inactive chips at natural width</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="752" height="232" viewBox="0 0 752 232">
+  <rect width="752" height="232" rx="10" fill="#11161e"/>
+  <g font-family="Inter,Arial,sans-serif">
+    <text x="16" y="23" fill="#e8edf2" font-size="13" font-weight="600">Roomy: natural widths</text>
+    <text x="16" y="42" fill="#788592" font-size="10">Full-height and compact-height chips use natural widths. No scroll affordance.</text>
+    <text x="16" y="61" fill="#91a7b8" font-size="9" font-weight="600">FULL HEIGHT · 34 PX</text>
+    <g transform="translate(16 68)"><rect width="184" height="34" rx="7" fill="#29333e" stroke="#91a7b8" stroke-width="1.5"/><rect x="10" y="10" width="16" height="14" rx="3" fill="none" stroke="#e8edf2" stroke-width="1.5"/><path d="M13 14l4 3-4 3m6 0h4" fill="none" stroke="#e8edf2" stroke-width="1.5" stroke-linecap="round"/><circle cx="25" cy="9" r="3.2" fill="#4fc17d" stroke="#11161e"/><text x="35" y="16" fill="#e8edf2" font-size="11" font-weight="600">production-db</text><text x="35" y="28" fill="#a7b2bd" font-size="8.5">focused · normal width</text><path d="M169 11l7 7m0-7l-7 7" stroke="#a7b2bd" stroke-width="1.4" stroke-linecap="round"/></g>
+    <g transform="translate(208 68)"><rect width="136" height="34" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="17" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><text x="27" y="16" fill="#d6dde4" font-size="10.5">dev-shell</text><text x="27" y="28" fill="#788592" font-size="8.5">inactive</text></g>
+    <g transform="translate(352 68)"><rect width="136" height="34" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="17" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><text x="27" y="16" fill="#d6dde4" font-size="10.5">logs-east</text><text x="27" y="28" fill="#788592" font-size="8.5">inactive</text></g>
+    <g transform="translate(496 68)"><rect width="80" height="34" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="17" r="5" fill="none" stroke="#a7b2bd"/><text x="27" y="21" fill="#d6dde4" font-size="10.5">docs</text></g>
+    <text x="16" y="127" fill="#91a7b8" font-size="9" font-weight="600">COMPACT HEIGHT · 28 PX</text>
+    <g transform="translate(16 134)"><rect width="184" height="28" rx="6" fill="#29333e" stroke="#91a7b8" stroke-width="1.5"/><rect x="10" y="7" width="16" height="14" rx="3" fill="none" stroke="#e8edf2" stroke-width="1.5"/><circle cx="25" cy="6" r="3.2" fill="#4fc17d" stroke="#11161e"/><text x="35" y="18" fill="#e8edf2" font-size="11" font-weight="600">production-db</text><path d="M169 10l7 7m0-7l-7 7" stroke="#a7b2bd" stroke-width="1.4" stroke-linecap="round"/></g>
+    <g transform="translate(208 134)"><rect width="136" height="28" rx="6" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="14" r="5" fill="none" stroke="#a7b2bd"/><text x="27" y="18" fill="#d6dde4" font-size="10.5">dev-shell</text></g>
+    <g transform="translate(352 134)"><rect width="136" height="28" rx="6" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="14" r="5" fill="none" stroke="#a7b2bd"/><text x="27" y="18" fill="#d6dde4" font-size="10.5">logs-east</text></g>
+    <g transform="translate(496 134)"><rect width="80" height="28" rx="6" fill="#1a222c" stroke="#35414e"/><text x="14" y="18" fill="#d6dde4" font-size="10.5">docs</text></g>
+    <g fill="none" stroke="#a7b2bd" stroke-width="1.5" stroke-linecap="round"><path d="M607 85h12m-6-6v12M607 148h12m-6-6v12"/><circle cx="650" cy="85" r="6"/><circle cx="650" cy="148" r="6"/><circle cx="685" cy="85" r="1.5" fill="#a7b2bd"/><circle cx="692" cy="85" r="1.5" fill="#a7b2bd"/><circle cx="699" cy="85" r="1.5" fill="#a7b2bd"/><circle cx="685" cy="148" r="1.5" fill="#a7b2bd"/><circle cx="692" cy="148" r="1.5" fill="#a7b2bd"/><circle cx="699" cy="148" r="1.5" fill="#a7b2bd"/></g>
+    <path d="M16 187h560" stroke="#35414e" stroke-dasharray="3 3"/><text x="16" y="207" fill="#788592" font-size="10">Same horizontal policy in both vertical-density modes</text>
   </g>
 </svg>

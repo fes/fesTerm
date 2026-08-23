@@ -815,7 +815,13 @@ fesTerm's independent-chip visual treatment. Optional wrapping remains
 available for users who value simultaneous session visibility more than
 terminal height.
 
-The single-row behavior has three visually distinct states:
+The single-row behavior has three visually distinct horizontal states.
+Each mockup shows the same state in both approved vertical densities:
+**full-height 34 px chips** with primary and secondary lines, and
+**compact-height 28 px chips** with one line. The horizontal allocation policy
+does not change when the vertical-density preference changes: the focused chip
+keeps its normal width for that density, inactive chips compact first, and
+scrolling remains the last resort.
 
 ![Roomy chip row: all chips at natural width](images/gui-mockups/chip-overflow-roomy.png)
 
@@ -833,6 +839,13 @@ it keeps its normal chip width, including its type icon, state badge, stable
 primary identity, and active-only Close control. Crowding is absorbed by
 inactive chips before scrolling is introduced; the focused chip does not join
 a uniform proportional shrink.
+
+This contract applies independently to both vertical-density modes. Full-height
+chips are 34 px tall and may show two lines. Compact-height chips are 28 px tall
+and show one line, with active detail relocated according to the compact-chrome
+rules. Density may change measured natural text width, but it must not change
+the allocation order, permit the focused chip to shrink, or enable scrolling
+before inactive chips reach minimum width.
 
 For each layout pass:
 
@@ -880,10 +893,11 @@ The following are non-conforming:
 - permanently caching a forced compact width as a chip's natural width; or
 - allowing a newly focused chip to remain clipped or compacted.
 
-Current implementation: `shrink_to_fit_single_row` provides the first
-compaction seam, but an equal proportional shrink of every chip is
-transitional and does **not** satisfy this target. Its width allocation must
-protect the focused chip and apply the shortage to inactive chips.
+Current implementation: `allocate_single_row_widths` (`crates/festerm-ui-egui/src/chrome.rs`)
+protects the focused chip's normal width and applies water-filling shortage
+distribution to inactive chips only, satisfying this contract; regression
+tests cover the natural-fit, inactive-only-compaction, minimum-width-scrolling,
+focus-change, and grow-back-after-close cases described above.
 
 The design remains usable with many sessions through:
 
@@ -934,8 +948,10 @@ Structural tests must drive exact row budgets and prove all of the following:
 - long or rapidly changing untrusted titles cannot alter the allocation order
   or overlap fixed chrome controls.
 
-Rendered review should compare the three states above at the same scale and
-verify that compaction is visible before any scroll affordance appears.
+Rendered review should compare the three states above at the same scale in
+both 34 px full-height and 28 px compact-height modes. In each density,
+compaction must be visibly established before any scroll affordance appears,
+and switching density must not change the focused-chip-first priority.
 
 ## Session Creation Workflow
 
