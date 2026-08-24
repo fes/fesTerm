@@ -2309,7 +2309,7 @@ fn serial_enum_combo<T: Copy + PartialEq + SerialEnumLabels>(
 ) {
     ui.horizontal(|ui| {
         ui.label(label);
-        egui::ComboBox::from_label("")
+        egui::ComboBox::from_id_salt(("serial_enum_combo", label))
             .selected_text(current.label())
             .show_ui(ui, |ui| {
                 for (variant, variant_label) in T::all() {
