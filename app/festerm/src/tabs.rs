@@ -25,6 +25,7 @@ use festerm_config::{
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
 use festerm_secret_store::{SecretBytes, SecretStore};
+use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
     HostKeyPrompt, PasswordPrompt, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
     SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
@@ -85,6 +86,7 @@ fn make_notifier(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
 pub enum ApplicationSession {
     Local(LocalPtySession),
     Ssh(SshSession),
+    Serial(SerialSession),
 }
 
 /// The host-key decisions exposed by the application (ADR 0020).
@@ -233,6 +235,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.id(),
             Self::Ssh(session) => session.id(),
+            Self::Serial(session) => session.id(),
         }
     }
 
@@ -240,6 +243,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.lifecycle(),
             Self::Ssh(session) => session.lifecycle(),
+            Self::Serial(session) => session.lifecycle(),
         }
     }
 
@@ -247,6 +251,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.metrics(),
             Self::Ssh(session) => session.metrics(),
+            Self::Serial(session) => session.metrics(),
         }
     }
 
@@ -254,6 +259,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.try_send_input(bytes),
             Self::Ssh(session) => session.try_send_input(bytes),
+            Self::Serial(session) => session.try_send_input(bytes),
         }
     }
 
@@ -261,6 +267,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.try_resize(size),
             Self::Ssh(session) => session.try_resize(size),
+            Self::Serial(session) => session.try_resize(size),
         }
     }
 
@@ -268,6 +275,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.try_shutdown(),
             Self::Ssh(session) => session.try_shutdown(),
+            Self::Serial(session) => session.try_shutdown(),
         }
     }
 
@@ -275,6 +283,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.try_recv_event(),
             Self::Ssh(session) => session.try_recv_event(),
+            Self::Serial(session) => session.try_recv_event(),
         }
     }
 
@@ -282,6 +291,7 @@ impl Session for ApplicationSession {
         match self {
             Self::Local(session) => session.shutdown(timeout),
             Self::Ssh(session) => session.shutdown(timeout),
+            Self::Serial(session) => session.shutdown(timeout),
         }
     }
 }
@@ -333,6 +343,14 @@ pub enum InspectorTransport {
         /// it is presentation metadata only and never itself a live process
         /// or connection handle.
         persistence: Option<InspectorPersistence>,
+    },
+    Serial {
+        device: String,
+        baud_rate: u32,
+        data_bits: festerm_config::SerialDataBits,
+        parity: festerm_config::SerialParity,
+        stop_bits: festerm_config::SerialStopBits,
+        flow_control: festerm_config::SerialFlowControl,
     },
 }
 
@@ -564,6 +582,56 @@ impl SessionTab {
         )
     }
 
+    /// Starts a serial session from explicit line settings, optionally tied
+    /// to a saved profile. `window_dimensions` follows the same pattern as
+    /// `start_default`/`start_local_profile`.
+    fn start_serial(
+        settings: LineSettings,
+        profile_id: Option<&str>,
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+    ) -> Self {
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let label = profile_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| settings.device().to_owned());
+        let launch_secondary = Some(format!("Serial · {} baud", settings.baud_rate()));
+        let inspector_transport = inspector_transport_from_settings(&settings);
+        let result = SerialSession::open_with_notifier(settings, make_notifier(context))
+            .map(ApplicationSession::Serial);
+        Self::from_serial_session_result(
+            result,
+            dimensions,
+            &label,
+            launch_secondary,
+            profile_id.map(str::to_owned),
+            inspector_transport,
+        )
+    }
+
+    fn from_serial_session_result(
+        result: Result<ApplicationSession, SerialSessionError>,
+        dimensions: Dimensions,
+        label: &str,
+        launch_secondary: Option<String>,
+        profile_identifier: Option<String>,
+        inspector_transport: InspectorTransport,
+    ) -> Self {
+        Self::from_session_result(
+            result,
+            dimensions,
+            SessionResultMeta {
+                label,
+                launch_secondary,
+                profile_identifier,
+                session_name: "Serial session",
+                inspector_transport,
+                ssh_password_retry: None,
+            },
+        )
+    }
+
     fn from_session_result<E: std::fmt::Display>(
         result: Result<ApplicationSession, E>,
         dimensions: Dimensions,
@@ -666,27 +734,27 @@ impl SessionTab {
 
     /// Content-free locality/transport text for the status bar.
     pub fn system_label(&self) -> &'static str {
-        match self.controller.session() {
-            Some(ApplicationSession::Ssh(_)) => "Remote",
-            Some(ApplicationSession::Local(_)) | None if cfg!(windows) => "Local · Windows",
-            Some(ApplicationSession::Local(_)) | None if cfg!(target_os = "macos") => {
-                "Local · macOS"
-            }
-            Some(ApplicationSession::Local(_)) | None => "Local · Linux",
+        match &self.inspector_transport {
+            InspectorTransport::Ssh { .. } => "Remote",
+            InspectorTransport::Serial { .. } => "Serial",
+            InspectorTransport::Local if cfg!(windows) => "Local · Windows",
+            InspectorTransport::Local if cfg!(target_os = "macos") => "Local · macOS",
+            InspectorTransport::Local => "Local · Linux",
         }
     }
 
     /// Transport-specific factual state for the persistent status bar.
     pub fn status_bar_label(&self) -> &'static str {
-        match (self.controller.session(), self.chip_status()) {
+        match (&self.inspector_transport, self.chip_status()) {
             (_, ChipStatus::Starting) => "Starting",
             (_, ChipStatus::Reconnecting) => "Reconnecting",
             (_, ChipStatus::Disconnected) => "Disconnected",
             (_, ChipStatus::AuthRequired) => "Authentication required",
             (_, ChipStatus::Failed) => "Failed",
             (_, ChipStatus::Exited) => "Exited",
-            (Some(ApplicationSession::Local(_)) | None, ChipStatus::Connected) => "Running",
-            (Some(ApplicationSession::Ssh(_)), ChipStatus::Connected) => "Connected",
+            (InspectorTransport::Local, ChipStatus::Connected) => "Running",
+            (InspectorTransport::Ssh { .. }, ChipStatus::Connected) => "Connected",
+            (InspectorTransport::Serial { .. }, ChipStatus::Connected) => "Open",
             (_, ChipStatus::Neutral) => "",
         }
     }
@@ -782,6 +850,17 @@ fn local_profile_secondary(profile: &LocalProfile) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
+fn inspector_transport_from_settings(settings: &LineSettings) -> InspectorTransport {
+    InspectorTransport::Serial {
+        device: settings.device().to_owned(),
+        baud_rate: settings.baud_rate(),
+        data_bits: settings.data_bits().into(),
+        parity: settings.parity().into(),
+        stop_bits: settings.stop_bits().into(),
+        flow_control: settings.flow_control().into(),
+    }
+}
+
 /// The content of one tab.
 ///
 /// Launcher and Settings are non-session application surfaces
@@ -853,6 +932,17 @@ pub enum AppCommand {
     /// (openssh-style in-terminal password prompt, no composition-root
     /// resource needed). Never reaches `AppState::dispatch` for real work.
     StartConfiguredSshProfile {
+        profile_id: String,
+    },
+    /// Starts a serial session from explicitly supplied line settings. The
+    /// Launcher's serial form validates input into a `LineSettings` value;
+    /// this does not create a persisted profile.
+    StartSerialSession {
+        settings: LineSettings,
+    },
+    /// Starts a serial session from a saved serial profile. Mirrors
+    /// `StartConfiguredLocalProfile`.
+    StartConfiguredSerialProfile {
         profile_id: String,
     },
     /// Requests that the composition root store a password for an existing
@@ -1186,6 +1276,21 @@ impl AppState {
                         profile: ssh.clone(),
                     })
                 }
+                WorkspaceTab::SerialSession(tab) => {
+                    let serial = configuration
+                        .profile(tab.profile_id())
+                        .and_then(festerm_config::Profile::as_serial)
+                        .expect("validated workspace serial profile reference");
+                    let settings = serial
+                        .to_line_settings()
+                        .expect("validated serial profile line settings");
+                    TabContent::Session(Box::new(SessionTab::start_serial(
+                        settings,
+                        Some(serial.identifier()),
+                        context,
+                        None,
+                    )))
+                }
             };
             restored.push(Tab { id, content });
         }
@@ -1254,12 +1359,16 @@ impl AppState {
                 TabContent::Session(session) => session
                     .profile_identifier
                     .as_deref()
-                    .filter(|profile_id| {
-                        self.configuration
-                            .profile(profile_id)
-                            .is_some_and(|profile| profile.as_local().is_some())
+                    .and_then(|profile_id| {
+                        let profile = self.configuration.profile(profile_id)?;
+                        if profile.as_local().is_some() {
+                            Some(WorkspaceTab::local_session(identifier.clone(), profile_id))
+                        } else if profile.as_serial().is_some() {
+                            Some(WorkspaceTab::serial_session(identifier.clone(), profile_id))
+                        } else {
+                            None
+                        }
                     })
-                    .map(|profile_id| WorkspaceTab::local_session(identifier, profile_id))
                     .transpose()?,
             };
             if let Some(workspace_tab) = workspace_tab {
@@ -1429,6 +1538,12 @@ impl AppState {
             | AppCommand::StoreProfilePassword { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. } => {}
+            AppCommand::StartSerialSession { settings } => {
+                self.start_serial_session(settings, context)
+            }
+            AppCommand::StartConfiguredSerialProfile { profile_id } => {
+                self.start_configured_serial_profile(&profile_id, context)
+            }
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
             }
@@ -1601,6 +1716,33 @@ impl AppState {
         self.place_session(SessionTab::start_local_profile(
             local.to_local_profile(),
             local.identifier(),
+            context,
+            dimensions,
+        ));
+    }
+
+    fn start_serial_session(&mut self, settings: LineSettings, context: &egui::Context) {
+        let dimensions = self.current_session_dimensions();
+        self.place_session(SessionTab::start_serial(
+            settings, None, context, dimensions,
+        ));
+    }
+
+    fn start_configured_serial_profile(&mut self, profile_id: &str, context: &egui::Context) {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_serial)
+        else {
+            return;
+        };
+        let Ok(settings) = profile.to_line_settings() else {
+            return;
+        };
+        let dimensions = self.current_session_dimensions();
+        self.place_session(SessionTab::start_serial(
+            settings,
+            Some(profile_id),
             context,
             dimensions,
         ));
@@ -2879,5 +3021,103 @@ mod tests {
 
         assert_eq!(state.tabs().len(), 1, "root state is never empty");
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn serial_startup_failure_surfaces_a_concise_error() {
+        let context = egui::Context::default();
+        let dimensions = Dimensions::new(80, 24).expect("test dimensions are valid");
+        let settings = LineSettings::with_defaults("/dev/festerm-test-nonexistent-000")
+            .expect("test line settings are valid");
+        let inspector_transport = inspector_transport_from_settings(&settings);
+        let result = SerialSession::open_with_notifier(settings, make_notifier(&context))
+            .map(ApplicationSession::Serial);
+        let session = SessionTab::from_serial_session_result(
+            result,
+            dimensions,
+            "nonexistent-device",
+            Some("Serial · 115200 baud".to_owned()),
+            None,
+            inspector_transport,
+        );
+
+        assert!(
+            session.controller.start_error().is_some(),
+            "a nonexistent serial device must surface a startup error"
+        );
+        assert!(
+            session
+                .controller
+                .status_line()
+                .starts_with("Serial session unavailable:"),
+            "serial failures use the controller's ordinary startup-error state"
+        );
+        assert!(session
+            .terminal
+            .row_text(0)
+            .is_some_and(|row| row.starts_with("Serial session could not start.")));
+    }
+
+    #[test]
+    fn serial_command_replaces_the_active_launcher_in_place() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let launcher_id = state.active();
+
+        let settings = LineSettings::with_defaults("/dev/festerm-test-nonexistent-000")
+            .expect("test line settings are valid");
+        state.dispatch(AppCommand::StartSerialSession { settings }, &context);
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), launcher_id);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("serial command must place a session tab");
+        };
+        assert_eq!(session.label, "/dev/festerm-test-nonexistent-000");
+        assert_eq!(session.system_label(), "Serial");
+        assert_eq!(session.status_bar_label(), "Failed");
+        assert!(
+            session.controller.start_error().is_some(),
+            "the nonexistent device proves the serial launch path was exercised"
+        );
+        assert!(matches!(
+            session.inspector_transport,
+            InspectorTransport::Serial { .. }
+        ));
+
+        state.dispatch(AppCommand::CloseTab(launcher_id), &context);
+    }
+
+    #[test]
+    fn configured_serial_profile_command_starts_a_serial_session() {
+        let context = egui::Context::default();
+        let configuration =
+            Configuration::new(vec![festerm_config::Profile::serial_with_defaults(
+                "my-device",
+                "/dev/festerm-test-nonexistent-serial-profile",
+            )
+            .expect("test serial profile is valid")])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let launcher_id = state.active();
+
+        state.dispatch(
+            AppCommand::StartConfiguredSerialProfile {
+                profile_id: "my-device".to_owned(),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), 1);
+        assert_eq!(state.active(), launcher_id);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("configured serial profile must replace the active launcher");
+        };
+        assert_eq!(session.label, "my-device");
+        assert_eq!(session.profile_identifier.as_deref(), Some("my-device"));
+        assert!(
+            session.controller.start_error().is_some(),
+            "the nonexistent device proves the configured launch path attempted its metadata"
+        );
     }
 }

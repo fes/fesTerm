@@ -25,8 +25,10 @@ use crate::tabs::{AppCommand, PasswordToStore, PrivateKeyToStore, TabId};
 enum LauncherItemKind<'a> {
     LocalDefault,
     NewSsh,
+    NewSerial,
     LocalProfile(&'a str),
     SshProfile(&'a str),
+    SerialProfile(&'a str),
 }
 
 struct LauncherItem<'a> {
@@ -38,8 +40,12 @@ struct LauncherItem<'a> {
 impl LauncherItem<'_> {
     fn profile_id(&self) -> Option<&str> {
         match self.kind {
-            LauncherItemKind::LocalDefault | LauncherItemKind::NewSsh => None,
-            LauncherItemKind::LocalProfile(id) | LauncherItemKind::SshProfile(id) => Some(id),
+            LauncherItemKind::LocalDefault
+            | LauncherItemKind::NewSsh
+            | LauncherItemKind::NewSerial => None,
+            LauncherItemKind::LocalProfile(id)
+            | LauncherItemKind::SshProfile(id)
+            | LauncherItemKind::SerialProfile(id) => Some(id),
         }
     }
 
@@ -56,12 +62,22 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewSsh => {
                 unreachable!("the New SSH Connection item opens the SSH form, not an AppCommand")
             }
+            LauncherItemKind::NewSerial => {
+                unreachable!(
+                    "the New Serial Connection item opens the serial form, not an AppCommand"
+                )
+            }
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
             LauncherItemKind::SshProfile(profile_id) => AppCommand::StartConfiguredSshProfile {
                 profile_id: profile_id.to_owned(),
             },
+            LauncherItemKind::SerialProfile(profile_id) => {
+                AppCommand::StartConfiguredSerialProfile {
+                    profile_id: profile_id.to_owned(),
+                }
+            }
         }
     }
 }
@@ -545,12 +561,42 @@ impl SshLauncherForm {
     }
 }
 
+#[derive(Clone)]
+struct SerialLauncherForm {
+    device: String,
+    baud_rate: String,
+    data_bits: festerm_config::SerialDataBits,
+    parity: festerm_config::SerialParity,
+    stop_bits: festerm_config::SerialStopBits,
+    flow_control: festerm_config::SerialFlowControl,
+    discovered_ports: Vec<festerm_serial::DiscoveredPort>,
+    feedback: Option<String>,
+}
+
+impl Default for SerialLauncherForm {
+    fn default() -> Self {
+        let discovered_ports = festerm_serial::discover_ports().unwrap_or_default();
+        Self {
+            device: String::new(),
+            baud_rate: "115200".to_owned(),
+            data_bits: festerm_config::SerialDataBits::Eight,
+            parity: festerm_config::SerialParity::None,
+            stop_bits: festerm_config::SerialStopBits::One,
+            flow_control: festerm_config::SerialFlowControl::None,
+            discovered_ports,
+            feedback: None,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct LauncherState {
     selected: usize,
     ssh_open: bool,
     ssh: SshLauncherForm,
     ssh_profile_prefilled: bool,
+    serial_open: bool,
+    serial: SerialLauncherForm,
 }
 
 fn launcher_state_id(tab_id: TabId) -> egui::Id {
@@ -1040,6 +1086,11 @@ pub fn show_launcher(
             description: "Connect to a remote host".to_owned(),
             kind: LauncherItemKind::NewSsh,
         },
+        LauncherItem {
+            label: "Serial".to_owned(),
+            description: "Open a local serial device".to_owned(),
+            kind: LauncherItemKind::NewSerial,
+        },
     ];
     // Saved profiles are listed last, after the two fixed "new session"
     // entries above, with a subtle separator (rendered when painting the
@@ -1068,6 +1119,20 @@ pub fn show_launcher(
                     profile.port()
                 ),
                 kind: LauncherItemKind::SshProfile(profile.identifier()),
+            }),
+    );
+    items.extend(
+        profiles
+            .iter()
+            .filter_map(Profile::as_serial)
+            .map(|profile| LauncherItem {
+                label: profile.identifier().to_owned(),
+                description: format!(
+                    "Saved serial profile · {} · {} baud",
+                    profile.device(),
+                    profile.baud_rate()
+                ),
+                kind: LauncherItemKind::SerialProfile(profile.identifier()),
             }),
     );
 
@@ -1108,6 +1173,126 @@ pub fn show_launcher(
         });
         if back_clicked {
             state.ssh_open = false;
+        }
+        ui.data_mut(|data| data.insert_temp(state_id, state));
+        return command;
+    }
+
+    if state.serial_open {
+        let mut command = None;
+        let mut back_clicked = false;
+        show_bounded_content_scroll(ui, (tab_id, "serial_connection_surface"), |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(34.0);
+                    ui.vertical(|ui| {
+                        if ssh_back_button(ui).clicked() {
+                            back_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("Open Serial Port")
+                                .size(24.0)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new("Select a device and configure line settings.")
+                                .size(11.0)
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        ui.add_space(16.0);
+
+                        // Device field with discovered-port picker
+                        ui.label("Device");
+                        ui.text_edit_singleline(&mut state.serial.device);
+                        if !state.serial.discovered_ports.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("Available ports:")
+                                    .size(11.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                            for port in &state.serial.discovered_ports {
+                                let port_label = match port.description() {
+                                    Some(desc) => {
+                                        format!("{} — {}", port.identifier(), desc)
+                                    }
+                                    None => port.identifier().to_owned(),
+                                };
+                                if ui
+                                    .selectable_label(
+                                        state.serial.device == port.identifier(),
+                                        &port_label,
+                                    )
+                                    .clicked()
+                                {
+                                    state.serial.device = port.identifier().to_owned();
+                                }
+                            }
+                        }
+                        if ui.button("Refresh").clicked() {
+                            state.serial.discovered_ports =
+                                festerm_serial::discover_ports().unwrap_or_default();
+                        }
+
+                        ui.add_space(8.0);
+                        ui.label("Baud rate");
+                        ui.text_edit_singleline(&mut state.serial.baud_rate);
+
+                        ui.add_space(8.0);
+                        serial_enum_combo(ui, "Data bits", &mut state.serial.data_bits);
+                        serial_enum_combo(ui, "Parity", &mut state.serial.parity);
+                        serial_enum_combo(ui, "Stop bits", &mut state.serial.stop_bits);
+                        serial_enum_combo(ui, "Flow control", &mut state.serial.flow_control);
+
+                        if let Some(feedback) = &state.serial.feedback {
+                            ui.add_space(8.0);
+                            ui.colored_label(theme::STATUS_ERROR, feedback.as_str());
+                        }
+
+                        ui.add_space(12.0);
+                        if ui.button("Open").clicked() && !back_clicked {
+                            let device = state.serial.device.trim();
+                            let baud: Result<u32, _> = state.serial.baud_rate.trim().parse();
+                            match baud {
+                                Ok(baud) if baud > 0 && !device.is_empty() => {
+                                    match festerm_serial::LineSettings::new(
+                                        device,
+                                        baud,
+                                        state.serial.data_bits.into(),
+                                        state.serial.parity.into(),
+                                        state.serial.stop_bits.into(),
+                                        state.serial.flow_control.into(),
+                                    ) {
+                                        Ok(settings) => {
+                                            command =
+                                                Some(AppCommand::StartSerialSession { settings });
+                                        }
+                                        Err(error) => {
+                                            state.serial.feedback = Some(error.to_string());
+                                        }
+                                    }
+                                }
+                                Ok(_) => {
+                                    state.serial.feedback =
+                                        Some("Device and baud rate are required".to_owned());
+                                }
+                                Err(_) => {
+                                    state.serial.feedback =
+                                        Some("Baud rate must be a positive number".to_owned());
+                                }
+                            }
+                        }
+                    });
+                });
+            });
+        });
+        if back_clicked {
+            state.serial_open = false;
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            state.serial_open = false;
         }
         ui.data_mut(|data| data.insert_temp(state_id, state));
         return command;
@@ -1214,6 +1399,8 @@ pub fn show_launcher(
                                     if matches!(item.kind, LauncherItemKind::NewSsh) {
                                         state.ssh_open = true;
                                         state.ssh.focus_username = true;
+                                    } else if matches!(item.kind, LauncherItemKind::NewSerial) {
+                                        state.serial_open = true;
                                     } else {
                                         command = Some(item.command());
                                     }
@@ -1234,6 +1421,8 @@ pub fn show_launcher(
         if matches!(items[state.selected].kind, LauncherItemKind::NewSsh) {
             state.ssh_open = true;
             state.ssh.focus_username = true;
+        } else if matches!(items[state.selected].kind, LauncherItemKind::NewSerial) {
+            state.serial_open = true;
         } else {
             command = Some(items[state.selected].command());
         }
@@ -1824,6 +2013,11 @@ fn profile_summary(profile: &Profile) -> (&'static str, String, String) {
             ssh.identifier().to_owned(),
             format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
         ),
+        Profile::Serial(serial) => (
+            "Serial",
+            serial.identifier().to_owned(),
+            format!("{} · {} baud", serial.device(), serial.baud_rate()),
+        ),
     }
 }
 
@@ -1836,6 +2030,7 @@ enum ProfilesScreenMode {
     List,
     EditLocal(LocalProfileDraft),
     EditSsh(SshProfileDraft),
+    EditSerial(SerialProfileDraft),
     ConfirmDelete {
         identifier: String,
         references: usize,
@@ -2041,9 +2236,159 @@ impl SshProfileDraft {
     }
 }
 
+#[derive(Clone)]
+struct SerialProfileDraft {
+    original_id: Option<String>,
+    name: String,
+    device: String,
+    baud_rate: String,
+    data_bits: festerm_config::SerialDataBits,
+    parity: festerm_config::SerialParity,
+    stop_bits: festerm_config::SerialStopBits,
+    flow_control: festerm_config::SerialFlowControl,
+    error: Option<String>,
+}
+
+impl Default for SerialProfileDraft {
+    fn default() -> Self {
+        Self {
+            original_id: None,
+            name: String::new(),
+            device: String::new(),
+            baud_rate: "115200".to_owned(),
+            data_bits: festerm_config::SerialDataBits::Eight,
+            parity: festerm_config::SerialParity::None,
+            stop_bits: festerm_config::SerialStopBits::One,
+            flow_control: festerm_config::SerialFlowControl::None,
+            error: None,
+        }
+    }
+}
+
+impl SerialProfileDraft {
+    fn from_profile(serial: &festerm_config::SerialProfileConfiguration) -> Self {
+        Self {
+            original_id: Some(serial.identifier().to_owned()),
+            name: serial.identifier().to_owned(),
+            device: serial.device().to_owned(),
+            baud_rate: serial.baud_rate().to_string(),
+            data_bits: serial.data_bits(),
+            parity: serial.parity(),
+            stop_bits: serial.stop_bits(),
+            flow_control: serial.flow_control(),
+            error: None,
+        }
+    }
+
+    fn build_profile(&self) -> Result<Profile, String> {
+        let baud_rate: u32 = self
+            .baud_rate
+            .trim()
+            .parse()
+            .map_err(|_| "Baud rate must be a positive number".to_owned())?;
+        Profile::serial(
+            self.name.trim(),
+            self.device.trim(),
+            baud_rate,
+            self.data_bits,
+            self.parity,
+            self.stop_bits,
+            self.flow_control,
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
 /// The standalone Profiles management surface: list, create, edit,
 /// duplicate, and delete reusable local/SSH launch definitions
 /// (`docs/gui-design.md` "Profile editing").
+fn serial_enum_combo<T: Copy + PartialEq + SerialEnumLabels>(
+    ui: &mut Ui,
+    label: &str,
+    current: &mut T,
+) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        egui::ComboBox::from_label("")
+            .selected_text(current.label())
+            .show_ui(ui, |ui| {
+                for (variant, variant_label) in T::all() {
+                    ui.selectable_value(current, variant, variant_label);
+                }
+            });
+    });
+}
+
+trait SerialEnumLabels: Sized {
+    fn label(&self) -> &'static str;
+    fn all() -> Vec<(Self, &'static str)>;
+}
+
+impl SerialEnumLabels for festerm_config::SerialDataBits {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Five => "5",
+            Self::Six => "6",
+            Self::Seven => "7",
+            Self::Eight => "8",
+        }
+    }
+    fn all() -> Vec<(Self, &'static str)> {
+        vec![
+            (Self::Five, "5"),
+            (Self::Six, "6"),
+            (Self::Seven, "7"),
+            (Self::Eight, "8"),
+        ]
+    }
+}
+
+impl SerialEnumLabels for festerm_config::SerialParity {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Odd => "Odd",
+            Self::Even => "Even",
+        }
+    }
+    fn all() -> Vec<(Self, &'static str)> {
+        vec![
+            (Self::None, "None"),
+            (Self::Odd, "Odd"),
+            (Self::Even, "Even"),
+        ]
+    }
+}
+
+impl SerialEnumLabels for festerm_config::SerialStopBits {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::Two => "2",
+        }
+    }
+    fn all() -> Vec<(Self, &'static str)> {
+        vec![(Self::One, "1"), (Self::Two, "2")]
+    }
+}
+
+impl SerialEnumLabels for festerm_config::SerialFlowControl {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Software => "Software (XON/XOFF)",
+            Self::Hardware => "Hardware (RTS/CTS)",
+        }
+    }
+    fn all() -> Vec<(Self, &'static str)> {
+        vec![
+            (Self::None, "None"),
+            (Self::Software, "Software (XON/XOFF)"),
+            (Self::Hardware, "Hardware (RTS/CTS)"),
+        ]
+    }
+}
+
 fn profile_text_edit(
     ui: &mut Ui,
     tab_id: TabId,
@@ -2168,6 +2513,9 @@ pub fn show_profiles(
                 Profile::Ssh(ssh) => {
                     ProfilesScreenMode::EditSsh(SshProfileDraft::from_profile(ssh))
                 }
+                Profile::Serial(serial) => {
+                    ProfilesScreenMode::EditSerial(SerialProfileDraft::from_profile(serial))
+                }
             };
         }
     }
@@ -2190,6 +2538,10 @@ pub fn show_profiles(
                     }
                     if ui.button("New SSH Profile").clicked() {
                         next_mode = Some(ProfilesScreenMode::EditSsh(SshProfileDraft::default()));
+                    }
+                    if ui.button("New Serial Profile").clicked() {
+                        next_mode =
+                            Some(ProfilesScreenMode::EditSerial(SerialProfileDraft::default()));
                     }
                 });
                 ui.add_space(12.0);
@@ -2240,6 +2592,9 @@ pub fn show_profiles(
                                 Profile::Ssh(_) => AppCommand::StartConfiguredSshProfile {
                                     profile_id: name.clone(),
                                 },
+                                Profile::Serial(_) => AppCommand::StartConfiguredSerialProfile {
+                                    profile_id: name.clone(),
+                                },
                             });
                         }
                         if ui.button("Edit").clicked() {
@@ -2249,6 +2604,9 @@ pub fn show_profiles(
                                 ),
                                 Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
                                     SshProfileDraft::from_profile(ssh),
+                                ),
+                                Profile::Serial(serial) => ProfilesScreenMode::EditSerial(
+                                    SerialProfileDraft::from_profile(serial),
                                 ),
                             });
                         }
@@ -2266,6 +2624,12 @@ pub fn show_profiles(
                                     draft.original_id = None;
                                     draft.name = duplicate_name;
                                     ProfilesScreenMode::EditSsh(draft)
+                                }
+                                Profile::Serial(serial) => {
+                                    let mut draft = SerialProfileDraft::from_profile(serial);
+                                    draft.original_id = None;
+                                    draft.name = duplicate_name;
+                                    ProfilesScreenMode::EditSerial(draft)
                                 }
                             });
                         }
@@ -2646,6 +3010,53 @@ pub fn show_profiles(
                             }
                         });
                     });
+            });
+        }
+        ProfilesScreenMode::EditSerial(draft) => {
+            show_bounded_content_scroll(ui, (tab_id, "serial_profile_editor"), |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                let heading = if draft.original_id.is_some() {
+                    "Edit Serial Profile"
+                } else {
+                    "New Serial Profile"
+                };
+                ui.heading(heading);
+                ui.add_space(12.0);
+                profile_text_edit(ui, tab_id, "serial_name", "Name", &mut draft.name);
+                profile_text_edit(ui, tab_id, "serial_device", "Device", &mut draft.device);
+                profile_text_edit(
+                    ui,
+                    tab_id,
+                    "serial_baud_rate",
+                    "Baud rate",
+                    &mut draft.baud_rate,
+                );
+                ui.add_space(8.0);
+                serial_enum_combo(ui, "Data bits", &mut draft.data_bits);
+                serial_enum_combo(ui, "Parity", &mut draft.parity);
+                serial_enum_combo(ui, "Stop bits", &mut draft.stop_bits);
+                serial_enum_combo(ui, "Flow control", &mut draft.flow_control);
+                if let Some(error) = &draft.error {
+                    ui.add_space(8.0);
+                    ui.colored_label(theme::STATUS_ERROR, error.as_str());
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        match draft.build_profile() {
+                            Ok(profile) => {
+                                command = Some(AppCommand::SaveProfile { profile });
+                                next_mode = Some(ProfilesScreenMode::List);
+                            }
+                            Err(error) => draft.error = Some(error),
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        next_mode = Some(ProfilesScreenMode::List);
+                    }
+                });
+            });
             });
         }
         ProfilesScreenMode::ConfirmDelete {
@@ -3494,6 +3905,8 @@ mod tests {
         assert!(harness
             .query_by_label("development — Saved local profile")
             .is_some());
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
         harness.key_press(egui::Key::ArrowDown);

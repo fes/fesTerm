@@ -20,6 +20,7 @@ use std::{
 
 use festerm_pty::LocalProfile;
 use festerm_secret_store::SecretReference;
+use festerm_serial::LineSettings;
 use festerm_session::TerminalSize;
 use festerm_ssh::{
     is_sha256_fingerprint, HostIdentity, PersistenceProvider, PersistentSessionName,
@@ -33,6 +34,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 const DEFAULT_SSH_PORT: u16 = 22;
 const DEFAULT_COLUMNS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
+const DEFAULT_SERIAL_BAUD_RATE: u32 = 115_200;
 const TEMPORARY_FILE_ATTEMPTS: u32 = 128;
 
 static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
@@ -746,6 +748,8 @@ pub enum WorkspaceTab {
     LocalSession(SessionTabConfiguration),
     /// An SSH session recreated from an SSH profile.
     SshSession(SessionTabConfiguration),
+    /// A serial session recreated from a serial profile.
+    SerialSession(SessionTabConfiguration),
 }
 
 impl WorkspaceTab {
@@ -802,20 +806,37 @@ impl WorkspaceTab {
         Ok(tab)
     }
 
+    /// Creates a serial-session tab which will reference a serial profile.
+    pub fn serial_session(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::SerialSession(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
     /// Returns this tab's stable, serialized application identifier.
     pub fn identifier(&self) -> &str {
         match self {
             Self::Launcher(tab) => tab.identifier(),
             Self::Settings(tab) => tab.identifier(),
             Self::Profiles(tab) => tab.identifier(),
-            Self::LocalSession(tab) | Self::SshSession(tab) => tab.identifier(),
+            Self::LocalSession(tab) | Self::SshSession(tab) | Self::SerialSession(tab) => {
+                tab.identifier()
+            }
         }
     }
 
     /// Returns the referenced profile identifier for session tabs.
     pub fn profile_id(&self) -> Option<&str> {
         match self {
-            Self::LocalSession(tab) | Self::SshSession(tab) => Some(tab.profile_id()),
+            Self::LocalSession(tab) | Self::SshSession(tab) | Self::SerialSession(tab) => {
+                Some(tab.profile_id())
+            }
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => None,
         }
     }
@@ -825,14 +846,23 @@ impl WorkspaceTab {
             Self::Launcher(tab) => validate_tab_identifier(tab.identifier()),
             Self::Settings(tab) => validate_tab_identifier(tab.identifier()),
             Self::Profiles(tab) => validate_tab_identifier(tab.identifier()),
-            Self::LocalSession(tab) | Self::SshSession(tab) => tab.validate(),
+            Self::LocalSession(tab) | Self::SshSession(tab) | Self::SerialSession(tab) => {
+                tab.validate()
+            }
         }
     }
 
     fn validate_profile_reference(&self, profiles: &[Profile]) -> Result<(), ConfigError> {
         match self {
-            Self::LocalSession(tab) => validate_session_profile(profiles, tab.profile_id(), true),
-            Self::SshSession(tab) => validate_session_profile(profiles, tab.profile_id(), false),
+            Self::LocalSession(tab) => {
+                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Local)
+            }
+            Self::SshSession(tab) => {
+                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
+            }
+            Self::SerialSession(tab) => {
+                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Serial)
+            }
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => Ok(()),
         }
     }
@@ -911,10 +941,20 @@ fn validate_tab_identifier(identifier: &str) -> Result<(), ConfigError> {
         .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidWorkspaceTabIdentifier))
 }
 
+/// Which profile kind a workspace session tab expects its `profile_id` to
+/// resolve to. Prevents e.g. a serial-session tab from silently launching a
+/// local-shell profile that happens to share an identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExpectedProfileKind {
+    Local,
+    Ssh,
+    Serial,
+}
+
 fn validate_session_profile(
     profiles: &[Profile],
     profile_id: &str,
-    expected_local: bool,
+    expected: ExpectedProfileKind,
 ) -> Result<(), ConfigError> {
     let Some(profile) = profiles
         .iter()
@@ -926,8 +966,10 @@ fn validate_session_profile(
     };
 
     let kind_matches = matches!(
-        (expected_local, profile),
-        (true, Profile::Local(_)) | (false, Profile::Ssh(_))
+        (expected, profile),
+        (ExpectedProfileKind::Local, Profile::Local(_))
+            | (ExpectedProfileKind::Ssh, Profile::Ssh(_))
+            | (ExpectedProfileKind::Serial, Profile::Serial(_))
     );
     if kind_matches {
         Ok(())
@@ -988,6 +1030,7 @@ impl<'de> Deserialize<'de> for CredentialReference {
 pub enum Profile {
     Local(LocalProfileConfiguration),
     Ssh(SshProfileConfiguration),
+    Serial(SerialProfileConfiguration),
 }
 
 impl Profile {
@@ -1035,7 +1078,47 @@ impl Profile {
         Ok(profile)
     }
 
-    /// Associates an SSH profile with an opaque native-store SSH-password reference.
+    /// Creates a serial-port profile with default line settings (115200
+    /// baud, 8 data bits, no parity, 1 stop bit, no flow control), as
+    /// documented in `docs/gui-design.md`.
+    pub fn serial_with_defaults(
+        identifier: impl Into<String>,
+        device: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        Self::serial(
+            identifier,
+            device,
+            DEFAULT_SERIAL_BAUD_RATE,
+            SerialDataBits::default(),
+            SerialParity::default(),
+            SerialStopBits::default(),
+            SerialFlowControl::default(),
+        )
+    }
+
+    /// Creates a serial-port profile with explicit line settings.
+    #[allow(clippy::too_many_arguments)]
+    pub fn serial(
+        identifier: impl Into<String>,
+        device: impl Into<String>,
+        baud_rate: u32,
+        data_bits: SerialDataBits,
+        parity: SerialParity,
+        stop_bits: SerialStopBits,
+        flow_control: SerialFlowControl,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::Serial(SerialProfileConfiguration {
+            id: identifier.into(),
+            device: device.into(),
+            baud_rate,
+            data_bits,
+            parity,
+            stop_bits,
+            flow_control,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
     ///
     /// This accepts only the validated reference type, so callers cannot put a
     /// raw identifier or a secret value into profile metadata.
@@ -1067,7 +1150,8 @@ impl Profile {
     }
 
     /// Configures a saved local or SSH profile's durable-session provider and name
-    /// (ADR 0018).
+    /// (ADR 0018). Serial profiles have no durable-session concept (ADR 0023)
+    /// and return [`ConfigErrorKind::PersistenceRequiresLocalOrSshProfile`].
     ///
     /// This only changes which remote session a *future* connection for this
     /// profile creates or attaches to; it never claims to convert an
@@ -1081,6 +1165,11 @@ impl Profile {
         match &mut self {
             Self::Local(profile) => profile.persistence = persistence,
             Self::Ssh(profile) => profile.persistence = persistence,
+            Self::Serial(_) => {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
+                ))
+            }
         }
         self.validate()?;
         Ok(self)
@@ -1091,6 +1180,7 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.identifier(),
             Self::Ssh(profile) => profile.identifier(),
+            Self::Serial(profile) => profile.identifier(),
         }
     }
 
@@ -1098,15 +1188,23 @@ impl Profile {
     pub fn as_local(&self) -> Option<&LocalProfileConfiguration> {
         match self {
             Self::Local(profile) => Some(profile),
-            Self::Ssh(_) => None,
+            Self::Ssh(_) | Self::Serial(_) => None,
         }
     }
 
     /// Returns SSH metadata when this is an SSH profile.
     pub fn as_ssh(&self) -> Option<&SshProfileConfiguration> {
         match self {
-            Self::Local(_) => None,
             Self::Ssh(profile) => Some(profile),
+            Self::Local(_) | Self::Serial(_) => None,
+        }
+    }
+
+    /// Returns serial metadata when this is a serial-port profile.
+    pub fn as_serial(&self) -> Option<&SerialProfileConfiguration> {
+        match self {
+            Self::Serial(profile) => Some(profile),
+            Self::Local(_) | Self::Ssh(_) => None,
         }
     }
 
@@ -1117,11 +1215,13 @@ impl Profile {
     }
 
     /// Returns this profile's durable-session provider and name,
-    /// if persistence is configured (ADR 0018).
+    /// if persistence is configured (ADR 0018). Always `None` for serial
+    /// profiles, which have no durable-session concept (ADR 0023).
     pub fn persistence(&self) -> Option<&PersistenceConfiguration> {
         match self {
             Self::Local(profile) => profile.persistence(),
             Self::Ssh(profile) => profile.persistence(),
+            Self::Serial(_) => None,
         }
     }
 
@@ -1129,6 +1229,7 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.validate(),
             Self::Ssh(profile) => profile.validate(),
+            Self::Serial(profile) => profile.validate(),
         }
     }
 }
@@ -1409,6 +1510,213 @@ impl SshProfileConfiguration {
         }
         self.to_connection_profile().map(|_| ())?;
         self.session_strategy().map(|_| ())
+    }
+}
+
+/// Secret-free metadata for a serial-port connection (REQ-SESS-011).
+///
+/// Serial profiles never carry a credential reference: attaching to a local
+/// device has no authentication step, unlike SSH.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SerialProfileConfiguration {
+    id: String,
+    device: String,
+    #[serde(default = "default_serial_baud_rate")]
+    baud_rate: u32,
+    #[serde(default)]
+    data_bits: SerialDataBits,
+    #[serde(default)]
+    parity: SerialParity,
+    #[serde(default)]
+    stop_bits: SerialStopBits,
+    #[serde(default)]
+    flow_control: SerialFlowControl,
+}
+
+impl SerialProfileConfiguration {
+    /// Returns this profile's stable reusable identifier.
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the serial device path or port name (e.g. `/dev/ttyUSB0`,
+    /// `COM3`), exactly as the user or discovery entered it.
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    /// Returns the configured baud rate.
+    pub const fn baud_rate(&self) -> u32 {
+        self.baud_rate
+    }
+
+    /// Returns the configured data-bit width.
+    pub const fn data_bits(&self) -> SerialDataBits {
+        self.data_bits
+    }
+
+    /// Returns the configured parity checking.
+    pub const fn parity(&self) -> SerialParity {
+        self.parity
+    }
+
+    /// Returns the configured stop-bit count.
+    pub const fn stop_bits(&self) -> SerialStopBits {
+        self.stop_bits
+    }
+
+    /// Returns the configured flow-control strategy.
+    pub const fn flow_control(&self) -> SerialFlowControl {
+        self.flow_control
+    }
+
+    /// Converts safe metadata into the serial backend's line settings.
+    pub fn to_line_settings(&self) -> Result<LineSettings, ConfigError> {
+        LineSettings::new(
+            self.device.clone(),
+            self.baud_rate,
+            self.data_bits.into(),
+            self.parity.into(),
+            self.stop_bits.into(),
+            self.flow_control.into(),
+        )
+        .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSerialProfile))
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        if self.device.trim().is_empty()
+            || contains_control_character(&self.device)
+            || contains_secret_bearing_value(&self.device)
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidSerialProfile));
+        }
+        self.to_line_settings().map(|_| ())
+    }
+}
+
+fn default_serial_baud_rate() -> u32 {
+    DEFAULT_SERIAL_BAUD_RATE
+}
+
+/// Serializable mirror of [`festerm_serial::DataBits`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialDataBits {
+    Five,
+    Six,
+    Seven,
+    #[default]
+    Eight,
+}
+
+impl From<SerialDataBits> for festerm_serial::DataBits {
+    fn from(value: SerialDataBits) -> Self {
+        match value {
+            SerialDataBits::Five => Self::Five,
+            SerialDataBits::Six => Self::Six,
+            SerialDataBits::Seven => Self::Seven,
+            SerialDataBits::Eight => Self::Eight,
+        }
+    }
+}
+
+/// Serializable mirror of [`festerm_serial::Parity`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialParity {
+    #[default]
+    None,
+    Odd,
+    Even,
+}
+
+impl From<SerialParity> for festerm_serial::Parity {
+    fn from(value: SerialParity) -> Self {
+        match value {
+            SerialParity::None => Self::None,
+            SerialParity::Odd => Self::Odd,
+            SerialParity::Even => Self::Even,
+        }
+    }
+}
+
+/// Serializable mirror of [`festerm_serial::StopBits`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialStopBits {
+    #[default]
+    One,
+    Two,
+}
+
+impl From<SerialStopBits> for festerm_serial::StopBits {
+    fn from(value: SerialStopBits) -> Self {
+        match value {
+            SerialStopBits::One => Self::One,
+            SerialStopBits::Two => Self::Two,
+        }
+    }
+}
+
+/// Serializable mirror of [`festerm_serial::FlowControl`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialFlowControl {
+    #[default]
+    None,
+    Software,
+    Hardware,
+}
+
+impl From<SerialFlowControl> for festerm_serial::FlowControl {
+    fn from(value: SerialFlowControl) -> Self {
+        match value {
+            SerialFlowControl::None => Self::None,
+            SerialFlowControl::Software => Self::Software,
+            SerialFlowControl::Hardware => Self::Hardware,
+        }
+    }
+}
+
+impl From<festerm_serial::DataBits> for SerialDataBits {
+    fn from(value: festerm_serial::DataBits) -> Self {
+        match value {
+            festerm_serial::DataBits::Five => Self::Five,
+            festerm_serial::DataBits::Six => Self::Six,
+            festerm_serial::DataBits::Seven => Self::Seven,
+            festerm_serial::DataBits::Eight => Self::Eight,
+        }
+    }
+}
+
+impl From<festerm_serial::Parity> for SerialParity {
+    fn from(value: festerm_serial::Parity) -> Self {
+        match value {
+            festerm_serial::Parity::None => Self::None,
+            festerm_serial::Parity::Odd => Self::Odd,
+            festerm_serial::Parity::Even => Self::Even,
+        }
+    }
+}
+
+impl From<festerm_serial::StopBits> for SerialStopBits {
+    fn from(value: festerm_serial::StopBits) -> Self {
+        match value {
+            festerm_serial::StopBits::One => Self::One,
+            festerm_serial::StopBits::Two => Self::Two,
+        }
+    }
+}
+
+impl From<festerm_serial::FlowControl> for SerialFlowControl {
+    fn from(value: festerm_serial::FlowControl) -> Self {
+        match value {
+            festerm_serial::FlowControl::None => Self::None,
+            festerm_serial::FlowControl::Software => Self::Software,
+            festerm_serial::FlowControl::Hardware => Self::Hardware,
+        }
     }
 }
 
@@ -1698,9 +2006,11 @@ pub enum ConfigErrorKind {
     DuplicateProfileIdentifier,
     InvalidLocalProfile,
     InvalidSshProfile,
+    InvalidSerialProfile,
     InvalidPersistenceConfiguration,
     InvalidCredentialReference,
     CredentialReferenceRequiresSshProfile,
+    PersistenceRequiresLocalOrSshProfile,
     WorkspacePresentWhenDisabled,
     WorkspaceMissingWhenEnabled,
     EmptyWorkspace,
@@ -1773,6 +2083,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
             ),
+            ConfigErrorKind::InvalidSerialProfile => formatter.write_str(
+                "serial profile metadata must contain a non-empty, control-character-free device identifier and a nonzero baud rate",
+            ),
             ConfigErrorKind::InvalidPersistenceConfiguration => formatter.write_str(
                 "a persistent session name may only contain ASCII letters, digits, '-', '_', or '.', and must be 1-64 bytes",
             ),
@@ -1781,6 +2094,9 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::CredentialReferenceRequiresSshProfile => formatter.write_str(
                 "opaque credential references may be attached only to SSH profiles",
+            ),
+            ConfigErrorKind::PersistenceRequiresLocalOrSshProfile => formatter.write_str(
+                "durable-session persistence may only be attached to local or SSH profiles",
             ),
             ConfigErrorKind::WorkspacePresentWhenDisabled => formatter.write_str(
                 "workspace metadata requires workspace_enabled = true",
@@ -2943,6 +3259,102 @@ username = "alice"
         )
         .unwrap_err();
         assert_eq!(invalid_ssh.kind(), ConfigErrorKind::InvalidSshProfile);
+    }
+
+    #[test]
+    fn serial_profile_defaults_round_trip_and_convert_to_line_settings() {
+        let profile = Profile::serial_with_defaults("bench-mcu", "/dev/ttyUSB0").unwrap();
+        let serial = profile.as_serial().unwrap();
+        assert_eq!(serial.device(), "/dev/ttyUSB0");
+        assert_eq!(serial.baud_rate(), 115_200);
+        assert_eq!(serial.data_bits(), SerialDataBits::Eight);
+        assert_eq!(serial.parity(), SerialParity::None);
+        assert_eq!(serial.stop_bits(), SerialStopBits::One);
+        assert_eq!(serial.flow_control(), SerialFlowControl::None);
+
+        let settings = serial.to_line_settings().unwrap();
+        assert_eq!(settings.device(), "/dev/ttyUSB0");
+        assert_eq!(settings.baud_rate(), 115_200);
+
+        let configuration = Configuration::new(vec![profile]).unwrap();
+        let serialized = configuration.to_toml().unwrap();
+        assert!(serialized.contains("kind = \"serial\""));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+    }
+
+    #[test]
+    fn validates_serial_profile_device_and_baud_rate() {
+        let empty_device = Configuration::parse(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "serial"
+id = "bad-serial"
+device = ""
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(empty_device.kind(), ConfigErrorKind::InvalidSerialProfile);
+
+        let zero_baud = Configuration::parse(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "serial"
+id = "bad-baud"
+device = "/dev/ttyUSB0"
+baud_rate = 0
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(zero_baud.kind(), ConfigErrorKind::InvalidSerialProfile);
+    }
+
+    #[test]
+    fn serial_persistence_and_credential_reference_are_rejected() {
+        let profile = Profile::serial_with_defaults("bench-mcu", "/dev/ttyUSB0").unwrap();
+        let error = profile
+            .with_persistence(PersistenceProviderKind::Tmux, "session")
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            ConfigErrorKind::PersistenceRequiresLocalOrSshProfile
+        );
+
+        let credential_error = Profile::serial_with_defaults("bench-mcu", "/dev/ttyUSB0")
+            .unwrap()
+            .with_credential_reference(SecretReference::parse(CREDENTIAL_REFERENCE).unwrap())
+            .unwrap_err();
+        assert_eq!(
+            credential_error.kind(),
+            ConfigErrorKind::CredentialReferenceRequiresSshProfile
+        );
+    }
+
+    #[test]
+    fn workspace_serial_session_tab_requires_a_matching_serial_profile() {
+        let serial_profile = Profile::serial_with_defaults("bench-mcu", "/dev/ttyUSB0").unwrap();
+        let local_profile = Profile::local("shell", "/bin/sh", vec![], None).unwrap();
+        let configuration = Configuration::new(vec![serial_profile, local_profile]).unwrap();
+
+        let matching_workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::serial_session("serial-tab", "bench-mcu").unwrap()],
+            None,
+        )
+        .unwrap();
+        configuration.with_workspace(matching_workspace).unwrap();
+
+        let mismatched_workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::serial_session("serial-tab", "shell").unwrap()],
+            None,
+        )
+        .unwrap();
+        let error = configuration
+            .with_workspace(mismatched_workspace)
+            .unwrap_err();
+        assert_eq!(error.kind(), ConfigErrorKind::WorkspaceProfileKindMismatch);
     }
 
     #[test]

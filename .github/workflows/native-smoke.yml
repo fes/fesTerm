@@ -99,8 +99,17 @@ jobs:
       - name: Install Xvfb
         run: sudo apt-get install -y xvfb
 
+      - name: Install socat and libudev headers for the serial loopback smoke
+        run: sudo apt-get install -y socat pkg-config libudev-dev
+
       - name: Build workspace
         run: cargo build --workspace
+
+      - name: Run Linux serial loopback smoke
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm-serial --test socat_loopback -- --ignored --nocapture
 
       # Run with a virtual display available (DISPLAY=:99) even though the
       # current PTY tests don't require it.

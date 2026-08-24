@@ -59,7 +59,8 @@
     {
       "id": "launcher",
       "edges": [
-        "LAUNCH-*"
+        "LAUNCH-0[1-5]",
+        "LAUNCH-0[78]"
       ],
       "requirements": [
         "docs/gui-design.md#session-launcher"
@@ -203,19 +204,38 @@
     {
       "id": "serial",
       "edges": [
+        "LAUNCH-06",
         "SERIAL-*"
       ],
       "requirements": [
-        "docs/gui-design.md#serial-session-creation"
+        "docs/gui-design.md#session-launcher",
+        "docs/gui-design.md#serial-session-creation",
+        "REQUIREMENTS.md#req-sess-011-first-class-serial-sessions",
+        "docs/application-command-model.md#command-responsibilities"
       ],
-      "decisions": [],
-      "automated_tests": [],
+      "decisions": [
+        "ADR-0023"
+      ],
+      "automated_tests": [
+        "serial_profile_defaults_round_trip_and_convert_to_line_settings",
+        "validates_serial_profile_device_and_baud_rate",
+        "serial_startup_failure_surfaces_a_concise_error",
+        "serial_command_replaces_the_active_launcher_in_place",
+        "configured_serial_profile_command_starts_a_serial_session",
+        "serial_session_delivers_bytes_across_a_socat_loopback_pair"
+      ],
       "manual_scenarios": [
         "CP-04"
       ],
-      "status": "deferred",
-      "prerequisites": [
-        "Serial backend and owned UI"
+      "status": "partial",
+      "prerequisites": [],
+      "evidence_sources": [
+        "crates/festerm-config/src/lib.rs::serial_profile_defaults_round_trip_and_convert_to_line_settings",
+        "crates/festerm-config/src/lib.rs::validates_serial_profile_device_and_baud_rate",
+        "app/festerm/src/tabs.rs::serial_startup_failure_surfaces_a_concise_error",
+        "app/festerm/src/tabs.rs::serial_command_replaces_the_active_launcher_in_place",
+        "app/festerm/src/tabs.rs::configured_serial_profile_command_starts_a_serial_session",
+        "crates/festerm-serial/tests/socat_loopback.rs::serial_session_delivers_bytes_across_a_socat_loopback_pair"
       ]
     },
     {

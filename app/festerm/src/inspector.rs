@@ -22,6 +22,14 @@ pub enum TransportFacts<'a> {
         host: &'a str,
         port: u16,
     },
+    Serial {
+        device: &'a str,
+        baud_rate: u32,
+        data_bits: &'a str,
+        parity: &'a str,
+        stop_bits: &'a str,
+        flow_control: &'a str,
+    },
 }
 
 #[derive(Clone)]
@@ -197,6 +205,22 @@ pub fn show(
                                     fact(ui, "Destination", &format!("{host}:{port}"), true);
                                     fact(ui, "Username", username, true);
                                     fact(ui, "Type", "SSH", false);
+                                }
+                                TransportFacts::Serial {
+                                    device,
+                                    baud_rate,
+                                    data_bits,
+                                    parity,
+                                    stop_bits,
+                                    flow_control,
+                                } => {
+                                    section_heading(ui, "Serial Port");
+                                    fact(ui, "Device", device, true);
+                                    fact(ui, "Baud rate", &baud_rate.to_string(), false);
+                                    fact(ui, "Data bits", data_bits, false);
+                                    fact(ui, "Parity", parity, false);
+                                    fact(ui, "Stop bits", stop_bits, false);
+                                    fact(ui, "Flow control", flow_control, false);
                                 }
                             }
 

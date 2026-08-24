@@ -33,6 +33,24 @@ still recording it as such; it does not constitute native-focus evidence.
 Platform-native OS input automation remains a later layer for independently
 driven focus and accessibility proof.
 
+### Serial loopback smoke (Linux only)
+
+`crates/festerm-serial/tests/socat_loopback.rs` cross-connects two
+pseudo-terminal endpoints with `socat` and proves `SerialSession` opens a
+real device and delivers bytes byte-for-byte in both directions, satisfying
+`K13 Serial` (`docs/gui-action-graph.md`) as automated virtual-loopback
+evidence. It is `#[ignore]`d and runs only in the Linux job of
+`native-smoke.yml`, which installs `socat` first.
+
+This is deliberately **Linux-only**. The `serialport` crate's own source
+documents that macOS always sets a serial port's baud rate through the
+`IOSSIOSPEED` ioctl, which pseudo-terminals do not support and fails with
+`ENOTTY` — confirmed directly against a `socat` pty pair while writing this
+test. macOS and Windows therefore have no virtual-loopback path with this
+crate; their native/manual evidence (`docs/manual-validation.md` CP-04)
+requires a real adapter with TX/RX shorted, or on Windows, a third-party
+virtual COM-port driver (e.g. `com0com`).
+
 ## CI placement
 
 Native smoke tests are in `.github/workflows/native-smoke.yml`, triggered by

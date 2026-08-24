@@ -25,6 +25,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0019: Fingerprint-First SSH Authentication Ordering](0019-fingerprint-first-ssh-authentication-ordering.md)
 - [ADR 0020: Persistent Host-Key Trust](0020-persistent-host-key-trust.md)
 - [ADR 0022: Focused-Chip-First Single-Row Chrome Allocation](0022-focused-chip-first-single-row-chrome.md)
+- [ADR 0023: `serialport` Crate and Worker-Thread Model for the Serial Session Backend](0023-serialport-worker-thread-serial-backend.md)
 
 ## Proposed Decisions
 

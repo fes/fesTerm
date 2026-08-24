@@ -8,7 +8,10 @@ use std::{
 };
 
 use eframe::egui;
-use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
+use festerm_config::{
+    Configuration, InterfaceSettings, Profile, SerialDataBits, SerialFlowControl, SerialParity,
+    SerialStopBits, TerminalFontPreference,
+};
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
@@ -300,6 +303,38 @@ fn confirmation_width(viewport_width: f32, preferred: f32) -> f32 {
     (viewport_width - 32.0).clamp(240.0, preferred)
 }
 
+const fn serial_data_bits_label(value: SerialDataBits) -> &'static str {
+    match value {
+        SerialDataBits::Five => "5",
+        SerialDataBits::Six => "6",
+        SerialDataBits::Seven => "7",
+        SerialDataBits::Eight => "8",
+    }
+}
+
+const fn serial_parity_label(value: SerialParity) -> &'static str {
+    match value {
+        SerialParity::None => "None",
+        SerialParity::Odd => "Odd",
+        SerialParity::Even => "Even",
+    }
+}
+
+const fn serial_stop_bits_label(value: SerialStopBits) -> &'static str {
+    match value {
+        SerialStopBits::One => "1",
+        SerialStopBits::Two => "2",
+    }
+}
+
+const fn serial_flow_control_label(value: SerialFlowControl) -> &'static str {
+    match value {
+        SerialFlowControl::None => "None",
+        SerialFlowControl::Software => "Software (XON/XOFF)",
+        SerialFlowControl::Hardware => "Hardware (RTS/CTS)",
+    }
+}
+
 fn bounded_paste_preview(text: &str) -> (String, usize, usize) {
     let mut preview = String::new();
     let mut shown_characters = 0;
@@ -544,6 +579,9 @@ impl FesTermApp {
                                     CloseConsequence::TerminateLocalProcess
                                 }
                                 InspectorTransport::Ssh { .. } => CloseConsequence::DisconnectSsh,
+                                InspectorTransport::Serial { .. } => {
+                                    CloseConsequence::TerminateLocalProcess
+                                }
                             },
                             lifecycle_generation: session.controller.lifecycle_generation(),
                             restore_tab: self.state.active(),
@@ -611,6 +649,7 @@ impl FesTermApp {
                         (&session.inspector_transport, pending.consequence),
                         (InspectorTransport::Local, CloseConsequence::TerminateLocalProcess)
                             | (InspectorTransport::Ssh { .. }, CloseConsequence::DisconnectSsh)
+                            | (InspectorTransport::Serial { .. }, CloseConsequence::TerminateLocalProcess)
                     ))
             });
         if !still_live {
@@ -2088,6 +2127,21 @@ impl FesTermApp {
                 host,
                 port: *port,
             },
+            InspectorTransport::Serial {
+                device,
+                baud_rate,
+                data_bits,
+                parity,
+                stop_bits,
+                flow_control,
+            } => TransportFacts::Serial {
+                device,
+                baud_rate: *baud_rate,
+                data_bits: serial_data_bits_label(*data_bits),
+                parity: serial_parity_label(*parity),
+                stop_bits: serial_stop_bits_label(*stop_bits),
+                flow_control: serial_flow_control_label(*flow_control),
+            },
         };
         let persistent_session = match &session.inspector_transport {
             InspectorTransport::Ssh {
@@ -2097,11 +2151,14 @@ impl FesTermApp {
                 provider_label: persistence.provider_label,
                 session_name: &persistence.session_name,
             }),
-            InspectorTransport::Local | InspectorTransport::Ssh { .. } => None,
+            InspectorTransport::Local
+            | InspectorTransport::Ssh { .. }
+            | InspectorTransport::Serial { .. } => None,
         };
         let type_label = match session.inspector_transport {
             InspectorTransport::Local => "Local shell",
             InspectorTransport::Ssh { .. } => "SSH",
+            InspectorTransport::Serial { .. } => "Serial",
         };
         let state_message = match chip_status {
             ChipStatus::Failed => Some(match session.inspector_transport {
@@ -2110,6 +2167,9 @@ impl FesTermApp {
                 }
                 InspectorTransport::Ssh { .. } => {
                     "The SSH session could not start. Review Diagnostics for the failure detail."
+                }
+                InspectorTransport::Serial { .. } => {
+                    "The serial session could not start. Review Diagnostics for the failure detail."
                 }
             }),
             ChipStatus::Disconnected => Some("The connection has been lost."),

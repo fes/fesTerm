@@ -221,17 +221,18 @@ Session I/O and terminal-update queues shall be bounded or otherwise protected f
 Serial shall be modeled as its own session transport rather than as a local
 shell option or branded operating-system identity. Its approved UI/profile
 contract includes explicit device and line settings, open/close lifecycle,
-selection and clipboard behavior, and non-secret restoration metadata. Backend
-implementation is deferred to a focused capability track with platform device,
-permission, exclusive-access, and loopback-test policy.
+selection and clipboard behavior, and non-secret restoration metadata. This
+capability is implemented. Native validation for platform device discovery,
+permission states, exclusive access, and representative loopback/hardware
+evidence remains tracked separately.
 
 ## Profiles and Workspaces
 
 ### REQ-PROF-001 — Reusable profiles
 
 fesTerm shall support reusable profiles describing how local, SSH, and future
-serial sessions are created. Serial profile fields become active only when the
-serial backend is implemented.
+serial sessions are created. Serial profile fields are active and are
+validated as explicit, secret-free session metadata.
 
 ### REQ-PROF-002 — Profiles separate from workspaces
 

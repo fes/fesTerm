@@ -28,9 +28,12 @@ Application commands represent product-level intent, for example:
 
 ```text
 NewLauncher
-NewLocalSession(profile)
-NewSshSession(profile)
-NewSerialSession(profile)
+StartLocalSession
+StartConfiguredLocalProfile(profile_id)
+StartSshSession(profile, authentication, options)
+StartConfiguredSshProfile(profile_id)
+StartSerialSession { settings }
+StartConfiguredSerialProfile { profile_id }
 OpenSettings
 ToggleSessionInspector
 SwitchSession(session)
@@ -39,7 +42,7 @@ CloseSession(session)
 OpenWorkspace(workspace)
 ```
 
-These names are illustrative rather than a required Rust API. The implementation may use enums, typed command objects, or another explicit representation provided that the following properties hold.
+These names are illustrative rather than a required Rust API, but the current `AppCommand` vocabulary follows this shape closely. The implementation may use enums, typed command objects, or another explicit representation provided that the following properties hold.
 
 ## Required Properties
 

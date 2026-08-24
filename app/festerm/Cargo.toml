@@ -17,6 +17,7 @@ festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
+festerm-serial = { path = "../../crates/festerm-serial" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }

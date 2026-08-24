@@ -1,0 +1,20 @@
+[package]
+name = "festerm-serial"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Local serial-port session backend for fesTerm."
+
+[dependencies]
+festerm-session = { path = "../festerm-session" }
+# Default features (in particular Linux's `libudev` enumeration) are kept
+# enabled deliberately: disabling `libudev` on Linux can return ports that do
+# not exist physically, which would violate this backend's "never fabricate
+# an identifier" device-discovery invariant. Linux CI installs the
+# `libudev-dev` build dependency accordingly (see `.github/workflows/ci.yml`).
+serialport = "4.9"
+
+[lints]
+workspace = true

@@ -57,7 +57,7 @@ clipboard data, shell profile, credentials, host, path, or terminal history.
 | `K10 RestoreMixed` | Workspace recipe with one successful local definition, one SSH auth-required definition, and one invalid/missing definition. | Close restored surfaces and remove disposable workspace; return `K1`. |
 | `K11 Narrow` | Any applicable checkpoint at `360 × 516` logical px and recorded scale. | Restore `752 × 516` baseline. |
 | `K12 Modal` | A specified close/paste/trust/destructive dialog open with Cancel focused. | Take its safe Cancel/Escape edge, verify zero unintended bytes/effects. |
-| `K13 Serial` | Future virtual loopback or representative adapter fixture. | Close/release port, remove loopback, return `K1`. |
+| `K13 Serial` | Serial fixture: Linux `crates/festerm-serial/tests/socat_loopback.rs` virtual loopback, or a representative hardware adapter on macOS/Windows per `docs/native-smoke-policy.md`. | Close/release port, remove loopback or disconnect the hardware fixture, return `K1`. |
 | `K14 ChangedHostKey` | Disposable SSH fixture whose persisted trust record names a different fingerprint than the one currently presented. | Cancel; restore fixture trust store to its prior single-record state; return to destination or `K1`. |
 
 Every unexpected state has a bounded recovery ladder:
@@ -88,7 +88,7 @@ stateDiagram-v2
 
     Launcher --> LocalStarting: choose Local
     Launcher --> SshDestination: choose SSH
-    Launcher --> SerialForm: choose Serial [future]
+    Launcher --> SerialForm: choose Serial
     Launcher --> Settings: open Settings
     SshDestination --> HostKey: Continue / unknown key
     SshDestination --> Authentication: Continue / trusted key
@@ -97,9 +97,9 @@ stateDiagram-v2
     Authentication --> SshDestination: Escape after clearing secret
     Authentication --> Sessions: authenticated
     SerialForm --> Launcher: Back or Escape
-    SerialForm --> SerialOpening: Open [future]
+    SerialForm --> SerialOpening: Open
     LocalStarting --> Sessions: running or failed session
-    SerialOpening --> Sessions: open or failed [future]
+    SerialOpening --> Sessions: open or failed
 
     Sessions --> Palette: open command palette
     Sessions --> Inspector: open inspector
@@ -145,7 +145,7 @@ stateDiagram-v2
 | `LAUNCH-03` | `SshDestination → K1` | Back or Escape before connect. | No session is created; non-secret draft fields are discarded only when Launcher lifetime ends. | `LAUNCH-02`. | H,N |
 | `LAUNCH-04` | `SshDestination → same` | Continue with missing/invalid host, username, or port. | Validation stays beside exact field; no network attempt or modal error. | Correct field or `LAUNCH-03`. | P,H,N |
 | `LAUNCH-05` | `SshDestination → K7/K8` | Continue with valid fixture destination. | Work is asynchronous; unknown key goes to Host Key before credentials, known key goes to Authentication. | Reject/cancel through `TRUST-02` or `AUTH-03`. | P,H,N |
-| `LAUNCH-06` | `K1 → SerialForm` | Activate Serial when implemented. | Same Launcher chip shows device and supported line settings with 115200/8/N/1/no-flow defaults; exact identifier remains visible. | `SERIAL-02`. | H,V,N,U; deferred |
+| `LAUNCH-06` | `K1 → SerialForm` | Activate Serial. | Same Launcher chip shows device and supported line settings with 115200/8/N/1/no-flow defaults; exact identifier remains visible. | `SERIAL-02`. | H,V,N,U |
 | `LAUNCH-07` | `K1 → PopulatedLauncher` | Provide real saved profiles/recent workspaces. | Only nonempty sourced groups appear; selection launches a validated snapshot. Duplicate visible names receive no fabricated suffix. | Close or launch, then rebuild `K1`. | P,H,V,U; partial |
 | `LAUNCH-08` | `SshDestination → K7/K8` | Enable a durable remote session in Quick Connect, Advanced Connect, or a saved SSH profile; select tmux/screen and enter a session name. | The shared control accepts only a 1-64 byte safe name; launch attaches or creates that provider session. Automatic recovery is offered only while persistence is enabled and remains an explicit per-launch opt-in. Disabling persistence returns to plain-shell semantics without erasing the draft name. | Disconnect, then Resume for durable state; disable and reconnect for a fresh plain shell. | P,H,N,U; partial |
 
@@ -180,17 +180,16 @@ stateDiagram-v2
 
 ## E. Serial lifecycle
 
-All Serial edges are required target coverage but remain **not run** until the
-backend and platform fixture exist.
+Serial session creation is implemented. Linux virtual-loopback automation now covers the cross-connected open/byte path, while macOS and Windows still require representative hardware per `docs/native-smoke-policy.md` and `CP-04`.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `SERIAL-01` | SerialForm → Opening | Select discovered/exact device, edit supported line settings, Open. | Asynchronous exclusive acquisition; no probe bytes; chip says Opening. | Cancel/close releases attempt. | P,H,N,U; deferred |
-| `SERIAL-02` | SerialForm → K1 | Back/Escape. | No port acquired; no chip duplication; draft discarded with Launcher. | Reenter through `LAUNCH-06`. | H,N; deferred |
-| `SERIAL-03` | Opening → `K13` | Loopback opens. | Status says Open, never Connected; inspector shows exact applied settings and only reliable hardware facts. | `SERIAL-05`. | P,H,N; deferred |
-| `SERIAL-04` | Opening → Failed/Edit | Busy, missing, unsupported, or permission-denied fixture. | Concise cause; Details plus Edit/Back/Close as applicable; raw OS detail bounded; no ownership leak. | Edit/retry or close to `K1`. | P,H,N,U; deferred |
-| `SERIAL-05` | `K13 → K6` | Close Port via Inspector. | Device released; history read-only; reopening only if backend supports same configured identifier, without claiming same hardware. | Reopen or close to `K1`. | P,H,N; deferred |
-| `SERIAL-06` | `K13 → K13` | Type, paste, search, select, resize renderer, and loop back bytes. | Common terminal contracts hold; no peer-grid resize claim or implicit echo/newline translation. | Clear transient UI; retain/close session. | P,H,N; deferred |
+| `SERIAL-01` | SerialForm → Opening | Select discovered/exact device, edit supported line settings, Open. | Asynchronous exclusive acquisition; no probe bytes; chip says Opening. | Cancel/close releases attempt. | P,H,N,U |
+| `SERIAL-02` | SerialForm → K1 | Back/Escape. | No port acquired; no chip duplication; draft discarded with Launcher. | Reenter through `LAUNCH-06`. | H,N |
+| `SERIAL-03` | Opening → `K13` | Loopback or representative adapter opens. | Status says Open, never Connected; inspector shows exact applied settings and only reliable hardware facts. | `SERIAL-05`. | P,H,N |
+| `SERIAL-04` | Opening → Failed/Edit | Busy, missing, unsupported, or permission-denied fixture. | Concise cause; Details plus Edit/Back/Close as applicable; raw OS detail bounded; no ownership leak. | Edit/retry or close to `K1`. | P,H,N,U |
+| `SERIAL-05` | `K13 → K6` | Close Port via Inspector. | Device released; history read-only; reopening uses the same configured identifier only as a fresh session, without claiming the same live hardware state. | Reopen or close to `K1`. | P,H,N |
+| `SERIAL-06` | `K13 → K13` | Type, paste, search, select, resize renderer, and loop back bytes. | Common terminal contracts hold; no peer-grid resize claim or implicit echo/newline translation. | Clear transient UI; retain/close session. | P,H,N |
 
 ## F. Chips, identity, switching, overflow, and rename
 
