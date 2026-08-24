@@ -9,7 +9,7 @@
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, PersistenceConfiguration, PersistenceProviderKind, Profile,
-    SshProfileConfiguration,
+    SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -1442,6 +1442,8 @@ pub struct SettingsViewModel {
     pub show_session_details: bool,
     pub confirm_session_close: bool,
     pub restore_workspace: bool,
+    pub terminal_font: TerminalFontPreference,
+    pub terminal_ligatures: bool,
 }
 
 pub fn show_settings(
@@ -1456,6 +1458,8 @@ pub fn show_settings(
         show_session_details,
         confirm_session_close,
         restore_workspace,
+        terminal_font,
+        terminal_ligatures,
     } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
@@ -1588,6 +1592,63 @@ pub fn show_settings(
 
                         ui.add_space(12.0);
 
+                        settings_card(ui, "Terminal typography", |ui| {
+                            let mut selected_font = terminal_font;
+                            egui::Sides::new().show(
+                                ui,
+                                |ui| {
+                                    ui.set_max_width(ui.available_width() - 190.0);
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("Terminal font")
+                                                .color(theme::TEXT_PRIMARY),
+                                        );
+                                        ssh_paragraph(
+                                            ui,
+                                            "Choose the bundled primary face used by terminal \
+                                             cells. Application text is unchanged.",
+                                        );
+                                    });
+                                },
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("terminal-font-family")
+                                        .selected_text(terminal_font_label(selected_font))
+                                        .width(160.0)
+                                        .show_ui(ui, |ui| {
+                                            for font in [
+                                                TerminalFontPreference::JetBrainsMono,
+                                                TerminalFontPreference::IosevkaTerm,
+                                                TerminalFontPreference::JuliaMono,
+                                                TerminalFontPreference::MapleMono,
+                                            ] {
+                                                ui.selectable_value(
+                                                    &mut selected_font,
+                                                    font,
+                                                    terminal_font_label(font),
+                                                );
+                                            }
+                                        });
+                                },
+                            );
+                            if selected_font != terminal_font {
+                                command = Some(AppCommand::SetTerminalFont(selected_font));
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Programming ligatures",
+                                "Shape eligible adjacent cells together while preserving cursor, \
+                                 selection, and terminal grid ownership.",
+                                terminal_ligatures,
+                            ) {
+                                command = Some(AppCommand::ToggleTerminalLigatures);
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
                         settings_card(ui, "Keyboard", |ui| {
                             ui.horizontal(|ui| {
                                 ssh_paragraph(ui, "Command palette");
@@ -1614,6 +1675,15 @@ pub fn show_settings(
         });
     });
     command
+}
+
+const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
+    match font {
+        TerminalFontPreference::JetBrainsMono => "JetBrains Mono",
+        TerminalFontPreference::IosevkaTerm => "Iosevka Term",
+        TerminalFontPreference::JuliaMono => "JuliaMono",
+        TerminalFontPreference::MapleMono => "Maple Mono",
+    }
 }
 
 /// A titled card matching the launcher/profile-editor "quiet section" visual
@@ -2662,7 +2732,7 @@ mod tests {
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 640.0))
+            .with_size(egui::vec2(520.0, 900.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
@@ -2673,6 +2743,8 @@ mod tests {
                             show_session_details: true,
                             confirm_session_close: true,
                             restore_workspace: false,
+                            terminal_font: TerminalFontPreference::JetBrainsMono,
+                            terminal_ligatures: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -2788,6 +2860,24 @@ mod tests {
     }
 
     #[test]
+    fn settings_exposes_terminal_font_and_ligature_controls() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness.query_by_label("Terminal font").is_some());
+        let ligatures = "Programming ligatures";
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, ligatures)
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleTerminalLigatures)
+        ));
+    }
+
+    #[test]
     fn settings_panel_does_not_overlap_a_visible_bottom_status_bar() {
         // Regression test: the card-based Settings redesign is taller than
         // the old flat button list, so without a status-bar-aware height
@@ -2800,7 +2890,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 700.0))
+            .with_size(egui::vec2(520.0, 900.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -2818,6 +2908,8 @@ mod tests {
                             show_session_details: true,
                             confirm_session_close: true,
                             restore_workspace: false,
+                            terminal_font: TerminalFontPreference::JetBrainsMono,
+                            terminal_ligatures: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",

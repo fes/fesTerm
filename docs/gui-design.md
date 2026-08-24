@@ -1576,9 +1576,13 @@ At minimum, define:
 
 Terminal typography may use separate font and shaping rules from application chrome.
 
-The current terminal renderer defaults to bundled **JetBrains Mono NL 2.304**
-at `14` pt. The regular, bold, italic, and bold-italic static faces are owned
-assets; missing glyphs continue through a separate monospace fallback chain.
+The terminal renderer defaults to bundled **JetBrains Mono NL 2.304** at `14`
+pt and lets Settings select JetBrains Mono, Iosevka Term, JuliaMono, or Maple
+Mono. Each family includes regular, bold, italic, and bold-italic static
+faces; missing glyphs continue through a separate monospace fallback chain.
+Changing the primary family rebuilds egui's atlas, advances a font generation,
+invalidates terminal glyph caches, recalculates primary-face cell metrics, and
+coalesces the resulting PTY resize through the existing viewport path.
 The approved application chrome will bundle **Inter** for consistent metrics
 across Windows, Linux, and macOS. Inter is an application asset, not a terminal
 font default: it serves chips, launcher and Settings content, overlays, menus,
@@ -1617,14 +1621,20 @@ without changing the semantic typography roles or terminal-font contract.
 
 Ligatures are a planned capability, but they must never alter terminal cell ownership, cursor placement, selection boundaries, or mouse coordinates.
 
-The bundled default deliberately uses JetBrains Mono's `NL` (no ligatures)
-faces. Ligature enabling should remain blocked until the M6 ligature and
-fallback validation requirements are satisfied; it will require selecting a
-ligature-capable face explicitly rather than silently changing this default.
+The bundled default deliberately uses JetBrains Mono's `NL` faces and
+one-cell layout. A default-off Settings toggle enables shaping only for
+contiguous, compatible ASCII cells. JetBrains then uses its ordinary faces;
+Iosevka uses the reproducible `calt` build recorded with its assets; JuliaMono
+and Maple Mono use their pinned upstream feature sets. Empty, wide,
+combining/non-ASCII, fallback, selected, linked, and style-transition cells
+remain hard shaping boundaries.
 
 ### User control
 
-Users should eventually be able to configure terminal font family, size, fallback behavior, line height, and ligature preference through versioned configuration and GUI settings.
+Users can configure the bundled terminal family and ligature preference
+through versioned configuration and GUI Settings. Font size remains
+per-session runtime zoom; configurable fallback behavior and line height are
+future controls.
 
 Runtime zoom is per session. `Ctrl++`, `Ctrl+-`, and `Ctrl+0` on Windows/Linux
 (`Cmd` equivalents on macOS) change only the active terminal's font size.
@@ -2331,9 +2341,10 @@ requires a different sequence:
    Launcher session types and persistent chrome controls use it with semantic
    colors and accessible control labels. Remaining one-off sites and native
    cross-platform visual evidence are tracked separately. The terminal now
-   bundles JetBrains Mono NL 2.304 with four real faces and an independent
-   fallback chain. Bundle Inter through the owned application-font layer next,
-   retaining fallback contracts.
+   bundles four selectable families with real regular/bold/italic/bold-italic
+   faces, generation-safe runtime switching, independent fallback chains, and
+   default-off ligatures. Bundle Inter through the owned application-font
+   layer next, retaining fallback contracts.
 6. Implement **Show session details in chips** as the presentation-only live
    preference defined above: grouped Settings row, `34→28` chip geometry,
    `42→36` single-row chrome geometry, active-only status-bar relocation, and

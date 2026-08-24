@@ -1,10 +1,12 @@
 {
   "schema_version": 1,
-  "family": "JetBrains Mono NL",
+  "family": "JetBrains Mono",
+  "role": "default-no-ligature-and-shaped-opt-in",
   "upstream_repository": "JetBrains/JetBrainsMono",
   "pinned_release": "v2.304",
   "pinned_version": "2.304",
   "archive_url": "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
+  "archive_sha256": "6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf",
   "files": [
     {
       "archive_path": "fonts/ttf/JetBrainsMonoNL-Regular.ttf",
@@ -25,6 +27,26 @@
       "archive_path": "fonts/ttf/JetBrainsMonoNL-BoldItalic.ttf",
       "path": "assets/fonts/jetbrains-mono/JetBrainsMonoNL-BoldItalic.ttf",
       "sha256": "6c2716f2e85101f4109a8c16916061eb38176b3b10342834858d6221ec2fda1b"
+    },
+    {
+      "archive_path": "fonts/ttf/JetBrainsMono-Regular.ttf",
+      "path": "assets/fonts/jetbrains-mono/JetBrainsMono-Regular.ttf",
+      "sha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f"
+    },
+    {
+      "archive_path": "fonts/ttf/JetBrainsMono-Bold.ttf",
+      "path": "assets/fonts/jetbrains-mono/JetBrainsMono-Bold.ttf",
+      "sha256": "5590990c82e097397517f275f430af4546e1c45cff408bde4255dad142479dcb"
+    },
+    {
+      "archive_path": "fonts/ttf/JetBrainsMono-Italic.ttf",
+      "path": "assets/fonts/jetbrains-mono/JetBrainsMono-Italic.ttf",
+      "sha256": "9d0a1f7a708e6af183f1193b7e81d40da294f5c67682c085d8401c60aac8ded4"
+    },
+    {
+      "archive_path": "fonts/ttf/JetBrainsMono-BoldItalic.ttf",
+      "path": "assets/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.ttf",
+      "sha256": "4039d5ce0ed225bf9c8b2c8c6436290ae2f356b7e90d70fa666227238324aa3b"
     },
     {
       "archive_path": "OFL.txt",

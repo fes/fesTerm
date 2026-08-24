@@ -510,6 +510,15 @@ pub struct InterfaceSettings {
     /// chip-layout or status-bar cosmetic choice.
     #[serde(default, skip_serializing_if = "is_false")]
     restore_workspace: bool,
+    /// The bundled primary face used for terminal cells. Application chrome
+    /// typography remains independent.
+    #[serde(default, skip_serializing_if = "TerminalFontPreference::is_default")]
+    terminal_font: TerminalFontPreference,
+    /// Whether eligible adjacent terminal cells may be shaped as a run.
+    /// Disabled by default until the renderer can preserve cell ownership
+    /// across every supported face.
+    #[serde(default, skip_serializing_if = "is_false")]
+    terminal_ligatures: bool,
 }
 
 impl InterfaceSettings {
@@ -521,6 +530,8 @@ impl InterfaceSettings {
         show_session_details: true,
         confirm_session_close: true,
         restore_workspace: false,
+        terminal_font: TerminalFontPreference::JetBrainsMono,
+        terminal_ligatures: false,
     };
 
     pub const fn new(
@@ -536,7 +547,19 @@ impl InterfaceSettings {
             show_session_details,
             confirm_session_close,
             restore_workspace,
+            terminal_font: TerminalFontPreference::JetBrainsMono,
+            terminal_ligatures: false,
         }
+    }
+
+    pub const fn with_terminal_typography(
+        mut self,
+        terminal_font: TerminalFontPreference,
+        terminal_ligatures: bool,
+    ) -> Self {
+        self.terminal_font = terminal_font;
+        self.terminal_ligatures = terminal_ligatures;
+        self
     }
 
     pub const fn chip_layout(self) -> ChipLayoutPreference {
@@ -559,8 +582,34 @@ impl InterfaceSettings {
         self.restore_workspace
     }
 
+    pub const fn terminal_font(self) -> TerminalFontPreference {
+        self.terminal_font
+    }
+
+    pub const fn terminal_ligatures(self) -> bool {
+        self.terminal_ligatures
+    }
+
     fn is_default(&self) -> bool {
         *self == Self::DEFAULT
+    }
+}
+
+/// Bundled primary terminal families. The serialized names are stable
+/// configuration values rather than platform font-discovery names.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalFontPreference {
+    #[default]
+    JetBrainsMono,
+    IosevkaTerm,
+    JuliaMono,
+    MapleMono,
+}
+
+impl TerminalFontPreference {
+    const fn is_default(&self) -> bool {
+        matches!(self, Self::JetBrainsMono)
     }
 }
 
@@ -3460,6 +3509,35 @@ schema_version = 99
         let configuration = Configuration::parse(document).unwrap();
 
         assert!(configuration.interface_settings().confirm_session_close());
+        assert_eq!(
+            configuration.interface_settings().terminal_font(),
+            TerminalFontPreference::JetBrainsMono
+        );
+        assert!(!configuration.interface_settings().terminal_ligatures());
+    }
+
+    #[test]
+    fn terminal_typography_preferences_round_trip_and_reject_unknown_families() {
+        let settings = InterfaceSettings::DEFAULT
+            .with_terminal_typography(TerminalFontPreference::IosevkaTerm, true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("terminal_font = \"iosevka-term\""));
+        assert!(serialized.contains("terminal_ligatures = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+        assert!(Configuration::parse(
+            "schema_version = 1\n\n[settings]\nterminal_font = \"system\"\n"
+        )
+        .is_err());
     }
 
     #[test]

@@ -53,8 +53,9 @@ Before considering this milestone complete:
 3. Convert every reproducible failure into the smallest deterministic
    fixture, replay, controlled-PTY test, or snapshot before closing it.
 4. Complete P5 evidence before making broader terminal or terminfo claims.
-5. Do not enable user-visible ligatures until the production policy tracked in
-   [#22](https://github.com/fes/fesTerm/issues/22) is accepted.
+5. Exercise both default one-cell rendering and opt-in ligatures with the
+   selected bundled family; verify cursor, selection, hyperlinks, wide cells,
+   fallback glyphs, and resize geometry remain cell-authoritative.
 
 ## Reference Scenarios
 

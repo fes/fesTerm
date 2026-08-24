@@ -12,7 +12,11 @@ use festerm_core::{Attributes, Color, CursorStyle, Dimensions};
 
 use crate::{
     cache::{RenderedCell, TerminalRenderCache},
-    fonts::{BOLD_FAMILY, BOLD_ITALIC_FAMILY, ITALIC_FAMILY, REGULAR_FAMILY},
+    fonts::{
+        TerminalFontSet, BOLD_FAMILY, BOLD_ITALIC_FAMILY, ITALIC_FAMILY, LIGATURE_BOLD_FAMILY,
+        LIGATURE_BOLD_ITALIC_FAMILY, LIGATURE_ITALIC_FAMILY, LIGATURE_REGULAR_FAMILY,
+        REGULAR_FAMILY,
+    },
     geometry::{CellGeometry, CellPosition, CellRange},
     selection::Selection,
     TerminalSnapshot, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, GLYPH_CACHE_CAPACITY,
@@ -23,28 +27,50 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontSettings {
     pub size_points: f32,
+    font_set: TerminalFontSet,
 }
 
 impl Default for FontSettings {
     fn default() -> Self {
-        Self { size_points: 14.0 }
+        Self {
+            size_points: 14.0,
+            font_set: TerminalFontSet::default(),
+        }
     }
 }
 
 impl FontSettings {
     pub(crate) fn regular_font_id(&self) -> FontId {
-        FontId::new(self.size_points, FontFamily::Name(REGULAR_FAMILY.into()))
+        let family = if self.font_set.ligatures() {
+            LIGATURE_REGULAR_FAMILY
+        } else {
+            REGULAR_FAMILY
+        };
+        FontId::new(self.size_points, FontFamily::Name(family.into()))
+    }
+
+    pub(crate) const fn font_set(&self) -> TerminalFontSet {
+        self.font_set
+    }
+
+    pub(crate) fn set_font_set(&mut self, font_set: TerminalFontSet) {
+        self.font_set = font_set;
     }
 
     fn font_id(&self, attributes: Attributes) -> FontId {
         let family = match (
+            self.font_set.ligatures(),
             attributes.contains(Attributes::BOLD),
             attributes.contains(Attributes::ITALIC),
         ) {
-            (true, true) => BOLD_ITALIC_FAMILY,
-            (true, false) => BOLD_FAMILY,
-            (false, true) => ITALIC_FAMILY,
-            (false, false) => REGULAR_FAMILY,
+            (true, true, true) => LIGATURE_BOLD_ITALIC_FAMILY,
+            (true, true, false) => LIGATURE_BOLD_FAMILY,
+            (true, false, true) => LIGATURE_ITALIC_FAMILY,
+            (true, false, false) => LIGATURE_REGULAR_FAMILY,
+            (false, true, true) => BOLD_ITALIC_FAMILY,
+            (false, true, false) => BOLD_FAMILY,
+            (false, false, true) => ITALIC_FAMILY,
+            (false, false, false) => REGULAR_FAMILY,
         };
         FontId::new(self.size_points, FontFamily::Name(family.into()))
     }
@@ -57,6 +83,7 @@ struct GlyphKey {
     attributes: u16,
     font_size_bits: u32,
     layout_width_bits: u32,
+    font_generation: crate::TerminalFontGeneration,
 }
 
 /// Cache laid-out cell glyphs. `egui` owns the underlying font atlas; this
@@ -67,6 +94,10 @@ pub(crate) struct GlyphCache {
 }
 
 impl GlyphCache {
+    pub(crate) fn clear(&mut self) {
+        self.layouts.clear();
+    }
+
     pub(crate) fn layout(
         &mut self,
         painter: &egui::Painter,
@@ -82,6 +113,7 @@ impl GlyphCache {
             attributes: attributes.bits(),
             font_size_bits: font.size_points.to_bits(),
             layout_width_bits: layout_width.to_bits(),
+            font_generation: font.font_set().generation(),
         };
         if let Some(layout) = self.layouts.get(&key) {
             return layout.clone();
@@ -130,7 +162,7 @@ pub(crate) struct GridPaint<'a> {
     pub(crate) cache: &'a TerminalRenderCache,
     pub(crate) selection: &'a Selection,
     pub(crate) fonts: &'a FontSettings,
-    pub(crate) cell_run_shaping: bool,
+    pub(crate) shape_cell_runs: bool,
     pub(crate) focused: bool,
 }
 
@@ -204,7 +236,11 @@ impl GlyphRun {
             && !selected
             && !self.has_hyperlink
             && self.single_width_only
+            && !self.text.is_empty()
+            && self.text.is_ascii()
             && cell.width == festerm_core::CellWidth::Single
+            && !cell.text.is_empty()
+            && cell.text.is_ascii()
             && self.foreground == foreground
             && self.attributes == cell.attributes
             && cell.hyperlink.is_none()
@@ -287,7 +323,7 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                     },
                 );
             }
-            if !paint.cell_run_shaping && !cell.text.is_empty() {
+            if !paint.shape_cell_runs && !cell.text.is_empty() {
                 let galley = glyphs.layout(
                     &painter,
                     &cell.text,
@@ -334,7 +370,7 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 );
             }
         }
-        if paint.cell_run_shaping {
+        if paint.shape_cell_runs {
             for run in glyph_runs(cells, row, dimensions, selection_range) {
                 if run.text.is_empty() {
                     continue;
@@ -552,6 +588,48 @@ mod tests {
             ),
         ] {
             assert_eq!(font.font_id(attributes).family.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn ligature_policy_selects_shaped_faces_and_collapses_standard_operators() {
+        for family in [
+            crate::TerminalFontFamily::JetBrainsMono,
+            crate::TerminalFontFamily::IosevkaTerm,
+            crate::TerminalFontFamily::JuliaMono,
+            crate::TerminalFontFamily::MapleMono,
+        ] {
+            let context = egui::Context::default();
+            let generation = crate::install_terminal_font_family(&context, family);
+            let mut ligature_spans = Vec::new();
+
+            let mut output = context.run_ui(Default::default(), |context| {
+                egui::CentralPanel::default().show(context, |ui| {
+                    for text in ["!=", "==", "->", "=>", "::", "<=", "==="] {
+                        let mut font = FontSettings::default();
+                        font.set_font_set(crate::TerminalFontSet::new(family, true, generation));
+                        let galley = ui.painter().layout_no_wrap(
+                            text.to_owned(),
+                            font.regular_font_id(),
+                            Color32::WHITE,
+                        );
+                        let spans_multiple_cells = galley
+                            .rows
+                            .iter()
+                            .flat_map(|row| &row.glyphs)
+                            .any(|glyph| glyph.uv_rect.size.x > glyph.advance_width + 0.5);
+                        ligature_spans.push((text, spans_multiple_cells));
+                    }
+                });
+            });
+            output.textures_delta.clear();
+
+            assert!(
+                ligature_spans
+                    .iter()
+                    .any(|(_, spans_multiple_cells)| *spans_multiple_cells),
+                "{family:?} exposes no standard programming ligature"
+            );
         }
     }
 }

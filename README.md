@@ -95,7 +95,7 @@ selection preservation across reflow (selection is currently invalidated
 rather than remapped) remain open M9 work; see the Milestone 9 note in
 [`ROADMAP.md`](ROADMAP.md). Automatic persistence, agent or key-file UI,
 OpenSSH-config import UI,
-terminfo distribution, or user-visible ligature support are not yet
+terminfo distribution, color emoji, or script-specific deterministic fallback are not yet
 provided. Following [ADR 0018](docs/adr/0018-ssh-liveness-reconnect-and-persistent-session-recovery.md),
 plain SSH sessions do not reconnect automatically: transport loss surfaces a
 Disconnected state with read-only history, and the Inspector offers an
@@ -129,8 +129,9 @@ custom-terminfo strategy.
   from requirements and ADRs through graph edges to automated/manual evidence.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
   names, accessibility rules, color/state policy, and validation pipeline.
-- [Bundled terminal font](assets/fonts/jetbrains-mono/README.md) — pinned
-  JetBrains Mono NL provenance, licensing, verification, and reviewed update workflow.
+- [Bundled terminal fonts](assets/fonts/) — pinned JetBrains Mono, Iosevka
+  Term, JuliaMono, and Maple Mono provenance, licensing, checksums, and
+  reproducible selection/ligature policy.
 - [UI and platform test plan](docs/ui-test-plan.md) — layered compatibility,
   interaction, rendering, PTY, and platform validation strategy.
 - [Manual and usability validation registry](docs/manual-validation.md) — the

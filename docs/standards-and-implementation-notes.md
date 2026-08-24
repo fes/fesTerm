@@ -245,12 +245,11 @@ columns, clamps requests to valid core dimensions, and avoids redundant
 resizes. It resolves ANSI, indexed, and RGB colors; handles inverse,
 concealed, faint/bold fallback, italic, underline, double underline, and
 strikethrough as egui permits; and draws a visibility-controlled cursor. It
-uses cached one-cell layout jobs over egui's glyph atlas in production.
-M6/P6 added a test-only, clipped cell-run shaping seam whose immutable
-cell-geometry contract preserves cursor, selection, and hit testing; its
-reviewed snapshot is part of the optional validation suite. User-visible
-ligatures remain disabled pending the explicit production policy in
-[#22](https://github.com/fes/fesTerm/issues/22).
+uses generation-keyed cached one-cell layout jobs over egui's glyph atlas by
+default. The clipped cell-run shaping path is now an explicit, persisted,
+default-off preference. It groups only compatible ASCII cells and preserves
+immutable cursor, selection, hit-test, hyperlink, fallback, and wide-cell
+boundaries under ADR 0012.
 
 Egui keyboard/text, paste, focus, pointer, wheel, selection, and copy events
 become M3 `InputEvent` values. The core alone selects mode-aware byte

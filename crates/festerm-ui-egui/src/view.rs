@@ -9,7 +9,6 @@ use festerm_core::{InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
-    fonts::terminal_fonts_installed,
     geometry::{cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
@@ -82,13 +81,13 @@ pub struct FrameDiagnostics {
 
 /// The initial `egui` terminal renderer and input adapter.
 ///
-/// It renders one cached layout per leading display cell. This deliberately
-/// preserves the one-cell mapping and does **not** claim ligature shaping;
-/// ligature-capable run shaping remains Milestone 6 work.
+/// It renders one cached layout per leading display cell by default. An
+/// explicit font policy may instead shape compatible ASCII cell runs while
+/// immutable grid geometry continues to own interaction and clipping.
 #[derive(Default)]
 pub struct TerminalView {
     pub(crate) fonts: FontSettings,
-    cell_run_shaping: bool,
+    force_cell_run_shaping: bool,
     pub(crate) cache: TerminalRenderCache,
     pub(crate) glyphs: GlyphCache,
     pub(crate) selection: Selection,
@@ -266,9 +265,19 @@ impl TerminalView {
         true
     }
 
+    /// Applies the application-wide primary-family and shaping policy while
+    /// preserving this session's independent zoom level.
+    pub fn set_font_set(&mut self, font_set: crate::TerminalFontSet) {
+        if self.fonts.font_set() == font_set {
+            return;
+        }
+        self.fonts.set_font_set(font_set);
+        self.glyphs.clear();
+    }
+
     #[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
     pub(crate) fn enable_cell_run_shaping_for_test(&mut self) {
-        self.cell_run_shaping = true;
+        self.force_cell_run_shaping = true;
     }
 
     pub fn diagnostics(&self) -> &FrameDiagnostics {
@@ -360,8 +369,14 @@ impl TerminalView {
         sink: &mut impl EncodedInputSink,
         options: TerminalViewOptions,
     ) {
-        if !terminal_fonts_installed(ui.ctx()) {
-            crate::install_terminal_fonts(ui.ctx());
+        if !crate::fonts::terminal_font_family_installed(ui.ctx(), self.fonts.font_set().family()) {
+            let generation =
+                crate::install_terminal_font_family(ui.ctx(), self.fonts.font_set().family());
+            self.set_font_set(crate::TerminalFontSet::new(
+                self.fonts.font_set().family(),
+                self.fonts.font_set().ligatures(),
+                generation,
+            ));
             // The named families become available after egui rebuilds its
             // atlas at the pass boundary. Direct TerminalView users can
             // bypass the application composition root, so yield safely.
@@ -765,7 +780,8 @@ impl TerminalView {
                         cache: &self.cache,
                         selection: &self.selection,
                         fonts: &self.fonts,
-                        cell_run_shaping: self.cell_run_shaping,
+                        shape_cell_runs: self.force_cell_run_shaping
+                            || self.fonts.font_set().ligatures(),
                         focused: response.has_focus(),
                     },
                     &mut self.glyphs,

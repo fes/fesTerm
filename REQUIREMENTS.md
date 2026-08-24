@@ -116,8 +116,8 @@ diagnostics. M5 installs one default local-session sink that forwards encoded
 input and accepted cell dimensions through the application; the UI remains
 session-backend-free. Native-window validation remains an M6 gate; scrollback
 history, tabs, profiles, and SSH are not implied by this status.
-The initial monospace renderer has no ligature-run shaping, which remains the
-later REQ-UI-009 capability.
+The renderer defaults to one-cell layout and offers explicit, default-off
+ligature shaping over bounded compatible cell runs under REQ-UI-009.
 
 ### REQ-UI-001 — Tabbed interface
 
@@ -154,6 +154,10 @@ The rendering architecture shall not preclude GPU acceleration or a later specia
 ### REQ-UI-009 — Ligature support
 
 fesTerm shall support font ligatures after the cell model and shaping integration can preserve correct cursor placement, selection, mouse targeting, and screen updates.
+
+Implemented: a persisted default-off preference shapes eligible ASCII runs
+without changing cell ownership; wide, selected, linked, non-ASCII, fallback,
+and style-boundary cells remain separate.
 
 ### REQ-UI-010 — Dirty-state rendering
 

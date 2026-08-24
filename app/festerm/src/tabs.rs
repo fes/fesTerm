@@ -20,7 +20,7 @@ use std::sync::{
 use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, SshProfileConfiguration,
-    WorkspaceConfiguration, WorkspaceTab,
+    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
@@ -943,6 +943,12 @@ pub enum AppCommand {
     /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
     /// opt-in, off by default).
     ToggleRestoreWorkspace,
+    /// Selects the bundled primary terminal face without changing
+    /// application-chrome typography.
+    SetTerminalFont(TerminalFontPreference),
+    /// Enables or disables eligible multi-cell shaping runs. Cell ownership
+    /// remains authoritative regardless of the selected font.
+    ToggleTerminalLigatures,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1059,6 +1065,8 @@ pub struct AppState {
     /// than a cosmetic chip-layout/status-bar choice, so it needs its own
     /// opt-in rather than defaulting on.
     restore_workspace: bool,
+    terminal_font: TerminalFontPreference,
+    terminal_ligatures: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1095,6 +1103,8 @@ impl AppState {
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
             restore_workspace: settings.restore_workspace(),
+            terminal_font: settings.terminal_font(),
+            terminal_ligatures: settings.terminal_ligatures(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1127,6 +1137,8 @@ impl AppState {
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
             restore_workspace: settings.restore_workspace(),
+            terminal_font: settings.terminal_font(),
+            terminal_ligatures: settings.terminal_ligatures(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1190,6 +1202,8 @@ impl AppState {
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
             restore_workspace: settings.restore_workspace(),
+            terminal_font: settings.terminal_font(),
+            terminal_ligatures: settings.terminal_ligatures(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1289,6 +1303,14 @@ impl AppState {
         self.restore_workspace
     }
 
+    pub const fn terminal_font(&self) -> TerminalFontPreference {
+        self.terminal_font
+    }
+
+    pub const fn terminal_ligatures(&self) -> bool {
+        self.terminal_ligatures
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1300,6 +1322,7 @@ impl AppState {
             self.confirm_session_close,
             self.restore_workspace,
         )
+        .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1444,6 +1467,12 @@ impl AppState {
             AppCommand::ToggleRestoreWorkspace => {
                 self.restore_workspace = !self.restore_workspace;
             }
+            AppCommand::SetTerminalFont(font) => {
+                self.terminal_font = font;
+            }
+            AppCommand::ToggleTerminalLigatures => {
+                self.terminal_ligatures = !self.terminal_ligatures;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -1451,6 +1480,8 @@ impl AppState {
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
                 self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
+                self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
+                self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -2656,6 +2687,32 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert!(state.confirm_session_close());
+    }
+
+    #[test]
+    fn terminal_typography_changes_and_resets_independently() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
+        assert!(!state.terminal_ligatures());
+
+        state.dispatch(
+            AppCommand::SetTerminalFont(TerminalFontPreference::JuliaMono),
+            &context,
+        );
+        state.dispatch(AppCommand::ToggleTerminalLigatures, &context);
+
+        assert_eq!(state.terminal_font(), TerminalFontPreference::JuliaMono);
+        assert!(state.terminal_ligatures());
+        assert_eq!(
+            state.interface_settings().terminal_font(),
+            TerminalFontPreference::JuliaMono
+        );
+        assert!(state.interface_settings().terminal_ligatures());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
+        assert!(!state.terminal_ligatures());
     }
 
     #[test]

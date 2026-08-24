@@ -31,7 +31,8 @@ pub use cache::{
     RenderCacheUpdate, RenderedCell, ResizeOutcome, ResizeTracker, TerminalRenderCache,
 };
 pub use fonts::{
-    install_terminal_fonts, terminal_font, terminal_fonts_installed, DEFAULT_TERMINAL_FONT_SIZE,
+    install_terminal_font_family, install_terminal_fonts, terminal_font, terminal_fonts_installed,
+    TerminalFontFamily, TerminalFontGeneration, TerminalFontSet, DEFAULT_TERMINAL_FONT_SIZE,
 };
 pub use geometry::{
     cell_from_point, dimensions_from_points, CellMetrics, CellPosition, CellRange, ViewSize,
@@ -337,7 +338,7 @@ mod tests {
         let dimensions = Dimensions::new(cells.len(), 1).unwrap();
         let runs = glyph_runs(&cells, 0, dimensions, None);
 
-        assert_eq!(runs.len(), 7);
+        assert_eq!(runs.len(), 8);
         assert_eq!(runs[0].position(), CellPosition { column: 0, row: 0 });
         assert_eq!(runs[0].columns(), 2);
         assert_eq!(runs[0].text(), "==");
@@ -345,12 +346,13 @@ mod tests {
         assert_eq!(runs[1].columns(), 2);
         assert_eq!(runs[1].text(), "界");
         assert_eq!(runs[2].position(), CellPosition { column: 4, row: 0 });
-        assert_eq!(runs[2].columns(), 2);
-        assert_eq!(runs[2].text(), "e\u{301}\u{1f980}");
-        assert_eq!(runs[3].position(), CellPosition { column: 6, row: 0 });
-        assert_eq!(runs[4].position(), CellPosition { column: 7, row: 0 });
-        assert_eq!(runs[5].position(), CellPosition { column: 8, row: 0 });
-        assert_eq!(runs[6].position(), CellPosition { column: 9, row: 0 });
+        assert_eq!(runs[2].columns(), 1);
+        assert_eq!(runs[2].text(), "e\u{301}");
+        assert_eq!(runs[3].position(), CellPosition { column: 5, row: 0 });
+        assert_eq!(runs[4].position(), CellPosition { column: 6, row: 0 });
+        assert_eq!(runs[5].position(), CellPosition { column: 7, row: 0 });
+        assert_eq!(runs[6].position(), CellPosition { column: 8, row: 0 });
+        assert_eq!(runs[7].position(), CellPosition { column: 9, row: 0 });
 
         let selected = glyph_runs(
             &cells[..2],
@@ -366,6 +368,15 @@ mod tests {
             2,
             "selection remains a hard shaping boundary for future selected-text styling"
         );
+
+        let separated = glyph_runs(
+            &[single("="), single(""), single("=")],
+            0,
+            Dimensions::new(3, 1).unwrap(),
+            None,
+        );
+        assert_eq!(separated.len(), 3);
+        assert_eq!(separated[2].position(), CellPosition { column: 2, row: 0 });
     }
 
     struct HeadlessViewState {

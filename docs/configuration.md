@@ -95,6 +95,8 @@ status_bar_visible = true
 show_session_details = true
 confirm_session_close = true
 restore_workspace = false
+terminal_font = "jetbrains-mono"
+terminal_ligatures = false
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
@@ -150,14 +152,19 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table holds five interface preferences:
+The optional `[settings]` table holds seven interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `true`), `confirm_session_close` (default
-`true`), and `restore_workspace` (default `false`). They mirror the current
+`true`), `restore_workspace` (default `false`), `terminal_font`
+(`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
+default `"jetbrains-mono"`), and `terminal_ligatures` (default `false`). They mirror the current
 Settings controls for chip layout, the bottom status bar, session-detail
 visibility, live-session close confirmation, and explicit workspace
-restoration.
+restoration, plus terminal-only typography. Font choice never changes
+application chrome. Enabling ligatures shapes only eligible adjacent ASCII
+cells; the terminal grid remains authoritative for cursor, selection, mouse,
+and resize geometry.
 
 fesTerm writes the whole configuration document through immediately whenever
 one of these controls changes (or after an explicit Settings **Reset interface

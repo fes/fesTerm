@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify, check, and deliberately update fesTerm's bundled terminal font."""
+"""Verify and monitor fesTerm's bundled terminal fonts."""
 
 from __future__ import annotations
 
@@ -49,13 +49,14 @@ def verify(root: Path, manifest: dict[str, object]) -> None:
         relative = str(entry.get("path", ""))
         archive_path = str(entry.get("archive_path", ""))
         expected = str(entry.get("sha256", ""))
+        expected_size = entry.get("size_bytes")
         if relative in destinations:
             errors.append(f"duplicate destination: {relative}")
         if archive_path in archive_paths:
             errors.append(f"duplicate archive path: {archive_path}")
         destinations.add(relative)
         archive_paths.add(archive_path)
-        if not relative.startswith("assets/fonts/jetbrains-mono/"):
+        if not relative.startswith("assets/fonts/"):
             errors.append(f"font destination escapes owned directory: {relative}")
             continue
         path = root / relative
@@ -63,6 +64,8 @@ def verify(root: Path, manifest: dict[str, object]) -> None:
             errors.append(f"bundled font file is missing: {relative}")
         elif digest(path.read_bytes()) != expected:
             errors.append(f"bundled font checksum differs: {relative}")
+        elif expected_size is not None and path.stat().st_size != expected_size:
+            errors.append(f"bundled font size differs: {relative}")
 
     version = str(manifest.get("pinned_version", ""))
     release = str(manifest.get("pinned_release", ""))
@@ -71,7 +74,7 @@ def verify(root: Path, manifest: dict[str, object]) -> None:
         errors.append(f"invalid pinned_version: {version!r}")
     if release != f"v{version}":
         errors.append("pinned_release must be 'v' plus pinned_version")
-    if release not in archive_url or f"JetBrainsMono-{version}.zip" not in archive_url:
+    if release not in archive_url:
         errors.append("archive_url does not match the pinned release/version")
     for marker in manifest.get("version_markers", []):
         path = root / str(marker)
@@ -118,15 +121,25 @@ def request_json(url: str) -> dict[str, object]:
     return json.loads(request_bytes(url, 30))
 
 
-def latest_release(manifest: dict[str, object]) -> dict[str, str]:
+def latest_release(manifest: dict[str, object]) -> dict[str, object]:
     repository = str(manifest["upstream_repository"])
     payload = request_json(f"https://api.github.com/repos/{repository}/releases/latest")
     tag = str(payload.get("tag_name", ""))
     if not re.fullmatch(r"v[0-9]+(?:\.[0-9]+)+", tag):
         raise FontError(f"upstream latest release has unexpected tag: {tag!r}")
     version = tag.removeprefix("v")
+    return {
+        "tag": tag,
+        "version": version,
+        "release_url": str(payload.get("html_url", "")),
+        "assets": payload.get("assets", []),
+    }
+
+
+def jetbrains_archive_url(release: dict[str, object]) -> str:
+    version = str(release["version"])
     expected_asset = f"JetBrainsMono-{version}.zip"
-    assets = payload.get("assets", [])
+    assets = release.get("assets", [])
     archive_url = next(
         (
             str(asset["browser_download_url"])
@@ -136,13 +149,8 @@ def latest_release(manifest: dict[str, object]) -> dict[str, str]:
         "",
     )
     if not archive_url:
-        raise FontError(f"upstream release {tag} lacks {expected_asset}")
-    return {
-        "tag": tag,
-        "version": version,
-        "archive_url": archive_url,
-        "release_url": str(payload.get("html_url", "")),
-    }
+        raise FontError(f"upstream release {release['tag']} lacks {expected_asset}")
+    return archive_url
 
 
 def version_tuple(version: str) -> tuple[int, ...]:
@@ -159,14 +167,24 @@ def download(url: str) -> bytes:
     return request_bytes(url, 60)
 
 
+def verify_archive(manifest: dict[str, object]) -> None:
+    expected = str(manifest.get("archive_sha256", ""))
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise FontError(f"{manifest.get('family')} lacks a valid archive_sha256")
+    actual = digest(download(str(manifest["archive_url"])))
+    if actual != expected:
+        raise FontError(f"{manifest.get('family')} upstream archive checksum differs")
+
+
 def update_assets(
     root: Path,
     manifest_path: Path,
     manifest: dict[str, object],
-    release: dict[str, str],
+    release: dict[str, object],
 ) -> None:
     old_version = str(manifest["pinned_version"])
-    archive = download(release["archive_url"])
+    archive_url = str(release["archive_url"])
+    archive = download(archive_url)
     with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
         names = set(bundle.namelist())
         for entry in manifest["files"]:
@@ -178,10 +196,12 @@ def update_assets(
             destination = root / str(entry["path"])
             destination.write_bytes(data)
             entry["sha256"] = digest(data)
+            entry["size_bytes"] = len(data)
 
-    manifest["pinned_release"] = release["tag"]
-    manifest["pinned_version"] = release["version"]
-    manifest["archive_url"] = release["archive_url"]
+    manifest["pinned_release"] = str(release["tag"])
+    manifest["pinned_version"] = str(release["version"])
+    manifest["archive_url"] = archive_url
+    manifest["archive_sha256"] = digest(archive)
     for marker in manifest.get("version_markers", []):
         path = root / str(marker)
         text = path.read_text(encoding="utf-8")
@@ -202,39 +222,74 @@ def write_github_output(path: Path, values: dict[str, str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--check-upstream", action="store_true")
     parser.add_argument("--update-latest", action="store_true")
+    parser.add_argument("--verify-archives", action="store_true")
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     try:
-        manifest_path = args.manifest.resolve()
-        root = ROOT if manifest_path == DEFAULT_MANIFEST else manifest_path.parents[3]
+        manifest_path = (args.manifest or DEFAULT_MANIFEST).resolve()
+        root = ROOT if manifest_path.is_relative_to(ROOT) else manifest_path.parents[3]
         manifest = load_manifest(manifest_path)
-        verify(root, manifest)
-        if not (args.check_upstream or args.update_latest):
-            print(f"bundled font: PASS ({manifest['family']} {manifest['pinned_version']})")
+        if not (args.check_upstream or args.update_latest or args.verify_archives):
+            manifests = (
+                [manifest_path]
+                if args.manifest
+                else sorted((ROOT / "assets/fonts").glob("*/manifest.json"))
+            )
+            summaries = []
+            for path in manifests:
+                candidate = load_manifest(path)
+                verify(ROOT, candidate)
+                summaries.append(f"{candidate['family']} {candidate['pinned_version']}")
+            print(f"bundled fonts: PASS ({', '.join(summaries)})")
             return 0
+        if args.verify_archives:
+            manifests = (
+                [manifest_path]
+                if args.manifest
+                else sorted((ROOT / "assets/fonts").glob("*/manifest.json"))
+            )
+            for path in manifests:
+                candidate = load_manifest(path)
+                verify(ROOT, candidate)
+                verify_archive(candidate)
+            print(f"bundled font archives: PASS ({len(manifests)} verified)")
+            return 0
+        verify(root, manifest)
+        if args.update_latest and manifest_path != DEFAULT_MANIFEST:
+            raise FontError(
+                "automatic asset staging currently supports JetBrains Mono only"
+            )
 
         release = latest_release(manifest)
-        available = update_available(str(manifest["pinned_version"]), release["version"])
+        available = update_available(
+            str(manifest["pinned_version"]), str(release["version"])
+        )
         values = {
+            "family": str(manifest["family"]),
             "current_version": str(manifest["pinned_version"]),
-            "latest_version": release["version"],
-            "latest_tag": release["tag"],
-            "release_url": release["release_url"],
+            "latest_version": str(release["version"]),
+            "latest_tag": str(release["tag"]),
+            "release_url": str(release["release_url"]),
             "update_available": str(available).lower(),
         }
         if args.github_output:
             write_github_output(args.github_output, values)
         if args.report:
+            update_instruction = (
+                "`python scripts/manage_bundled_font.py --update-latest`"
+                if manifest_path == DEFAULT_MANIFEST
+                else "update the pinned assets and manifest deliberately from the official release"
+            )
             args.report.write_text(
-                "# JetBrains Mono update available\n\n"
+                f"# {values['family']} update available\n\n"
                 f"fesTerm pins **{values['current_version']}**; upstream latest is "
                 f"**{values['latest_version']}**.\n\n"
                 f"Release: {values['release_url']}\n\n"
-                "Run `python scripts/manage_bundled_font.py --update-latest`, then "
+                f"Review the release and {update_instruction}, then "
                 "review the resulting font metrics, glyph/fallback behavior, license, "
                 "native DPI captures, terminal grid geometry, and full test suite. "
                 "Do not merge this update automatically.\n",
@@ -244,6 +299,7 @@ def main() -> int:
             if not available:
                 print(f"bundled font is current ({release['version']})")
                 return 0
+            release["archive_url"] = jetbrains_archive_url(release)
             update_assets(root, manifest_path, manifest, release)
             print(f"updated bundled font to {release['version']}; review is required")
         else:

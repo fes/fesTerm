@@ -155,11 +155,12 @@ events. Before M5, `festerm` recorded content-free input metadata in an observab
 no-session demo sink rather than presenting a shell. M5 replaces that demo
 sink with the local-session pump described below.
 
-The initial renderer uses bundled JetBrains Mono NL 2.304, with real regular,
-bold, italic, and bold-italic faces plus egui's monospace glyph fallbacks, and
-cached single-cell layouts. It preserves width-two and continuation geometry and
-renders the implemented colors, cursor, and basic attributes. It deliberately
-does not claim ligature shaping; cell-run shaping and ligatures remain M6.
+The renderer bundles selectable JetBrains Mono 2.304, Iosevka Term 34.8.1,
+JuliaMono 0.63.2, and Maple Mono 7.9 regular/bold/italic/bold-italic faces.
+JetBrains Mono remains the default. Cached one-cell layouts preserve the
+default no-ligature behavior; an explicit default-off preference enables
+bounded ASCII cell-run shaping without changing width-two, cursor, selection,
+mouse, or resize geometry.
 
 ### Completion criteria
 

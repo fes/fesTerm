@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "family": "JuliaMono",
+  "upstream_repository": "cormullion/juliamono",
+  "pinned_release": "v0.63.2",
+  "pinned_version": "0.63.2",
+  "archive_url": "https://github.com/cormullion/juliamono/releases/download/v0.63.2/JuliaMono-ttf.zip",
+  "archive_sha256": "bc7140ccf1cbd84ee66a4c00a41628ee0a531a241e521773bad25a10c5066795",
+  "license": "OFL-1.1",
+  "reserved_font_name": "JuliaMono",
+  "files": [
+    {"archive_path": "JuliaMono-Regular.ttf", "path": "assets/fonts/julia-mono/JuliaMono-Regular.ttf", "sha256": "40a07da0d1601215eb6b89312eb44128a3e2f36675d3e1f518264bd391fc7023", "size_bytes": 3261260},
+    {"archive_path": "JuliaMono-Bold.ttf", "path": "assets/fonts/julia-mono/JuliaMono-Bold.ttf", "sha256": "a886d817cbd02fb7b646c3eb722de572bf6819ad223d66d64dbef33207964fea", "size_bytes": 3254432},
+    {"archive_path": "JuliaMono-RegularItalic.ttf", "path": "assets/fonts/julia-mono/JuliaMono-RegularItalic.ttf", "sha256": "35260252fa576b3e2ae6cda538475e6fa78a053eade7784518b53f0a5dbaa526", "size_bytes": 3399948},
+    {"archive_path": "JuliaMono-BoldItalic.ttf", "path": "assets/fonts/julia-mono/JuliaMono-BoldItalic.ttf", "sha256": "a3f09c2216eeca9d35f967fe9b096419a2f0a5da6d38280e934a708f84064cf3", "size_bytes": 3364340},
+    {"archive_path": "LICENSE", "path": "assets/fonts/julia-mono/LICENSE", "sha256": "bae3beff9e15f1a680c2764c4bbdb25b995b9bf539aeaf8467482a495c75ad0c", "size_bytes": 4467}
+  ]
+}

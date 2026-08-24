@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -54,6 +55,63 @@ class BundledFontTests(unittest.TestCase):
             path.write_text(json.dumps({"schema_version": 99}), encoding="utf-8")
             with self.assertRaisesRegex(fonts.FontError, "schema_version"):
                 fonts.load_manifest(path)
+
+    @mock.patch("manage_bundled_font.request_json")
+    def test_latest_release_is_generic_across_font_repositories(self, request_json):
+        request_json.return_value = {
+            "tag_name": "v34.8.2",
+            "html_url": "https://github.com/example/font/releases/tag/v34.8.2",
+            "assets": [],
+        }
+
+        release = fonts.latest_release(
+            {"upstream_repository": "example/font"}
+        )
+
+        self.assertEqual(release["version"], "34.8.2")
+        self.assertEqual(release["tag"], "v34.8.2")
+        request_json.assert_called_once_with(
+            "https://api.github.com/repos/example/font/releases/latest"
+        )
+
+    def test_jetbrains_updater_selects_its_versioned_archive(self):
+        release = {
+            "tag": "v2.305",
+            "version": "2.305",
+            "assets": [
+                {
+                    "name": "JetBrainsMono-2.305.zip",
+                    "browser_download_url": "https://example.test/JetBrainsMono-2.305.zip",
+                }
+            ],
+        }
+
+        self.assertEqual(
+            fonts.jetbrains_archive_url(release),
+            "https://example.test/JetBrainsMono-2.305.zip",
+        )
+
+    @mock.patch("manage_bundled_font.latest_release")
+    def test_non_jetbrains_automatic_update_fails_before_network_check(
+        self, latest_release
+    ):
+        manifest = (
+            Path(__file__).resolve().parents[2]
+            / "assets/fonts/iosevka-term/manifest.json"
+        )
+        with mock.patch.object(
+            sys,
+            "argv",
+            [
+                "manage_bundled_font.py",
+                "--manifest",
+                str(manifest),
+                "--update-latest",
+            ],
+        ), mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(fonts.main(), 1)
+            self.assertIn("supports JetBrains Mono only", stderr.getvalue())
+        latest_release.assert_not_called()
 
     @mock.patch("manage_bundled_font.subprocess.run")
     @mock.patch("manage_bundled_font.urllib.request.urlopen")

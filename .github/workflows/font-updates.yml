@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,19 +23,45 @@ jobs:
           python-version: '3.x'
       - name: Verify pinned assets
         run: python scripts/manage_bundled_font.py
+
+  check:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - manifest: assets/fonts/jetbrains-mono/manifest.json
+            slug: jetbrains-mono
+            issue_title: JetBrains Mono update review
+          - manifest: assets/fonts/iosevka-term/manifest.json
+            slug: iosevka-term
+            issue_title: Iosevka Term update review
+          - manifest: assets/fonts/julia-mono/manifest.json
+            slug: julia-mono
+            issue_title: JuliaMono update review
+          - manifest: assets/fonts/maple-mono/manifest.json
+            slug: maple-mono
+            issue_title: Maple Mono update review
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
       - name: Check official latest release
         id: font
         run: >-
           python scripts/manage_bundled_font.py
+          --manifest "${{ matrix.manifest }}"
           --check-upstream
           --github-output "$GITHUB_OUTPUT"
-          --report "$RUNNER_TEMP/jetbrains-mono-update.md"
+          --report "$RUNNER_TEMP/${{ matrix.slug }}-update.md"
       - name: Open or update the review issue
         if: steps.font.outputs.update_available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_TITLE: JetBrains Mono update review
-          REPORT: ${{ runner.temp }}/jetbrains-mono-update.md
+          ISSUE_TITLE: ${{ matrix.issue_title }}
+          REPORT: ${{ runner.temp }}/${{ matrix.slug }}-update.md
         run: |
           issue_number="$(gh issue list --state open --limit 100 --json number,title --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')"
           if [ -n "$issue_number" ]; then

@@ -8,7 +8,7 @@ use std::{
 };
 
 use eframe::egui;
-use festerm_config::{Configuration, InterfaceSettings, Profile};
+use festerm_config::{Configuration, InterfaceSettings, Profile, TerminalFontPreference};
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
@@ -18,6 +18,7 @@ use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAct
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
 use festerm_ui_egui::theme;
+use festerm_ui_egui::{TerminalFontFamily, TerminalFontGeneration, TerminalFontSet};
 
 use crate::configuration_startup::{
     ConfigurationReloader, ConfigurationStartupStatus, StartupConfiguration,
@@ -170,12 +171,22 @@ fn quick_switch_label(index: usize) -> Option<String> {
     if index >= MAX_QUICK_SWITCH_TABS {
         return None;
     }
+
     let n = index + 1;
     Some(if cfg!(target_os = "macos") {
         format!("\u{2318} {n}")
     } else {
         format!("Ctrl+{n}")
     })
+}
+
+const fn terminal_font_family(preference: TerminalFontPreference) -> TerminalFontFamily {
+    match preference {
+        TerminalFontPreference::JetBrainsMono => TerminalFontFamily::JetBrainsMono,
+        TerminalFontPreference::IosevkaTerm => TerminalFontFamily::IosevkaTerm,
+        TerminalFontPreference::JuliaMono => TerminalFontFamily::JuliaMono,
+        TerminalFontPreference::MapleMono => TerminalFontFamily::MapleMono,
+    }
 }
 
 /// Composition root.
@@ -222,6 +233,7 @@ pub struct FesTermApp {
     wake_requested: Arc<AtomicBool>,
     focus_mode: bool,
     terminal_fonts_installed: bool,
+    terminal_font_generation: TerminalFontGeneration,
     about_icon: Option<egui::TextureHandle>,
 }
 
@@ -367,7 +379,10 @@ impl FesTermApp {
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
-        festerm_ui_egui::install_terminal_fonts(context);
+        let terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
+            context,
+            terminal_font_family(configuration.interface_settings().terminal_font()),
+        );
         // fesTerm owns the standard zoom chords as per-session terminal
         // commands. Letting egui also process them at end-of-frame would scale
         // application chrome and violate the documented zoom boundary.
@@ -408,6 +423,7 @@ impl FesTermApp {
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: true,
+            terminal_font_generation,
             about_icon: Some(about_icon),
         }
     }
@@ -942,6 +958,14 @@ impl FesTermApp {
         });
     }
 
+    fn reinstall_terminal_font(&mut self, context: &egui::Context) {
+        self.terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
+            context,
+            terminal_font_family(self.state.terminal_font()),
+        );
+        context.request_repaint();
+    }
+
     fn show_settings_reset_confirmation(&mut self, context: &egui::Context, escape: bool) {
         let Some(pending) = self.overlays.pending_settings_reset.as_ref().cloned() else {
             return;
@@ -959,7 +983,10 @@ impl FesTermApp {
                 ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
                 ui.heading("Reset interface settings?");
                 ui.add_space(6.0);
-                ui.label("Chip layout and status bar visibility will return to their defaults.");
+                ui.label(
+                    "Interface layout, workspace behavior, and terminal typography will return \
+                     to their defaults.",
+                );
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     let cancel_button = ui.button("Cancel");
@@ -983,6 +1010,7 @@ impl FesTermApp {
             self.overlays.pending_settings_reset = None;
             self.state
                 .dispatch(AppCommand::ResetInterfaceSettings, context);
+            self.reinstall_terminal_font(context);
             self.persist_interface_settings();
         }
     }
@@ -1935,7 +1963,7 @@ impl FesTermApp {
                             );
                             ui.label(
                                 egui::RichText::new(
-                                    "JetBrains Mono NL 2.304 is bundled under the SIL Open Font License 1.1. Its complete license and attribution are stored under assets/fonts/jetbrains-mono. Inter is not yet bundled.",
+                                    "JetBrains Mono 2.304, Iosevka Term 34.8.1, JuliaMono 0.63.2, and Maple Mono 7.9 are bundled under the SIL Open Font License 1.1. Complete licenses, attribution, source archives, and checksums are stored under assets/fonts. JuliaMono and Maple Mono retain their upstream Reserved Font Names. Inter is not yet bundled.",
                                 )
                                 .small()
                                 .color(theme::TEXT_MUTED),
@@ -2433,7 +2461,10 @@ impl FesTermApp {
     /// private to `eframe` and not test-constructible).
     fn ui_content(&mut self, ui: &mut egui::Ui) {
         if !self.terminal_fonts_installed {
-            festerm_ui_egui::install_terminal_fonts(ui.ctx());
+            self.terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
+                ui.ctx(),
+                terminal_font_family(self.state.terminal_font()),
+            );
             self.terminal_fonts_installed = true;
             // `set_fonts` rebuilds egui's atlas after this pass. A test app
             // can begin directly on a terminal surface (unlike production,
@@ -2537,6 +2568,11 @@ impl FesTermApp {
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
         let active_tab_id = self.state.active();
+        let terminal_font_set = TerminalFontSet::new(
+            terminal_font_family(self.state.terminal_font()),
+            self.state.terminal_ligatures(),
+            self.terminal_font_generation,
+        );
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -2558,6 +2594,8 @@ impl FesTermApp {
                             show_session_details: self.state.show_session_details(),
                             confirm_session_close: self.state.confirm_session_close(),
                             restore_workspace: self.state.restore_workspace(),
+                            terminal_font: self.state.terminal_font(),
+                            terminal_ligatures: self.state.terminal_ligatures(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()
@@ -2585,6 +2623,7 @@ impl FesTermApp {
                     );
                 }
                 TabContent::Session(session) => {
+                    session.view.set_font_set(terminal_font_set);
                     let host_key_prompt = session.host_key_prompt().cloned();
                     let password_prompt = host_key_prompt
                         .is_none()
@@ -2709,9 +2748,17 @@ impl FesTermApp {
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
-                | AppCommand::ToggleConfirmSessionClose) => {
+                | AppCommand::ToggleConfirmSessionClose
+                | AppCommand::ToggleTerminalLigatures) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
+                    self.persist_interface_settings();
+                }
+                AppCommand::SetTerminalFont(font) => {
+                    let context = ui.ctx().clone();
+                    self.state
+                        .dispatch(AppCommand::SetTerminalFont(font), &context);
+                    self.reinstall_terminal_font(&context);
                     self.persist_interface_settings();
                 }
                 AppCommand::ToggleRestoreWorkspace => {
@@ -2813,6 +2860,7 @@ impl FesTermApp {
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: false,
+            terminal_font_generation: TerminalFontGeneration::default(),
             about_icon: None,
         }
     }
@@ -2935,6 +2983,26 @@ mod tests {
         assert_eq!(
             harness.state().state.interface_settings(),
             InterfaceSettings::DEFAULT
+        );
+    }
+
+    #[test]
+    fn selecting_a_terminal_font_reinstalls_the_atlas_with_a_new_generation() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.terminal_font_generation = festerm_ui_egui::install_terminal_fonts(&context);
+        let previous = app.terminal_font_generation;
+
+        app.state.dispatch(
+            AppCommand::SetTerminalFont(TerminalFontPreference::JuliaMono),
+            &context,
+        );
+        app.reinstall_terminal_font(&context);
+
+        assert_ne!(app.terminal_font_generation, previous);
+        assert_eq!(
+            app.state.interface_settings().terminal_font(),
+            TerminalFontPreference::JuliaMono
         );
     }
 

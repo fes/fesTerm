@@ -154,10 +154,11 @@ complete policy.
   `docs/icon-system.md` as its naming/accessibility contract. Use semantic Icon
   names in Rust, keep color in UI state, and never add branded OS glyphs as a
   required remote-session identity.
-- Treat `assets/fonts/jetbrains-mono/manifest.json` as authoritative for the
-  bundled terminal font. Run `python scripts/manage_bundled_font.py` after
-  font-related changes. Use `--update-latest` only as an explicit reviewed
-  upgrade; never copy an installed system font or auto-merge upstream metrics.
+- Treat each `assets/fonts/*/manifest.json` as authoritative for its bundled
+  terminal font. Run `python scripts/manage_bundled_font.py` after font-related
+  changes. Use `--update-latest` only for an explicit reviewed JetBrains Mono
+  upgrade; rebuild or replace the other families according to their provenance
+  notes. Never copy an installed system font or auto-merge upstream metrics.
 - Route application-level GUI actions through
   `docs/application-command-model.md`; invocation surfaces translate intent,
   while application policy remains centralized and testable.

@@ -707,7 +707,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "native JetBrains Mono fallback/DPI review and bundled application font"
+        "native four-family ligature/fallback/DPI review and bundled application font"
       ]
     },
     {

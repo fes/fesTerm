@@ -220,8 +220,11 @@ screen, dimensions, cursor, and modes. `TerminalRenderCache` copies only rows
 identified by `Terminal::take_dirty_rows` (with a complete refresh on initial
 view or size change), so a GUI frame does not clone the entire core grid.
 Cell metrics and point-to-cell helpers remain UI-owned and convert only to
-valid core dimensions. The initial cache uses egui's monospace font atlas and
-cached one-cell layouts; it intentionally does not perform ligature shaping.
+valid core dimensions. A selected bundled primary face alone determines cell
+metrics. The glyph cache is generation-keyed so replacing egui's font atlas
+cannot reuse stale layouts. One-cell layout remains the default; an explicit
+ligature policy may shape compatible ASCII runs inside their preallocated
+cell spans.
 Width-two leading cells and their continuations are submitted as one
 two-column paint span.
 

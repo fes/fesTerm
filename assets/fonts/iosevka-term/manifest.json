@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "family": "Iosevka Term",
+  "upstream_repository": "be5invis/Iosevka",
+  "pinned_release": "v34.8.1",
+  "pinned_version": "34.8.1",
+  "role": "reproducible-terminal-ligature-build",
+  "archive_url": "https://github.com/be5invis/Iosevka/archive/refs/tags/v34.8.1.tar.gz",
+  "archive_sha256": "492d9e377c5fc508145c2194f4c0992db14885758a3eab5cf1f24913a6c8032f",
+  "build_target": "ttf-unhinted::FesTermIosevka",
+  "license": "OFL-1.1",
+  "reserved_font_name": null,
+  "files": [
+    {"archive_path": "dist/FesTermIosevka/TTF-Unhinted/FesTermIosevka-Regular.ttf", "path": "assets/fonts/iosevka-term/FesTermIosevka-Regular.ttf", "sha256": "28cd676e448b62bbf7944c3888c574ecc61ae7d2adcd49ddd67b0edaad38c23b", "size_bytes": 7764084},
+    {"archive_path": "dist/FesTermIosevka/TTF-Unhinted/FesTermIosevka-Bold.ttf", "path": "assets/fonts/iosevka-term/FesTermIosevka-Bold.ttf", "sha256": "8a4a0c54d5fcddd4315237beccbdf91413c4ada73a7da771573386b6eb3cff48", "size_bytes": 7727564},
+    {"archive_path": "dist/FesTermIosevka/TTF-Unhinted/FesTermIosevka-Italic.ttf", "path": "assets/fonts/iosevka-term/FesTermIosevka-Italic.ttf", "sha256": "5dc7b2cbcb48553aaa81507f71b38694aac2a7bd372219cd15fabec8d1ab5723", "size_bytes": 8295204},
+    {"archive_path": "dist/FesTermIosevka/TTF-Unhinted/FesTermIosevka-BoldItalic.ttf", "path": "assets/fonts/iosevka-term/FesTermIosevka-BoldItalic.ttf", "sha256": "734df9f006f467eb8219b36996fe943d57e062ca4a838494591be610e78dbc35", "size_bytes": 8183116},
+    {"archive_path": "LICENSE.md", "path": "assets/fonts/iosevka-term/LICENSE.md", "sha256": "4ba53c7c1cb39279aae5f8d7d22054c485c71169920e5a36ed098b115e2e3c5d", "size_bytes": 4493},
+    {"archive_path": "private-build-plans.toml", "path": "assets/fonts/iosevka-term/private-build-plans.toml", "sha256": "a9c1773bcad8ce4817e4856476c372670a16936d0b5344c4c6121b43032bac7e", "size_bytes": 861}
+  ]
+}
