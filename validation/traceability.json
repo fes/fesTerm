@@ -150,7 +150,8 @@
       ],
       "decisions": [
         "ADR-0016",
-        "ADR-0019"
+        "ADR-0019",
+        "ADR-0024"
       ],
       "automated_tests": [
         "ssh_form_submit_clears_the_transient_password",
@@ -164,7 +165,12 @@
         "password_gate_rejects_missing_timeout_cancel_and_invalid_resolutions",
         "stale_password_decision_cannot_resolve_a_later_prompt",
         "password_prompt_is_rejected_when_the_bounded_event_queue_is_full",
-        "controlled_openssh_interactive_password_interoperability"
+        "controlled_openssh_interactive_password_interoperability",
+        "stored_private_key_credential_kind_saves_loads_and_defaults_to_password",
+        "stored_private_key_authentication_resolves_only_through_the_worker_source",
+        "stored_private_key_round_trips_with_a_passphrase",
+        "stored_private_key_resolution_errors_are_actionable_and_redacted",
+        "ssh_profile_editor_offers_a_private_key_field_that_dispatches_store_profile_private_key"
       ],
       "manual_scenarios": [
         "TI-07",
@@ -214,7 +220,7 @@
         "docs/application-command-model.md#command-responsibilities"
       ],
       "decisions": [
-        "ADR-0023"
+        "ADR-0024"
       ],
       "automated_tests": [
         "serial_profile_defaults_round_trip_and_convert_to_line_settings",

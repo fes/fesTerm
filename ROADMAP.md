@@ -364,8 +364,18 @@ The GUI-independent `festerm-secret-store` foundation is implemented with
 opaque UUID-v4 references and native macOS Keychain, Windows Credential
 Manager, and Linux Secret Service backends. It has no insecure fallback.
 Issue [#42](https://github.com/fes/fesTerm/issues/42) now covers the remaining
-native secure-store usability/platform evidence; password-only reference
-persistence and just-in-time worker resolution are implemented.
+native secure-store usability/platform evidence; password and private-key
+reference persistence and just-in-time worker resolution are implemented.
+
+**Post-M8 follow-up:** Private-key and passphrase persistence
+([ADR 0024](docs/adr/0024-native-secret-store-stored-private-keys.md)),
+persistent host-key trust
+([ADR 0020](docs/adr/0020-persistent-host-key-trust.md)), and a full
+Profiles editor UI (create/update/delete/reorder) have since been
+implemented, narrowing the M8 deferred list above. SSH-agent authentication
+(tracked separately as [#40](https://github.com/fes/fesTerm/issues/40)),
+literal key-file path references, OpenSSH-config import UI, and richer
+restoration presentation remain deferred.
 
 ### Outcome
 

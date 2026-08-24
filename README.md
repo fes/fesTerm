@@ -32,15 +32,17 @@ Keychain, Windows Credential Manager, or Linux Secret Service over session
 D-Bus, with no insecure fallback. Existing saved SSH profiles can explicitly
 store and use a password through that service: TOML retains only an opaque
 reference and the SSH worker resolves it immediately before password
-authentication. Private keys, passphrases, agents, key files, and host trust
-are not persisted.
+authentication. A saved private key (with its optional passphrase) can be
+stored and used the same way
+([ADR 0024](docs/adr/0024-native-secret-store-stored-private-keys.md)).
+Agents and key-file path references are not persisted.
 Milestone 7 is implemented: the
 `festerm-ssh` crate provides an in-process password- and public-key-authenticated
 SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
 reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
-encrypted in-memory OpenSSH private keys; encrypted-key passphrases are
-transient parse inputs and are never persisted. Agents and key-file references
-remain incomplete; saved SSH profiles await opaque-reference persistence. The
+encrypted in-memory OpenSSH private keys. SSH-agent authentication and
+key-file path references remain incomplete (tracked in
+[#40](https://github.com/fes/fesTerm/issues/40)). The
 fixture
 includes an ECDSA P-256-only server-host-key case whose SHA-256 trust prompt
 is checked before a shell exchange. The
@@ -72,17 +74,22 @@ than a fake shell.
 The current application has in-memory local session tabs, explicitly injected
 secret-free reusable local-profile metadata, and a compact Launcher SSH
 authentication form. Saved SSH profiles can explicitly use a stored native
-password or open their profile-backed password form; a restored workspace SSH
+password or private key, or open their profile-backed password/private-key
+form; a restored workspace SSH
 tab opens the same form with destination metadata pre-filled and never
 auto-connects. The transient form validates a host,
 optional port (default
 22), and username into a secret-free profile, then sends a transient password
 or a parsed in-memory OpenSSH private key to the typed SSH-session command and
 clears secret text on submit. Encrypted keys may use a transient parse
-passphrase; no key text or passphrase is persisted. When an active SSH tab
+passphrase; unless the user explicitly chooses to store it, no key text or
+passphrase is persisted. When an active SSH tab
 needs host trust, it presents the canonical
 host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
-actions; trust persistence is intentionally deferred to M8. The core now owns
+actions; trust persistence, added later
+([ADR 0020](docs/adr/0020-persistent-host-key-trust.md)), also offers an
+explicit Accept and remember action so a previously trusted host no longer
+prompts. The core now owns
 the first bounded logical-history slice, and the application layer built on
 top of it (Milestone 9, [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md))
 provides history viewport navigation — wheel/keyboard scrolling, Shift+Page

@@ -63,10 +63,16 @@ terminal_type = "xterm-256color"
 initial_columns = 132
 initial_rows = 43
 credential_id = "550e8400-e29b-41d4-a716-446655440000"
+credential_kind = "password"
 
 [profiles.persistence]
 provider = "tmux"
 session_name = "main"
+
+[[known_hosts]]
+host = "build.example"
+port = 2200
+sha256_fingerprint = "SHA256:AAAAB3NzaC1yc2EAAAADAQABAAAB..."
 
 [workspace]
 focused_tab_id = "build-tab"
@@ -199,10 +205,13 @@ old shell process or terminal output.
 An SSH-session entry restores as an **SSH authentication required** surface
 at its saved position. It retains non-secret destination metadata and
 pre-fills the existing transient authentication form, but starts no SSH
-connection. The user must explicitly supply fresh password or in-memory
-private-key authentication; host trust is requested anew when needed. No
-credentials, key material, connection/channel, process state, or host trust
-is persisted or recreated.
+connection. The user must explicitly supply fresh authentication — a typed
+password/key, or the profile's stored credential if it has one. When the
+connection actually starts, host-key verification runs again as it would for
+any other launch: a matching persisted `known_hosts` entry (above) is
+accepted silently, otherwise the user is prompted anew. No live
+connection/channel or process state is persisted or recreated by workspace
+restoration itself.
 
 Workspace state saves automatically the moment the open tab list, its order,
 or the active tab changes - there is no manual "Save workspace" action. Each
@@ -220,8 +229,10 @@ kind of save that may create a missing native configuration directory; an
 explicit `FESTERM_CONFIG_PATH` override never has its parent created. Profile
 editing (create, update, delete, reorder) also saves automatically on each
 change, the same way. fesTerm still never watches the file or reacts to edits
-made outside the running app, and it never persists secure storage/trust
-material into this TOML.
+made outside the running app, and it never persists secret material (only
+opaque secret-store references) into this TOML; non-secret host-key trust
+records are the one exception stored directly, per the "Persistent host-key
+trust" section below.
 
 ## Secret boundary and reload behavior
 
@@ -230,31 +241,52 @@ credential values in this TOML. The parser rejects known secret-bearing field
 names, private-key material, and recognizable credential options throughout
 profiles and workspaces; unknown fields are also errors.
 
-An SSH profile may instead include one optional `credential_id`. In this M8
-slice it is **only** a canonical lowercase UUID-v4 opaque reference to a
-native stored SSH password produced by `festerm-secret-store`; it does not
-identify a private key, passphrase, agent response, key file, trust record, or
-arbitrary credential. The parser rejects malformed, noncanonical, or non-v4
-references. No other credential field or metadata is allowed in profiles or
-workspaces. The SSH transport resolves the opaque reference on its background
-worker immediately before password authentication; UI event handling never
-retrieves the password.
+An SSH profile may instead include one optional `credential_id` plus an
+optional `credential_kind` (defaulting to `"password"` when omitted, the only
+other value being `"private_key"`). `credential_id` is always a canonical
+lowercase UUID-v4 opaque reference produced by `festerm-secret-store`
+([ADR 0016](adr/0016-native-secret-store-boundary.md)); `credential_kind`
+says only which native-stored secret shape it names — an SSH password, or an
+OpenSSH private key plus its optional passphrase packed together
+([ADR 0024](adr/0024-native-secret-store-stored-private-keys.md)). Neither
+field ever contains a password, key, or passphrase directly. The parser
+rejects malformed, noncanonical, or non-v4 references. No other credential
+field or metadata is allowed in profiles or workspaces. The SSH transport
+resolves the opaque reference on its background worker immediately before
+authentication; UI event handling never retrieves the secret.
 
-The Launcher exposes stored-password actions only for an existing saved SSH
-profile. A user may explicitly enter a password and select **Remember this
-password in native secure storage**; the password is written on a background
-worker, then the generated opaque reference is atomically saved into that
-profile. If configuration persistence fails, fesTerm removes the newly created
+The Launcher/profile editor exposes stored-credential actions only for an
+existing saved SSH profile. A user may explicitly enter a password or an
+OpenSSH private key (with optional passphrase) and select **Remember this
+password/private key in native secure storage**; the secret is written on a
+background worker, then the generated opaque reference and its
+`credential_kind` are atomically saved into that profile. If configuration
+persistence fails, fesTerm removes the newly created
 native secret where possible and leaves the old profile reference unchanged.
 One-off SSH connections remain transient. Restored workspace SSH surfaces
-never auto-connect: users must explicitly choose the stored-password action
-or enter a fresh password.
+never auto-connect: users must explicitly choose the stored-credential action
+or enter fresh authentication.
 
 Native storage uses macOS Keychain, Windows Credential Manager, or a Linux
 Secret Service provider available through the logged-in session D-Bus. KWallet
 is supported only when its Secret Service integration is active. Locked or
 unavailable storage must produce an actionable error; fesTerm does not fall
 back to a file, keyutils, plaintext, or in-memory storage.
+
+## Persistent host-key trust
+
+Host public keys and their SHA-256 fingerprints are not secret, so they use
+ordinary configuration rather than `festerm-secret-store`
+([ADR 0020](adr/0020-persistent-host-key-trust.md)). The document may include
+a top-level `known_hosts` array of `{ host, port, sha256_fingerprint }`
+entries, at most one per `host:port`. Accepting and remembering a host's key
+(or accepting a deliberate, explicitly typed key change) upserts that host's
+entry; there is no automatic merge. A future connection to a `host:port` with
+a persisted, matching fingerprint is accepted without prompting; any other
+presented key still prompts, flagged as a changed-key warning when a record
+already exists. No UI currently exposes revoking a `known_hosts` entry other
+than accepting a legitimate key change; removing one otherwise requires
+editing this TOML directly.
 
 `ConfigurationState::reload` parses and validates a complete replacement
 before changing active state. A rejected candidate leaves the previous valid

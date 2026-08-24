@@ -39,22 +39,29 @@ behavior across every invocation path. Workspace saves preserve
 the manually authored profiles and cover only ordered Launcher/Settings
 surfaces, restored SSH authentication-required profile surfaces, and
 configured-local profile tabs; default, ad-hoc, and live SSH sessions are
-omitted. Existing saved SSH profiles can explicitly store or use a password:
-TOML receives only an opaque reference, native storage is used only on a
-background worker, and password resolution occurs immediately before SSH
-authentication. The
+omitted. Existing saved SSH profiles can explicitly store or use a password
+or a private key (with optional passphrase):
+TOML receives only an opaque reference plus a `credential_kind` discriminant,
+native storage is used only on a
+background worker, and secret resolution occurs immediately before SSH
+authentication ([ADR 0024](adr/0024-native-secret-store-stored-private-keys.md)
+extends the original password-only slice). The
 `festerm-secret-store` foundation uses macOS Keychain, Windows Credential
 Manager, and Linux Secret Service over the logged-in session D-Bus (including
 KWallet only through Secret Service integration). A locked or unavailable
 native store remains an actionable condition with no insecure fallback.
+Host-key trust can also persist: an accepted (or deliberately, explicitly
+replaced) host key is remembered in plain, non-secret TOML
+([ADR 0020](adr/0020-persistent-host-key-trust.md)), so reconnecting to an
+already-trusted `host:port` no longer prompts.
 
 Not implemented: OpenSSH configuration import,
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
-references, color emoji/script-specific fallback, a custom GPU renderer, terminfo
+path references, color emoji/script-specific fallback, a custom GPU renderer, terminfo
 distribution, and reference-TUI compatibility sign-off. M7 supplies transient
 password and in-memory OpenSSH private-key authentication plus bounded opt-in
-reconnect; encrypted-key passphrases are transient in-memory parse inputs,
-never profile data. Read [`milestone-progress.md`](milestone-progress.md)
+reconnect; for one-off (non-profile) connections, encrypted-key passphrases
+remain transient in-memory parse inputs only. Read [`milestone-progress.md`](milestone-progress.md)
 before choosing work.
 
 The current single-row chrome follows ADR 0022: the focused chip retains its
