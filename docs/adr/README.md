@@ -24,13 +24,10 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0018: SSH Liveness, Reconnect, and Persistent Session Recovery](0018-ssh-liveness-reconnect-and-persistent-session-recovery.md)
 - [ADR 0019: Fingerprint-First SSH Authentication Ordering](0019-fingerprint-first-ssh-authentication-ordering.md)
 - [ADR 0020: Persistent Host-Key Trust](0020-persistent-host-key-trust.md)
+- [ADR 0021: `cargo-packager` and GitHub Releases for Distribution and Updates](0021-cargo-packager-github-releases-distribution.md)
 - [ADR 0022: Focused-Chip-First Single-Row Chrome Allocation](0022-focused-chip-first-single-row-chrome.md)
 - [ADR 0023: `serialport` Crate and Worker-Thread Model for the Serial Session Backend](0023-serialport-worker-thread-serial-backend.md)
 - [ADR 0024: Native Secret Store Extended to Stored Private Keys](0024-native-secret-store-stored-private-keys.md)
-
-## Proposed Decisions
-
-- [ADR 0021: `cargo-dist` and GitHub Releases for Build, Distribution, and Updates](0021-cargo-dist-github-releases-distribution.md)
 
 ## Status Values
 
