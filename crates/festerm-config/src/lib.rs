@@ -954,6 +954,7 @@ impl Profile {
             executable: executable.into(),
             arguments,
             working_directory,
+            persistence: None,
         });
         profile.validate()?;
         Ok(profile)
@@ -1016,7 +1017,7 @@ impl Profile {
         Ok(self)
     }
 
-    /// Configures an SSH profile's durable remote-session provider and name
+    /// Configures a saved local or SSH profile's durable-session provider and name
     /// (ADR 0018).
     ///
     /// This only changes which remote session a *future* connection for this
@@ -1027,12 +1028,11 @@ impl Profile {
         provider: PersistenceProviderKind,
         session_name: impl Into<String>,
     ) -> Result<Self, ConfigError> {
-        let Self::Ssh(profile) = &mut self else {
-            return Err(ConfigError::new(
-                ConfigErrorKind::PersistenceRequiresSshProfile,
-            ));
-        };
-        profile.persistence = Some(PersistenceConfiguration::new(provider, session_name));
+        let persistence = Some(PersistenceConfiguration::new(provider, session_name));
+        match &mut self {
+            Self::Local(profile) => profile.persistence = persistence,
+            Self::Ssh(profile) => profile.persistence = persistence,
+        }
         self.validate()?;
         Ok(self)
     }
@@ -1067,10 +1067,13 @@ impl Profile {
             .and_then(SshProfileConfiguration::credential_reference)
     }
 
-    /// Returns this SSH profile's durable remote-session provider and name,
+    /// Returns this profile's durable-session provider and name,
     /// if persistence is configured (ADR 0018).
     pub fn persistence(&self) -> Option<&PersistenceConfiguration> {
-        self.as_ssh().and_then(SshProfileConfiguration::persistence)
+        match self {
+            Self::Local(profile) => profile.persistence(),
+            Self::Ssh(profile) => profile.persistence(),
+        }
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -1141,6 +1144,8 @@ pub struct LocalProfileConfiguration {
     arguments: Vec<String>,
     #[serde(default)]
     working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    persistence: Option<PersistenceConfiguration>,
 }
 
 impl LocalProfileConfiguration {
@@ -1164,12 +1169,22 @@ impl LocalProfileConfiguration {
         self.working_directory.as_deref().map(Path::new)
     }
 
+    /// Returns the explicitly configured durable local-session provider/name.
+    pub fn persistence(&self) -> Option<&PersistenceConfiguration> {
+        self.persistence.as_ref()
+    }
+
     /// Converts safe launch metadata into the PTY backend's launch profile.
     ///
     /// This does not test whether the executable or working directory exists;
     /// those are runtime concerns of the platform session backend.
     pub fn to_local_profile(&self) -> LocalProfile {
-        let profile = LocalProfile::new(&self.executable).with_arguments(self.arguments.clone());
+        let profile = match &self.persistence {
+            Some(persistence) => persistence
+                .to_local_profile()
+                .expect("validated local persistence must remain valid"),
+            None => LocalProfile::new(&self.executable).with_arguments(self.arguments.clone()),
+        };
         match &self.working_directory {
             Some(working_directory) => profile.with_working_directory(working_directory),
             None => profile,
@@ -1197,6 +1212,9 @@ impl LocalProfileConfiguration {
                 || contains_secret_bearing_value(directory)
         }) {
             return Err(ConfigError::new(ConfigErrorKind::InvalidLocalProfile));
+        }
+        if let Some(persistence) = &self.persistence {
+            persistence.to_local_profile()?;
         }
         Ok(())
     }
@@ -1394,6 +1412,25 @@ impl PersistenceConfiguration {
             provider: self.provider.to_backend(),
             session_name,
         })
+    }
+
+    /// Builds the direct local provider command for an explicitly persistent
+    /// saved local profile. The built-in Local Shell never calls this path.
+    pub fn to_local_profile(&self) -> Result<LocalProfile, ConfigError> {
+        let session_name = PersistentSessionName::new(self.session_name.clone())
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPersistenceConfiguration))?;
+        let profile = match self.provider {
+            PersistenceProviderKind::Tmux => LocalProfile::new("tmux").with_arguments([
+                "new-session",
+                "-A",
+                "-s",
+                session_name.as_str(),
+            ]),
+            PersistenceProviderKind::Screen => {
+                LocalProfile::new("screen").with_arguments(["-xRR", session_name.as_str()])
+            }
+        };
+        Ok(profile)
     }
 }
 
@@ -1613,7 +1650,6 @@ pub enum ConfigErrorKind {
     InvalidLocalProfile,
     InvalidSshProfile,
     InvalidPersistenceConfiguration,
-    PersistenceRequiresSshProfile,
     InvalidCredentialReference,
     CredentialReferenceRequiresSshProfile,
     WorkspacePresentWhenDisabled,
@@ -1690,9 +1726,6 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::InvalidPersistenceConfiguration => formatter.write_str(
                 "a persistent session name may only contain ASCII letters, digits, '-', '_', or '.', and must be 1-64 bytes",
-            ),
-            ConfigErrorKind::PersistenceRequiresSshProfile => formatter.write_str(
-                "a durable-session provider and name may be configured only on SSH profiles",
             ),
             ConfigErrorKind::InvalidCredentialReference => formatter.write_str(
                 "SSH credential_id must be a canonical opaque UUID-v4 reference",
@@ -3171,18 +3204,24 @@ credential_id = "{CREDENTIAL_REFERENCE}"
     fn saves_and_loads_a_durable_session_configuration() {
         let directory = TestDirectory::new();
         let path = directory.path().join("profiles.toml");
-        let configuration = Configuration::new(vec![Profile::ssh(
-            "remote",
-            "example.test",
-            22,
-            "alice",
-            "xterm-256color",
-            80,
-            24,
-        )
-        .unwrap()
-        .with_persistence(PersistenceProviderKind::Tmux, "build")
-        .unwrap()])
+        let configuration = Configuration::new(vec![
+            Profile::ssh(
+                "remote",
+                "example.test",
+                22,
+                "alice",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::Tmux, "build")
+            .unwrap(),
+            Profile::local("local-build", "/bin/sh", vec!["-l".to_owned()], None)
+                .unwrap()
+                .with_persistence(PersistenceProviderKind::Screen, "editor")
+                .unwrap(),
+        ])
         .unwrap();
 
         configuration.save_to_path(&path).unwrap();
@@ -3194,6 +3233,12 @@ credential_id = "{CREDENTIAL_REFERENCE}"
         let persistence = loaded.profiles()[0].persistence().unwrap();
         assert_eq!(persistence.provider(), PersistenceProviderKind::Tmux);
         assert_eq!(persistence.session_name(), "build");
+        let local_persistence = loaded.profiles()[1].persistence().unwrap();
+        assert_eq!(
+            local_persistence.provider(),
+            PersistenceProviderKind::Screen
+        );
+        assert_eq!(local_persistence.session_name(), "editor");
         assert_eq!(loaded, configuration);
     }
 
@@ -3263,13 +3308,27 @@ credential_id = "{CREDENTIAL_REFERENCE}"
     }
 
     #[test]
-    fn with_persistence_requires_an_ssh_profile() {
-        let error = Profile::local("local", "/bin/sh", Vec::new(), None)
+    fn saved_local_profile_can_explicitly_use_named_tmux_persistence() {
+        let profile = Profile::local("local", "/bin/sh", vec!["-l".to_owned()], None)
             .unwrap()
             .with_persistence(PersistenceProviderKind::Tmux, "build")
-            .unwrap_err();
+            .unwrap();
+        let local = profile.as_local().unwrap();
 
-        assert_eq!(error.kind(), ConfigErrorKind::PersistenceRequiresSshProfile);
+        assert_eq!(
+            local.persistence().unwrap().provider(),
+            PersistenceProviderKind::Tmux
+        );
+        let launch = local.to_local_profile();
+        assert_eq!(launch.executable(), Path::new("tmux"));
+        assert_eq!(
+            launch
+                .arguments()
+                .iter()
+                .map(|argument| argument.to_str())
+                .collect::<Vec<_>>(),
+            vec![Some("new-session"), Some("-A"), Some("-s"), Some("build")]
+        );
     }
 
     #[test]
@@ -3460,7 +3519,10 @@ schema_version = 99
         assert!(cleared.workspace().is_none());
         // Turning off workspace persistence must not also discard unrelated
         // settings/profile state.
-        assert_eq!(cleared.interface_settings(), configuration.interface_settings());
+        assert_eq!(
+            cleared.interface_settings(),
+            configuration.interface_settings()
+        );
     }
 
     struct TestDirectory {

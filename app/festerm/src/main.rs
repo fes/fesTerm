@@ -12,6 +12,12 @@ use app::FesTermApp;
 use configuration_startup::load as load_startup_configuration;
 
 const APPLICATION_TITLE: &str = "fesTerm";
+const APPLICATION_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/app-icon-256.png");
+
+pub(crate) fn application_icon_data() -> eframe::egui::IconData {
+    eframe::icon_data::from_png_bytes(APPLICATION_ICON_PNG)
+        .expect("the committed fesTerm application icon must be a valid PNG")
+}
 
 fn main() -> eframe::Result<()> {
     diagnostics::init();
@@ -43,6 +49,7 @@ fn main() -> eframe::Result<()> {
         .with_title_shown(!cfg!(target_os = "macos"))
         .with_titlebar_shown(!cfg!(target_os = "macos"))
         .with_title(APPLICATION_TITLE)
+        .with_icon(application_icon_data())
         .with_inner_size([default_width, default_height])
         .with_min_inner_size([360.0, 240.0]);
     let options = eframe::NativeOptions {
@@ -62,4 +69,18 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn native_window_uses_the_committed_festerm_application_icon() {
+        let icon = super::application_icon_data();
+        assert_eq!((icon.width, icon.height), (256, 256));
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+        assert!(
+            icon.rgba.chunks_exact(4).any(|pixel| pixel[2] > pixel[0]),
+            "the branded icon must retain its cyan prompt treatment"
+        );
+    }
 }

@@ -7,7 +7,10 @@
 //! the single command-handling path.
 
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
-use festerm_config::{CredentialKind, PersistenceConfiguration, Profile, SshProfileConfiguration};
+use festerm_config::{
+    CredentialKind, PersistenceConfiguration, PersistenceProviderKind, Profile,
+    SshProfileConfiguration,
+};
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
     HostIdentity, ReconnectPolicy, RecoveryPolicy, SessionStrategy, SshAuthentication,
@@ -224,6 +227,66 @@ enum SshAuthenticationMethod {
     PrivateKey,
 }
 
+#[derive(Clone)]
+struct DurableSessionDraft {
+    enabled: bool,
+    provider: PersistenceProviderKind,
+    session_name: String,
+    automatic_recovery: bool,
+}
+
+impl Default for DurableSessionDraft {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: PersistenceProviderKind::Tmux,
+            session_name: "main".to_owned(),
+            automatic_recovery: false,
+        }
+    }
+}
+
+impl DurableSessionDraft {
+    fn from_persistence(persistence: Option<&PersistenceConfiguration>) -> Self {
+        match persistence {
+            Some(persistence) => Self {
+                enabled: true,
+                provider: persistence.provider(),
+                session_name: persistence.session_name().to_owned(),
+                automatic_recovery: false,
+            },
+            None => Self::default(),
+        }
+    }
+
+    fn persistence(&self) -> Result<Option<PersistenceConfiguration>, String> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let persistence = PersistenceConfiguration::new(self.provider, self.session_name.trim());
+        persistence
+            .to_session_strategy()
+            .map_err(|error| error.to_string())?;
+        Ok(Some(persistence))
+    }
+
+    fn session_options(&self) -> Result<SshSessionOptions, String> {
+        let strategy = self
+            .persistence()?
+            .as_ref()
+            .map(PersistenceConfiguration::to_session_strategy)
+            .transpose()
+            .map_err(|error| error.to_string())?
+            .unwrap_or(SessionStrategy::PlainShell);
+        if self.enabled && self.automatic_recovery {
+            let recovery = RecoveryPolicy::Automatic(ReconnectPolicy::default_automatic());
+            return SshSessionOptions::with_recovery_policy(strategy, recovery)
+                .map_err(|error| error.to_string());
+        }
+        Ok(SshSessionOptions::manual_recovery(strategy))
+    }
+}
+
 /// Per-launcher, transient SSH authentication form state.
 ///
 /// This belongs only to egui's temporary per-tab data. In particular, it is
@@ -251,17 +314,7 @@ struct SshLauncherForm {
     key_passphrase: String,
     saved_profile_id: Option<String>,
     saved_profile_has_credential: bool,
-    /// The saved profile's durable remote-session provider and name, if any
-    /// (ADR 0018). `None` means this session is an ordinary plain shell.
-    persistence: Option<PersistenceConfiguration>,
-    /// Whether this launch should opt into automatic recovery. Only
-    /// meaningful (and only shown in the form) when `persistence` is set:
-    /// automatic recovery is never valid for a plain shell, and is never on
-    /// merely because a durable-session provider is configured (ADR 0018
-    /// requires an explicit, separate opt-in from persistence itself). This
-    /// always starts `false`, so each launch re-opts in rather than
-    /// remembering a prior choice.
-    automatic_recovery: bool,
+    durable_session: DurableSessionDraft,
     remember_password: bool,
     feedback: Option<String>,
     /// Set whenever the form is (re)opened so the Username field can claim
@@ -286,8 +339,7 @@ impl Default for SshLauncherForm {
             key_passphrase: String::new(),
             saved_profile_id: None,
             saved_profile_has_credential: false,
-            persistence: None,
-            automatic_recovery: false,
+            durable_session: DurableSessionDraft::default(),
             remember_password: false,
             feedback: None,
             focus_username: false,
@@ -302,32 +354,16 @@ impl SshLauncherForm {
     /// recovery is not valid for them (ADR 0018); every reconnect is the
     /// user-initiated action available from the session Inspector once
     /// connected. A persistent session only gets automatic recovery when
-    /// `self.automatic_recovery` is explicitly set, which
-    /// `with_recovery_policy` can never reject for a persistent strategy,
-    /// so this falls back to manual recovery only if that invariant is
-    /// somehow violated.
-    fn session_options(&self) -> SshSessionOptions {
-        let strategy = self
-            .persistence
-            .as_ref()
-            .and_then(|persistence| persistence.to_session_strategy().ok())
-            .unwrap_or(SessionStrategy::PlainShell);
-        if self.automatic_recovery {
-            let recovery = RecoveryPolicy::Automatic(ReconnectPolicy::default_automatic());
-            if let Ok(options) = SshSessionOptions::with_recovery_policy(strategy.clone(), recovery)
-            {
-                return options;
-            }
-        }
-        SshSessionOptions::manual_recovery(strategy)
+    /// `self.durable_session.automatic_recovery` is explicitly set.
+    fn session_options(&self) -> Result<SshSessionOptions, String> {
+        self.durable_session.session_options()
     }
 
     fn prefill_from_profile(&mut self, profile: &SshProfileConfiguration) {
         self.host = profile.host().to_owned();
         self.port = profile.port().to_string();
         self.username = profile.username().to_owned();
-        self.persistence = profile.persistence().cloned();
-        self.automatic_recovery = false;
+        self.durable_session = DurableSessionDraft::from_persistence(profile.persistence());
         self.advanced_open = true;
     }
 
@@ -363,6 +399,7 @@ impl SshLauncherForm {
             initial_size,
         )
         .map_err(|error| error.to_string())?;
+        let options = self.session_options()?;
 
         match self.authentication_method {
             SshAuthenticationMethod::Password
@@ -376,25 +413,25 @@ impl SshLauncherForm {
                         .clone()
                         .expect("saved profile was checked above"),
                     password: PasswordToStore::new(password),
-                    options: self.session_options(),
+                    options,
                 })
             }
             SshAuthenticationMethod::Password if password.is_empty() => {
                 Ok(AppCommand::StartSshSession {
                     profile,
                     authentication: SshAuthentication::interactive(),
-                    options: self.session_options(),
+                    options,
                 })
             }
             SshAuthenticationMethod::Password => Ok(AppCommand::StartSshSession {
                 profile,
                 authentication: SshAuthentication::password(password),
-                options: self.session_options(),
+                options,
             }),
             SshAuthenticationMethod::PrivateKey => Ok(AppCommand::StartSshSession {
                 profile,
                 authentication: Self::parse_private_key(private_key, key_passphrase)?,
-                options: self.session_options(),
+                options,
             }),
         }
     }
@@ -522,6 +559,48 @@ fn launcher_state_id(tab_id: TabId) -> egui::Id {
 
 fn ssh_field_id(ui: &Ui, tab_id: TabId, field: &'static str) -> egui::Id {
     ui.make_persistent_id(("launcher_ssh", tab_id, field))
+}
+
+const CONTENT_SCROLLBAR_LANE: f32 = 26.0;
+
+fn content_viewport_bottom(ui: &Ui) -> f32 {
+    let mut bottom = ui.ctx().content_rect().bottom();
+    if let Some(status_bar) =
+        egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("status_bar"))
+    {
+        bottom = bottom.min(status_bar.outer_rect.top());
+    }
+    bottom
+}
+
+fn configure_content_scrollbar(ui: &mut Ui) {
+    let mut scroll_style = egui::style::ScrollStyle::floating();
+    scroll_style.active_handle_opacity = 0.0;
+    scroll_style.active_background_opacity = 0.0;
+    ui.spacing_mut().scroll = scroll_style;
+}
+
+fn show_bounded_content_scroll<R>(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    body: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let top = ui.cursor().top();
+    let height = (content_viewport_bottom(ui) - top).max(0.0);
+    let scroll_rect =
+        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+        configure_content_scrollbar(ui);
+        ScrollArea::vertical()
+            .id_salt(id)
+            .max_height(height)
+            .show(ui, |ui| {
+                ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
+                body(ui)
+            })
+            .inner
+    })
+    .inner
 }
 
 fn ssh_form_has_focus(ui: &Ui, tab_id: TabId) -> bool {
@@ -656,6 +735,14 @@ fn show_ssh_quick_connect(
         })
         .inner;
     ui.add_space(8.0);
+    show_durable_session_controls(
+        ui,
+        tab_id,
+        &mut form.durable_session,
+        DurableSessionTarget::Remote,
+        true,
+    );
+    ui.add_space(8.0);
     if ui.button("Connect").clicked() || submit_with_enter {
         match form.submit_quick_connect() {
             Ok(command) => {
@@ -679,6 +766,84 @@ fn show_ssh_quick_connect(
         form.open_advanced_settings();
     }
     result
+}
+
+#[derive(Clone, Copy)]
+enum DurableSessionTarget {
+    Local,
+    Remote,
+}
+
+fn show_durable_session_controls(
+    ui: &mut Ui,
+    tab_id: TabId,
+    draft: &mut DurableSessionDraft,
+    target: DurableSessionTarget,
+    show_automatic_recovery: bool,
+) {
+    let (heading, toggle_label, description) = match target {
+        DurableSessionTarget::Local => (
+            "Durable local session",
+            "Use a durable local session",
+            "Attach to the named local tmux or screen session, creating it when needed.",
+        ),
+        DurableSessionTarget::Remote => (
+            "Durable remote session",
+            "Use a durable remote session",
+            "Attach to the named remote tmux or screen session, creating it when needed.",
+        ),
+    };
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(heading).color(theme::TEXT_PRIMARY));
+        if toggle_switch(ui, draft.enabled, toggle_label).clicked() {
+            draft.enabled = !draft.enabled;
+        }
+    });
+    ssh_paragraph(ui, description);
+    if !draft.enabled {
+        return;
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut draft.provider, PersistenceProviderKind::Tmux, "tmux");
+        ui.radio_value(
+            &mut draft.provider,
+            PersistenceProviderKind::Screen,
+            "GNU screen",
+        );
+    });
+    ssh_text_edit(
+        ui,
+        tab_id,
+        "durable_session_name",
+        "Session name",
+        &mut draft.session_name,
+        false,
+        false,
+    );
+    ssh_paragraph(
+        ui,
+        "Use only letters, digits, hyphens, underscores, or periods.",
+    );
+
+    if show_automatic_recovery {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Recover after connection loss").color(theme::TEXT_PRIMARY),
+            );
+            if toggle_switch(
+                ui,
+                draft.automatic_recovery,
+                "Automatically resume after connection loss",
+            )
+            .clicked()
+            {
+                draft.automatic_recovery = !draft.automatic_recovery;
+            }
+        });
+    }
 }
 
 fn show_ssh_form(
@@ -724,22 +889,15 @@ fn show_ssh_form(
             ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false, false);
             ssh_text_edit(ui, tab_id, "port", "Port", &mut form.port, false, false);
 
-            if let Some(persistence) = form.persistence.clone() {
-                ui.add_space(10.0);
-                ssh_section_heading(ui, "Durable session");
-                ssh_paragraph(
-                    ui,
-                    &format!(
-                        "This profile attaches to or creates a {} session named \"{}\".",
-                        persistence.provider().label(),
-                        persistence.session_name()
-                    ),
-                );
-                ui.checkbox(
-                    &mut form.automatic_recovery,
-                    "Automatically resume this session after a lost connection",
-                );
-            }
+            ui.add_space(10.0);
+            ssh_section_heading(ui, "Durable session");
+            show_durable_session_controls(
+                ui,
+                tab_id,
+                &mut form.durable_session,
+                DurableSessionTarget::Remote,
+                true,
+            );
 
             ui.add_space(10.0);
             ssh_section_heading(ui, "Authentication");
@@ -920,28 +1078,31 @@ pub fn show_launcher(
     if state.ssh_open {
         let mut command = None;
         let mut back_clicked = false;
-        ui.vertical(|ui| {
-            ui.add_space(24.0);
-            ui.horizontal(|ui| {
-                ui.add_space(34.0);
-                ui.vertical(|ui| {
-                    if ssh_back_button(ui).clicked() {
-                        back_clicked = true;
-                    }
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("Connect with SSH")
-                            .size(24.0)
-                            .color(theme::TEXT_PRIMARY),
-                    );
-                    ui.label(
-                        egui::RichText::new("Enter connection details.")
-                            .size(11.0)
-                            .color(theme::TEXT_SECONDARY),
-                    );
-                    if !back_clicked {
-                        command = show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available);
-                    }
+        show_bounded_content_scroll(ui, (tab_id, "ssh_connection_surface"), |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(34.0);
+                    ui.vertical(|ui| {
+                        if ssh_back_button(ui).clicked() {
+                            back_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("Connect with SSH")
+                                .size(24.0)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new("Enter connection details.")
+                                .size(11.0)
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        if !back_clicked {
+                            command =
+                                show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available);
+                        }
+                    });
                 });
             });
         });
@@ -1010,9 +1171,11 @@ pub fn show_launcher(
             egui::vec2(ui.available_width(), available_height),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+            configure_content_scrollbar(ui);
             egui::ScrollArea::vertical()
                 .max_height(available_height)
                 .show(ui, |ui| {
+                    ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
                     ui.horizontal(|ui| {
                         ui.add_space(26.0);
                         ui.vertical(|ui| {
@@ -1348,8 +1511,7 @@ pub fn show_settings(
                     // frame itself. That way the (invisible until needed)
                     // scroll bar never has to sit on top of the cards' own
                     // right edge.
-                    let right_inset = 26.0;
-                    ui.set_max_width((ui.available_width() - right_inset).max(0.0));
+                    ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
                     ui.vertical(|ui| {
                         ui.add_space(24.0);
                         ui.heading("Settings");
@@ -1629,6 +1791,7 @@ struct LocalProfileDraft {
     executable: String,
     arguments: String,
     working_directory: String,
+    durable_session: DurableSessionDraft,
     error: Option<String>,
 }
 
@@ -1645,6 +1808,7 @@ impl Default for LocalProfileDraft {
                 .unwrap_or_default(),
             arguments: String::new(),
             working_directory: String::new(),
+            durable_session: DurableSessionDraft::default(),
             error: None,
         }
     }
@@ -1661,11 +1825,12 @@ impl LocalProfileDraft {
                 .working_directory()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
+            durable_session: DurableSessionDraft::from_persistence(local.persistence()),
             error: None,
         }
     }
 
-    fn build(&self) -> Result<Profile, festerm_config::ConfigError> {
+    fn build(&self) -> Result<Profile, String> {
         let arguments = self
             .arguments
             .split_whitespace()
@@ -1673,12 +1838,19 @@ impl LocalProfileDraft {
             .collect();
         let working_directory = (!self.working_directory.trim().is_empty())
             .then(|| self.working_directory.trim().to_owned());
-        Profile::local(
+        let profile = Profile::local(
             self.name.trim(),
             self.executable.trim(),
             arguments,
             working_directory,
         )
+        .map_err(|error| error.to_string())?;
+        match self.durable_session.persistence()? {
+            Some(persistence) => profile
+                .with_persistence(persistence.provider(), persistence.session_name())
+                .map_err(|error| error.to_string()),
+            None => Ok(profile),
+        }
     }
 }
 
@@ -1713,6 +1885,7 @@ struct SshProfileDraft {
     /// Which kind of credential is actually stored for this profile.
     /// Meaningless unless `has_stored_credential` is true.
     stored_credential_kind: CredentialKind,
+    durable_session: DurableSessionDraft,
     error: Option<String>,
 }
 
@@ -1733,6 +1906,7 @@ impl Default for SshProfileDraft {
             key_passphrase: String::new(),
             has_stored_credential: false,
             stored_credential_kind: CredentialKind::Password,
+            durable_session: DurableSessionDraft::default(),
             error: None,
         }
     }
@@ -1756,13 +1930,18 @@ impl SshProfileDraft {
             key_passphrase: String::new(),
             has_stored_credential: ssh.credential_reference().is_some(),
             stored_credential_kind,
+            durable_session: DurableSessionDraft::from_persistence(ssh.persistence()),
             error: None,
         }
     }
 
-    fn build(&self) -> Result<Profile, ()> {
-        let port: u16 = self.port.trim().parse().map_err(|_| ())?;
-        Profile::ssh(
+    fn build(&self, existing_profile: Option<&SshProfileConfiguration>) -> Result<Profile, String> {
+        let port: u16 = self
+            .port
+            .trim()
+            .parse()
+            .map_err(|_| "SSH port must be a number between 1 and 65535".to_owned())?;
+        let profile = Profile::ssh(
             self.name.trim(),
             self.host.trim(),
             port,
@@ -1771,7 +1950,24 @@ impl SshProfileDraft {
             80,
             24,
         )
-        .map_err(|_| ())
+        .map_err(|error| error.to_string())?;
+        let profile = match self.durable_session.persistence()? {
+            Some(persistence) => profile
+                .with_persistence(persistence.provider(), persistence.session_name())
+                .map_err(|error| error.to_string()),
+            None => Ok(profile),
+        }?;
+        if let Some(existing_profile) = existing_profile {
+            if let Some(reference) = existing_profile.credential_reference() {
+                return profile
+                    .with_credential_reference_kind(
+                        reference.duplicate_for_transport(),
+                        existing_profile.credential_kind(),
+                    )
+                    .map_err(|error| error.to_string());
+            }
+        }
+        Ok(profile)
     }
 }
 
@@ -2057,20 +2253,21 @@ pub fn show_profiles(
             });
         }
         ProfilesScreenMode::EditLocal(draft) => {
-            ui.vertical(|ui| {
-                ui.add_space(24.0);
-                ui.heading(if draft.original_id.is_some() {
-                    "Edit Local Profile"
-                } else {
-                    "New Local Profile"
-                });
-                ui.add_space(16.0);
-                egui::Frame::new()
-                    .fill(theme::SURFACE_TAB_INACTIVE)
-                    .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .corner_radius(8.0)
-                    .inner_margin(egui::Margin::same(16))
-                    .show(ui, |ui| {
+            show_bounded_content_scroll(ui, (tab_id, "edit_local_profile_scroll"), |ui| {
+                ui.vertical(|ui| {
+                    ui.add_space(24.0);
+                    ui.heading(if draft.original_id.is_some() {
+                        "Edit Local Profile"
+                    } else {
+                        "New Local Profile"
+                    });
+                    ui.add_space(16.0);
+                    egui::Frame::new()
+                        .fill(theme::SURFACE_TAB_INACTIVE)
+                        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::same(16))
+                        .show(ui, |ui| {
                         ui.set_width(340.0);
                         ssh_section_heading(ui, "Profile");
                         profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name);
@@ -2092,6 +2289,19 @@ pub fn show_profiles(
                             "working_directory",
                             "Working directory (optional)",
                             &mut draft.working_directory,
+                        );
+                        ui.add_space(10.0);
+                        ssh_section_heading(ui, "Durable session");
+                        show_durable_session_controls(
+                            ui,
+                            tab_id,
+                            &mut draft.durable_session,
+                            DurableSessionTarget::Local,
+                            false,
+                        );
+                        ssh_paragraph(
+                            ui,
+                            "Available only on saved Local profiles. The built-in Local Shell always starts a fresh plain shell.",
                         );
                         if let Some(error) = &draft.error {
                             ui.add_space(6.0);
@@ -2116,7 +2326,8 @@ pub fn show_profiles(
                                 next_mode = Some(ProfilesScreenMode::List);
                             }
                         });
-                    });
+                        });
+                });
             });
         }
         ProfilesScreenMode::EditSsh(draft) => {
@@ -2190,10 +2401,14 @@ pub fn show_profiles(
                             egui::vec2(ui.available_width(), scroll_max_height),
                         );
                         ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+                            configure_content_scrollbar(ui);
                             ScrollArea::vertical()
                             .id_salt((tab_id, "edit_ssh_profile_scroll"))
                             .max_height(scroll_max_height)
                             .show(ui, |ui| {
+                                ui.set_max_width(
+                                    (ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0),
+                                );
                                 ssh_section_heading(ui, "Connection");
                                 profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name);
                                 profile_text_edit(
@@ -2205,6 +2420,15 @@ pub fn show_profiles(
                                 );
                                 profile_text_edit(ui, tab_id, "host", "Host", &mut draft.host);
                                 profile_text_edit(ui, tab_id, "port", "Port", &mut draft.port);
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Durable session");
+                                show_durable_session_controls(
+                                    ui,
+                                    tab_id,
+                                    &mut draft.durable_session,
+                                    DurableSessionTarget::Remote,
+                                    false,
+                                );
                                 if let Some(profile_id) = draft.original_id.clone() {
                                     ui.add_space(10.0);
                                     ssh_section_heading(ui, "Authentication");
@@ -2334,17 +2558,17 @@ pub fn show_profiles(
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
-                                match draft.build() {
+                                let existing_profile = draft
+                                    .original_id
+                                    .as_deref()
+                                    .and_then(|identifier| configuration.profile(identifier))
+                                    .and_then(Profile::as_ssh);
+                                match draft.build(existing_profile) {
                                     Ok(profile) => {
                                         command = Some(AppCommand::SaveProfile { profile });
                                         next_mode = Some(ProfilesScreenMode::List);
                                     }
-                                    Err(()) => {
-                                        draft.error = Some(
-                                            "Enter a valid name, host, numeric port, and username."
-                                                .to_owned(),
-                                        );
-                                    }
+                                    Err(error) => draft.error = Some(error),
                                 }
                             }
                             if ui.button("Cancel").clicked() {
@@ -2791,6 +3015,8 @@ mod tests {
 
         harness.get_by_label("user@host").type_text("fes@10.1.2.3");
         harness.run();
+        harness.get_by_label("Connect").scroll_to_me();
+        harness.run();
         harness.get_by_label("Connect").click();
         harness.run();
 
@@ -2834,6 +3060,65 @@ mod tests {
             panic!("a valid quick-connect destination must start an interactive SSH session");
         };
         assert_eq!(profile.identity().port(), 2222);
+    }
+
+    #[test]
+    fn quick_connect_can_attach_to_a_named_tmux_session() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host")
+            .click();
+        harness.run();
+
+        harness.get_by_label("Use a durable remote session").click();
+        harness.run();
+        assert!(harness.query_by_label("tmux").is_some());
+        assert!(harness.query_by_label("GNU screen").is_some());
+        assert!(harness.query_by_label("Session name").is_some());
+        assert!(harness
+            .query_by_label("Automatically resume after connection loss")
+            .is_some());
+
+        let mut form = SshLauncherForm {
+            quick_connect: "fes@10.1.2.3".to_owned(),
+            durable_session: DurableSessionDraft {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let AppCommand::StartSshSession { options, .. } = form
+            .submit_quick_connect()
+            .expect("Quick Connect must return an SSH command")
+        else {
+            unreachable!("the SSH launcher only returns SSH commands");
+        };
+        assert_eq!(
+            options.strategy(),
+            SessionStrategy::Persistent {
+                provider: festerm_ssh::PersistenceProvider::Tmux,
+                session_name: festerm_ssh::PersistentSessionName::new("main").unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn quick_connect_rejects_an_invalid_durable_session_name_before_launch() {
+        let mut form = SshLauncherForm {
+            quick_connect: "fes@10.1.2.3".to_owned(),
+            durable_session: DurableSessionDraft {
+                enabled: true,
+                session_name: "not valid".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            form.submit_quick_connect().unwrap_err(),
+            "a persistent session name may only contain ASCII letters, digits, '-', '_', or '.', and must be 1-64 bytes"
+        );
     }
 
     #[test]
@@ -3409,13 +3694,13 @@ mod tests {
         form.prefill_saved_profile(profile.as_ssh().unwrap());
 
         assert_eq!(
-            form.session_options().strategy(),
+            form.session_options().unwrap().strategy(),
             SessionStrategy::Persistent {
                 provider: festerm_ssh::PersistenceProvider::Tmux,
                 session_name: festerm_ssh::PersistentSessionName::new("build").unwrap(),
             }
         );
-        assert_eq!(form.session_options().reconnect_policy(), None);
+        assert_eq!(form.session_options().unwrap().reconnect_policy(), None);
     }
 
     #[test]
@@ -3437,7 +3722,7 @@ mod tests {
         form.prefill_saved_profile(profile.as_ssh().unwrap());
 
         assert!(
-            !form.automatic_recovery,
+            !form.durable_session.automatic_recovery,
             "ADR 0018 requires automatic recovery to be an explicit, separate opt-in"
         );
     }
@@ -3459,9 +3744,9 @@ mod tests {
 
         let mut form = SshLauncherForm::default();
         form.prefill_saved_profile(profile.as_ssh().unwrap());
-        form.automatic_recovery = true;
+        form.durable_session.automatic_recovery = true;
 
-        assert!(form.session_options().reconnect_policy().is_some());
+        assert!(form.session_options().unwrap().reconnect_policy().is_some());
     }
 
     #[test]
@@ -3469,15 +3754,18 @@ mod tests {
         let form = SshLauncherForm {
             host: "example.invalid".to_owned(),
             username: "test-user".to_owned(),
-            automatic_recovery: true,
+            durable_session: DurableSessionDraft {
+                automatic_recovery: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
         assert_eq!(
-            form.session_options().strategy(),
+            form.session_options().unwrap().strategy(),
             SessionStrategy::PlainShell
         );
-        assert_eq!(form.session_options().reconnect_policy(), None);
+        assert_eq!(form.session_options().unwrap().reconnect_policy(), None);
     }
 
     #[test]
@@ -3497,7 +3785,7 @@ mod tests {
         form.prefill_saved_profile(profile.as_ssh().unwrap());
 
         assert_eq!(
-            form.session_options().strategy(),
+            form.session_options().unwrap().strategy(),
             SessionStrategy::PlainShell
         );
     }
@@ -3821,6 +4109,36 @@ mod tests {
     }
 
     #[test]
+    fn saved_local_profile_can_opt_into_named_tmux_persistence() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text("durable-local");
+        harness.run();
+        harness.get_by_label("Use a durable local session").click();
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile {
+            profile: Profile::Local(local),
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("saving a durable local profile must return a SaveProfile command");
+        };
+        let persistence = local
+            .persistence()
+            .expect("saved local profile must retain explicit persistence");
+        assert_eq!(persistence.provider(), PersistenceProviderKind::Tmux);
+        assert_eq!(persistence.session_name(), "main");
+    }
+
+    #[test]
     fn profiles_new_local_profile_flow_reports_an_error_for_an_empty_name() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
@@ -4110,5 +4428,87 @@ mod tests {
             panic!("clicking Save private key must return a StoreProfilePrivateKey command");
         };
         assert_eq!(profile_id, "prod");
+    }
+
+    #[test]
+    fn ssh_profile_editor_saves_named_tmux_persistence() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New SSH Profile").click();
+        harness.run();
+        for (label, value) in [
+            ("Name", "build-host"),
+            ("Username", "builder"),
+            ("Host", "ssh.example.test"),
+        ] {
+            harness.get_by_label(label).click();
+            harness.run();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+        harness.get_by_label("Use a durable remote session").click();
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile { profile }) = harness.state().command.as_ref() else {
+            panic!("saving the SSH profile must return a SaveProfile command");
+        };
+        let persistence = profile
+            .persistence()
+            .expect("the profile must retain durable-session settings");
+        assert_eq!(persistence.provider(), PersistenceProviderKind::Tmux);
+        assert_eq!(persistence.session_name(), "main");
+    }
+
+    #[test]
+    fn editing_durable_session_settings_preserves_the_stored_credential_reference() {
+        let reference = festerm_secret_store::SecretReference::generate();
+        let expected_reference = reference.to_persisted_string();
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference_kind(reference, CredentialKind::PrivateKey)
+        .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        harness.get_by_label("Edit").click();
+        harness.run();
+        harness.get_by_label("Use a durable remote session").click();
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile { profile }) = harness.state().command.as_ref() else {
+            panic!("editing the SSH profile must return a SaveProfile command");
+        };
+        assert_eq!(
+            profile
+                .credential_reference()
+                .expect("the stored credential reference must survive the edit")
+                .to_persisted_string(),
+            expected_reference
+        );
+        assert_eq!(
+            profile
+                .as_ssh()
+                .expect("profile remains SSH")
+                .credential_kind(),
+            CredentialKind::PrivateKey
+        );
     }
 }

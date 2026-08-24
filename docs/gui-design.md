@@ -202,11 +202,18 @@ in [SSH session creation](#ssh-session-creation). Saved profiles, agents,
 key-file selection, and OpenSSH-config import controls appear only when their
 capabilities are implemented and available, never as disabled placeholders.
 
-Selecting SSH opens **Quick Connect** by default: a single `user@host[:port]`
-field and a Connect button, matching how most SSH clients' fast path works,
-with a "Show advanced settings" checkbox that reveals the full destination,
-persistence, and authentication-method form
+Selecting SSH opens **Quick Connect** by default: a `user@host[:port]` field
+and Connect button, plus an initially off **Durable remote session** control.
+Enabling it exposes the shared provider (`tmux` or GNU screen), validated
+session-name, and per-launch automatic-recovery controls, allowing an ad-hoc
+connection to attach to or create a durable session without first saving a
+profile. A "Show advanced settings" checkbox reveals the full destination and
+authentication-method form while reusing those same durable-session controls
 (`app/festerm/src/screens.rs`'s `show_ssh_quick_connect`/`show_ssh_form`).
+The Launcher list, SSH connection surface, and profile editor use the same
+surface-owned scrollbar behavior as Settings: content reserves a right-side
+lane, the bar does not overlap controls, and ordinary content hover does not
+reveal it.
 Submitting with no password (from either surface) starts the session
 immediately with no credential attached (`SshAuthentication::Interactive`)
 rather than collecting one blind beforehand, mirroring `ssh`'s own ordering:
@@ -430,8 +437,9 @@ keyboard movement/resizing, and accessibility work tracked in issue #29.
 
 ![About fesTerm dialog target](images/gui-mockups/about-festerm.png)
 
-**About fesTerm** is a compact native-style dialog containing the application
-mark, `fesTerm`, exact application version, the description “A compact local,
+**About fesTerm** is a compact native-style dialog containing the same branded
+fesTerm application icon used by the native window, dock, and task switcher,
+`fesTerm`, exact application version, the description “A compact local,
 SSH, and serial terminal.”, **Copy Version Information**, **Licenses**, a
 canonical project/source link once one is established, and Close. It does not
 include live session counts, decorative slogans, donation/promotional content,
@@ -1023,9 +1031,12 @@ identity. Renaming a running chip does not rename its profile; editing a
 profile does not mutate existing sessions. Launching uses a validated snapshot
 of the current definition.
 
-Local profiles initially contain name, executable, arguments, and initial
-directory. SSH profiles contain name, host, port, username, and an
-authentication preference. Serial profiles contain name, exact device
+Local profiles contain name, executable, arguments, initial directory, and an
+initially-off durable local-session option. Enabling it selects local
+`tmux`/GNU screen plus a validated session name; it affects only future
+launches of that saved profile. The built-in **Local Shell** has no persistence
+control and always starts a fresh plain shell. SSH profiles contain name, host,
+port, username, and an authentication preference. Serial profiles contain name, exact device
 identifier, baud rate, data bits, parity, stop bits, and flow control. Profiles
 never contain passwords, private-key contents, terminal output, scrollback, or
 diagnostics. Authentication may
@@ -1045,7 +1056,8 @@ overflow menu's "Open Profiles" button or the command palette's "Open
 Profiles" entry, mirroring Settings) lists every saved profile with its kind
 and a short description, plus "New Local Profile" and "New SSH Profile"
 buttons. Each row offers Edit, Duplicate, and Delete. Local editing currently
-covers name/executable/arguments/working directory; SSH editing currently
+covers name/executable/arguments/working directory and explicit local
+tmux/screen persistence; SSH editing currently
 covers name/host/port/username (agent, key-file, and stored-password
 authentication references remain scoped to the existing one-off SSH form and
 are not yet editable from a saved profile). A profile's name is also its

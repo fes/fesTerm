@@ -17,9 +17,9 @@ SVG_NS = "http://www.w3.org/2000/svg"
 ET.register_namespace("", SVG_NS)
 
 EXPECTED = {
-    "app-mark", "auth-required", "clear", "close", "command-palette",
+    "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
     "copy", "diagnostics", "disconnect", "error", "host-key-verification",
-    "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
+    "edit", "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
     "new-session", "overflow", "paste", "profile", "reconnect", "restore",
     "search", "secret-storage", "serial", "session-inspector", "settings", "ssh-remote",
     "theme-appearance", "typography-font", "warning", "workspace",

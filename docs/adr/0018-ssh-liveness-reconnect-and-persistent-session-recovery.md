@@ -269,7 +269,7 @@ providers demonstrate the need.
   not serialize live SSH transports or terminal process state.
 - Secret handling, host-key verification, and authentication policy remain
   governed by the existing SSH and native-secret-store boundaries.
-- A future persistence UI should explain the difference between **Reconnect**
+- The persistence UI and Inspector explain the difference between **Reconnect**
   (new transport/new plain shell) and **Resume** (new transport plus provider
   reattachment to durable remote state).
 
@@ -351,13 +351,15 @@ reconnect attempt (manual or automatic) naturally reattaches to the same
 durable remote session rather than creating a new one, with no separate
 recovery code path required.
 
-Not yet implemented: any `app/festerm` UI to configure a profile's
-persistence provider/session name, toggle "Enable persistent sessions", or
-distinguish "Reconnect" (new transport, new plain shell) from "Resume" (new
-transport, provider reattachment) in the session inspector's language. Until
-that UI exists, `SessionStrategy::Persistent` is only reachable
-programmatically; no user-facing profile can select it yet. This is tracked
-as the remaining scope of issue #49.
+`app/festerm` now exposes this strategy through one shared durable-session
+editor used by Quick Connect, Advanced Connect, and saved SSH profiles. Users
+can leave persistence off, or select `tmux`/GNU screen and a validated session
+name; each launch can separately opt into bounded automatic recovery. Saved
+profiles persist only provider/name, so automatic recovery remains a deliberate
+per-launch choice. The session Inspector uses **Resume** rather than
+**Reconnect** when the active SSH session has durable-provider metadata.
+Provider capability probing and controlled real-provider interoperability
+remain tracked by issue #49.
 
 `festerm-ssh` now implements the SSH-level liveness probe itself
 (`SshSession::try_check_liveness`, backed by an ordinary `keepalive`/`ping`

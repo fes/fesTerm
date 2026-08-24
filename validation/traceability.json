@@ -71,11 +71,16 @@
       "automated_tests": [
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
         "ssh_form_returns_a_typed_password_command_with_default_port",
-        "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell"
+        "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell",
+        "quick_connect_can_attach_to_a_named_tmux_session",
+        "quick_connect_rejects_an_invalid_durable_session_name_before_launch",
+        "ssh_profile_editor_saves_named_tmux_persistence",
+        "editing_durable_session_settings_preserves_the_stored_credential_reference"
       ],
       "manual_scenarios": [
         "AS-01",
-        "AS-02"
+        "AS-02",
+        "TI-08"
       ],
       "status": "partial",
       "prerequisites": []
@@ -642,12 +647,16 @@
         "profiles_list_shows_no_profiles_saved_yet_when_empty",
         "profiles_new_local_profile_flow_returns_a_save_profile_command",
         "profiles_new_local_profile_flow_reports_an_error_for_an_empty_name",
+        "saved_local_profile_can_opt_into_named_tmux_persistence",
+        "saved_local_profile_can_explicitly_use_named_tmux_persistence",
+        "local_children_identify_festerm_and_drop_an_inherited_terminal_session",
         "profiles_delete_flow_returns_a_delete_profile_command",
         "local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path",
         "ssh_profile_editor_offers_a_password_field_that_dispatches_store_profile_password"
       ],
       "manual_scenarios": [
-        "CP-05"
+        "CP-05",
+        "TI-09"
       ],
       "status": "automated",
       "prerequisites": []

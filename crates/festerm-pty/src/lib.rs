@@ -854,6 +854,13 @@ fn command_builder(profile: &LocalProfile) -> CommandBuilder {
     // M5's core implements the currently selected xterm-compatible subset.
     // This is an argv/environment assignment, never shell interpolation.
     command.env("TERM", "xterm-256color");
+    // A GUI-launched fesTerm can inherit another terminal's identity. On
+    // macOS, inheriting `TERM_PROGRAM=Apple_Terminal` makes Apple's zsh
+    // startup hooks load that terminal's saved shell-session transcript and
+    // print "Restored session" in an otherwise fresh fesTerm shell. Identify
+    // the actual terminal owner and clear the stale source-session ID.
+    command.env("TERM_PROGRAM", "fesTerm");
+    command.env_remove("TERM_SESSION_ID");
     command
 }
 
@@ -1116,6 +1123,15 @@ mod tests {
             profile.validate(),
             Err(LocalProfileError::InvalidWorkingDirectory(_))
         ));
+    }
+
+    #[test]
+    fn local_children_identify_festerm_and_drop_an_inherited_terminal_session() {
+        let command = command_builder(&LocalProfile::new("shell"));
+
+        assert_eq!(command.get_env("TERM"), Some(OsStr::new("xterm-256color")));
+        assert_eq!(command.get_env("TERM_PROGRAM"), Some(OsStr::new("fesTerm")));
+        assert_eq!(command.get_env("TERM_SESSION_ID"), None);
     }
 
     fn make_executable(path: &Path) {

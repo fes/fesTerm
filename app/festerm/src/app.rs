@@ -222,6 +222,7 @@ pub struct FesTermApp {
     wake_requested: Arc<AtomicBool>,
     focus_mode: bool,
     terminal_fonts_installed: bool,
+    about_icon: Option<egui::TextureHandle>,
 }
 
 #[cfg(target_os = "macos")]
@@ -247,6 +248,18 @@ impl PlatformWakeMonitor {
 
 fn native_secret_store() -> Result<Arc<dyn SecretStore>, SecretStoreError> {
     native_store().map(Arc::<dyn SecretStore>::from)
+}
+
+fn load_application_icon(context: &egui::Context) -> egui::TextureHandle {
+    let icon = crate::application_icon_data();
+    context.load_texture(
+        "fesTerm application icon",
+        egui::ColorImage::from_rgba_unmultiplied(
+            [icon.width as usize, icon.height as usize],
+            &icon.rgba,
+        ),
+        egui::TextureOptions::LINEAR,
+    )
 }
 
 fn secret_store_message(error: SecretStoreError) -> &'static str {
@@ -360,6 +373,7 @@ impl FesTermApp {
         // application chrome and violate the documented zoom boundary.
         context.options_mut(|options| options.zoom_with_keyboard = false);
         let native_smoke = NativeWindowSmoke::from_environment();
+        let about_icon = load_application_icon(context);
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
         });
@@ -394,6 +408,7 @@ impl FesTermApp {
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: true,
+            about_icon: Some(about_icon),
         }
     }
 
@@ -1890,24 +1905,13 @@ impl FesTermApp {
                 ui.heading("About fesTerm");
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                    let stroke = egui::Stroke::new(2.0, theme::ACCENT_PRIMARY);
-                    let map = |x: f32, y: f32| {
-                        egui::pos2(
-                            rect.left() + x / 24.0 * rect.width(),
-                            rect.top() + y / 24.0 * rect.height(),
-                        )
-                    };
-                    let painter = ui.painter();
-                    painter.line_segment([map(4.0, 18.0), map(4.0, 6.0)], stroke);
-                    painter.line_segment([map(4.0, 6.0), map(11.0, 6.0)], stroke);
-                    painter.line_segment([map(4.0, 11.0), map(9.0, 11.0)], stroke);
-                    painter.line(
-                        vec![map(13.0, 8.0), map(16.0, 11.0), map(13.0, 14.0)],
-                        stroke,
-                    );
-                    painter.line_segment([map(17.5, 16.0), map(21.0, 16.0)], stroke);
+                    if let Some(about_icon) = &self.about_icon {
+                        ui.add(
+                            egui::Image::new(about_icon)
+                                .fit_to_exact_size(egui::vec2(48.0, 48.0))
+                                .alt_text("fesTerm application icon"),
+                        );
+                    }
                     ui.vertical(|ui| {
                         ui.heading("fesTerm");
                         ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
@@ -2712,7 +2716,8 @@ impl FesTermApp {
                 }
                 AppCommand::ToggleRestoreWorkspace => {
                     let context = ui.ctx().clone();
-                    self.state.dispatch(AppCommand::ToggleRestoreWorkspace, &context);
+                    self.state
+                        .dispatch(AppCommand::ToggleRestoreWorkspace, &context);
                     self.persist_interface_settings();
                     // Turning the preference off scrubs any previously
                     // saved tab list from disk immediately, rather than
@@ -2808,6 +2813,7 @@ impl FesTermApp {
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: false,
+            about_icon: None,
         }
     }
 
@@ -3998,11 +4004,13 @@ mod tests {
         // workspace saved by an earlier run (or an older fesTerm build
         // that always persisted the tab list) must not silently resurface
         // just because the file still contains one.
-        let workspace = festerm_config::WorkspaceConfiguration::new(
-            vec![festerm_config::WorkspaceTab::settings("settings").expect("settings tab is valid")],
-            Some("settings".to_owned()),
-        )
-        .expect("workspace is valid");
+        let workspace =
+            festerm_config::WorkspaceConfiguration::new(
+                vec![festerm_config::WorkspaceTab::settings("settings")
+                    .expect("settings tab is valid")],
+                Some("settings".to_owned()),
+            )
+            .expect("workspace is valid");
         let configuration = Configuration::new_with_workspace(Vec::new(), workspace)
             .expect("configuration is valid");
         assert!(!configuration.interface_settings().restore_workspace());
@@ -4027,11 +4035,13 @@ mod tests {
         // preference must scrub the on-disk tab list immediately, not just
         // stop updating it - otherwise re-enabling the toggle later would
         // resurrect a stale, forgotten snapshot instead of starting clean.
-        let workspace = festerm_config::WorkspaceConfiguration::new(
-            vec![festerm_config::WorkspaceTab::launcher("launcher").expect("launcher tab is valid")],
-            None,
-        )
-        .expect("workspace is valid");
+        let workspace =
+            festerm_config::WorkspaceConfiguration::new(
+                vec![festerm_config::WorkspaceTab::launcher("launcher")
+                    .expect("launcher tab is valid")],
+                None,
+            )
+            .expect("workspace is valid");
         let configuration = Configuration::new_with_workspace(Vec::new(), workspace)
             .expect("configuration is valid")
             .with_interface_settings(InterfaceSettings::new(

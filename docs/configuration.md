@@ -64,6 +64,10 @@ initial_columns = 132
 initial_rows = 43
 credential_id = "550e8400-e29b-41d4-a716-446655440000"
 
+[profiles.persistence]
+provider = "tmux"
+session_name = "main"
+
 [workspace]
 focused_tab_id = "build-tab"
 
@@ -95,12 +99,22 @@ restore_workspace = false
 
 Local profiles pass `executable`, `arguments`, and the optional
 `working_directory` directly to `festerm_pty::LocalProfile`; they do not
-contain environment overrides. SSH profiles convert only host, port, username,
-terminal type, and initial dimensions to
-`festerm_ssh::SshConnectionProfile`.
+contain environment overrides. A saved Local profile may add the same optional
+`persistence` table shown above to select a local `tmux` or `screen` session.
+When present, the provider command replaces the profile executable for that
+launch (`tmux new-session -A -s <name>` or `screen -xRR <name>`); the working
+directory still applies. The built-in **Local Shell** is not a profile and
+never enables persistence.
+
+SSH profiles convert host, port, username, terminal type, and initial
+dimensions to `festerm_ssh::SshConnectionProfile`. Their optional
+`persistence` table selects the corresponding provider and validated remote
+session name. Omitting `persistence` on either profile kind preserves ordinary
+plain-shell behavior.
 
 SSH defaults are port `22`, terminal type `xterm-256color`, and an initial
-size of `80` columns by `24` rows.
+size of `80` columns by `24` rows. Persistent session names are 1-64 bytes and
+may contain only ASCII letters, digits, `-`, `_`, or `.`.
 
 ## Workspace metadata
 
