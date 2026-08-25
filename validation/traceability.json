@@ -220,7 +220,7 @@
         "docs/application-command-model.md#command-responsibilities"
       ],
       "decisions": [
-        "ADR-0024"
+        "ADR-0023"
       ],
       "automated_tests": [
         "serial_profile_defaults_round_trip_and_convert_to_line_settings",
