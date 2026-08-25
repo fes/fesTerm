@@ -10,3 +10,8 @@
 # checkout, on every platform, produces byte-identical content.
 assets/fonts/jetbrains-mono/*.txt text eol=lf
 assets/fonts/jetbrains-mono/*.ttf binary
+
+# Iosevka's pinned license and private build plan are checksummed too.
+assets/fonts/iosevka-term/*.md text eol=lf
+assets/fonts/iosevka-term/*.toml text eol=lf
+assets/fonts/iosevka-term/*.ttf binary

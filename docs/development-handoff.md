@@ -4,6 +4,11 @@ This is the operational entry point for a new developer or agent. Product
 decisions remain in the main design documents; see [`../AGENTS.md`](../AGENTS.md)
 for a compact document map.
 
+fesTerm's code, tests, documentation, and first-party assets are written
+entirely by GitHub Copilot under human guidance. The human project owner
+defines product direction, requirements, priorities, acceptance decisions,
+and release authorization.
+
 ## Current State
 
 Milestones 0 through 5 are implemented with native-window validation pending;

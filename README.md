@@ -3,6 +3,12 @@
 A cross-platform graphical terminal emulator and native SSH client, written in
 Rust.
 
+> [!NOTE]
+> **AI authorship:** fesTerm's code, tests, documentation, and first-party
+> assets were written entirely by GitHub Copilot under human guidance. The
+> human project owner defines the product direction, requirements, priorities,
+> acceptance decisions, and release authorization.
+
 ## Status
 
 Milestones 0 through 5, M7, and M8 are implemented. M6 remains the open

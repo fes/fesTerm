@@ -440,18 +440,21 @@ keyboard movement/resizing, and accessibility work tracked in issue #29.
 **About fesTerm** is a compact native-style dialog containing the same branded
 fesTerm application icon used by the native window, dock, and task switcher,
 `fesTerm`, exact application version, the description “A compact local,
-SSH, and serial terminal.”, **Copy Version Information**, **Licenses**, a
-canonical project/source link once one is established, and Close. It does not
-include live session counts, decorative slogans, donation/promotional content,
-or an update control without an implemented update capability.
+SSH, and serial terminal.”, the explicit disclosure “Entirely AI-written with
+human guidance.” plus concise GitHub Copilot/project-owner attribution,
+**Copy Version Information**, **Licenses**, the canonical project/source link,
+and Close. It does not include live session counts, decorative slogans,
+donation/promotional content, or an update control without an implemented
+update capability.
 
 Copy Version Information produces a bounded support-oriented summary: exact
 version, build/commit identifier when available, OS and architecture, and
-relevant renderer/backend versions. It excludes usernames, hostnames,
-filesystem paths, serial-device identifiers, environment values, settings,
-profiles, workspace names, terminal content, and session diagnostics. Licenses
-shows the repository license and bundled dependency/asset notices, including
-the exact Inter font license once the font is shipped.
+relevant renderer/backend versions, plus the same bounded authorship summary.
+It excludes usernames, hostnames, filesystem paths, serial-device identifiers,
+environment values, settings, profiles, workspace names, terminal content,
+and session diagnostics. Licenses shows the repository license and bundled
+dependency/asset notices, including the exact Inter font license once the font
+is shipped.
 
 **Check for Updates** is present only in packaged builds carrying the updater
 verification public key. It contacts the fixed public fesTerm GitHub Releases

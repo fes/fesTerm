@@ -39,6 +39,10 @@ use crate::tabs::{
 use crate::updates::{UpdateController, UpdateStatus};
 
 const APPLICATION_TITLE: &str = "fesTerm";
+const AI_AUTHORSHIP_SUMMARY: &str = "Entirely AI-written with human guidance.";
+const AI_AUTHORSHIP_DETAIL: &str =
+    "GitHub Copilot produced the code, tests, documentation, and first-party assets; \
+     the project owner directs and accepts the work.";
 const LARGE_PASTE_CHARACTER_THRESHOLD: usize = 4_096;
 const LARGE_PASTE_LINE_THRESHOLD: usize = 100;
 const PASTE_PREVIEW_CHARACTER_LIMIT: usize = 800;
@@ -2021,10 +2025,11 @@ impl FesTermApp {
 
     fn version_information() -> String {
         let mut information = format!(
-            "fesTerm {}\nOS: {}\nArchitecture: {}\nUI: egui/eframe 0.36",
+            "fesTerm {}\nOS: {}\nArchitecture: {}\nUI: egui/eframe 0.36\nAuthorship: {}",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
             std::env::consts::ARCH,
+            AI_AUTHORSHIP_SUMMARY,
         );
         if let Some(commit) = option_env!("FESTERM_BUILD_COMMIT") {
             information.push_str("\nBuild: ");
@@ -2077,6 +2082,12 @@ impl FesTermApp {
                 });
                 ui.add_space(6.0);
                 ui.label("A compact local, SSH, and serial terminal.");
+                ui.label(egui::RichText::new(AI_AUTHORSHIP_SUMMARY).strong());
+                ui.label(
+                    egui::RichText::new(AI_AUTHORSHIP_DETAIL)
+                        .small()
+                        .color(theme::TEXT_SECONDARY),
+                );
                 ui.hyperlink_to("github.com/fes/fesTerm", "https://github.com/fes/fesTerm");
                 ui.add_space(8.0);
                 ui.separator();
@@ -3851,6 +3862,8 @@ mod tests {
         let version_label = format!("Version {}", env!("CARGO_PKG_VERSION"));
         harness.get_by_label(&version_label);
         harness.get_by_label("A compact local, SSH, and serial terminal.");
+        harness.get_by_label(AI_AUTHORSHIP_SUMMARY);
+        harness.get_by_label(AI_AUTHORSHIP_DETAIL);
         harness.get_by_label("Copy Version Information");
         harness.get_by_label("Licenses");
         harness.state_mut().overlays.about_licenses_open = true;
@@ -3870,6 +3883,7 @@ mod tests {
         assert!(version.contains(env!("CARGO_PKG_VERSION")));
         assert!(version.contains(std::env::consts::OS));
         assert!(version.contains(std::env::consts::ARCH));
+        assert!(version.contains(AI_AUTHORSHIP_SUMMARY));
         assert!(!version.contains("HOME="));
     }
 
