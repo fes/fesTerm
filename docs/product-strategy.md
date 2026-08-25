@@ -64,11 +64,13 @@ product track is to validate M6 and advance the remaining M9 scope (selection
 and search position stability across reflow, eviction fallback, and
 disconnected read-only history; resize reflow of retained scrollback is
 implemented) while bringing implemented GUI interactions into conformance with
-the approved detailed contracts. M8's narrow profile/workspace and native
-SSH-password persistence scope is implemented; profile editing/import UI,
-persistent trust, and additional credential types remain future capabilities.
-Serial's product and UI contract is defined now, but its backend remains a
-later focused track.
+the approved detailed contracts. M8's profile/workspace foundation, Profiles
+CRUD, native password/private-key persistence, persistent host trust, and
+named durable-session strategies are implemented. OpenSSH-config import,
+SSH-agent adapters, key-file references, and keyboard-interactive/2FA remain
+future capabilities. Serial's product/UI contract and worker backend are
+implemented; representative Windows/macOS adapter and permission evidence
+remains.
 
 ## Preemptive Seams Worth Establishing
 
@@ -89,9 +91,8 @@ Lifetime and ownership rules are defined in
 [ADR 0014](adr/0014-window-workspace-tab-session-ownership.md). It fixes the
 Application -> Window -> Workspace view -> Tab -> Session -> transport-attempt
 model, preserves tab/session identity across reconnect, and keeps restoration
-metadata separate from live process, channel, and terminal state. Issue #20
-tracks the later persistence and restoration tests required to implement that
-model.
+metadata separate from live process, channel, and terminal state. The model and
+its persistence/restoration tests are implemented; issue #20 is closed.
 
 ### Semantic GUI theming
 
@@ -99,7 +100,7 @@ Application chrome should use semantic roles rather than scattered literal color
 
 The first implementation does not need a full theme editor, but launcher, tabs, sidebar, settings, focus, and connection states should be expressed through reusable semantic roles.
 
-Tracked by GitHub issue #18.
+Implemented through the semantic theme roles; issue #18 is closed.
 
 ### Performance measurement before optimization
 

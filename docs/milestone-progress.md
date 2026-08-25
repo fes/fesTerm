@@ -50,8 +50,11 @@ ConPTY resize-retention smoke, production native-window self-smoke, and
 independently driven OS-input smoke all passed. The same optional suite found
 every reviewed Windows renderer snapshot invalid after the blue-graphite theme
 change. Those replacement baselines were reviewed and accepted at `8a3d331`;
-P3 remains open only for Linux confirmation under
-[#7](https://github.com/fes/fesTerm/issues/7).
+Linux CI later passed the complete snapshot suite through Lavapipe at
+`b8a242a`, closing [#7](https://github.com/fes/fesTerm/issues/7).
+Fresh native-window confirmation for the current candidate remains part of
+[#50](https://github.com/fes/fesTerm/issues/50), not reopened P3
+implementation work.
 
 An available WSLg Wayland session reproduced the existing Linux P4 blocker at
 `8a3d331`: focus was achieved, but initial PTY output timed out under
@@ -70,10 +73,11 @@ Two narrow parallel tracks proceeded without changing that acceptance status:
 - M8 is implemented: its GUI vertical slice supplies independent local-session
   chips, Launcher and Settings surfaces, command routing, palette activation,
   custom title-bar chrome, connection overlays, and a configurable status bar.
-  Versioned TOML profiles, explicit transactional reload, metadata-only
-  workspace restoration, and opaque native SSH-password references now meet
-  its narrow persistence acceptance criteria. Profile editing/import UI,
-  persistent trust, and other credential types remain separate future work.
+  Versioned TOML profiles, autosaved interface/profile/workspace metadata,
+  metadata-only workspace restoration, Profiles CRUD, persistent host trust,
+  and opaque native SSH password/private-key references now meet and extend
+  its narrow persistence acceptance criteria. OpenSSH-config import and
+  SSH-agent adapters remain separate future work.
 - M7 selected `russh` with the portable `ring` backend and now provides a live
   SSH `Session`, strict host trust, password and in-memory OpenSSH key
   authentication, remote PTY/resize, bounded opt-in reconnect, and controlled
@@ -156,10 +160,12 @@ globally opt-in and content-free. Before handoff, publish to `origin/main` and
 refresh milestone/issue truth so parallel work does not become coordination
 drift.
 
-The next sequencing is therefore deliberate: close M6 evidence loops while
-stabilizing the GUI and continue advancing M9. Bounded history, viewport
-navigation, and retained-scrollback resize reflow (`docs/ui-test-plan.md`'s
-"M9 scrollback and reflow verification") are implemented; selection/search
-position stability across reflow, eviction fallback, and disconnected
-read-only history remain open under issue #43. Reserve packaging/terminfo plus
-broader refinement for M10.
+The next sequencing is therefore deliberate: refresh the exact M6 candidate
+and close its native evidence loops while finishing the remaining M9
+selection/configuration work. M10 packaging and updater infrastructure is now
+implemented rather than merely reserved: native manifests, platform signing,
+notarization, updater signatures, and the protected tag-driven GitHub release
+workflow landed in `89a59ae`. The first signed production release and
+end-to-end upgrade/failure evidence remain under
+[#62](https://github.com/fes/fesTerm/issues/62); fesTerm-owned terminfo remains
+under [#27](https://github.com/fes/fesTerm/issues/27).

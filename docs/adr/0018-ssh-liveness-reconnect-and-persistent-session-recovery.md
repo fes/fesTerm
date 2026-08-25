@@ -367,8 +367,8 @@ remain tracked by issue #49.
 `festerm-ssh` now implements the SSH-level liveness probe itself
 (`SshSession::try_check_liveness`, backed by an ordinary `keepalive`/`ping`
 global request via `russh`), on an automatic cadence
-(`LIVENESS_PROBE_INTERVAL`) plus an on-demand, nonblocking trigger point a
-future wake/network-change hook can call. A probe failure is routed through
+(`LIVENESS_PROBE_INTERVAL`) plus the on-demand, nonblocking trigger used by
+the implemented platform wake hooks. A probe failure is routed through
 the exact same `ConnectionFailure::Transport` path as any other unintentional
 transport loss, so it inherits the existing guarantee that a plain-shell
 session only moves to `Disconnected` and never auto-reconnects by itself.

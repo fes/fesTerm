@@ -5,7 +5,7 @@ in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
 to the Launcher. Workspace state (the open tab list, its order, and the active
-tab), the five Settings interface preferences (chip layout, status bar
+tab), the seven Settings interface preferences (chip layout, status bar
 visibility, session details in chips, live-session close confirmation, and
 workspace restoration), known-host trust decisions, and profile CRUD all save
 automatically the moment they change - there is no
@@ -110,9 +110,11 @@ Local profiles pass `executable`, `arguments`, and the optional
 contain environment overrides. A saved Local profile may add the same optional
 `persistence` table shown above to select a local `tmux` or `screen` session.
 When present, the provider command replaces the profile executable for that
-launch (`tmux new-session -A -s <name>` or `screen -xRR <name>`); the working
-directory still applies. The built-in **Local Shell** is not a profile and
-never enables persistence.
+launch. tmux attaches or creates the named session, hides its status bar, and
+uses the latest attached client for window sizing; GNU Screen starts with
+`-c /dev/null` so user screenrc captions/hardstatus do not wrap the shell. The
+working directory still applies. The built-in **Local Shell** is not a profile
+and never enables persistence.
 
 SSH profiles convert host, port, username, terminal type, and initial
 dimensions to `festerm_ssh::SshConnectionProfile`. Their optional

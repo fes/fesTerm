@@ -1,39 +1,30 @@
-# M10 distribution sketch: `cargo-packager` + GitHub Releases
+# M10 distribution implementation: `cargo-packager` + GitHub Releases
 
-Implements ADR-0021. This is a planning sketch, not yet wired in. Pin and
-revalidate the current `cargo-packager` and `cargo-packager-updater` releases
-when M10 implementation begins.
+Implements ADR-0021. The packaging, signing, updater, and release pipeline
+landed in `89a59ae`; this document records the implemented shape and remaining
+acceptance work. `cargo-packager` is pinned to 0.11.8 and
+`cargo-packager-updater` to 0.2.3.
 
 ## Prerequisites
 
-- [ ] Provision an updater signing keypair. Store the private key only in the
+- [x] Provision an updater signing keypair. Store the private key only in the
       release environment and compile the public key into fesTerm.
-- [ ] Choose Windows Authenticode signing (evaluate Azure Trusted Signing
-      first) and provision its GitHub Actions credentials.
-- [ ] Enroll in the Apple Developer Program; provision Developer ID and App
+- [x] Provision Microsoft Artifact Signing with GitHub OIDC and no Entra
+      client secret.
+- [x] Enroll in the Apple Developer Program; provision Developer ID and App
       Store Connect notarization credentials.
-- [ ] Confirm `vMAJOR.MINOR.PATCH` tags exactly match
+- [x] Enforce that `vMAJOR.MINOR.PATCH` tags exactly match
       `workspace.package.version`.
-- [ ] Decide whether macOS ships one universal bundle or separate Intel and
-      Apple Silicon bundles.
+- [x] Ship the initial macOS release as Apple Silicon (`aarch64`); Intel or
+      universal delivery remains an additive future decision.
 
 ## Repository-owned packaging configuration
 
-`cargo-packager` reads `Packager.toml`, `packager.json`, or
-`package.metadata.packager`. Keep common product metadata in a root
-`Packager.toml` and pass the native target and formats explicitly in each CI
-job. The initial shape is:
-
-```toml
-product-name = "fesTerm"
-identifier = "dev.festerm.app"
-before-packaging-command = "cargo build --release -p festerm"
-icons = ["assets/app-icon/app-icon-*.png"]
-
-# Final source/target paths are set during the packaging spike.
-# Windows includes the pinned ConPTY/OpenConsole sidecar as installer-owned
-# resources beside the executable.
-```
+Repository-owned manifests live in `packaging/macos.toml`,
+`packaging/windows.toml`, and `packaging/linux.toml`. Windows includes the
+hash-verified ConPTY/OpenConsole sidecar as installer-owned resources beside
+the executable. `scripts/check_packaging.py` validates manifests, workflow
+contracts, installation markers, update key wiring, and artifact formats.
 
 Expected native outputs:
 
@@ -48,7 +39,7 @@ its user, but fesTerm must not replace files installed by `apt`/`dpkg`.
 
 ## Release workflow shape
 
-The checked-in `.github/workflows/release.yml` should:
+The checked-in `.github/workflows/release.yml`:
 
 1. Trigger only for a version tag, plus an explicit dry-run dispatch.
 2. Verify that the tag and workspace version agree.
@@ -56,8 +47,8 @@ The checked-in `.github/workflows/release.yml` should:
 4. Build each target on its native GitHub runner.
 5. Package, platform-sign, and notarize as applicable.
 6. Generate updater signatures for eligible artifacts.
-7. Inspect package contents and exercise clean install/update/uninstall smoke
-   tests on native runners.
+7. Verifies package structure and native signatures; clean
+   install/update/uninstall evidence remains tracked by #62.
 8. Create the GitHub Release and upload immutable versioned artifacts.
 9. Generate and upload the static update JSON **last**.
 
@@ -132,11 +123,17 @@ present the appropriate manual/package-manager guidance.
 - Log actionable update failures without recording credentials or private
   release URLs.
 
-## Open questions before implementation
+## Remaining acceptance work
 
-1. Azure Trusted Signing versus another Authenticode provider.
-2. Universal versus separate-architecture macOS delivery.
-3. Whether AppImage or `.deb` is presented as the primary Linux download.
-4. Stable action-graph edges and UI placement for check, confirmation,
-   progress, failure, and restart states.
-5. Release ownership, cadence, and rollback procedure.
+1. Run the first protected production tag release and retain content-free
+   signing/notarization/publication evidence.
+2. Exercise clean install, update, restart, failure preservation, and uninstall
+   on each supported native target, including package-managed Debian behavior.
+3. Add a safe test endpoint/channel for upgrading an older signed build without
+   repointing production clients.
+4. Package and validate fesTerm-owned terminfo under
+   [#27](https://github.com/fes/fesTerm/issues/27).
+
+Items 1-3 are tracked by
+[#62](https://github.com/fes/fesTerm/issues/62). Distribution is implemented
+but is not accepted until that evidence exists.

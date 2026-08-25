@@ -35,9 +35,12 @@ Read `README.md`, then use the document that matches the task:
 - `crates/festerm-pty-test-child`: deterministic repository-owned child used
   by controlled PTY and smoke tests.
 - `crates/festerm-ssh`: in-process `russh` transport, trust decisions,
-  transient authentication, OpenSSH metadata import, and bounded reconnect.
+  transient/stored authentication, liveness probes, durable-session providers,
+  and bounded reconnect/recovery.
+- `crates/festerm-serial`: serial-port discovery/configuration and bounded
+  worker-thread transport.
 - `crates/festerm-config`: strict versioned TOML profiles and metadata-only
-  workspace persistence with explicit transactional reload.
+  workspace persistence with startup validation and transactional autosave.
 - `crates/festerm-macos-window`: cfg-gated macOS custom-window integration.
 - `crates/festerm-windows-job`: cfg-gated safe wrapper around the Windows Job
   Object required for whole-ConPTY-tree shutdown.

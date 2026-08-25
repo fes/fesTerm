@@ -1,120 +1,45 @@
 # fesTerm
 
-A scratch implementation of a multi-platform graphical terminal emulator and
-native SSH client, written in Rust.
+A cross-platform graphical terminal emulator and native SSH client, written in
+Rust.
 
 ## Status
 
-Milestones 1 through 5 are implemented with native-window validation pending;
-Milestone 6 compatibility work is in progress. The initial M8-scope GUI
-vertical slice is implemented as an explicit parallel track: independent
-session chips, Launcher and Settings surfaces, a session inspector, command
-palette, custom title bar, and configurable status bar. See the Milestone 8
-note in [`ROADMAP.md`](ROADMAP.md). A first GUI-independent M8 configuration
-foundation now parses and serializes strict, versioned, secret-free TOML local
-and SSH profile metadata transactionally. At startup the graphical app
-discovers a native per-user `config.toml` (or an explicit
-`FESTERM_CONFIG_PATH` override), injects the immutable configuration into the
-Launcher, and launches saved local profiles. Missing configuration is normal;
-invalid or unreadable configuration leaves the app running with defaults and a
-content-free Settings diagnostic. Settings can explicitly reload the same
-selected file: valid changes affect only future Launcher choices, while
-invalid or unreadable candidates retain the last valid configuration. An
-opt-in, manually authored metadata-only workspace restores ordered Launcher,
-Settings, and fresh local-session tabs at startup; saved SSH tabs restore as
-an authentication-required surface with destination metadata pre-filled,
-never an auto-connected session. Runtime tab IDs, terminal output, processes,
-credentials, keys, and host trust are not restored. Settings can explicitly
-save this metadata-only workspace to the selected configuration source; manual
-profile editing remains required. Automatic saving and file watching remain M8 work. The GUI-independent
-`festerm-secret-store` native foundation is now present: it uses macOS
-Keychain, Windows Credential Manager, or Linux Secret Service over session
-D-Bus, with no insecure fallback. Existing saved SSH profiles can explicitly
-store and use a password through that service: TOML retains only an opaque
-reference and the SSH worker resolves it immediately before password
-authentication. A saved private key (with its optional passphrase) can be
-stored and used the same way
-([ADR 0024](docs/adr/0024-native-secret-store-stored-private-keys.md)).
-Agents and key-file path references are not persisted.
-Milestone 7 is implemented: the
-`festerm-ssh` crate provides an in-process password- and public-key-authenticated
-SSH transport with strict host trust, remote PTY/shell/resize, bounded opt-in
-reconnect, and a controlled OpenSSH fixture. It supports unencrypted and
-encrypted in-memory OpenSSH private keys. SSH-agent authentication and
-key-file path references remain incomplete (tracked in
-[#40](https://github.com/fes/fesTerm/issues/40)). The
-fixture
-includes an ECDSA P-256-only server-host-key case whose SHA-256 trust prompt
-is checked before a shell exchange. The
-GUI-independent terminal core has
-bounded ESC/CSI parsing, primary and alternate screens, cursor and
-scrolling-region behavior, SGR colors and attributes, non-reflow resize,
-interactive keyboard/paste/focus/mouse encoding, initial Unicode cells,
-fixtures, dirty-state inspection, and bounded transport queues. The egui view
-uses a borrowed cell-space contract plus a dirty-row cache; it renders colors,
-basic attributes, cursor, wide-cell geometry, local selection/copy, and
-mode-aware input routing.
+Milestones 0 through 5, M7, and M8 are implemented. M6 remains the open
+compatibility acceptance gate because fresh native-window and
+reference-application evidence is still incomplete. M9 has bounded logical
+scrollback, anchored viewport navigation, primary-screen resize reflow,
+read-only disconnected history, clear/reset commands, and eviction feedback;
+configurable limits and selection remapping across reflow remain open.
 
-M5 adds runtime-independent `festerm-session` lifecycle and bounded transport
-types plus a `festerm-pty` local backend. The backend uses `portable-pty` 0.9
-for Unix PTYs and Windows ConPTY, performs safe default-shell discovery, and
-uses bounded command/event queues and worker threads. Each queued session event
-wakes egui through its supported repaint request, so idle UI frames promptly
-drain PTY output without polling. Normal no-workspace startup opens the
-singleton Launcher; selecting Local Shell replaces it in place with a default
-local session. The app remains the sole terminal-core writer and preserves backpressured core
-input/replies in an ordered, bounded pending buffer. Unix shutdown signals the
-PTY session process group; Windows assigns the child to a kill-on-close Job
-Object. It displays lifecycle, queue-pressure, byte-count, error, and resize
-diagnostics. On Windows an installer may deploy the documented, hash-verified
-ConPTY sidecar; otherwise the backend safely uses inbox ConPTY rather than a
-directory-discovered DLL. If shell startup fails, it shows a visible no-session error rather
-than a fake shell.
+The application now provides local PTY, native SSH, and serial sessions;
+independent session chips; Launcher, Profiles, and Settings surfaces; command
+palette and native macOS menus; focus mode; selectable bundled terminal fonts
+and opt-in ligatures; autosaved versioned TOML profiles/interface settings;
+metadata-only workspace restoration; and native secret-store references for
+saved SSH passwords and private keys. Persistent host-key trust is explicit
+and non-secret.
 
-The current application has in-memory local session tabs, explicitly injected
-secret-free reusable local-profile metadata, and a compact Launcher SSH
-authentication form. Saved SSH profiles can explicitly use a stored native
-password or private key, or open their profile-backed password/private-key
-form; a restored workspace SSH
-tab opens the same form with destination metadata pre-filled and never
-auto-connects. The transient form validates a host,
-optional port (default
-22), and username into a secret-free profile, then sends a transient password
-or a parsed in-memory OpenSSH private key to the typed SSH-session command and
-clears secret text on submit. Encrypted keys may use a transient parse
-passphrase; unless the user explicitly chooses to store it, no key text or
-passphrase is persisted. When an active SSH tab
-needs host trust, it presents the canonical
-host and port plus SHA-256 fingerprint with nonblocking Reject and Accept Once
-actions; trust persistence, added later
-([ADR 0020](docs/adr/0020-persistent-host-key-trust.md)), also offers an
-explicit Accept and remember action so a previously trusted host no longer
-prompts. The core now owns
-the first bounded logical-history slice, and the application layer built on
-top of it (Milestone 9, [ADR 0017](docs/adr/0017-bounded-logical-scrollback-and-anchored-viewports.md))
-provides history viewport navigation — wheel/keyboard scrolling, Shift+Page
-Up/Down, Ctrl+End, a conditional `Jump to latest`, and a thin overlay
-scrollbar — plus primary-screen resize reflow and a one-shot eviction notice
-when the retained history discards its oldest lines. Once a session exits,
-fails, stops, or disconnects, its history becomes read-only and typed input
-is no longer delivered. A configurable scrollback-limit setting and
-selection preservation across reflow (selection is currently invalidated
-rather than remapped) remain open M9 work; see the Milestone 9 note in
-[`ROADMAP.md`](ROADMAP.md). Automatic persistence, agent or key-file UI,
-OpenSSH-config import UI,
-terminfo distribution, color emoji, or script-specific deterministic fallback are not yet
-provided. Following [ADR 0018](docs/adr/0018-ssh-liveness-reconnect-and-persistent-session-recovery.md),
-plain SSH sessions do not reconnect automatically: transport loss surfaces a
-Disconnected state with read-only history, and the Inspector offers an
-explicit Reconnect action (with bounded internal retry/backoff on that one
-request) that creates a fresh transport, re-verifies the host key, and starts
-a new shell without claiming to restore prior remote process state.
-Persistent-session (`tmux`/`screen`) recovery and opt-in automatic
-reconnect for such sessions remain future work. `TERM`
-remains `xterm-256color` as an
-interoperability baseline while M6 regression coverage defines the supported
-subset; see the M6 checklist for its conservative device-identity and future
-custom-terminfo strategy.
+SSH uses an in-process `russh` transport with fingerprint-first host
+verification, password and in-memory OpenSSH-key authentication, remote PTY
+resize, periodic/on-demand liveness probes, native wake hooks, and bounded
+recovery. Plain SSH reconnect always creates a fresh shell and remains a
+manual action. Profiles may instead select a named `tmux` or GNU Screen
+session; those providers launch without their own status chrome, inherit the
+actual first PTY size, and may opt into bounded automatic recovery. Controlled
+real-provider reattach evidence remains open in
+[#49](https://github.com/fes/fesTerm/issues/49). SSH-agent adapters,
+keyboard-interactive/2FA, key-file references, and OpenSSH-config import remain
+future work.
+
+Native packaging and signed updates are implemented under
+[ADR 0021](docs/adr/0021-cargo-packager-github-releases-distribution.md):
+signed/notarized macOS DMG, Authenticode-signed Windows NSIS, Linux AppImage
+and Debian packages, updater signatures, a protected tag-driven GitHub release
+workflow, and an explicit check/download/install UI. The first production
+release and end-to-end upgrade evidence remain tracked in
+[#62](https://github.com/fes/fesTerm/issues/62); custom terminfo remains
+[#27](https://github.com/fes/fesTerm/issues/27).
 
 ## Documentation
 
@@ -127,7 +52,8 @@ custom-terminfo strategy.
 - [M6 compatibility checklist](docs/m6-compatibility-checklist.md) — reference
   application scenarios, `TERM` strategy, and regression triage.
 - [Configuration foundation](docs/configuration.md) — M8 schema version 1
-  profile document, secret boundary, and transactional reload behavior.
+  profile document, secret boundary, atomic autosave, and restart-only external
+  edit behavior.
 - [GUI design](docs/gui-design.md) — authoritative interaction model, independent
   session-chip principles, visual hierarchy, and canonical wireframe.
 - [GUI exploration action graph](docs/gui-action-graph.md) — stable state and
@@ -177,9 +103,8 @@ custom-terminfo strategy.
 - Cross-platform `egui` front end with a GUI-independent terminal engine.
 - First-class local PTY and native in-process SSH session types.
 - Human-readable, versioned TOML configuration loaded at startup and explicitly
-  reloadable or workspace-saved from Settings; profiles remain manually edited,
-  with no automatic file watching or writes except an explicit native
-  SSH-password-reference update.
+  autosaved after profile, workspace, trust, credential-reference, and interface
+  changes; external file edits are intentionally picked up only after restart.
 - Fast interactive behavior, ligature-capable rendering, and privacy-aware
   diagnostics.
 - Local-first operation with optional future metadata synchronization.

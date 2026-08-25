@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
-- **Revised:** 2026-08-23
+- **Revised:** 2026-08-24
 - **Supersedes:** None
 
 ## Context
@@ -72,6 +72,28 @@ and a signed static update manifest are published through **GitHub Releases**.
   `conpty.dll`/`OpenConsole.exe` sidecar layout consumed by ADR-0011. The
   updater replaces that layout as one signed application unit.
 
+## Implementation status
+
+Implemented in `89a59ae`:
+
+- native `cargo-packager` manifests produce macOS DMG, Windows NSIS, Linux
+  AppImage, and Debian artifacts;
+- the application compiles an explicit installation marker and updater public
+  key, exposes check/download/install as separate nonblocking states, and
+  refuses network checks in developer or incompletely configured builds;
+- Apple Developer ID signing plus app/DMG notarization and stapling, Microsoft
+  Artifact Signing through GitHub OIDC, and updater signatures are wired into
+  the protected `release` environment;
+- the release workflow validates the tag/version, builds natively, verifies
+  signatures and package structure, creates a draft release, uploads immutable
+  artifacts, uploads `festerm-update.json` last, then publishes; and
+- manual dispatch builds signed artifacts without publishing.
+
+Local macOS signing/notarization and package construction have completed
+successfully. The first production tag plus cross-platform clean
+install/update/uninstall and failure-path evidence remains validation pending
+under [#62](https://github.com/fes/fesTerm/issues/62).
+
 ## Alternatives considered
 
 - **`cargo-dist` plus `axoupdater`.** Rejected after review: it is effective
@@ -105,9 +127,9 @@ and a signed static update manifest are published through **GitHub Releases**.
   so clients never observe an incomplete release.
 - The static updater endpoint and public verification key become durable
   compatibility contracts. Key rotation requires an overlap/migration plan.
-- Code-signing certificates and notarization credentials (Windows
-  Authenticode, Apple Developer ID) must be provisioned and stored as GitHub
-  Actions secrets before production installers ship.
+- Code-signing certificates and notarization credentials are provisioned in
+  the protected GitHub `release` environment and must remain out of repository
+  contents, pull-request jobs, logs, and artifacts.
 - Update checks require network access to GitHub-hosted metadata and
   artifacts. Offline use remains fully functional.
 - Package-manager ownership takes precedence over self-update convenience;
@@ -124,10 +146,10 @@ and a signed static update manifest are published through **GitHub Releases**.
   an update without explicit confirmation; package-managed installations are
   never replaced in place; the Windows sidecar layout remains
   installer-owned.
-- **GUI/action edges affected:** None yet — this ADR fixes build/distribution
-  infrastructure, not application UI. An update-check/update-available
-  affordance is expected once M10 implements the in-app update UI, at which
-  point it will need new stable action-graph edges (not yet assigned).
+- **GUI/action edges affected:** About/update actions now use `WIN-05` and
+  `WIN-06` in `docs/gui-action-graph.md`. Packaged builds expose explicit
+  check, download, and install/restart transitions; developer builds expose no
+  network action.
 - **Automated tests required:** Release CI must validate package contents,
   checksums, signatures, feed completeness, and version agreement. Application
   tests must prove that checking cannot download, downloading cannot install,

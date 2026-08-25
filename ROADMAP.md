@@ -1,9 +1,9 @@
 # fesTerm Capability Roadmap
 
-**Status:** Milestones 0 through 5 are implemented with native-window
-validation pending; Milestone 6 is the open acceptance gate. M7 is implemented,
-and an M8 GUI/configuration/workspace vertical slice advances in a deliberately
-narrow parallel track. See [`docs/milestone-progress.md`](docs/milestone-progress.md).
+**Status:** Milestones 0 through 5, M7, and M8 are implemented. Milestone 6 is
+the open compatibility acceptance gate; M9 and M10 have substantial
+implemented slices but retain explicit completion/validation work. See
+[`docs/milestone-progress.md`](docs/milestone-progress.md).
 
 fesTerm uses capability-based milestones rather than calendar-based commitments. A milestone is complete when its documented behavior and validation criteria pass; elapsed time is not part of the definition.
 
@@ -335,30 +335,21 @@ Users can create an SSH tab without invoking an external SSH executable.
 **Status:** Implemented ([#41](https://github.com/fes/fesTerm/issues/41))
 
 **Note:** By explicit decision, GUI chrome (session chips/tabs, the
-Launcher/Settings surfaces, and a minimal session inspector described in
-[`docs/gui-design.md`](docs/gui-design.md)) is being built as a parallel
-track alongside the M6 compatibility pass rather than waiting for M7/M8 to
-start. SSH tabs can launch from the transient M7 Launcher form, while persisted
-profiles and workspace restoration remain M8 work. This does not change M6/M8
-completion criteria. [ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md)
-defines the ownership model that M7 reconnect and M8 persistence follow.
+Launcher/Settings surfaces, and session inspector described in
+[`docs/gui-design.md`](docs/gui-design.md)) was built as a parallel track
+alongside the M6 compatibility pass rather than waiting for M6 acceptance.
+This did not change either milestone's completion criteria.
+[ADR 0014](docs/adr/0014-window-workspace-tab-session-ownership.md) defines
+the ownership model followed by SSH reconnect and workspace persistence.
 
 The configuration vertical slice is implemented in `festerm-config` and the
 application. It strictly parses and serializes
 schema-versioned TOML local and SSH profile metadata, rejects unknown and
 secret-bearing fields or values, validates complete replacements before
-atomically accepting them, and retains the previous valid configuration with
-content-free diagnostics when explicit reload fails. It does not watch files.
-Configured local profiles can launch, and Settings can explicitly save and
-restore the supported metadata-only workspace subset while preserving profiles.
-Native stored SSH-password references are now wired end-to-end: existing saved
-profiles can explicitly use a stored password, and their password form can
-explicitly replace it in platform secure storage before atomically persisting
-only its opaque reference. Resolution occurs on the SSH worker; restored
-workspace SSH surfaces still require explicit user action. Private keys,
-passphrases, agents, key files, persistent trust, profile editing/import UI,
-and richer restoration presentation are deliberately deferred capabilities;
-none is needed for the narrow M8 persistence acceptance criteria below.
+atomically accepting them, and reports content-free persistence failures. It
+does not watch files; external edits apply after restart. Profiles, workspace
+metadata, host trust, credential references, and interface settings autosave.
+Restored workspace SSH surfaces still require explicit user action.
 
 The GUI-independent `festerm-secret-store` foundation is implemented with
 opaque UUID-v4 references and native macOS Keychain, Windows Credential
@@ -372,7 +363,8 @@ reference persistence and just-in-time worker resolution are implemented.
 persistent host-key trust
 ([ADR 0020](docs/adr/0020-persistent-host-key-trust.md)), and a full
 Profiles editor UI (create/update/delete/reorder) have since been
-implemented, narrowing the M8 deferred list above. SSH-agent authentication
+implemented. Named local/SSH `tmux` and Screen strategies are also exposed,
+with separate opt-in automatic SSH recovery. SSH-agent authentication
 (tracked separately as [#40](https://github.com/fes/fesTerm/issues/40)),
 literal key-file path references, OpenSSH-config import UI, and richer
 restoration presentation remain deferred.
@@ -386,14 +378,16 @@ fesTerm operates as a practical multi-session terminal application.
 - Tabbed local and SSH sessions.
 - Connection and reconnect state indicators.
 - Versioned TOML profiles and application configuration.
-- Explicit transactional configuration reload; no file watching.
+- Full-document startup validation and atomic autosave; external edits apply
+  only after restart and there is no file watching.
 - Workspace persistence for open tabs, order, focused tab, and window size.
 - OS secure-storage references for secrets.
 
 ### Completion criteria
 
 - Restarting the application recreates the configured workspace when restoration is enabled.
-- Invalid configuration reloads leave the last valid configuration active and produce actionable diagnostics.
+- Invalid startup configuration uses safe defaults, and failed runtime saves
+  retain the active in-memory state while producing actionable diagnostics.
 - Profile and workspace documents contain no secret values.
 
 ## Milestone 9 — Scrollback, Viewport Navigation, and Reflow
@@ -461,6 +455,14 @@ clear and fallback behavior.
 
 ## Milestone 10 — Refinement and Distribution
 
+**Status:** In progress — ADR 0021, native package manifests, package/update
+validation, protected platform-signing configuration, the tag-driven
+draft-first GitHub release workflow, and the explicit signed-update state
+machine are implemented. A first production release plus end-to-end
+install/upgrade/uninstall and failure-path evidence remain under
+[#62](https://github.com/fes/fesTerm/issues/62). fesTerm-owned terminfo remains
+under [#27](https://github.com/fes/fesTerm/issues/27).
+
 ### Outcome
 
 The application is installable, configurable, observable, and suitable for broader testing.
@@ -487,10 +489,9 @@ The following tracks remain intentionally outside the initial critical path. Arc
 - Scripting and automation.
 - A stable plugin or extension API.
 - Detachable sessions and built-in multiplexing, especially where useful on Windows.
-- Serial connections. The first-class UI, profile, lifecycle, and ownership
-  contract is already defined in `docs/gui-design.md`; backend implementation
-  remains a focused post-core track and must add platform-specific discovery
-  and permissions plus deterministic loopback/fixture coverage.
+- Further serial refinement. The first-class UI, profile, lifecycle, worker
+  backend, validation, and Linux loopback coverage are implemented; native
+  Windows/macOS adapter and permission evidence remains in the manual registry.
 - Native Markdown viewing is a post-transport product-design candidate because
   Markdown is central to AI-assisted development and technical workflows. It
   must not begin until Local, SSH, and Serial capabilities and their owned UI

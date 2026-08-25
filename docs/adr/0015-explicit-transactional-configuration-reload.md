@@ -1,8 +1,8 @@
-# ADR 0015: Explicit Transactional Configuration Reload
+# ADR 0015: Startup Load and Transactional Autosave Without External Reload
 
 - **Status:** Accepted
 - **Date:** 2026-08-12
-- **Amended:** later revision removed the explicit "Reload configuration"/
+- **Amended:** 2026-08-24; later revision removed the explicit "Reload configuration"/
   "Save workspace" Settings actions in favor of automatic save/restore (see
   `docs/gui-design.md` "Configuration"); external file watching is still
   intentionally absent.

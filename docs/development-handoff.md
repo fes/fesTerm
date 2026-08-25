@@ -10,10 +10,12 @@ Milestones 0 through 5 are implemented with native-window validation pending;
 M6 is the open compatibility acceptance gate. The application now has
 in-memory local-session tabs, Launcher and Settings surfaces, command palette,
 custom title-bar chrome, and a configurable status bar. The terminal core, UI,
-session lifecycle, PTY backend, implemented native SSH transport,
+session lifecycle, PTY and serial backends, implemented native SSH transport,
 configuration foundation, and GUI-independent native secret-store foundation
 are separate crates.
 M7 and M8 are implemented; M6 remains the open compatibility acceptance gate.
+M9 scrollback/reflow and M10 packaging/updater work are substantially
+implemented but retain the completion work recorded in `ROADMAP.md`.
 
 At startup, the app loads `config.toml` from the native per-user project
 configuration location (`com.fes.fesTerm`) or the explicit
@@ -30,7 +32,7 @@ never connect without fresh transient authentication. Runtime tab IDs are new
 for each launch, and no terminal output, process, credential/key, channel, or
 host-trust state is restored. No configuration is watched or edited by
 fesTerm from outside the app. Workspace metadata, profiles (create, update,
-delete, reorder), and all five Settings interface preferences save
+delete, reorder), and all seven Settings interface preferences save
 automatically to the same selected source the moment they change - there is
 no manual reload/save action anywhere in Settings. Workspace restoration
 remains an explicit off-by-default preference; live-session close confirmation
@@ -55,10 +57,18 @@ replaced) host key is remembered in plain, non-secret TOML
 ([ADR 0020](adr/0020-persistent-host-key-trust.md)), so reconnecting to an
 already-trusted `host:port` no longer prompts.
 
-Not implemented: OpenSSH configuration import,
+SSH profiles may select a named `tmux` or GNU Screen strategy. Provider
+sessions suppress their own status chrome and receive the actual initial
+fesTerm viewport size; bounded automatic recovery is available only as a
+separate per-launch opt-in. Plain SSH remains manual reconnect and always
+creates a fresh shell. Real-provider create/detach/reattach evidence remains
+tracked by [#49](https://github.com/fes/fesTerm/issues/49).
+
+Not implemented: OpenSSH configuration import, real keyboard-interactive/2FA
+authentication ([#60](https://github.com/fes/fesTerm/issues/60)),
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
-path references, color emoji/script-specific fallback, a custom GPU renderer, terminfo
-distribution, and reference-TUI compatibility sign-off. M7 supplies transient
+path references, color emoji/script-specific fallback, a custom GPU renderer,
+terminfo distribution, and reference-TUI compatibility sign-off. M7 supplies transient
 password and in-memory OpenSSH private-key authentication plus bounded opt-in
 reconnect; for one-off (non-profile) connections, encrypted-key passphrases
 remain transient in-memory parse inputs only. Read [`milestone-progress.md`](milestone-progress.md)
@@ -70,6 +80,15 @@ horizontal scrolling begins only after that exact budget is exhausted. New
 Session stays fixed beside the strip during overflow and directly follows the
 last chip when scrolling is unnecessary. Compact and full-density chips use
 the same allocation contract.
+
+M10's native package and updater infrastructure is implemented. Protected
+GitHub Actions builds signed/notarized macOS DMG, signed Windows NSIS, Linux
+AppImage, and Debian outputs; packaged builds expose explicit
+check/download/install update states. Release credentials live only in the
+protected `release` environment. Use
+[`signing-and-release.md`](signing-and-release.md); the first production
+release and end-to-end upgrade evidence remain
+[#62](https://github.com/fes/fesTerm/issues/62).
 
 ## Bootstrap
 
@@ -282,6 +301,7 @@ Milestone 6 is the open acceptance gate. Use the
 application scenarios and the [M6 automation backlog](ui-test-plan.md#m6-automation-backlog)
 for implementation order. P0 through P2 are implemented; prioritize P3 visual
 evidence, P4 real-window validation, and P5 manual reference-application
-evidence. M7 is implemented; continue M8 only in focused slices that do not
-displace those gates. Convert every corrected failure into a concrete
-regression before broadening scope.
+evidence against the exact candidate recorded in the acceptance document. M7
+and M8 are implemented. Keep remaining M9 work and M10 release validation
+bounded by their existing ADRs/issues, and convert every corrected failure into
+a concrete regression before broadening scope.
