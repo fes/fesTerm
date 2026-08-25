@@ -1,6 +1,7 @@
 mod app;
 mod configuration_startup;
 mod diagnostics;
+mod environment;
 mod inspector;
 mod native_smoke;
 mod overlay_state;

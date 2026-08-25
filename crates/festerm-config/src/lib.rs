@@ -1777,11 +1777,22 @@ impl PersistenceConfiguration {
         let session_name = PersistentSessionName::new(self.session_name.clone())
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPersistenceConfiguration))?;
         let profile = match self.provider {
+            // The trailing `;` is passed as its own argv element (not a
+            // shell string), which tmux recognizes as a command separator
+            // even without a shell in between. This keeps the local session
+            // bare in the same way as the remote SSH provider (ADR 0018):
+            // no status bar, matching an otherwise undecorated fesTerm tab.
             PersistenceProviderKind::Tmux => LocalProfile::new("tmux").with_arguments([
                 "new-session",
                 "-A",
                 "-s",
                 session_name.as_str(),
+                ";",
+                "set-option",
+                "-t",
+                session_name.as_str(),
+                "status",
+                "off",
             ]),
             PersistenceProviderKind::Screen => {
                 LocalProfile::new("screen").with_arguments(["-xRR", session_name.as_str()])
@@ -3788,7 +3799,18 @@ credential_id = "{CREDENTIAL_REFERENCE}"
                 .iter()
                 .map(|argument| argument.to_str())
                 .collect::<Vec<_>>(),
-            vec![Some("new-session"), Some("-A"), Some("-s"), Some("build")]
+            vec![
+                Some("new-session"),
+                Some("-A"),
+                Some("-s"),
+                Some("build"),
+                Some(";"),
+                Some("set-option"),
+                Some("-t"),
+                Some("build"),
+                Some("status"),
+                Some("off"),
+            ]
         );
     }
 

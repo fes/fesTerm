@@ -465,6 +465,7 @@ impl SessionTab {
         context: &egui::Context,
         window_dimensions: Option<Dimensions>,
     ) -> Self {
+        let profile = crate::environment::with_corrected_local_path(profile);
         let dimensions = window_dimensions
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");

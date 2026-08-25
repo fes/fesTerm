@@ -507,6 +507,52 @@ mod tests {
     }
 
     #[test]
+    fn encodes_ctrl_chords_as_their_conventional_control_bytes() {
+        let mut terminal = terminal(8, 2);
+
+        // Letters, either case: same control byte (Ctrl+B and Ctrl+Shift+B
+        // both send 0x02, matching what every other terminal emulator sends
+        // and what tmux/GNU Screen expect for their default prefix key).
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control('b'))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control('B'))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(terminal.drain_input(), [0x02, 0x02]);
+
+        // A handful of punctuation keys conventionally paired with Ctrl for
+        // the remaining low control codes.
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control(' '))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control('['))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control('\\'))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control(']'))),
+            InputEventOutcome::Encoded { bytes: 1 }
+        );
+        assert_eq!(terminal.drain_input(), [0x00, 0x1b, 0x1c, 0x1d]);
+
+        // A character without an established Ctrl mapping sends nothing,
+        // rather than guessing at a byte.
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Control('1'))),
+            InputEventOutcome::Rejected
+        );
+        assert!(terminal.drain_input().is_empty());
+    }
+
+    #[test]
     fn encodes_cursor_keypad_paste_and_focus_input_modes_exactly() {
         let mut terminal = terminal(8, 2);
 

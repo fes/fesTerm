@@ -310,9 +310,13 @@ pub(crate) fn route_egui_events(
                 }
             }
             egui::Event::Key {
-                key, pressed: true, ..
+                key,
+                pressed: true,
+                modifiers,
+                ..
             } if keyboard_focused => {
-                if let Some(key) = translate_key(key) {
+                let translated = control_key(key, modifiers).or_else(|| translate_key(key));
+                if let Some(key) = translated {
                     terminal_key_routed = true;
                     record_terminal_input(
                         &mut reports,
@@ -598,6 +602,62 @@ fn translate_key(key: egui::Key) -> Option<Key> {
         egui::Key::ArrowDown => Some(Key::ArrowDown),
         egui::Key::ArrowLeft => Some(Key::ArrowLeft),
         egui::Key::ArrowRight => Some(Key::ArrowRight),
+        _ => None,
+    }
+}
+
+/// Maps a Ctrl-held key press to the terminal's C0 control-byte encoding
+/// (see `festerm_core::input::control_byte`), so a chord like Ctrl+B reaches
+/// the running program instead of being silently dropped: unlike ordinary
+/// typing, held Ctrl suppresses the platform's `Text` event, so this is the
+/// only path such a chord can reach the terminal through.
+///
+/// This only recognizes plain Ctrl — never the platform Command modifier
+/// (`mac_cmd`) — so it never intercepts a macOS `Cmd+<letter>` application
+/// shortcut (new tab, close tab, and so on), which egui reports with `ctrl`
+/// left `false` and `mac_cmd`/`command` set instead.
+fn control_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<Key> {
+    if !modifiers.ctrl || modifiers.mac_cmd {
+        return None;
+    }
+    let character = control_key_character(key)?;
+    Some(Key::Control(character))
+}
+
+/// The base character of a Ctrl chord, for the keys that have an
+/// established Ctrl mapping (see `festerm_core::input::control_byte`).
+fn control_key_character(key: egui::Key) -> Option<char> {
+    match key {
+        egui::Key::A => Some('a'),
+        egui::Key::B => Some('b'),
+        egui::Key::C => Some('c'),
+        egui::Key::D => Some('d'),
+        egui::Key::E => Some('e'),
+        egui::Key::F => Some('f'),
+        egui::Key::G => Some('g'),
+        egui::Key::H => Some('h'),
+        egui::Key::I => Some('i'),
+        egui::Key::J => Some('j'),
+        egui::Key::K => Some('k'),
+        egui::Key::L => Some('l'),
+        egui::Key::M => Some('m'),
+        egui::Key::N => Some('n'),
+        egui::Key::O => Some('o'),
+        egui::Key::P => Some('p'),
+        egui::Key::Q => Some('q'),
+        egui::Key::R => Some('r'),
+        egui::Key::S => Some('s'),
+        egui::Key::T => Some('t'),
+        egui::Key::U => Some('u'),
+        egui::Key::V => Some('v'),
+        egui::Key::W => Some('w'),
+        egui::Key::X => Some('x'),
+        egui::Key::Y => Some('y'),
+        egui::Key::Z => Some('z'),
+        egui::Key::Space => Some(' '),
+        egui::Key::OpenBracket => Some('['),
+        egui::Key::Backslash => Some('\\'),
+        egui::Key::CloseBracket => Some(']'),
         _ => None,
     }
 }

@@ -487,6 +487,70 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_letter_chords_reach_the_terminal_as_control_bytes() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("headless frame records grid geometry");
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // Ctrl+B: the tmux/GNU Screen default prefix key, and the
+        // motivating regression this test guards against (previously
+        // swallowed instead of reaching the running program).
+        harness.event(egui::Event::Key {
+            key: egui::Key::B,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![vec![0x02]]);
+
+        // A macOS Cmd+<letter> application shortcut sets `mac_cmd`/`command`
+        // rather than `ctrl`, and must never be reinterpreted as a Ctrl
+        // chord and sent to the terminal.
+        harness.event(egui::Event::Key {
+            key: egui::Key::N,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![vec![0x02]]);
+    }
+
+    #[test]
     fn history_snapshot_projects_retained_rows_without_moving_the_live_cursor() {
         let mut terminal = terminal(4, 2);
         terminal.ingest(b"one\r\ntwo\r\ntri\r\n");
