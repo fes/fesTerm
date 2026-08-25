@@ -730,13 +730,18 @@ impl TerminalView {
             });
         let context_menu_open = menu.is_some();
         if options.defer_paste_to_application {
+            // `response.has_focus()`/`clicked()` each read the egui context
+            // themselves (via `Context::input`/`Context::memory`), so they
+            // must be evaluated *before* entering `input_mut` below: egui's
+            // context lock is not reentrant, and calling them from inside
+            // the `input_mut` closure deadlocks the UI thread the moment a
+            // paste is delivered (e.g. Cmd+V).
+            let should_defer =
+                response.has_focus() || response.clicked() || !options.terminal_input_enabled;
             ui.input_mut(|input| {
                 input.events.retain(|event| {
                     if let egui::Event::Paste(text) = event {
-                        if response.has_focus()
-                            || response.clicked()
-                            || !options.terminal_input_enabled
-                        {
+                        if should_defer {
                             self.pending_paste_requests.push_back(text.clone());
                             return false;
                         }
