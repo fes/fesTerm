@@ -851,9 +851,10 @@ struct SingleRowAllocation {
     scrolling: bool,
 }
 
-/// Allocates the focused chip at its natural width, then water-fills the
-/// remaining budget across inactive chips. Once every inactive chip reaches
-/// its minimum, those compact widths are retained inside the scroll area.
+/// Allocates the focused chip at its natural width when the scroll viewport
+/// can contain it, then water-fills the remaining budget across inactive
+/// chips. Once every inactive chip reaches its minimum, those compact widths
+/// are retained inside the scroll area.
 fn allocate_single_row_widths(
     natural_widths: &[f32],
     active_index: Option<usize>,
@@ -884,12 +885,13 @@ fn allocate_single_row_widths(
     let inactive_minimum_total = CHIP_INACTIVE_MIN_WIDTH * inactive_count as f32;
     let scrolling = inactive_minimum_total > inactive_budget;
     if scrolling {
+        let focused_max_width = (available_width - 2.0 * CHIP_SCROLL_CONTROL_WIDTH).max(0.0);
         let widths = natural_widths
             .iter()
             .enumerate()
             .map(|(index, &width)| {
                 if Some(index) == active_index {
-                    width
+                    width.min(focused_max_width)
                 } else {
                     CHIP_INACTIVE_MIN_WIDTH
                 }
@@ -1975,14 +1977,18 @@ mod tests {
         }
 
         let after = harness.get_by_label(last_label).rect();
+        let visible_left = harness.get_by_label("Scroll chips left").rect().right();
+        let visible_right = harness.get_by_label("Scroll chips right").rect().left();
         assert!(
-            after.left() >= 0.0 && after.right() <= window_width + 1.0,
+            after.left() >= visible_left - 1.0 && after.right() <= visible_right + 1.0,
             "expected activating {last_label} to scroll it back into the \
-             {window_width}-wide window, got {after:?}"
+             visible chip viewport {visible_left}..{visible_right}, got {after:?}"
         );
+        let expected_active_width = CHIP_MAX_WIDTH.min(visible_right - visible_left);
         assert!(
-            (after.width() - CHIP_MAX_WIDTH).abs() < 0.01,
-            "newly focused chip must expand to its normal width, got {after:?}"
+            (after.width() - expected_active_width).abs() < 0.01,
+            "newly focused chip must expand to the largest fully visible \
+             width, got {after:?}"
         );
         let old_focused = harness
             .get_by_label("session-1-with-a-long-descriptive-name chip")
