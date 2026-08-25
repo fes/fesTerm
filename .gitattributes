@@ -1,17 +1,10 @@
 *.sh text eol=lf
 
-# The bundled JetBrains Mono font's license/attribution text and its binary
-# .ttf files are pinned by sha256 in assets/fonts/jetbrains-mono/manifest.json
-# (see scripts/manage_bundled_font.py). Without an explicit rule here, Git's
-# default line-ending conversion on Windows checkouts (`core.autocrlf`)
-# rewrites OFL.txt/AUTHORS.txt from LF to CRLF, changing their bytes and
-# breaking the pinned checksum even though the font itself is unchanged.
-# Force LF for the text files and mark the fonts explicitly binary so every
-# checkout, on every platform, produces byte-identical content.
-assets/fonts/jetbrains-mono/*.txt text eol=lf
-assets/fonts/jetbrains-mono/*.ttf binary
-
-# Iosevka's pinned license and private build plan are checksummed too.
-assets/fonts/iosevka-term/*.md text eol=lf
-assets/fonts/iosevka-term/*.toml text eol=lf
-assets/fonts/iosevka-term/*.ttf binary
+# Bundled font assets are pinned by sha256 in per-family manifests. Prevent
+# Windows autocrlf conversion from changing checksummed licenses/build plans,
+# and make the binary treatment of font files explicit.
+assets/fonts/**/*.txt text eol=lf
+assets/fonts/**/*.md text eol=lf
+assets/fonts/**/*.toml text eol=lf
+assets/fonts/*/LICENSE text eol=lf
+assets/fonts/**/*.ttf binary
