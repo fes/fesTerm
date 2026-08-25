@@ -335,8 +335,11 @@ still outstanding, per the "Validation impact" section above.
 #49: a `PersistenceProvider` enum (`Tmux`, `Screen`) supplies a lazy,
 explicit remote capability-probe command (e.g. `command -v tmux`, only ever
 run when a user opts a profile into persistence — never speculatively or in
-the background) and an idempotent attach-or-create command (e.g.
-`tmux new-session -A -s <name>`, `screen -xRR <name>`). A validated
+the background) and an idempotent attach-or-create command. Provider sessions are deliberately bare: tmux's
+status bar is disabled for the selected session, and GNU Screen starts without
+the user's screenrc chrome. The tmux command also seeds a new session with the
+actual fesTerm PTY dimensions and makes the most recently attached client
+authoritative for later window sizing. A validated
 `PersistentSessionName` restricts session names to a conservative,
 shell-metacharacter-free character set by construction, since the name is
 interpolated directly into a remote exec string and there is no reliable,

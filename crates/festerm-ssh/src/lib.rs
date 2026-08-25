@@ -738,10 +738,22 @@ impl PersistenceProvider {
     /// unintentional transport loss reattaches to the same durable session
     /// rather than creating a second one, which is what makes this strategy
     /// safe to pair with [`RecoveryPolicy::Automatic`].
-    fn attach_or_create_command(self, session_name: &PersistentSessionName) -> String {
+    fn attach_or_create_command(
+        self,
+        session_name: &PersistentSessionName,
+        initial_size: TerminalSize,
+    ) -> String {
         match self {
-            Self::Tmux => format!("exec tmux new-session -A -s {}", session_name.as_str()),
-            Self::Screen => format!("exec screen -xRR {}", session_name.as_str()),
+            Self::Tmux => format!(
+                "exec tmux new-session -A -s {} -x {} -y {} \\; set-option -t {} status off \
+                 \\; set-window-option -t {} window-size latest",
+                session_name.as_str(),
+                initial_size.columns(),
+                initial_size.rows(),
+                session_name.as_str(),
+                session_name.as_str(),
+            ),
+            Self::Screen => format!("exec screen -c /dev/null -xRR {}", session_name.as_str()),
         }
     }
 }
@@ -2328,6 +2340,8 @@ impl WorkerCommandReceiver {
 struct WorkerShared {
     id: SessionId,
     lifecycle: Mutex<SessionLifecycle>,
+    desired_terminal_size: Mutex<TerminalSize>,
+    pre_running_resize_pending: AtomicBool,
     reconnecting: AtomicBool,
     reconnect_requested: AtomicBool,
     liveness_check_requested: AtomicBool,
@@ -2338,6 +2352,36 @@ struct WorkerShared {
 }
 
 impl WorkerShared {
+    fn desired_terminal_size(&self) -> TerminalSize {
+        *self
+            .desired_terminal_size
+            .lock()
+            .expect("SSH desired terminal size lock is not poisoned")
+    }
+
+    fn retain_pre_running_resize(&self, size: TerminalSize) {
+        *self
+            .desired_terminal_size
+            .lock()
+            .expect("SSH desired terminal size lock is not poisoned") = size;
+        self.pre_running_resize_pending
+            .store(true, Ordering::Release);
+    }
+
+    fn record_running_resize(&self, size: TerminalSize) {
+        *self
+            .desired_terminal_size
+            .lock()
+            .expect("SSH desired terminal size lock is not poisoned") = size;
+        self.record_resize_applied(size);
+    }
+
+    fn take_pre_running_resize(&self) -> Option<TerminalSize> {
+        self.pre_running_resize_pending
+            .swap(false, Ordering::AcqRel)
+            .then(|| self.desired_terminal_size())
+    }
+
     fn lifecycle(&self) -> SessionLifecycle {
         self.lifecycle
             .lock()
@@ -2519,8 +2563,9 @@ impl SshWorkerFoundation {
         HostKeyDecisionResolver,
         PasswordDecisionResolver,
     ) {
+        let initial_size = profile.initial_size();
         #[cfg(not(test))]
-        let _ = profile;
+        let _ = &profile;
         assert!(
             command_capacity > 0,
             "SSH command queue capacity must be nonzero"
@@ -2536,6 +2581,8 @@ impl SshWorkerFoundation {
         let shared = Arc::new(WorkerShared {
             id: SessionId::next(),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
+            desired_terminal_size: Mutex::new(initial_size),
+            pre_running_resize_pending: AtomicBool::new(false),
             reconnecting: AtomicBool::new(false),
             reconnect_requested: AtomicBool::new(false),
             liveness_check_requested: AtomicBool::new(false),
@@ -3861,7 +3908,8 @@ async fn establish_connection(
         }
     };
     let mut channel = channel;
-    let dimensions = ssh_terminal_dimensions(profile.initial_size());
+    let initial_size = shared.desired_terminal_size();
+    let dimensions = ssh_terminal_dimensions(initial_size);
     match wait_for_ssh_operation(
         channel.request_pty(
             true,
@@ -3917,8 +3965,12 @@ async fn establish_connection(
             provider,
             session_name,
         } => {
+            let attach_size = shared.desired_terminal_size();
             wait_for_ssh_operation(
-                channel.exec(true, provider.attach_or_create_command(session_name)),
+                channel.exec(
+                    true,
+                    provider.attach_or_create_command(session_name, attach_size),
+                ),
                 command_receiver,
                 shared,
                 host_key_gate,
@@ -3942,7 +3994,42 @@ async fn establish_connection(
     match wait_for_channel_request_reply(&mut channel, command_receiver, shared, host_key_gate)
         .await
     {
-        ChannelRequestReply::Accepted => ConnectionAttempt::Established(handle, channel),
+        ChannelRequestReply::Accepted => {
+            let mut applied_size = initial_size;
+            while let Some(latest_size) = shared.take_pre_running_resize() {
+                if latest_size != applied_size {
+                    let dimensions = ssh_terminal_dimensions(latest_size);
+                    match wait_for_ssh_operation(
+                        channel.window_change(
+                            dimensions.0,
+                            dimensions.1,
+                            dimensions.2,
+                            dimensions.3,
+                        ),
+                        command_receiver,
+                        shared,
+                        host_key_gate,
+                    )
+                    .await
+                    {
+                        WorkerWait::Completed(Ok(())) => {}
+                        WorkerWait::Completed(Err(_)) => {
+                            return ConnectionAttempt::Permanent(
+                                ConnectionFailure::Setup,
+                                "SSH initial resize failed",
+                            );
+                        }
+                        WorkerWait::Shutdown => {
+                            let _ = stop_handle(handle, shared).await;
+                            return ConnectionAttempt::Shutdown;
+                        }
+                    }
+                }
+                applied_size = latest_size;
+                shared.record_resize_applied(latest_size);
+            }
+            ConnectionAttempt::Established(handle, channel)
+        }
         ChannelRequestReply::Rejected => {
             ConnectionAttempt::Permanent(ConnectionFailure::Setup, "SSH shell request was rejected")
         }
@@ -4231,7 +4318,7 @@ async fn process_authenticated_commands(
                 )
                 .await
                 {
-                    WorkerWait::Completed(Ok(())) => shared.record_resize_applied(size),
+                    WorkerWait::Completed(Ok(())) => shared.record_running_resize(size),
                     WorkerWait::Completed(Err(_)) => {
                         return Err(ssh_failure_with_kind(
                             shared,
@@ -4320,8 +4407,7 @@ fn process_commands_before_running(
                 report_unsupported(shared, "SSH input is not available");
             }
             Ok(WorkerCommand::Resize(size)) => {
-                let _ = size.columns();
-                report_unsupported(shared, "SSH resize is not available")
+                shared.retain_pre_running_resize(size);
             }
             Ok(WorkerCommand::Reconnect) => {
                 shared.clear_reconnect_request();
@@ -4875,12 +4961,15 @@ mod tests {
         let name = PersistentSessionName::new("work").unwrap();
 
         assert_eq!(
-            PersistenceProvider::Tmux.attach_or_create_command(&name),
-            "exec tmux new-session -A -s work"
+            PersistenceProvider::Tmux
+                .attach_or_create_command(&name, TerminalSize::new(132, 43).unwrap()),
+            "exec tmux new-session -A -s work -x 132 -y 43 \\; set-option -t work status off \
+             \\; set-window-option -t work window-size latest"
         );
         assert_eq!(
-            PersistenceProvider::Screen.attach_or_create_command(&name),
-            "exec screen -xRR work"
+            PersistenceProvider::Screen
+                .attach_or_create_command(&name, TerminalSize::new(132, 43).unwrap()),
+            "exec screen -c /dev/null -xRR work"
         );
         assert_eq!(
             PersistenceProvider::Tmux.capability_probe_command(),
@@ -5455,6 +5544,35 @@ mod tests {
             })
         );
         assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    #[test]
+    fn worker_retains_the_latest_resize_while_connecting_without_an_error() {
+        let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            2,
+            4,
+            noop_session_event_notifier(),
+        );
+        let requested = TerminalSize::new(132, 43).unwrap();
+        worker.try_resize(requested).unwrap();
+
+        assert!(!process_commands_before_running(
+            &receiver,
+            &worker.shared,
+            &HostKeyDecisionGate::new(),
+        ));
+        assert_eq!(worker.shared.desired_terminal_size(), requested);
+        assert_eq!(worker.shared.take_pre_running_resize(), Some(requested));
+        assert_eq!(worker.shared.take_pre_running_resize(), None);
+        assert!(matches!(
+            worker.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting))
+        ));
+        assert!(matches!(
+            worker.try_recv_event(),
+            Err(SessionTryReceiveError::Empty)
+        ));
     }
 
     #[test]

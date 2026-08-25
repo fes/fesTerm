@@ -11,6 +11,9 @@ pub enum NativeMenuCommand {
     CloseActiveSurface,
     ToggleCommandPalette,
     ToggleSessionInspector,
+    ClearTerminal,
+    ResetTerminal,
+    ToggleFocusMode,
 }
 
 /// Observes macOS resume-from-sleep (ADR 0018: "resume from system sleep" is
@@ -175,6 +178,21 @@ mod menu {
             fn toggle_session_inspector(&self, _sender: Option<&AnyObject>) {
                 self.emit(NativeMenuCommand::ToggleSessionInspector);
             }
+
+            #[unsafe(method(clearTerminal:))]
+            fn clear_terminal(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuCommand::ClearTerminal);
+            }
+
+            #[unsafe(method(resetTerminal:))]
+            fn reset_terminal(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuCommand::ResetTerminal);
+            }
+
+            #[unsafe(method(toggleFocusMode:))]
+            fn toggle_focus_mode(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuCommand::ToggleFocusMode);
+            }
         }
     );
 
@@ -286,8 +304,8 @@ mod menu {
         file.addItem(&custom_item(
             mtm,
             "Start Local Shell",
-            "",
-            NSEventModifierFlags::empty(),
+            "n",
+            NSEventModifierFlags::Command,
             sel!(startLocalShell:),
             &target,
         ));
@@ -311,6 +329,26 @@ mod menu {
         main.addItem(&submenu_root(mtm, "Edit", &edit));
         edit.addItem(&responder_item(mtm, "Copy", "c", sel!(copy:)));
         edit.addItem(&responder_item(mtm, "Paste", "v", sel!(paste:)));
+        edit.addItem(&NSMenuItem::separatorItem(mtm));
+        edit.addItem(&custom_item(
+            mtm,
+            "Clear Terminal",
+            "k",
+            NSEventModifierFlags::Command,
+            sel!(clearTerminal:),
+            &target,
+        ));
+
+        let shell = menu(mtm, "Shell");
+        main.addItem(&submenu_root(mtm, "Shell", &shell));
+        shell.addItem(&custom_item(
+            mtm,
+            "Reset Terminal",
+            "r",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Option,
+            sel!(resetTerminal:),
+            &target,
+        ));
 
         let view = menu(mtm, "View");
         main.addItem(&submenu_root(mtm, "View", &view));
@@ -323,6 +361,14 @@ mod menu {
             &target,
         );
         view.addItem(&palette);
+        view.addItem(&custom_item(
+            mtm,
+            "Toggle Focus Mode",
+            "f",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+            sel!(toggleFocusMode:),
+            &target,
+        ));
         let inspector_item = custom_item(
             mtm,
             "Show Session Inspector",

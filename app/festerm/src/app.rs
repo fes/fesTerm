@@ -48,6 +48,7 @@ const PASTE_PREVIEW_LINE_LIMIT: usize = 8;
 enum ApplicationShortcut {
     CommandPalette,
     NewSession,
+    StartLocalShell,
     CloseActiveSurface,
     NextSession,
     PreviousSession,
@@ -63,6 +64,9 @@ enum ApplicationShortcut {
     SettingsHotkey,
     ZoomOut,
     ZoomReset,
+    ClearTerminal,
+    ResetTerminal,
+    ToggleFocusMode,
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +90,14 @@ impl ApplicationShortcut {
                     egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
                 },
                 egui::Key::T,
+            )),
+            Self::StartLocalShell => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND
+                } else {
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+                },
+                egui::Key::N,
             )),
             Self::CloseActiveSurface => Some((
                 if cfg!(target_os = "macos") {
@@ -112,6 +124,34 @@ impl ApplicationShortcut {
             )),
             Self::ZoomOut => Some((egui::Modifiers::COMMAND, egui::Key::Minus)),
             Self::ZoomReset => Some((egui::Modifiers::COMMAND, egui::Key::Num0)),
+            Self::ClearTerminal => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND
+                } else {
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+                },
+                egui::Key::K,
+            )),
+            Self::ResetTerminal => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND | egui::Modifiers::ALT
+                } else {
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+                },
+                egui::Key::R,
+            )),
+            Self::ToggleFocusMode => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                } else {
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+                },
+                if cfg!(target_os = "macos") {
+                    egui::Key::F
+                } else {
+                    egui::Key::F11
+                },
+            )),
         }
     }
 
@@ -121,6 +161,8 @@ impl ApplicationShortcut {
             Self::CommandPalette => Some("Ctrl+Shift+P"),
             Self::NewSession if cfg!(target_os = "macos") => Some("\u{2318}+T"),
             Self::NewSession => Some("Ctrl+Shift+T"),
+            Self::StartLocalShell if cfg!(target_os = "macos") => Some("\u{2318}+N"),
+            Self::StartLocalShell => Some("Ctrl+Shift+N"),
             Self::CloseActiveSurface if cfg!(target_os = "macos") => Some("\u{2318}+W"),
             Self::CloseActiveSurface => Some("Ctrl+Shift+W"),
             Self::NextSession => Some("Ctrl+Tab"),
@@ -133,6 +175,12 @@ impl ApplicationShortcut {
             Self::ZoomOut => Some("Ctrl+-"),
             Self::ZoomReset if cfg!(target_os = "macos") => Some("\u{2318}+0"),
             Self::ZoomReset => Some("Ctrl+0"),
+            Self::ClearTerminal if cfg!(target_os = "macos") => Some("\u{2318}+K"),
+            Self::ClearTerminal => Some("Ctrl+Shift+K"),
+            Self::ResetTerminal if cfg!(target_os = "macos") => Some("Option+\u{2318}+R"),
+            Self::ResetTerminal => Some("Ctrl+Shift+R"),
+            Self::ToggleFocusMode if cfg!(target_os = "macos") => Some("\u{2318}+Shift+F"),
+            Self::ToggleFocusMode => Some("Ctrl+Shift+F11"),
         }
     }
 
@@ -540,6 +588,9 @@ impl FesTermApp {
                 NativeMenuCommand::ToggleSessionInspector => {
                     self.toggle_inspector_from_current_focus(context)
                 }
+                NativeMenuCommand::ClearTerminal => self.clear_active_terminal(context),
+                NativeMenuCommand::ResetTerminal => self.reset_active_terminal(context),
+                NativeMenuCommand::ToggleFocusMode => self.toggle_focus_mode(context),
             }
         }
     }
@@ -1523,7 +1574,9 @@ impl FesTermApp {
             PaletteItem {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
-                hint: None,
+                hint: ApplicationShortcut::StartLocalShell
+                    .label()
+                    .map(str::to_owned),
                 is_tab: false,
                 shortcut_label: None,
             },
@@ -1548,7 +1601,9 @@ impl FesTermApp {
                     } else {
                         "Enter Focus Mode".to_owned()
                     },
-                    hint: None,
+                    hint: ApplicationShortcut::ToggleFocusMode
+                        .label()
+                        .map(str::to_owned),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -1607,14 +1662,18 @@ impl FesTermApp {
                 PaletteItem {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
-                    hint: None,
+                    hint: ApplicationShortcut::ResetTerminal
+                        .label()
+                        .map(str::to_owned),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: CLEAR_TERMINAL_HISTORY,
-                    label: "Clear Terminal History".to_owned(),
-                    hint: None,
+                    label: "Clear Terminal".to_owned(),
+                    hint: ApplicationShortcut::ClearTerminal
+                        .label()
+                        .map(str::to_owned),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -1706,7 +1765,7 @@ impl FesTermApp {
                 context.request_repaint();
             }
             11 => self.reset_active_terminal(context),
-            12 => self.clear_active_terminal_history(context),
+            12 => self.clear_active_terminal(context),
             13 => self.copy_active_selection(context),
             14 => self.paste_into_active_session(context),
             id if id >= TAB_ACTIVATE_OFFSET => {
@@ -1759,6 +1818,7 @@ impl FesTermApp {
             return;
         }
         let new_tab = ApplicationShortcut::NewSession.consume(ctx);
+        let start_local_shell = ApplicationShortcut::StartLocalShell.consume(ctx);
         let close_tab = ApplicationShortcut::CloseActiveSurface.consume(ctx);
         let next_tab = ApplicationShortcut::NextSession.consume(ctx);
         let previous_tab = ApplicationShortcut::PreviousSession.consume(ctx);
@@ -1779,9 +1839,18 @@ impl FesTermApp {
             && ApplicationShortcut::ZoomOut.consume(ctx);
         let reset_zoom = matches!(self.state.active_tab().content, TabContent::Session(_))
             && ApplicationShortcut::ZoomReset.consume(ctx);
+        let clear_terminal = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ApplicationShortcut::ClearTerminal.consume(ctx);
+        let reset_terminal = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ApplicationShortcut::ResetTerminal.consume(ctx);
+        let toggle_focus_mode = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ApplicationShortcut::ToggleFocusMode.consume(ctx);
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
+        }
+        if start_local_shell {
+            self.state.dispatch(AppCommand::StartLocalSession, ctx);
         }
         if close_tab {
             let active = self.state.active();
@@ -1804,6 +1873,15 @@ impl FesTermApp {
         }
         if reset_zoom {
             self.zoom_active_session(ZoomCommand::Reset, ctx);
+        }
+        if clear_terminal {
+            self.clear_active_terminal(ctx);
+        }
+        if reset_terminal {
+            self.reset_active_terminal(ctx);
+        }
+        if toggle_focus_mode {
+            self.toggle_focus_mode(ctx);
         }
     }
 
@@ -1848,16 +1926,16 @@ impl FesTermApp {
         context.request_repaint();
     }
 
-    /// Clears the active session's retained scrollback without changing
-    /// its visible screen, distinct from `reset_active_terminal` above.
-    fn clear_active_terminal_history(&mut self, context: &egui::Context) {
+    /// Clears the visible display and retained scrollback while preserving
+    /// terminal modes and attributes, matching the conventional Cmd+K action.
+    fn clear_active_terminal(&mut self, context: &egui::Context) {
         let active = self.state.active();
         let Some(session) = self.state.session_tab_mut(active) else {
             return;
         };
-        session.terminal.clear_scrollback();
+        session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
         self.overlays.transient_notice = Some((
-            "Terminal history cleared".to_owned(),
+            "Terminal cleared".to_owned(),
             Instant::now() + Duration::from_millis(1_500),
         ));
         self.restore_active_terminal_focus();
@@ -3407,9 +3485,7 @@ mod tests {
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
         let items = app.palette_items();
         assert!(items.iter().any(|item| item.label == "Reset Terminal"));
-        assert!(items
-            .iter()
-            .any(|item| item.label == "Clear Terminal History"));
+        assert!(items.iter().any(|item| item.label == "Clear Terminal"));
 
         {
             let session = app
@@ -3448,6 +3524,100 @@ mod tests {
             scrollback_before,
             "reset must not clear scrollback"
         );
+    }
+
+    #[test]
+    fn clear_terminal_clears_display_and_scrollback_without_resetting_attributes() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        {
+            let session = app
+                .state
+                .session_tab_mut(tab)
+                .expect("active terminal session");
+            for line in 1..=60 {
+                session
+                    .terminal
+                    .ingest(format!("line{line}\r\n").as_bytes());
+            }
+            session.terminal.ingest(b"\x1b[1;31mred bold");
+            assert!(session.terminal.scrollback_stats().logical_lines() > 0);
+            assert_ne!(
+                session.terminal.attributes(),
+                festerm_core::Attributes::NONE
+            );
+        }
+
+        app.clear_active_terminal(&context);
+
+        let session = app
+            .state
+            .session_tab_mut(tab)
+            .expect("active terminal session");
+        assert_eq!(session.terminal.scrollback_stats().logical_lines(), 0);
+        assert_eq!(
+            session
+                .terminal
+                .row_text(0)
+                .expect("first terminal row")
+                .trim(),
+            ""
+        );
+        assert_ne!(
+            session.terminal.attributes(),
+            festerm_core::Attributes::NONE,
+            "clear must not perform a terminal reset"
+        );
+    }
+
+    #[test]
+    fn terminal_shortcuts_follow_platform_conventions() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                ApplicationShortcut::ClearTerminal.label(),
+                Some("\u{2318}+K")
+            );
+            assert_eq!(
+                ApplicationShortcut::ResetTerminal.label(),
+                Some("Option+\u{2318}+R")
+            );
+        } else {
+            assert_eq!(
+                ApplicationShortcut::ClearTerminal.label(),
+                Some("Ctrl+Shift+K")
+            );
+            assert_eq!(
+                ApplicationShortcut::ResetTerminal.label(),
+                Some("Ctrl+Shift+R")
+            );
+        }
+    }
+
+    #[test]
+    fn local_shell_and_focus_mode_shortcuts_dispatch_their_commands() {
+        let mut harness = harness();
+        harness.run();
+
+        let (local_modifiers, local_key) = ApplicationShortcut::StartLocalShell
+            .chord()
+            .expect("local-shell shortcut");
+        harness.key_press_modifiers(local_modifiers, local_key);
+        harness.step();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+
+        let (focus_modifiers, focus_key) = ApplicationShortcut::ToggleFocusMode
+            .chord()
+            .expect("focus-mode shortcut");
+        harness.key_press_modifiers(focus_modifiers, focus_key);
+        harness.step();
+        assert!(harness.state().focus_mode);
+
+        harness.key_press_modifiers(focus_modifiers, focus_key);
+        harness.step();
+        assert!(!harness.state().focus_mode);
     }
 
     #[test]
@@ -3607,7 +3777,7 @@ mod tests {
             egui::Key::P,
         );
         harness.step();
-        harness.get_by_label("Reset Terminal").click();
+        harness.get_by_label_contains("Reset Terminal").click();
         // The transient "Terminal reset" toast keeps requesting repaints
         // until it expires; one step is enough to observe the result of
         // this frame's click without waiting on that timer.
@@ -3651,7 +3821,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_terminal_history_palette_command_clears_only_scrollback() {
+    fn clear_terminal_palette_command_clears_display_and_scrollback() {
         let context = egui::Context::default();
         let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
 
@@ -3664,15 +3834,8 @@ mod tests {
                 .terminal
                 .ingest(b"one\r\ntwo\r\nthree\r\nfour\r\nprompt$ ");
         }
-        let visible_before = app
-            .state
-            .session_tab_mut(tab)
-            .expect("active terminal session")
-            .terminal
-            .row_text(0);
-
-        const CLEAR_TERMINAL_HISTORY: u64 = 12;
-        app.dispatch_palette_selection(CLEAR_TERMINAL_HISTORY, &context);
+        const CLEAR_TERMINAL: u64 = 12;
+        app.dispatch_palette_selection(CLEAR_TERMINAL, &context);
 
         let session = app
             .state
@@ -3683,10 +3846,14 @@ mod tests {
             0,
             "history should be cleared"
         );
-        assert_eq!(
-            session.terminal.row_text(0),
-            visible_before,
-            "the visible screen must be unaffected"
+        assert!(
+            session
+                .terminal
+                .row_text(0)
+                .expect("first terminal row")
+                .trim()
+                .is_empty(),
+            "the visible screen should be cleared"
         );
     }
 
@@ -4657,10 +4824,10 @@ mod tests {
         );
         harness.run();
         assert!(harness.state().palette.is_open());
-        // The Launcher tab is first, so it carries the "⌘1" quick-switch
-        // label shown in `palette_items` alongside its title.
+        // The Launcher tab is first, so its accessible label includes the
+        // right-aligned "⌘1" quick-switch chord.
         harness
-            .get_by_role_and_label(accesskit::Role::Button, "\u{2318} 1   Launcher")
+            .get_by_role_and_label(accesskit::Role::Button, "Launcher, \u{2318} 1")
             .click();
         harness.run();
         assert!(!harness.state().palette.is_open());

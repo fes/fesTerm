@@ -14,7 +14,10 @@
 //! `AppCommand` through the single command-handling path
 //! (`docs/application-command-model.md`).
 
-use egui::{Context, Id, Key, Modifiers, RichText, ScrollArea, Window};
+use egui::{
+    Align2, Context, Id, Key, Modifiers, ScrollArea, Sense, TextStyle, WidgetInfo, WidgetType,
+    Window,
+};
 
 /// One searchable entry: an application action or an open tab.
 #[derive(Clone, Debug)]
@@ -31,8 +34,8 @@ pub struct PaletteItem {
     /// Whether this row activates an open tab rather than running a
     /// one-shot action.
     pub is_tab: bool,
-    /// Pre-formatted quick-switch keystroke shown before the label (e.g.
-    /// `"\u{2318}1"`), for the first several open tabs. The same keystroke
+    /// Pre-formatted quick-switch keystroke shown in the muted right column
+    /// (e.g. `"\u{2318}1"`), for the first several open tabs. The same keystroke
     /// also switches directly to that tab outside the palette
     /// (`app::ApplicationShortcut`-style global handling); this field only
     /// controls how it is displayed here. Callers format the platform
@@ -161,26 +164,76 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
                     |ui| {
                         for (index, item) in matches.iter().enumerate() {
                             let highlighted = index == state.selected;
-                            let label_with_shortcut = match &item.shortcut_label {
-                                Some(shortcut) => format!("{shortcut}   {}", item.label),
-                                None => item.label.clone(),
-                            };
-                            let text = if let Some(hint) = &item.hint {
-                                RichText::new(format!("{label_with_shortcut}  \u{2014}  {hint}"))
+                            let row_shortcut = if item.is_tab {
+                                item.shortcut_label.as_deref()
                             } else {
-                                RichText::new(&label_with_shortcut)
+                                item.hint.as_deref()
                             };
-                            let text = if highlighted { text.strong() } else { text };
-                            // A plain `ui.selectable_label` (not
-                            // `ui.add_sized`, which forces
-                            // `Layout::centered_and_justified` and would
-                            // center this row's text) inherits this
-                            // `top_down(Align::Min).with_cross_justify`
-                            // layout directly: full row width *and*
-                            // left-aligned text, matching every other
-                            // palette entry (including non-tab rows,
-                            // rendered via this same call).
-                            let response = ui.selectable_label(highlighted, text);
+                            let left_text = if item.is_tab {
+                                match &item.hint {
+                                    Some(hint) => format!("{}  \u{2014}  {hint}", item.label),
+                                    None => item.label.clone(),
+                                }
+                            } else {
+                                item.label.clone()
+                            };
+                            let accessible_label = match row_shortcut {
+                                Some(shortcut) => format!("{left_text}, {shortcut}"),
+                                None => left_text.clone(),
+                            };
+                            let row_height = ui.spacing().interact_size.y;
+                            let (rect, response) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), row_height),
+                                Sense::click(),
+                            );
+                            response.widget_info(|| {
+                                let mut info = WidgetInfo::labeled(
+                                    WidgetType::SelectableLabel,
+                                    true,
+                                    accessible_label.clone(),
+                                );
+                                info.selected = Some(highlighted);
+                                info
+                            });
+                            let selection = ui.visuals().selection;
+                            if highlighted {
+                                ui.painter().rect_filled(rect, 3.0, selection.bg_fill);
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    3.0,
+                                    selection.stroke,
+                                    egui::StrokeKind::Inside,
+                                );
+                            } else if response.hovered() {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    3.0,
+                                    ui.visuals().widgets.hovered.weak_bg_fill,
+                                );
+                            }
+
+                            let font = TextStyle::Button.resolve(ui.style());
+                            let left_color = if highlighted {
+                                ui.visuals().strong_text_color()
+                            } else {
+                                ui.visuals().text_color()
+                            };
+                            ui.painter().text(
+                                rect.left_center() + egui::vec2(6.0, 0.0),
+                                Align2::LEFT_CENTER,
+                                left_text,
+                                font.clone(),
+                                left_color,
+                            );
+                            if let Some(shortcut) = row_shortcut {
+                                ui.painter().text(
+                                    rect.right_center() - egui::vec2(8.0, 0.0),
+                                    Align2::RIGHT_CENTER,
+                                    shortcut,
+                                    font,
+                                    ui.visuals().weak_text_color(),
+                                );
+                            }
                             if response.clicked() {
                                 decision = Some(Some(item.id));
                             }

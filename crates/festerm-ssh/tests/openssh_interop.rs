@@ -909,6 +909,8 @@ fn controlled_openssh_liveness_probe_succeeds_without_disrupting_a_healthy_sessi
 #[ignore = "requires the repository-owned OpenSSH Docker fixture"]
 fn controlled_openssh_tmux_persistent_session_reattaches_after_manual_reconnect() {
     const SET_MARKER: &[u8] = b"__FESTERM_TMUX_SET_OK__";
+    const SIZE_MARKER: &[u8] = b"__FESTERM_TMUX_SIZE_37_111__";
+    const STATUS_MARKER: &[u8] = b"__FESTERM_TMUX_STATUS_off__";
     const PROOF_MARKER: &[u8] = b"__FESTERM_TMUX_PROOF_persisted-value__";
 
     let configuration =
@@ -925,13 +927,22 @@ fn controlled_openssh_tmux_persistent_session_reattaches_after_manual_reconnect(
         SshSessionOptions::manual_recovery(strategy),
     )
     .expect("could not start the OpenSSH session");
+    session
+        .try_resize(TerminalSize::new(111, 37).expect("test size is valid"))
+        .expect("could not queue the initial tmux PTY size");
     let resolver = session.host_key_decision_resolver();
 
     let deadline = Instant::now() + EVENT_TIMEOUT;
     let mut running = false;
     let mut proof_set = false;
+    let mut correct_size_seen = false;
+    let mut bare_status_seen = false;
     let mut output_tail = Vec::new();
-    while Instant::now() < deadline && !(running && proof_set) {
+    let mut size_output_tail = Vec::new();
+    let mut status_output_tail = Vec::new();
+    while Instant::now() < deadline
+        && !(running && proof_set && correct_size_seen && bare_status_seen)
+    {
         match session.try_recv_event() {
             Ok(SessionEvent::HostKeyVerification(prompt)) => resolver
                 .resolve(&prompt, HostTrustDecision::AcceptOnce)
@@ -940,12 +951,18 @@ fn controlled_openssh_tmux_persistent_session_reattaches_after_manual_reconnect(
                 running = true;
                 session
                     .try_send_input(
-                        b"export FESTERM_PROOF=persisted-value; printf '%s\\n' '__FESTERM_TMUX_SET_OK__'\n",
+                        b"export FESTERM_PROOF=persisted-value; \
+                          printf '%s\\n' '__FESTERM_TMUX_SET_OK__'; \
+                          printf '__FESTERM_TMUX_SIZE_%s__\\n' \"$(stty size | tr ' ' '_')\"; \
+                          printf '__FESTERM_TMUX_STATUS_%s__\\n' \
+                          \"$(tmux show-option -t festerm-interop-tmux -v status)\"\n",
                     )
                     .expect("could not set the durable-session proof variable");
             }
             Ok(SessionEvent::Output(bytes)) => {
                 proof_set |= marker_seen(&mut output_tail, &bytes, SET_MARKER);
+                correct_size_seen |= marker_seen(&mut size_output_tail, &bytes, SIZE_MARKER);
+                bare_status_seen |= marker_seen(&mut status_output_tail, &bytes, STATUS_MARKER);
             }
             Ok(SessionEvent::Error(error)) => {
                 panic!(
@@ -966,6 +983,14 @@ fn controlled_openssh_tmux_persistent_session_reattaches_after_manual_reconnect(
     assert!(
         proof_set,
         "could not set the durable-session proof variable inside the tmux session"
+    );
+    assert!(
+        correct_size_seen,
+        "the first tmux shell did not receive the pre-connect 111x37 terminal size"
+    );
+    assert!(
+        bare_status_seen,
+        "the tmux session did not disable its status-bar chrome"
     );
 
     // Sever only the transport, not the container: the durable tmux session

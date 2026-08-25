@@ -1681,9 +1681,8 @@ The terminal-correctness spec default cursor style is `BlinkingBlock` (per real 
 Expected commands include:
 
 - New Tab opens the session launcher.
-- **Start Local Shell** opens the default local profile directly but has no
-  initial global binding. It remains available from the command palette, and
-  shortcut customization may bind the semantic command later.
+- **Start Local Shell** opens the default local profile directly with the
+  platform shortcut shown below and remains available from the command palette.
 - Close Tab closes the current launcher or session tab.
 - Next/Previous Tab switch predictably.
 - The combined command palette/session switcher finds tabs by stable identity
@@ -1701,13 +1700,16 @@ input. The current platform defaults are:
 | Command | Windows/Linux | macOS |
 | --- | --- | --- |
 | New Session… | `Ctrl+Shift+T` | `Cmd+T` |
-| Start Local Shell directly | Unbound | Unbound |
+| Start Local Shell directly | `Ctrl+Shift+N` | `Cmd+N` |
 | Close active tab | `Ctrl+Shift+W` | `Cmd+W` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` (pending native-convention review) |
 | Command palette / session switcher | `Ctrl+Shift+P` | `Cmd+Shift+P` |
 | Open Settings | `Ctrl+Shift+S` | `Cmd+Shift+S` (also `Cmd+,`, the macOS "Preferences" convention, via the native app menu) |
 | Find in terminal | `Ctrl+Shift+F` | `Cmd+F` target; current implementation remains `Cmd+Shift+F` until search lands |
 | Copy / Paste | `Ctrl+Shift+C` / `Ctrl+Shift+V` | `Cmd+C` / `Cmd+V` |
+| Clear terminal (display and scrollback) | `Ctrl+Shift+K` | `Cmd+K` |
+| Reset terminal display state | `Ctrl+Shift+R` | `Option+Cmd+R` |
+| Enter / exit Focus Mode | `Ctrl+Shift+F11` | `Cmd+Shift+F` |
 | Zoom in / out / reset | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | `Cmd++` / `Cmd+-` / `Cmd+0` |
 
 The application observes physical GUI modifiers before terminal encoding, so
