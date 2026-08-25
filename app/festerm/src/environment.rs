@@ -20,7 +20,9 @@
 //! iTerm2 resolve the same gap by reading the login shell's environment at
 //! startup; this reaches the same outcome without a process-wide mutation.
 
-use festerm_pty::{EnvironmentPolicy, LocalProfile};
+use festerm_pty::LocalProfile;
+#[cfg(target_os = "macos")]
+use festerm_pty::EnvironmentPolicy;
 
 /// Returns `profile` unchanged, except that on macOS its `PATH` is
 /// overridden with the user's login-shell `PATH`, provided the profile does
