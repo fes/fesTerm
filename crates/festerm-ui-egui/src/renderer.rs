@@ -324,8 +324,16 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 );
             }
             if !paint.shape_cell_runs && !cell.text.is_empty() {
+                // Clip to this cell's rect. Some glyphs (notably box-drawing
+                // corners/dots in certain bundled faces) can measure taller
+                // than the "M"-derived cell height, so an unclipped paint can
+                // bleed into an adjacent row; that row's later background
+                // fill then overwrites part of the bled glyph, leaving only
+                // a flat sliver visible. The run-shaping path below already
+                // clips for the same reason.
+                let cell_painter = painter.with_clip_rect(rect);
                 let galley = glyphs.layout(
-                    &painter,
+                    &cell_painter,
                     &cell.text,
                     cell.attributes,
                     foreground,
@@ -336,7 +344,7 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                     rect.left(),
                     rect.top() + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
                 );
-                painter.galley(text_position, galley, foreground);
+                cell_painter.galley(text_position, galley, foreground);
             }
             let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
             if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
