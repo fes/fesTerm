@@ -286,12 +286,16 @@
         "docs/gui-design.md#responsive-and-narrow-window-behavior"
       ],
       "decisions": [
-        "ADR-0007"
+        "ADR-0007",
+        "ADR-0021"
       ],
       "automated_tests": [
         "chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window",
         "viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes",
-        "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface"
+        "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface",
+        "about_exposes_updates_only_for_a_configured_packaged_build",
+        "developer_builds_never_contact_the_update_endpoint",
+        "package_managers_can_check_but_cannot_install"
       ],
       "manual_scenarios": [
         "NP-01",
@@ -300,7 +304,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "update, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent"
+        "native update apply, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent"
       ]
     },
     {

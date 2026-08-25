@@ -29,3 +29,6 @@ Platform packaging should consume the master or a generated PNG and create the
 native container required by that platform (`.icns`, `.ico`, or desktop
 packaging resources). Keep those packaging recipes with the application build
 configuration rather than changing the master artwork per operating system.
+Regenerate the checked-in Windows container with
+`python scripts/generate_windows_icon.py`; CI checks that it still matches the
+canonical PNGs.

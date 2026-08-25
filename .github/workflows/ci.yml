@@ -39,6 +39,8 @@ jobs:
       - run: cargo check --workspace
       - run: python -m unittest discover -s scripts/tests -p "test_*.py"
       - run: python scripts/manage_bundled_font.py
+      - run: python scripts/generate_windows_icon.py --check
+      - run: python scripts/check_packaging.py
       - run: python scripts/check_validation_traceability.py
       - if: github.event_name == 'pull_request'
         run: python scripts/check_validation_traceability.py --base ${{ github.event.pull_request.base.sha }}

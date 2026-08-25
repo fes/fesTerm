@@ -36,6 +36,7 @@ use crate::screens;
 use crate::tabs::{
     AppCommand, AppState, HostKeyTrustDecision, InspectorTransport, TabContent, TabId,
 };
+use crate::updates::{UpdateController, UpdateStatus};
 
 const APPLICATION_TITLE: &str = "fesTerm";
 const LARGE_PASTE_CHARACTER_THRESHOLD: usize = 4_096;
@@ -238,6 +239,7 @@ pub struct FesTermApp {
     terminal_fonts_installed: bool,
     terminal_font_generation: TerminalFontGeneration,
     about_icon: Option<egui::TextureHandle>,
+    updates: UpdateController,
 }
 
 #[cfg(target_os = "macos")]
@@ -460,6 +462,7 @@ impl FesTermApp {
             terminal_fonts_installed: true,
             terminal_font_generation,
             about_icon: Some(about_icon),
+            updates: UpdateController::from_build(),
         }
     }
 
@@ -1963,7 +1966,17 @@ impl FesTermApp {
             return;
         }
 
+        #[derive(Clone, Copy)]
+        enum UpdateAction {
+            Check,
+            Download,
+            Install,
+        }
+
         let mut close = false;
+        let mut update_action = None;
+        let update_status = self.updates.status().clone();
+        let installation_kind = self.updates.installation_kind();
         let width = (context.content_rect().width() - 32.0).clamp(280.0, 420.0);
         egui::Modal::new(egui::Id::new("fesTerm about dialog"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
@@ -1988,6 +2001,107 @@ impl FesTermApp {
                 ui.label("A compact local, SSH, and serial terminal.");
                 ui.hyperlink_to("github.com/fes/fesTerm", "https://github.com/fes/fesTerm");
                 ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Updates").strong());
+                match &update_status {
+                    UpdateStatus::Unavailable(message) => {
+                        ui.label(*message);
+                    }
+                    UpdateStatus::Idle => {
+                        if ui.button("Check for Updates").clicked() {
+                            update_action = Some(UpdateAction::Check);
+                        }
+                    }
+                    UpdateStatus::Checking => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Checking GitHub Releases…");
+                        });
+                    }
+                    UpdateStatus::Current => {
+                        ui.label("fesTerm is up to date.");
+                        if ui.button("Check Again").clicked() {
+                            update_action = Some(UpdateAction::Check);
+                        }
+                    }
+                    UpdateStatus::Available(summary) => {
+                        ui.label(format!("fesTerm {} is available.", summary.version));
+                        if let Some(notes) = summary.notes.as_deref() {
+                            let bounded = notes.chars().take(600).collect::<String>();
+                            if !bounded.trim().is_empty() {
+                                ui.label(
+                                    egui::RichText::new(bounded)
+                                        .small()
+                                        .color(theme::TEXT_SECONDARY),
+                                );
+                            }
+                        }
+                        if installation_kind.can_install() {
+                            if ui.button("Download Update").clicked() {
+                                update_action = Some(UpdateAction::Download);
+                            }
+                        } else {
+                            ui.label(
+                                "This installation is package-managed. Use its package manager to update.",
+                            );
+                            ui.hyperlink_to(
+                                "Open Releases",
+                                "https://github.com/fes/fesTerm/releases",
+                            );
+                        }
+                    }
+                    UpdateStatus::Downloading(summary) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(format!(
+                                "Downloading and verifying fesTerm {}…",
+                                summary.version
+                            ));
+                        });
+                    }
+                    UpdateStatus::ReadyToInstall(summary) => {
+                        ui.label(format!(
+                            "fesTerm {} is downloaded and verified.",
+                            summary.version
+                        ));
+                        if ui.button("Install and Restart").clicked() {
+                            update_action = Some(UpdateAction::Install);
+                        }
+                    }
+                    UpdateStatus::Installing(summary) => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(format!("Installing fesTerm {}…", summary.version));
+                        });
+                    }
+                    UpdateStatus::Installed(summary) => {
+                        ui.label(format!(
+                            "fesTerm {} was installed. Restart fesTerm if it remains open.",
+                            summary.version
+                        ));
+                    }
+                    UpdateStatus::Failed {
+                        message,
+                        retry_check,
+                    } => {
+                        ui.colored_label(theme::STATUS_ERROR, *message);
+                        if *retry_check && ui.button("Try Again").clicked() {
+                            update_action = Some(UpdateAction::Check);
+                        }
+                    }
+                }
+                if !matches!(update_status, UpdateStatus::Unavailable(_)) {
+                    ui.label(
+                        egui::RichText::new(
+                            "Checks fesTerm’s public GitHub Releases only when requested. No profile, session, terminal, or device data is sent.",
+                        )
+                        .small()
+                        .color(theme::TEXT_MUTED),
+                    );
+                    ui.hyperlink_to("Update endpoint", UpdateController::endpoint());
+                }
+                ui.add_space(6.0);
                 if self.overlays.about_licenses_open {
                     egui::ScrollArea::vertical()
                         .id_salt("fesTerm license text")
@@ -2025,6 +2139,12 @@ impl FesTermApp {
                     }
                 });
             });
+        match update_action {
+            Some(UpdateAction::Check) => self.updates.begin_check(),
+            Some(UpdateAction::Download) => self.updates.begin_download(),
+            Some(UpdateAction::Install) => self.updates.begin_install(),
+            None => {}
+        }
         if close {
             self.overlays.about_open = false;
             self.overlays.about_licenses_open = false;
@@ -2534,6 +2654,10 @@ impl FesTermApp {
             return;
         }
         self.process_pending_password_store(ui.ctx());
+        self.updates.poll();
+        if self.updates.status().is_busy() {
+            ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         self.update_native_menu();
@@ -2922,6 +3046,7 @@ impl FesTermApp {
             terminal_fonts_installed: false,
             terminal_font_generation: TerminalFontGeneration::default(),
             about_icon: None,
+            updates: UpdateController::unavailable_for_test(),
         }
     }
 
@@ -3602,6 +3727,25 @@ mod tests {
         assert!(version.contains(std::env::consts::OS));
         assert!(version.contains(std::env::consts::ARCH));
         assert!(!version.contains("HOME="));
+    }
+
+    #[test]
+    fn about_exposes_updates_only_for_a_configured_packaged_build() {
+        let mut unavailable = FesTermApp::for_test_with_configuration(Configuration::empty());
+        unavailable.overlays.about_open = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), unavailable);
+        harness.run();
+        harness.get_by_label("Update checks are available in packaged releases.");
+        assert!(harness.query_by_label("Check for Updates").is_none());
+
+        harness.state_mut().updates = UpdateController::configured_for_test();
+        harness.step();
+        harness.get_by_label("Check for Updates");
+        harness
+            .get_by_label_contains("Checks fesTerm’s public GitHub Releases only when requested");
     }
 
     fn harness() -> Harness<'static, FesTermApp> {

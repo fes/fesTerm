@@ -1,0 +1,393 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semver version to package without publishing
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_PACKAGER_VERSION: 0.11.8
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Resolve and validate release version
+        id: release
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+            publish=true
+          else
+            version="$DISPATCH_VERSION"
+            tag="v$version"
+            publish=false
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          workspace_version=$(sed -nE '/^\[workspace\.package\]$/,/^\[/s/^version = "([^"]+)"$/\1/p' Cargo.toml)
+          [[ "$version" == "$workspace_version" ]]
+          if [[ "$publish" == true ]]; then
+            [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]]
+          fi
+          {
+            echo "publish=$publish"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+      - name: Install Linux validation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev mesa-vulkan-drivers pkg-config
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - run: python3 scripts/manage_bundled_font.py
+      - run: python3 scripts/generate_windows_icon.py --check
+      - run: python3 scripts/check_packaging.py
+      - run: python3 scripts/check_validation_traceability.py
+
+  macos:
+    name: Package macOS
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: release
+    env:
+      APPLE_API_ISSUER: ${{ vars.APPLE_API_ISSUER }}
+      APPLE_API_KEY: ${{ vars.APPLE_API_KEY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+      FESTERM_INSTALLATION_KIND: app
+      FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Require protected signing configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_API_ISSUER"
+          test -n "$APPLE_API_KEY"
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          test -n "$FESTERM_UPDATE_PUBLIC_KEY"
+          test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"
+      - name: Install pinned cargo-packager
+        run: cargo install cargo-packager --version "$CARGO_PACKAGER_VERSION" --locked
+      - name: Prepare signing configuration
+        shell: bash
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_API_KEY_P8"
+          mkdir -p private_keys
+          printf '%s' "$APPLE_API_KEY_P8" > "private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          chmod 600 "private_keys/AuthKey_${APPLE_API_KEY}.p8"
+          cp packaging/macos.toml packaging/macos-release.toml
+          printf '\n[macos]\nsigning-identity = "%s"\n' "$APPLE_SIGNING_IDENTITY" \
+            >> packaging/macos-release.toml
+          echo "APPLE_API_KEY_PATH=$GITHUB_WORKSPACE/private_keys/AuthKey_${APPLE_API_KEY}.p8" \
+            >> "$GITHUB_ENV"
+      - name: Build, sign, and notarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p festerm
+          cargo packager --config packaging/macos-release.toml --formats dmg
+          codesign --verify --deep --strict --verbose=2 target/release/fesTerm.app
+          xcrun stapler validate target/release/fesTerm.app
+          spctl --assess --type execute --verbose=2 target/release/fesTerm.app
+          dmg=$(find target/release -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait \
+            --output-format json > dmg-notarization.json
+          python3 -c \
+            'import json; assert json.load(open("dmg-notarization.json"))["status"] == "Accepted"'
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          hdiutil verify "$dmg"
+          mkdir dist
+          mv "$dmg" "dist/fesTerm-${VERSION}-macos-aarch64.dmg"
+          COPYFILE_DISABLE=1 tar -C target/release -czf \
+            "dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz" fesTerm.app
+          cargo packager signer sign \
+            "dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-macos
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Package Windows
+    needs: validate
+    runs-on: windows-2025
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+      FESTERM_INSTALLATION_KIND: nsis
+      FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Require protected signing configuration
+        shell: pwsh
+        run: |
+          foreach ($name in @(
+            'AZURE_ARTIFACT_SIGNING_ACCOUNT',
+            'AZURE_ARTIFACT_SIGNING_ENDPOINT',
+            'AZURE_ARTIFACT_SIGNING_PROFILE',
+            'AZURE_CLIENT_ID',
+            'AZURE_SUBSCRIPTION_ID',
+            'AZURE_TENANT_ID',
+            'CARGO_PACKAGER_SIGN_PRIVATE_KEY',
+            'CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD',
+            'FESTERM_UPDATE_PUBLIC_KEY'
+          )) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) {
+              throw "Missing protected release value: $name"
+            }
+          }
+          if ($env:FESTERM_UPDATE_PUBLIC_KEY -ne (Get-Content packaging/updater.pub -Raw).Trim()) {
+            throw 'Protected updater public key does not match packaging/updater.pub'
+          }
+        env:
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      - name: Install pinned cargo-packager
+        run: cargo install cargo-packager --version $env:CARGO_PACKAGER_VERSION --locked
+      - name: Build and stage verified ConPTY runtime
+        shell: pwsh
+        run: |
+          ./scripts/stage-conpty.ps1 -Configuration Release
+          foreach ($sidecar in @(
+            'target/release/runtime/conpty/win-x64/conpty.dll',
+            'target/release/runtime/conpty/win-x64/x64/OpenConsole.exe'
+          )) {
+            if ((Get-AuthenticodeSignature $sidecar).Status -ne 'Valid') {
+              throw "Pinned ConPTY sidecar is not Authenticode-valid: $sidecar"
+            }
+          }
+      - uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign application binary
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\target\release\festerm.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          cargo packager --config packaging/windows.toml --formats nsis
+          $installers = @(Get-ChildItem target/release -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected one NSIS installer, found $($installers.Count)"
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Move-Item $installers[0].FullName "dist/fesTerm-$env:VERSION-windows-x86_64-setup.exe"
+      - name: Sign NSIS installer
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\fesTerm-${{ needs.validate.outputs.version }}-windows-x86_64-setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify and sign updater artifact
+        shell: pwsh
+        run: |
+          $installer = "dist/fesTerm-$env:VERSION-windows-x86_64-setup.exe"
+          if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') {
+            throw 'NSIS installer does not have a valid Authenticode signature'
+          }
+          cargo packager signer sign $installer
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-windows
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    name: Package Linux
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: release
+    env:
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+      FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Require protected signing configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          test -n "$FESTERM_UPDATE_PUBLIC_KEY"
+          test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2t64 libudev-dev pkg-config
+          cargo install cargo-packager --version "$CARGO_PACKAGER_VERSION" --locked
+      - name: Build AppImage updater artifact
+        env:
+          FESTERM_INSTALLATION_KIND: appimage
+        run: |
+          set -euo pipefail
+          cargo build --release -p festerm
+          cargo packager --config packaging/linux.toml --formats appimage
+          appimage=$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)
+          test -n "$appimage"
+          mkdir dist
+          mv "$appimage" "dist/fesTerm-${VERSION}-linux-x86_64.AppImage"
+          chmod +x "dist/fesTerm-${VERSION}-linux-x86_64.AppImage"
+          cargo packager signer sign "dist/fesTerm-${VERSION}-linux-x86_64.AppImage"
+      - name: Build package-managed Debian artifact
+        env:
+          FESTERM_INSTALLATION_KIND: managed
+        run: |
+          set -euo pipefail
+          cargo build --release -p festerm
+          cargo packager --config packaging/linux.toml --formats deb
+          deb=$(find target/release -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$deb"
+          mv "$deb" "dist/fesTerm-${VERSION}-linux-x86_64.deb"
+          dpkg-deb --info "dist/fesTerm-${VERSION}-linux-x86_64.deb"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-linux
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    if: needs.validate.outputs.publish == 'true'
+    needs: [validate, macos, windows, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.validate.outputs.tag }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify release payload
+        run: |
+          set -euo pipefail
+          expected=(
+            "fesTerm-${VERSION}-macos-aarch64.dmg"
+            "fesTerm-${VERSION}-macos-aarch64.app.tar.gz"
+            "fesTerm-${VERSION}-macos-aarch64.app.tar.gz.sig"
+            "fesTerm-${VERSION}-windows-x86_64-setup.exe"
+            "fesTerm-${VERSION}-windows-x86_64-setup.exe.sig"
+            "fesTerm-${VERSION}-linux-x86_64.AppImage"
+            "fesTerm-${VERSION}-linux-x86_64.AppImage.sig"
+            "fesTerm-${VERSION}-linux-x86_64.deb"
+          )
+          for artifact in "${expected[@]}"; do
+            test -s "dist/$artifact"
+          done
+          test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq "${#expected[@]}"
+      - name: Generate release notes and signed update manifest
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            --jq .body > release-notes.md
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          python3 scripts/generate_update_manifest.py \
+            --version "$VERSION" \
+            --notes-file release-notes.md \
+            --artifact "macos-aarch64=dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz=$base/fesTerm-${VERSION}-macos-aarch64.app.tar.gz=app" \
+            --artifact "windows-x86_64=dist/fesTerm-${VERSION}-windows-x86_64-setup.exe=$base/fesTerm-${VERSION}-windows-x86_64-setup.exe=nsis" \
+            --artifact "linux-x86_64=dist/fesTerm-${VERSION}-linux-x86_64.AppImage=$base/fesTerm-${VERSION}-linux-x86_64.AppImage=appimage" \
+            --output festerm-update.json
+      - name: Publish immutable artifacts, then update metadata
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --verify-tag \
+            --draft \
+            --title "fesTerm $TAG" \
+            --notes-file release-notes.md
+          gh release upload "$TAG" dist/*
+          gh release upload "$TAG" festerm-update.json
+          gh release edit "$TAG" --draft=false --latest

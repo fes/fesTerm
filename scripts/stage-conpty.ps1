@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [switch]$RunSmoke
+    [switch]$RunSmoke,
+
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Debug'
 )
 
 Set-StrictMode -Version Latest
@@ -144,12 +147,17 @@ catch {
 
 Push-Location $repositoryRoot
 try {
-    & cargo build --workspace
+    $cargoArguments = @('build', '--workspace')
+    if ($Configuration -eq 'Release') {
+        $cargoArguments += '--release'
+    }
+    & cargo @cargoArguments
     if ($LASTEXITCODE -ne 0) {
         throw "cargo build --workspace failed with exit code $LASTEXITCODE"
     }
 
-    foreach ($binaryDirectory in @('target\debug', 'target\debug\deps')) {
+    $profileDirectory = $Configuration.ToLowerInvariant()
+    foreach ($binaryDirectory in @("target\$profileDirectory", "target\$profileDirectory\deps")) {
         $runtimeDirectory = Join-Path $repositoryRoot ($binaryDirectory + '\runtime\conpty\win-x64')
         $hostDirectory = Join-Path $runtimeDirectory 'x64'
         New-Item -ItemType Directory -Force -Path $hostDirectory | Out-Null
@@ -162,7 +170,7 @@ try {
         Assert-Sha512 -Path $stagedHost -Expected $hostSha512 -Description "Staged $binaryDirectory OpenConsole.exe"
     }
 
-    Write-Host 'Staged verified x64 ConPTY runtime in target\debug and target\debug\deps.'
+    Write-Host "Staged verified x64 ConPTY runtime in target\$profileDirectory and target\$profileDirectory\deps."
 
     if ($RunSmoke) {
         & cargo test -p festerm windows_conpty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture

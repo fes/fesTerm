@@ -45,6 +45,12 @@ pwsh -NoProfile -File scripts\stage-conpty.ps1
 pwsh -NoProfile -File scripts\stage-conpty.ps1 -RunSmoke
 ```
 
+Release packaging uses the same verifier and stages beside the release binary:
+
+```powershell
+pwsh -NoProfile -File scripts\stage-conpty.ps1 -Configuration Release
+```
+
 The script reads this manifest, caches the exact package under the current
 user's local application-data directory (never in the repository), verifies
 the archive and extracted x64 files, builds the workspace, and stages the

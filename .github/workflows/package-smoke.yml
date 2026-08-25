@@ -1,0 +1,89 @@
+name: Native package smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/package-smoke.yml'
+      - '.github/workflows/release.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'app/festerm/**'
+      - 'assets/app-icon/**'
+      - 'packaging/**'
+      - 'scripts/check_packaging.py'
+      - 'scripts/stage-conpty.ps1'
+      - 'third_party/conpty/**'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            runner: macos-latest
+          - platform: windows
+            runner: windows-latest
+          - platform: linux
+            runner: ubuntu-latest
+    env:
+      FESTERM_UPDATE_PUBLIC_KEY: unsigned-package-smoke-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate packaging metadata
+        run: |
+          python scripts/generate_windows_icon.py --check
+          python scripts/check_packaging.py
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+      - name: Install pinned cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Build unsigned macOS package
+        if: matrix.platform == 'macos'
+        env:
+          FESTERM_INSTALLATION_KIND: app
+        run: |
+          cargo build --release -p festerm
+          cargo packager --config packaging/macos.toml --formats app
+          test -x target/release/fesTerm.app/Contents/MacOS/festerm
+          test -f target/release/fesTerm.app/Contents/Info.plist
+      - name: Build unsigned Windows package with verified ConPTY sidecar
+        if: matrix.platform == 'windows'
+        env:
+          FESTERM_INSTALLATION_KIND: nsis
+        shell: pwsh
+        run: |
+          ./scripts/stage-conpty.ps1 -Configuration Release
+          cargo packager --config packaging/windows.toml --formats nsis
+          if (-not (Get-ChildItem target/release -Filter '*-setup.exe')) {
+            throw 'cargo-packager did not produce an NSIS installer'
+          }
+      - name: Build unsigned Linux AppImage
+        if: matrix.platform == 'linux'
+        env:
+          FESTERM_INSTALLATION_KIND: appimage
+        run: |
+          cargo build --release -p festerm
+          cargo packager --config packaging/linux.toml --formats appimage
+          test -n "$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
+      - name: Rebuild package-managed Linux binary and Debian package
+        if: matrix.platform == 'linux'
+        env:
+          FESTERM_INSTALLATION_KIND: managed
+        run: |
+          cargo build --release -p festerm
+          cargo packager --config packaging/linux.toml --formats deb
+          test -n "$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"

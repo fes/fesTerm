@@ -134,6 +134,10 @@ custom-terminfo strategy.
   transition IDs with assertions, cancellation, inverse, and checkpoint recovery paths.
 - [Validation traceability](validation/README.md) — machine-checked mappings
   from requirements and ADRs through graph edges to automated/manual evidence.
+- [Native packaging](packaging/README.md) — platform manifests, update trust,
+  and package smoke workflow.
+- [Signing and release operations](docs/signing-and-release.md) — native
+  signing, notarization, updater keys, publication, and credential rotation.
 - [Icon system](docs/icon-system.md) — first-party SVG sources, semantic Rust
   names, accessibility rules, color/state policy, and validation pipeline.
 - [Bundled terminal fonts](assets/fonts/) — pinned JetBrains Mono, Iosevka

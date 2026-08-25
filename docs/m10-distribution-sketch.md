@@ -83,12 +83,12 @@ contains all supported target/architecture combinations:
     },
     "windows-x86_64": {
       "signature": "<contents of artifact.sig>",
-      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-x64.nsis.zip",
+      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-x64-setup.exe",
       "format": "nsis"
     },
     "linux-x86_64": {
       "signature": "<contents of artifact.sig>",
-      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-x86_64.AppImage.tar.gz",
+      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-x86_64.AppImage",
       "format": "appimage"
     }
   }

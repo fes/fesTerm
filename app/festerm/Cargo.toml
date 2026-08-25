@@ -23,6 +23,7 @@ festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+cargo-packager-updater = "0.2.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6"

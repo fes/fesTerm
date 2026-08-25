@@ -1,0 +1,27 @@
+name = "festerm"
+version = "0.1.0"
+product-name = "fesTerm"
+identifier = "dev.fes.festerm"
+description = "A compact local, SSH, and serial terminal."
+homepage = "https://github.com/fes/fesTerm"
+authors = ["fes"]
+out-dir = "../target/release"
+formats = ["appimage", "deb"]
+icons = [
+  "../assets/app-icon/app-icon-16.png",
+  "../assets/app-icon/app-icon-32.png",
+  "../assets/app-icon/app-icon-128.png",
+  "../assets/app-icon/app-icon-256.png",
+  "../assets/app-icon/app-icon-512.png",
+  "../assets/app-icon/app-icon-1024.png",
+]
+binaries = [{ path = "festerm", main = true }]
+
+[linux]
+generate-desktop-entry = true
+
+[deb]
+depends = ["libc6", "libgcc-s1", "libudev1"]
+section = "utils"
+priority = "optional"
+package-name = "festerm"

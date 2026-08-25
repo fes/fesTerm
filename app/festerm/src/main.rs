@@ -7,6 +7,7 @@ mod overlay_state;
 mod screens;
 pub mod session_controller;
 mod tabs;
+mod updates;
 
 use app::FesTermApp;
 use configuration_startup::load as load_startup_configuration;

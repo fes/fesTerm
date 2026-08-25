@@ -1,0 +1,22 @@
+name = "festerm"
+version = "0.1.0"
+product-name = "fesTerm"
+identifier = "dev.fes.festerm"
+description = "A compact local, SSH, and serial terminal."
+homepage = "https://github.com/fes/fesTerm"
+authors = ["fes"]
+out-dir = "../target/release"
+formats = ["nsis"]
+icons = ["../assets/app-icon/festerm.ico"]
+binaries = [{ path = "festerm", main = true }]
+resources = [
+  { src = "../target/release/runtime/conpty", target = "runtime/conpty" },
+]
+
+[nsis]
+install-mode = "currentUser"
+installer-icon = "../assets/app-icon/festerm.ico"
+appdata-paths = ["$APPDATA/fesTerm", "$LOCALAPPDATA/fesTerm"]
+
+[windows]
+allow-downgrades = false

@@ -453,13 +453,15 @@ profiles, workspace names, terminal content, and session diagnostics. Licenses
 shows the repository license and bundled dependency/asset notices, including
 the exact Inter font license once the font is shipped.
 
-**Check for Updates** remains absent until fesTerm has either a real signed
-update mechanism or a documented authoritative release-check endpoint.
-Package-manager installations defer to their package manager. Release notes do
-not interrupt startup. Any future built-in update notice is quiet, factual,
-dismissible, and cannot block the Launcher or a terminal session. Because even
-a version check creates outbound network traffic, its behavior, endpoint, and
-data must be disclosed and configurable before it is enabled.
+**Check for Updates** is present only in packaged builds carrying the updater
+verification public key. It contacts the fixed public fesTerm GitHub Releases
+`latest/download/festerm-update.json` endpoint only after the user presses the
+button; it sends no profile, session, terminal, device, or configuration data.
+Checking, verified download, and installation are separate user actions.
+Package-manager installations may report availability but defer installation
+to their package manager. Release notes never interrupt startup. Update state
+is quiet, factual, dismissible, and cannot block the Launcher or a terminal
+session. Developer and incompletely signed builds expose no network action.
 
 ### Deferred native Markdown viewing
 
@@ -2331,11 +2333,14 @@ requires a different sequence:
    palette commands, is bounded and per-session, and never scales application
    chrome. Native DPI, resize-coalescing, anchor, focus, and accessibility
    evidence remains in `manual-validation.md`.
-4. **Initial About surface implemented:** the compact application-owned modal
+4. **Initial About and update surface implemented:** the compact
+   application-owned modal
    exposes exact version/platform information, a bounded privacy-safe Copy
    summary, the canonical source link, and repository/asset license notices;
-   it deliberately has no update control. Native link handoff, accessibility,
-   and visual evidence remain in `manual-validation.md`.
+   configured packaged builds additionally expose the explicit signed-update
+   state machine from ADR 0021. Developer/incomplete builds fail closed without
+   a network action. Native update, link handoff, accessibility, and visual
+   evidence remain in `manual-validation.md`.
 5. **Semantic icon layer implemented:** `festerm-ui-egui::icon::Icon` owns the
    complete first-party inventory and dependency-free canonical geometry;
    Launcher session types and persistent chrome controls use it with semantic
