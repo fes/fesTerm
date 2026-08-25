@@ -57,6 +57,12 @@ Native smoke tests are in `.github/workflows/native-smoke.yml`, triggered by
 `schedule:` (nightly at 02:17 UTC) and `workflow_dispatch:`.  They are **not**
 part of the PR-blocking `ci.yml` matrix.
 
+The workflow also runs disposable native-secret-store lifecycles against
+Windows Credential Manager, Linux Secret Service, and macOS Keychain. Each
+test creates a random fesTerm-owned entry, verifies put/get/update/delete, and
+removes only that entry. The separate `.github/workflows/openssh-interop.yml`
+workflow runs the repository-owned Docker/OpenSSH suite daily and on demand.
+
 The transition from nightly-only to PR-blocking requires:
 
 1. Confirmed stable results across ≥ 7 consecutive nightly runs per platform.
@@ -128,6 +134,9 @@ screenshots alone cannot diagnose.
 | Linux | `unix_pty_bounded_shutdown_terminates_process_tree` | **Executed in the Linux P4 handoff (`5e97f5d`)** |
 | macOS | `unix_pty_smoke_flow_with_test_child_and_issue3_resizes` | Written; **advisory — pending macOS CI run** |
 | macOS | `unix_pty_bounded_shutdown_terminates_process_tree` | Written; **advisory — pending macOS CI run** |
+| Windows | Disposable Credential Manager lifecycle | **Scheduled; required within the Windows native-smoke job** |
+| Linux | Disposable Secret Service lifecycle under an isolated D-Bus session | **Scheduled; required within the Linux native-smoke job** |
+| macOS | Disposable Keychain lifecycle | **Scheduled; advisory with the macOS native-smoke job; passed locally on 2026-08-24** |
 
 Update this table after each first-run result, citing the CI run URL and
 commit SHA.

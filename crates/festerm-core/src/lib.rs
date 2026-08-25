@@ -141,6 +141,9 @@ pub use screen::Screen;
 pub use terminal::{Terminal, TerminalError};
 
 #[cfg(test)]
+mod model_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
         Attributes, CellWidth, Color, Dimensions, FocusEvent, InputEvent, InputEventOutcome, Key,

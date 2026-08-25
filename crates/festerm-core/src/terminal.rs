@@ -788,6 +788,7 @@ impl Terminal {
         if width == 2 && self.cursor().column() + 1 == columns {
             if auto_wrap {
                 let buffer = self.active_buffer_mut();
+                buffer.screen.mark_soft_wrapped(buffer.cursor.row);
                 buffer.cursor.column = 0;
                 buffer.pending_wrap = false;
                 self.index();

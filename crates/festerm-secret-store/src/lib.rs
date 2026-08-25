@@ -386,10 +386,10 @@ mod native {
 
     pub(super) fn create() -> Result<Box<dyn SecretStore>, SecretStoreError> {
         let store = zbus_secret_service_keyring_store::Store::new().map_err(map_keyring_error)?;
-        let modifiers = HashMap::from([
-            ("target", "io.github.fes.festerm"),
-            ("label", "fesTerm secret"),
-        ]);
+        // The service namespace and random account name isolate fesTerm
+        // entries without triggering a
+        // GUI prompt to create a separate collection.
+        let modifiers = HashMap::from([("label", "fesTerm secret")]);
         Ok(Box::new(NativeSecretStore::new(store, modifiers)))
     }
 }

@@ -90,9 +90,12 @@ Implemented in `89a59ae`:
 - manual dispatch builds signed artifacts without publishing.
 
 Local macOS signing/notarization and package construction have completed
-successfully. The first production tag plus cross-platform clean
-install/update/uninstall and failure-path evidence remains validation pending
-under [#62](https://github.com/fes/fesTerm/issues/62).
+successfully. Package smoke now verifies macOS bundle metadata, extracts and
+inspects the AppImage, and performs clean install/uninstall cycles for Windows
+NSIS and Debian packages. The first production tag plus signed cross-platform
+upgrade, cancellation, restart, interrupted-download, and signature-rejection
+evidence remains validation pending under
+[#62](https://github.com/fes/fesTerm/issues/62).
 
 ## Alternatives considered
 

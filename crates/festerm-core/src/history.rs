@@ -244,9 +244,9 @@ impl Scrollback {
     /// Rewraps every retained logical line's physical-row boundaries at the
     /// new primary width. Logical-line identity, cell content, ordering, and
     /// hard-break endings are unchanged; only physical row splits and the
-    /// accounted row-index storage move. This never evicts lines: reflow
-    /// does not add cell content, so charged bytes cannot exceed the
-    /// existing budget as a result of calling it.
+    /// accounted row-index storage move. Narrower rows can require more
+    /// row-index capacity, so the caller re-applies the bound after splitting
+    /// the live-screen tail back out.
     pub(crate) fn reflow(&mut self, columns: usize) {
         for line in &mut self.lines {
             let prior_charge = line.charged_bytes;
@@ -351,6 +351,10 @@ impl Scrollback {
                 let keep_cell_end = line.row_ends[keep_rows - 1];
                 line.cells.truncate(keep_cell_end);
                 line.row_ends.truncate(keep_rows);
+                // Capacity is charged, so truncating alone would leave the
+                // retained prefix billed for the removed live-screen tail.
+                line.cells.shrink_to_fit();
+                line.row_ends.shrink_to_fit();
                 line.physical_rows = keep_rows;
                 line.hard_break = false;
                 line.charged_bytes = size_of::<LogicalLine>()
@@ -362,7 +366,25 @@ impl Scrollback {
             }
         }
         segments.reverse();
-        segments.into_iter().flatten().collect()
+        let rows = segments.into_iter().flatten().collect();
+        self.enforce_limit();
+        rows
+    }
+
+    fn enforce_limit(&mut self) {
+        self.evict_complete_lines();
+        if self.charged_bytes <= self.limit_bytes {
+            return;
+        }
+
+        let removed = self
+            .lines
+            .pop_front()
+            .expect("over-budget scrollback contains an open line");
+        debug_assert!(!removed.hard_break);
+        self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
+        self.oversize_lines = self.oversize_lines.saturating_add(1);
+        self.dropping_oversize_line = true;
     }
 
     pub(crate) fn stats(&self) -> ScrollbackStats {

@@ -60,6 +60,8 @@ jobs:
           cargo packager --config packaging/macos.toml --formats app
           test -x target/release/fesTerm.app/Contents/MacOS/festerm
           test -f target/release/fesTerm.app/Contents/Info.plist
+          test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleIdentifier)" = "dev.fes.festerm"
+          test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleExecutable)" = "festerm"
       - name: Build unsigned Windows package with verified ConPTY sidecar
         if: matrix.platform == 'windows'
         env:
@@ -68,8 +70,33 @@ jobs:
         run: |
           ./scripts/stage-conpty.ps1 -Configuration Release
           cargo packager --config packaging/windows.toml --formats nsis
-          if (-not (Get-ChildItem target/release -Filter '*-setup.exe')) {
+          $installer = Get-ChildItem target/release -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) {
             throw 'cargo-packager did not produce an NSIS installer'
+          }
+          $installDirectory = Join-Path $env:LOCALAPPDATA 'fesTerm'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "NSIS clean install failed with exit code $($process.ExitCode)"
+          }
+          $installedBinary = Join-Path $installDirectory 'festerm.exe'
+          $installedConpty = Join-Path $installDirectory 'runtime/conpty/conpty.dll'
+          $uninstaller = Join-Path $installDirectory 'uninstall.exe'
+          if (-not (Test-Path $installedBinary -PathType Leaf)) {
+            throw 'NSIS install did not place festerm.exe'
+          }
+          if (-not (Test-Path $installedConpty -PathType Leaf)) {
+            throw 'NSIS install did not place the ConPTY runtime'
+          }
+          if (-not (Test-Path $uninstaller -PathType Leaf)) {
+            throw 'NSIS install did not place an uninstaller'
+          }
+          $process = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "NSIS uninstall failed with exit code $($process.ExitCode)"
+          }
+          if (Test-Path $installedBinary) {
+            throw 'NSIS uninstall left the application binary installed'
           }
       - name: Build unsigned Linux AppImage
         if: matrix.platform == 'linux'
@@ -78,7 +105,18 @@ jobs:
         run: |
           cargo build --release -p festerm
           cargo packager --config packaging/linux.toml --formats appimage
-          test -n "$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
+          appimage="$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          chmod +x "$appimage"
+          (
+            cd target/release
+            rm -rf squashfs-root
+            "./$(basename "$appimage")" --appimage-extract >/dev/null
+            test -x squashfs-root/AppRun
+            test -x squashfs-root/usr/bin/festerm
+            test -n "$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
+            rm -rf squashfs-root
+          )
       - name: Rebuild package-managed Linux binary and Debian package
         if: matrix.platform == 'linux'
         env:
@@ -86,4 +124,11 @@ jobs:
         run: |
           cargo build --release -p festerm
           cargo packager --config packaging/linux.toml --formats deb
-          test -n "$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"
+          deb="$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "$deb"
+          dpkg-deb --info "$deb" >/dev/null
+          dpkg-deb --contents "$deb" | grep -q '/usr/bin/festerm$'
+          sudo dpkg --install "$deb"
+          test -x /usr/bin/festerm
+          sudo dpkg --remove festerm
+          test ! -e /usr/bin/festerm

@@ -15,6 +15,21 @@
 //! route-change detection is also deliberately out of scope here; see issue
 //! #48 for that follow-up.
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WakeEvent {
+    Wake,
+    Ignore,
+}
+
+#[cfg(any(target_os = "linux", test))]
+const fn classify_prepare_for_sleep(preparing_for_sleep: Option<bool>) -> WakeEvent {
+    match preparing_for_sleep {
+        Some(false) => WakeEvent::Wake,
+        Some(true) | None => WakeEvent::Ignore,
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use std::sync::Arc;
@@ -23,6 +38,8 @@ mod imp {
     use futures_util::StreamExt;
     use tokio::sync::watch;
     use zbus::{message::Type as MessageType, Connection, MatchRule, MessageStream};
+
+    use super::{classify_prepare_for_sleep, WakeEvent};
 
     const LOGIND_DESTINATION: &str = "org.freedesktop.login1";
     const LOGIND_PATH: &str = "/org/freedesktop/login1";
@@ -85,10 +102,10 @@ mod imp {
                             let Some(Ok(message)) = message else {
                                 break;
                             };
-                            // `PrepareForSleep(true)` fires just before
-                            // suspending; only `false` (resume) is a wake
-                            // signal.
-                            if matches!(message.body().deserialize::<bool>(), Ok(false)) {
+                            if classify_prepare_for_sleep(
+                                message.body().deserialize::<bool>().ok(),
+                            ) == WakeEvent::Wake
+                            {
                                 wake();
                             }
                         }
@@ -118,5 +135,17 @@ pub struct WakeMonitor;
 impl WakeMonitor {
     pub fn install(_wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
         Self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_prepare_for_sleep, WakeEvent};
+
+    #[test]
+    fn only_resume_prepare_for_sleep_events_wake() {
+        assert_eq!(classify_prepare_for_sleep(Some(false)), WakeEvent::Wake);
+        assert_eq!(classify_prepare_for_sleep(Some(true)), WakeEvent::Ignore);
+        assert_eq!(classify_prepare_for_sleep(None), WakeEvent::Ignore);
     }
 }

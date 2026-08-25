@@ -16,6 +16,62 @@ pub enum NativeMenuCommand {
     ToggleFocusMode,
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeMenuAction {
+    NewSession,
+    StartLocalShell,
+    OpenSettings,
+    CloseActiveSurface,
+    ToggleCommandPalette,
+    ToggleSessionInspector,
+    ClearTerminal,
+    ResetTerminal,
+    ToggleFocusMode,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl NativeMenuAction {
+    const fn command(self) -> NativeMenuCommand {
+        match self {
+            Self::NewSession => NativeMenuCommand::NewSession,
+            Self::StartLocalShell => NativeMenuCommand::StartLocalShell,
+            Self::OpenSettings => NativeMenuCommand::OpenSettings,
+            Self::CloseActiveSurface => NativeMenuCommand::CloseActiveSurface,
+            Self::ToggleCommandPalette => NativeMenuCommand::ToggleCommandPalette,
+            Self::ToggleSessionInspector => NativeMenuCommand::ToggleSessionInspector,
+            Self::ClearTerminal => NativeMenuCommand::ClearTerminal,
+            Self::ResetTerminal => NativeMenuCommand::ResetTerminal,
+            Self::ToggleFocusMode => NativeMenuCommand::ToggleFocusMode,
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Eq, PartialEq)]
+struct NativeMenuState<'a> {
+    close_label: &'a str,
+    inspector_enabled: bool,
+    inspector_label: &'static str,
+}
+
+#[cfg(any(target_os = "macos", test))]
+const fn native_menu_state(
+    close_label: &str,
+    inspector_enabled: bool,
+    inspector_open: bool,
+) -> NativeMenuState<'_> {
+    NativeMenuState {
+        close_label,
+        inspector_enabled,
+        inspector_label: if inspector_open {
+            "Hide Session Inspector"
+        } else {
+            "Show Session Inspector"
+        },
+    }
+}
+
 /// Observes macOS resume-from-sleep (ADR 0018: "resume from system sleep" is
 /// the primary wake/network-change trigger for an on-demand SSH liveness
 /// probe). Network-interface/route-change detection is deliberately out of
@@ -130,7 +186,7 @@ mod menu {
     use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
     use objc2_foundation::{MainThreadMarker, NSObject, NSObjectProtocol, NSString};
 
-    use super::NativeMenuCommand;
+    use super::{native_menu_state, NativeMenuAction, NativeMenuCommand};
 
     struct MenuTargetIvars {
         sender: mpsc::Sender<NativeMenuCommand>,
@@ -151,47 +207,47 @@ mod menu {
         impl MenuTarget {
             #[unsafe(method(newSession:))]
             fn new_session(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::NewSession);
+                self.emit(NativeMenuAction::NewSession);
             }
 
             #[unsafe(method(startLocalShell:))]
             fn start_local_shell(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::StartLocalShell);
+                self.emit(NativeMenuAction::StartLocalShell);
             }
 
             #[unsafe(method(openSettings:))]
             fn open_settings(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::OpenSettings);
+                self.emit(NativeMenuAction::OpenSettings);
             }
 
             #[unsafe(method(closeActiveSurface:))]
             fn close_active_surface(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::CloseActiveSurface);
+                self.emit(NativeMenuAction::CloseActiveSurface);
             }
 
             #[unsafe(method(toggleCommandPalette:))]
             fn toggle_command_palette(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::ToggleCommandPalette);
+                self.emit(NativeMenuAction::ToggleCommandPalette);
             }
 
             #[unsafe(method(toggleSessionInspector:))]
             fn toggle_session_inspector(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::ToggleSessionInspector);
+                self.emit(NativeMenuAction::ToggleSessionInspector);
             }
 
             #[unsafe(method(clearTerminal:))]
             fn clear_terminal(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::ClearTerminal);
+                self.emit(NativeMenuAction::ClearTerminal);
             }
 
             #[unsafe(method(resetTerminal:))]
             fn reset_terminal(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::ResetTerminal);
+                self.emit(NativeMenuAction::ResetTerminal);
             }
 
             #[unsafe(method(toggleFocusMode:))]
             fn toggle_focus_mode(&self, _sender: Option<&AnyObject>) {
-                self.emit(NativeMenuCommand::ToggleFocusMode);
+                self.emit(NativeMenuAction::ToggleFocusMode);
             }
         }
     );
@@ -207,8 +263,8 @@ mod menu {
             unsafe { msg_send![super(this), init] }
         }
 
-        fn emit(&self, command: NativeMenuCommand) {
-            let _ = self.ivars().sender.send(command);
+        fn emit(&self, action: NativeMenuAction) {
+            let _ = self.ivars().sender.send(action.command());
             (self.ivars().wake)();
         }
     }
@@ -238,16 +294,13 @@ mod menu {
         }
 
         pub fn update(&self, close_label: &str, inspector_enabled: bool, inspector_open: bool) {
+            let state = native_menu_state(close_label, inspector_enabled, inspector_open);
             if let Some(close_item) = &self.close_item {
-                close_item.setTitle(&NSString::from_str(close_label));
+                close_item.setTitle(&NSString::from_str(state.close_label));
             }
             if let Some(inspector_item) = &self.inspector_item {
-                inspector_item.setEnabled(inspector_enabled);
-                inspector_item.setTitle(&NSString::from_str(if inspector_open {
-                    "Hide Session Inspector"
-                } else {
-                    "Show Session Inspector"
-                }));
+                inspector_item.setEnabled(state.inspector_enabled);
+                inspector_item.setTitle(&NSString::from_str(state.inspector_label));
             }
         }
     }
@@ -470,6 +523,15 @@ impl NativeMenu {
 #[cfg(target_os = "macos")]
 use std::ptr::NonNull;
 
+#[cfg(any(target_os = "macos", test))]
+fn traffic_light_origin_y(
+    superview_height: f64,
+    band_center_from_top: f64,
+    button_height: f64,
+) -> f64 {
+    superview_height - band_center_from_top - button_height / 2.0
+}
+
 /// Vertically places macOS's standard traffic lights so their center sits
 /// `band_center_from_top` points below the window's top edge, matching
 /// fesTerm's integrated chrome band (`festerm_ui_egui::chrome::
@@ -517,7 +579,8 @@ pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, band_center_fro
         let frame = button.frame();
         // AppKit's window coordinate space has a bottom-left origin;
         // convert the desired distance from the top edge into that space.
-        let target_origin_y = superview_height - band_center_from_top - frame.size.height / 2.0;
+        let target_origin_y =
+            traffic_light_origin_y(superview_height, band_center_from_top, frame.size.height);
         if (frame.origin.y - target_origin_y).abs() > f64::EPSILON {
             button.setFrameOrigin(NSPoint::new(frame.origin.x, target_origin_y));
         }
@@ -563,3 +626,80 @@ pub fn disable_native_window_movement(ns_view: NonNull<std::ffi::c_void>) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn disable_native_window_movement(_: ()) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        native_menu_state, traffic_light_origin_y, NativeMenuAction, NativeMenuCommand,
+        NativeMenuState,
+    };
+
+    #[test]
+    fn native_menu_actions_map_to_shared_commands() {
+        let cases = [
+            (NativeMenuAction::NewSession, NativeMenuCommand::NewSession),
+            (
+                NativeMenuAction::StartLocalShell,
+                NativeMenuCommand::StartLocalShell,
+            ),
+            (
+                NativeMenuAction::OpenSettings,
+                NativeMenuCommand::OpenSettings,
+            ),
+            (
+                NativeMenuAction::CloseActiveSurface,
+                NativeMenuCommand::CloseActiveSurface,
+            ),
+            (
+                NativeMenuAction::ToggleCommandPalette,
+                NativeMenuCommand::ToggleCommandPalette,
+            ),
+            (
+                NativeMenuAction::ToggleSessionInspector,
+                NativeMenuCommand::ToggleSessionInspector,
+            ),
+            (
+                NativeMenuAction::ClearTerminal,
+                NativeMenuCommand::ClearTerminal,
+            ),
+            (
+                NativeMenuAction::ResetTerminal,
+                NativeMenuCommand::ResetTerminal,
+            ),
+            (
+                NativeMenuAction::ToggleFocusMode,
+                NativeMenuCommand::ToggleFocusMode,
+            ),
+        ];
+
+        for (action, expected) in cases {
+            assert_eq!(action.command(), expected);
+        }
+    }
+
+    #[test]
+    fn native_menu_state_tracks_surface_and_inspector_context() {
+        assert_eq!(
+            native_menu_state("Close Settings", false, false),
+            NativeMenuState {
+                close_label: "Close Settings",
+                inspector_enabled: false,
+                inspector_label: "Show Session Inspector",
+            }
+        );
+        assert_eq!(
+            native_menu_state("Close Session", true, true),
+            NativeMenuState {
+                close_label: "Close Session",
+                inspector_enabled: true,
+                inspector_label: "Hide Session Inspector",
+            }
+        );
+    }
+
+    #[test]
+    fn traffic_light_origin_centers_button_in_chrome_band() {
+        assert_eq!(traffic_light_origin_y(40.0, 14.0, 12.0), 20.0);
+        assert_eq!(traffic_light_origin_y(20.0, 24.0, 12.0), -10.0);
+    }
+}

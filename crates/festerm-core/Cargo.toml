@@ -15,6 +15,13 @@ workspace = true
 icu_properties = { version = "=2.2.0", default-features = false, features = ["compiled_data"] }
 unicode-width = "=0.2.2"
 
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false }
+
 [[bench]]
 name = "sustained_output"
+harness = false
+
+[[bench]]
+name = "interaction"
 harness = false

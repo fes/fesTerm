@@ -8,6 +8,36 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WakeEvent {
+    Wake,
+    Ignore,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy)]
+struct WindowsPowerEventCodes {
+    power_broadcast: u32,
+    resume_automatic: usize,
+    resume_suspend: usize,
+}
+
+#[cfg(any(windows, test))]
+const fn classify_windows_power_event(
+    message: u32,
+    wparam: usize,
+    codes: WindowsPowerEventCodes,
+) -> WakeEvent {
+    if message == codes.power_broadcast
+        && (wparam == codes.resume_automatic || wparam == codes.resume_suspend)
+    {
+        WakeEvent::Wake
+    } else {
+        WakeEvent::Ignore
+    }
+}
+
 #[cfg(windows)]
 mod imp {
     use std::cell::RefCell;
@@ -22,6 +52,14 @@ mod imp {
         PostMessageW, PostQuitMessage, RegisterClassExW, TranslateMessage, HWND_MESSAGE, MSG,
         PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, WM_CLOSE, WM_DESTROY, WM_POWERBROADCAST,
         WNDCLASSEXW,
+    };
+
+    use super::{classify_windows_power_event, WakeEvent, WindowsPowerEventCodes};
+
+    const POWER_EVENT_CODES: WindowsPowerEventCodes = WindowsPowerEventCodes {
+        power_broadcast: WM_POWERBROADCAST,
+        resume_automatic: PBT_APMRESUMEAUTOMATIC as usize,
+        resume_suspend: PBT_APMRESUMESUSPEND as usize,
     };
 
     /// UTF-16, NUL-terminated `"fesTermWakeMonitorWindowClass"`.
@@ -46,10 +84,7 @@ mod imp {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if message == WM_POWERBROADCAST
-            && (wparam == PBT_APMRESUMEAUTOMATIC as usize
-                || wparam == PBT_APMRESUMESUSPEND as usize)
-        {
+        if classify_windows_power_event(message, wparam, POWER_EVENT_CODES) == WakeEvent::Wake {
             WAKE.with(|wake| {
                 if let Some(wake) = wake.borrow().as_ref() {
                     wake();
@@ -204,5 +239,34 @@ pub struct WakeMonitor;
 impl WakeMonitor {
     pub fn install(_wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
         Self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_windows_power_event, WakeEvent, WindowsPowerEventCodes};
+
+    const CODES: WindowsPowerEventCodes = WindowsPowerEventCodes {
+        power_broadcast: 10,
+        resume_automatic: 20,
+        resume_suspend: 30,
+    };
+
+    #[test]
+    fn automatic_and_user_visible_resume_events_wake() {
+        assert_eq!(classify_windows_power_event(10, 20, CODES), WakeEvent::Wake);
+        assert_eq!(classify_windows_power_event(10, 30, CODES), WakeEvent::Wake);
+    }
+
+    #[test]
+    fn unrelated_messages_and_power_events_are_ignored() {
+        assert_eq!(
+            classify_windows_power_event(11, 20, CODES),
+            WakeEvent::Ignore
+        );
+        assert_eq!(
+            classify_windows_power_event(10, 40, CODES),
+            WakeEvent::Ignore
+        );
     }
 }

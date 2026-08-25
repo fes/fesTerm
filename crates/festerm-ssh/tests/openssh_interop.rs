@@ -1,13 +1,14 @@
 use std::{
     env, fs,
-    process::Command,
+    io::Write,
+    process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
 use festerm_session::{
-    Session, SessionEvent, SessionLifecycle, SessionOperation, SessionSendError,
-    SessionTryReceiveError, ShutdownResult, TerminalSize,
+    HostKeyPrompt, Session, SessionErrorKind, SessionEvent, SessionLifecycle, SessionOperation,
+    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
 };
 use festerm_ssh::{
     HostIdentity, HostTrustDecision, PersistenceProvider, PersistentSessionName, ReconnectPolicy,
@@ -585,6 +586,189 @@ impl DockerFixture {
             "OpenSSH fixture did not retain its mapped host port after restart"
         );
     }
+
+    fn disable_screen(&self) -> DisabledFixtureProgram {
+        let original_path = docker_output(
+            &[
+                "exec",
+                &self.container_name,
+                "sh",
+                "-c",
+                "command -v screen",
+            ],
+            "locate GNU Screen inside the OpenSSH fixture",
+        )
+        .trim()
+        .to_owned();
+        assert!(
+            original_path.starts_with('/'),
+            "OpenSSH fixture returned an invalid GNU Screen path"
+        );
+        let disabled_path = format!("{original_path}.festerm-disabled");
+        docker_status(
+            &[
+                "exec",
+                &self.container_name,
+                "mv",
+                &original_path,
+                &disabled_path,
+            ],
+            "disable GNU Screen inside the OpenSSH fixture",
+        );
+        DisabledFixtureProgram {
+            container_name: self.container_name.clone(),
+            original_path,
+            disabled_path,
+        }
+    }
+
+    fn override_password(&self, replacement: &str, original: String) -> FixturePasswordOverride {
+        assert!(
+            set_fixture_password(&self.container_name, replacement),
+            "Docker could not replace the OpenSSH fixture password"
+        );
+        FixturePasswordOverride {
+            container_name: self.container_name.clone(),
+            original,
+        }
+    }
+
+    fn rotate_ecdsa_host_key(&self) -> RotatedFixtureHostKey {
+        docker_status(
+            &[
+                "exec",
+                &self.container_name,
+                "sh",
+                "-c",
+                "rm -f /run/festerm-original-ecdsa-key \
+                    /run/festerm-original-ecdsa-key.pub && \
+                 cp /etc/ssh/ssh_host_ecdsa_key /run/festerm-original-ecdsa-key && \
+                 cp /etc/ssh/ssh_host_ecdsa_key.pub /run/festerm-original-ecdsa-key.pub && \
+                 rm -f /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ecdsa_key.pub && \
+                 ssh-keygen -q -t ecdsa -b 256 -N '' \
+                    -f /etc/ssh/ssh_host_ecdsa_key",
+            ],
+            "rotate the OpenSSH fixture ECDSA host key",
+        );
+        docker_status(
+            &["kill", "--signal", "HUP", &self.container_name],
+            "reload the OpenSSH fixture after rotating its host key",
+        );
+        thread::sleep(Duration::from_secs(1));
+        self.wait_until_healthy();
+        RotatedFixtureHostKey {
+            container_name: self.container_name.clone(),
+            fingerprint: self.ecdsa_host_key_fingerprint(),
+        }
+    }
+
+    fn ecdsa_host_key_fingerprint(&self) -> String {
+        let details = docker_output(
+            &[
+                "exec",
+                &self.container_name,
+                "ssh-keygen",
+                "-lf",
+                "/etc/ssh/ssh_host_ecdsa_key.pub",
+                "-E",
+                "sha256",
+            ],
+            "read the OpenSSH fixture ECDSA host-key fingerprint",
+        );
+        let fingerprint = details
+            .split_whitespace()
+            .nth(1)
+            .expect("OpenSSH fixture host-key details did not include a fingerprint")
+            .to_owned();
+        assert!(
+            fingerprint.starts_with("SHA256:"),
+            "OpenSSH fixture returned an invalid ECDSA host-key fingerprint"
+        );
+        fingerprint
+    }
+}
+
+struct DisabledFixtureProgram {
+    container_name: String,
+    original_path: String,
+    disabled_path: String,
+}
+
+impl Drop for DisabledFixtureProgram {
+    fn drop(&mut self) {
+        let _ = Command::new("docker")
+            .args([
+                "exec",
+                &self.container_name,
+                "mv",
+                &self.disabled_path,
+                &self.original_path,
+            ])
+            .output();
+    }
+}
+
+struct FixturePasswordOverride {
+    container_name: String,
+    original: String,
+}
+
+impl Drop for FixturePasswordOverride {
+    fn drop(&mut self) {
+        let _ = set_fixture_password(&self.container_name, &self.original);
+    }
+}
+
+struct RotatedFixtureHostKey {
+    container_name: String,
+    fingerprint: String,
+}
+
+impl RotatedFixtureHostKey {
+    fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
+}
+
+impl Drop for RotatedFixtureHostKey {
+    fn drop(&mut self) {
+        let restored = Command::new("docker")
+            .args([
+                "exec",
+                &self.container_name,
+                "sh",
+                "-c",
+                "mv /run/festerm-original-ecdsa-key \
+                    /etc/ssh/ssh_host_ecdsa_key && \
+                 mv /run/festerm-original-ecdsa-key.pub \
+                    /etc/ssh/ssh_host_ecdsa_key.pub",
+            ])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if restored {
+            let _ = Command::new("docker")
+                .args(["kill", "--signal", "HUP", &self.container_name])
+                .output();
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+}
+
+fn set_fixture_password(container_name: &str, password: &str) -> bool {
+    let Ok(mut child) = Command::new("docker")
+        .args(["exec", "-i", container_name, "chpasswd"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let written = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| writeln!(stdin, "festerm:{password}").is_ok());
+    written && child.wait().is_ok_and(|status| status.success())
 }
 
 fn docker_status(arguments: &[&str], operation: &str) {
@@ -602,6 +786,154 @@ fn docker_output(arguments: &[&str], operation: &str) -> String {
         .unwrap_or_else(|_| panic!("could not invoke Docker to {operation}"));
     assert!(output.status.success(), "Docker could not {operation}");
     String::from_utf8(output.stdout).expect("Docker returned non-UTF-8 fixture metadata")
+}
+
+fn start_known_host_automatic_screen_session(
+    configuration: &OpenSshConfiguration,
+    session_name: &str,
+    marker: &[u8],
+    command: &[u8],
+) -> SshSession {
+    let known_fingerprint = required_environment("FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT")
+        .expect("OpenSSH fixture host-key fingerprint is invalid");
+    let strategy = SessionStrategy::Persistent {
+        provider: PersistenceProvider::Screen,
+        session_name: PersistentSessionName::new(session_name)
+            .expect("durable session name is valid"),
+    };
+    let options = SshSessionOptions::with_recovery_policy(
+        strategy,
+        RecoveryPolicy::Automatic(ReconnectPolicy::default_automatic()),
+    )
+    .expect("automatic recovery is valid for a persistent strategy")
+    .with_known_host_fingerprint(known_fingerprint);
+    let session = SshSession::start_with_options(
+        connection_profile(configuration),
+        SshAuthentication::password(configuration.password.clone()),
+        options,
+    )
+    .expect("could not start the automatic-recovery OpenSSH session");
+
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut running = false;
+    let mut marker_seen_in_output = false;
+    let mut output_tail = Vec::new();
+    while Instant::now() < deadline && !(running && marker_seen_in_output) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(_)) => {
+                panic!("the unchanged known OpenSSH host key unexpectedly required confirmation")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(command)
+                    .expect("could not send the automatic-recovery readiness command");
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                marker_seen_in_output |= marker_seen(&mut output_tail, &bytes, marker);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error before automatic-recovery failure testing",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before automatic-recovery failure testing")
+            }
+        }
+    }
+    assert!(
+        running,
+        "automatic-recovery OpenSSH session did not reach Running within the test timeout"
+    );
+    assert!(
+        marker_seen_in_output,
+        "automatic-recovery readiness command did not produce its expected marker"
+    );
+    session
+}
+
+fn assert_automatic_recovery_stops_with<F>(
+    session: &SshSession,
+    expected_kind: SessionErrorKind,
+    expected_message: &str,
+    mut handle_host_key_prompt: F,
+) -> usize
+where
+    F: FnMut(&HostKeyPrompt),
+{
+    let deadline = Instant::now() + RECONNECT_EVENT_TIMEOUT;
+    let mut starting_count = 0;
+    let mut error_event = None;
+    let mut failed_lifecycle = None;
+    while Instant::now() < deadline && (error_event.is_none() || failed_lifecycle.is_none()) {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Starting)) => {
+                starting_count += 1;
+            }
+            Ok(SessionEvent::HostKeyVerification(prompt)) => {
+                handle_host_key_prompt(&prompt);
+            }
+            Ok(SessionEvent::Error(error)) => {
+                assert!(
+                    error_event.is_none(),
+                    "automatic recovery emitted more than one terminal error"
+                );
+                error_event = Some(error);
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Failed(error))) => {
+                assert!(
+                    failed_lifecycle.is_none(),
+                    "automatic recovery entered Failed more than once"
+                );
+                failed_lifecycle = Some(error);
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => {
+                panic!("automatic recovery unexpectedly returned to Running")
+            }
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Disconnected(_))) => {
+                panic!("a permanent recovery failure must stop instead of becoming Disconnected")
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before reporting recovery failure")
+            }
+        }
+    }
+
+    assert!(
+        starting_count > 0,
+        "the automatic-recovery session never entered Starting"
+    );
+    let error_event =
+        error_event.expect("automatic recovery did not emit its terminal error in time");
+    let failed_lifecycle =
+        failed_lifecycle.expect("automatic recovery did not enter Failed in time");
+    for error in [&error_event, &failed_lifecycle] {
+        assert_eq!(error.kind(), expected_kind);
+        assert_eq!(error.message(), expected_message);
+    }
+    assert_eq!(
+        session.lifecycle(),
+        SessionLifecycle::Failed(failed_lifecycle.clone()),
+        "automatic recovery did not remain terminal after its permanent failure"
+    );
+    assert!(
+        !session.reconnect_available(),
+        "a terminal automatic-recovery failure must not remain reconnectable"
+    );
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Err(ShutdownError::Failed(error)) => {
+            assert_eq!(error.kind(), expected_kind);
+            assert_eq!(error.message(), expected_message);
+        }
+        result => {
+            panic!("expected failed SSH shutdown after recovery stopped, received {result:?}")
+        }
+    }
+    starting_count
 }
 
 #[test]
@@ -1220,4 +1552,122 @@ fn controlled_openssh_screen_persistent_session_reattaches_after_automatic_recov
             panic!("automatically reattached SSH session did not shut down within the test timeout")
         }
     }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_automatic_recovery_stops_when_provider_disappears() {
+    const READY_MARKER: &[u8] = b"__FESTERM_RECOVERY_PROVIDER_READY_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let session = start_known_host_automatic_screen_session(
+        &configuration,
+        "festerm-recovery-provider-disappears",
+        READY_MARKER,
+        b"printf '%s%s%s\\n' '__FESTERM_' 'RECOVERY_PROVIDER_READY_' 'OK__'\n",
+    );
+
+    let _disabled_screen = fixture.disable_screen();
+    fixture.sever_active_ssh_connection();
+
+    let starting_count = assert_automatic_recovery_stops_with(
+        &session,
+        SessionErrorKind::Spawn,
+        "the configured durable-session provider is not available on the remote host",
+        |_| panic!("unchanged known host trust unexpectedly prompted during automatic recovery"),
+    );
+    assert_eq!(
+        starting_count, 1,
+        "provider disappearance must stop automatic recovery after its first fresh connection"
+    );
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_automatic_recovery_stops_when_host_key_change_is_rejected() {
+    const READY_MARKER: &[u8] = b"__FESTERM_RECOVERY_HOST_KEY_READY_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let expected_fingerprint = required_environment("FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT")
+        .expect("OpenSSH fixture host-key fingerprint is invalid");
+    let fixture = DockerFixture::from_environment();
+    let session = start_known_host_automatic_screen_session(
+        &configuration,
+        "festerm-recovery-host-key-changes",
+        READY_MARKER,
+        b"printf '%s%s%s\\n' '__FESTERM_' 'RECOVERY_HOST_KEY_READY_' 'OK__'\n",
+    );
+    let rotated_host_key = fixture.rotate_ecdsa_host_key();
+    assert_ne!(
+        rotated_host_key.fingerprint(),
+        expected_fingerprint,
+        "the OpenSSH fixture host-key rotation did not change its fingerprint"
+    );
+    fixture.sever_active_ssh_connection();
+
+    let resolver = session.host_key_decision_resolver();
+    let mut prompt_count = 0;
+    let starting_count = assert_automatic_recovery_stops_with(
+        &session,
+        SessionErrorKind::Spawn,
+        "SSH host key was rejected",
+        |prompt| {
+            prompt_count += 1;
+            assert_eq!(prompt.host(), configuration.host);
+            assert_eq!(prompt.port(), configuration.port);
+            assert!(prompt.is_key_change());
+            assert_eq!(
+                prompt.previously_trusted_fingerprint(),
+                Some(expected_fingerprint.as_str())
+            );
+            assert_eq!(prompt.sha256_fingerprint(), rotated_host_key.fingerprint());
+            resolver
+                .resolve(prompt, HostTrustDecision::Reject)
+                .expect("could not reject the changed OpenSSH fixture host key");
+        },
+    );
+    assert_eq!(
+        prompt_count, 1,
+        "changed host trust must produce exactly one recovery prompt"
+    );
+    assert_eq!(
+        starting_count, 1,
+        "rejected changed host trust must stop automatic recovery after its first attempt"
+    );
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_automatic_recovery_stops_when_password_is_rejected() {
+    const READY_MARKER: &[u8] = b"__FESTERM_RECOVERY_PASSWORD_READY_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let session = start_known_host_automatic_screen_session(
+        &configuration,
+        "festerm-recovery-password-rejected",
+        READY_MARKER,
+        b"printf '%s%s%s\\n' '__FESTERM_' 'RECOVERY_PASSWORD_READY_' 'OK__'\n",
+    );
+
+    let _password_override = fixture.override_password(
+        "festerm-deliberately-rejected-during-recovery",
+        configuration.password,
+    );
+    fixture.sever_active_ssh_connection();
+
+    let starting_count = assert_automatic_recovery_stops_with(
+        &session,
+        SessionErrorKind::Authentication,
+        "SSH authentication failed",
+        |_| panic!("unchanged known host trust unexpectedly prompted during automatic recovery"),
+    );
+    assert_eq!(
+        starting_count, 1,
+        "rejected credentials must stop automatic recovery after its first fresh connection"
+    );
 }

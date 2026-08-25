@@ -146,11 +146,7 @@ impl Screen {
             screen.cells[start..start + len].clone_from_slice(&screen_row.cells[..len]);
             screen.occupied_cells[start..start + len].fill(true);
             screen.soft_wrapped_rows[row] = screen_row.soft_wrapped;
-            screen.occupied_columns[row] = if screen_row.soft_wrapped {
-                columns
-            } else {
-                len
-            };
+            screen.occupied_columns[row] = len;
         }
         screen.repair_wide_cells();
         screen.mark_all_dirty();
@@ -377,8 +373,9 @@ impl Screen {
     }
 
     pub(crate) fn mark_soft_wrapped(&mut self, row: usize) {
+        // A width-two glyph can pre-wrap before the final column, so the
+        // logical continuation flag and occupied extent are independent.
         self.soft_wrapped_rows[row] = true;
-        self.occupied_columns[row] = self.dimensions.columns();
     }
 
     fn cell_index(&self, column: usize, row: usize) -> Option<usize> {
@@ -479,10 +476,6 @@ impl Screen {
     }
 
     fn recompute_occupied(&mut self, row: usize) {
-        if self.soft_wrapped_rows[row] {
-            self.occupied_columns[row] = self.dimensions.columns();
-            return;
-        }
         let start = row * self.dimensions.columns();
         self.occupied_columns[row] = self.occupied_cells[start..start + self.dimensions.columns()]
             .iter()

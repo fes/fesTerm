@@ -688,9 +688,17 @@ fn reader_worker(
         }
         match reader.read(&mut buffer) {
             Ok(0) => {
-                // No known serial platform reports EOF this way, but treat
-                // it the same as a real close rather than spinning.
-                let _ = done_sender.send(Ok(()));
+                if shared.cancel.load(Ordering::Acquire) {
+                    let _ = done_sender.send(Ok(()));
+                    return;
+                }
+                let error = SessionError::new(
+                    SessionErrorKind::Output,
+                    "serial device closed unexpectedly",
+                );
+                shared.record_error(error.clone());
+                shared.cancel.store(true, Ordering::Release);
+                let _ = done_sender.send(Err(error));
                 return;
             }
             Ok(read) => {
@@ -775,7 +783,9 @@ fn control_worker(
                 Ok(ShutdownResult::Stopped)
             }
             Ok(Err(error)) => {
-                shared.fail(error.clone());
+                // The reader records its failure before waking the control
+                // worker, so only the terminal lifecycle remains to publish.
+                shared.set_lifecycle(SessionLifecycle::Failed(error.clone()));
                 Err(error)
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -836,13 +846,30 @@ mod tests {
 
     #[test]
     fn opening_a_nonexistent_device_reports_a_concise_error() {
-        let settings =
-            LineSettings::with_defaults("/dev/festerm-serial-test-device-that-does-not-exist-0001")
-                .unwrap();
+        let device = "/dev/festerm-serial-test-device-that-does-not-exist-0001";
+        let settings = LineSettings::with_defaults(device).unwrap();
         let Err(error) = SerialSession::open(settings) else {
             panic!("opening a nonexistent serial device must fail");
         };
-        assert!(error.to_string().contains("could not open serial device"));
+        let message = error.to_string();
+        assert!(message.starts_with("could not open serial device"));
+        assert!(message.contains(device));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opening_an_existing_non_tty_reports_an_open_failure() {
+        let device = std::env::current_exe()
+            .expect("the test executable has a path")
+            .to_string_lossy()
+            .into_owned();
+        let settings = LineSettings::with_defaults(device.clone()).unwrap();
+        let Err(error) = SerialSession::open(settings) else {
+            panic!("opening a regular file as a serial device must fail");
+        };
+        let message = error.to_string();
+        assert!(message.starts_with("could not open serial device"));
+        assert!(message.contains(&device));
     }
 
     #[test]

@@ -396,10 +396,17 @@ for release candidates until their reliability is measured.
 | Headless egui frame tests | Every pull request after harness adoption | Yes | Semantic tree/layout dump |
 | Snapshot suite | Linux and Windows after baseline stabilization | Yes | Baseline, actual, and diff image |
 | Native smoke/UI automation | Nightly and release candidate | Initially no | Screenshot, bounded video, sanitized logs |
+| Controlled OpenSSH interoperability | Daily and on demand | Yes within the dedicated workflow | Sanitized lifecycle and fixture logs |
 | Reference apps and `vttest` | M6 milestones and release candidate | Manual sign-off | Checklist and regression fixture links |
 
 Benchmark results should report trends and regressions separately from
-correctness gates until hardware-independent budgets are agreed.
+correctness gates until hardware-independent budgets are agreed. Criterion
+scaffolding covers sustained plain/styled output, representative
+scrollback-reflow resize sequences, mode-aware input, bracketed paste, queue
+pressure, viewport scrolling, selection copy, and steady/dirty egui paint
+submission. Run it with `cargo bench -p festerm-core` and
+`cargo bench -p festerm-ui-egui`; native GPU/compositor presentation latency
+remains platform evidence rather than a headless UI benchmark.
 
 ## M6 Automation Backlog
 
@@ -430,8 +437,8 @@ overlapping checklist entry.
   P5 manual reference-application evidence.
 - Curate and port selected libvterm and WezTerm cases into fixtures.
 - Add parser split-write/cancellation cases and Unicode boundary fixtures.
-- Introduce property tests for grid dimensions, dirty-row bounds, transport
-  bounds, and double/continuation integrity.
+- Extend the generated resize/reflow and bounded-scrollback model tests to
+  dirty-row and transport-operation sequences.
 
 ### Visual regression growth
 
@@ -445,8 +452,11 @@ overlapping checklist entry.
 - Add visual cases for font fallback and ligatures only after their
   cell-to-glyph mapping is specified; exercise the opt-in run-shaping seam
   separately until a supported production font policy is accepted.
-- Extend session integration to controlled OpenSSH, reconnect, tabs, profiles,
-  and restoration as those milestones implement them.
+- Keep the daily controlled OpenSSH suite stable. It now covers password and
+  in-memory key authentication, host-key variants, liveness, reconnect,
+  tmux/Screen persistence, and recovery stopping on provider disappearance,
+  rejected changed trust, or rejected credentials. Extend app-level tab,
+  profile, and restoration scenarios separately.
 
 ### M9 scrollback and reflow verification
 
