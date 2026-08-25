@@ -191,17 +191,44 @@ enum StringKind {
     Other,
 }
 
+/// Which `G` graphic character set slot a `ESC (` / `ESC )` designation
+/// targets (ISO 2022; VT100 only implements `G0`/`G1`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CharsetSlot {
+    G0,
+    G1,
+}
+
+/// A designatable graphic character set. `Other` covers every VT100
+/// designation this parser does not special-case (e.g. UK `A`), which all
+/// behave like `Ascii` for printable 7-bit bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+enum Charset {
+    #[default]
+    Ascii,
+    DecSpecialGraphics,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ParserState {
     Ground,
     Escape,
     EscapeIntermediate,
+    /// Immediately after `ESC (` or `ESC )`: the next byte designates the
+    /// named slot's charset.
+    CharsetDesignate(CharsetSlot),
     CsiEntry,
     CsiParam,
     CsiIntermediate,
     CsiIgnore,
-    String { kind: StringKind, bytes: usize },
-    StringEscape { kind: StringKind, bytes: usize },
+    String {
+        kind: StringKind,
+        bytes: usize,
+    },
+    StringEscape {
+        kind: StringKind,
+        bytes: usize,
+    },
 }
 
 /// A bounded state-machine parser for ESC and CSI input.
@@ -216,6 +243,57 @@ pub struct Parser {
     intermediate_length: usize,
     string_payload: Vec<u8>,
     osc_action: Option<OscAction>,
+    /// The charset designated into `G0` (via `ESC (`); active unless
+    /// shifted out with `SO` (0x0E).
+    g0_charset: Charset,
+    /// The charset designated into `G1` (via `ESC )`); active only after
+    /// `SO` (0x0E), until the next `SI` (0x0F).
+    g1_charset: Charset,
+    /// Whether `SO` has shifted the active charset from `G0` to `G1`.
+    shifted_to_g1: bool,
+}
+
+/// Translates a 7-bit printable byte through the DEC Special Graphics
+/// (VT100 line-drawing) charset, as designated by `ESC ( 0` / `ESC ) 0`.
+/// Bytes outside `0x60..=0x7e` are not remapped by this charset and pass
+/// through unchanged; this is the same mapping xterm and other emulators
+/// use, which is what tmux (and ncurses' `smacs`/`rmacs`) draw its window
+/// borders and status-bar dividers with.
+const fn dec_special_graphics(byte: u8) -> char {
+    match byte {
+        0x60 => '\u{25c6}', // ◆
+        0x61 => '\u{2592}', // ▒
+        0x62 => '\u{2409}', // ␉ HT
+        0x63 => '\u{240c}', // ␌ FF
+        0x64 => '\u{240d}', // ␍ CR
+        0x65 => '\u{240a}', // ␊ LF
+        0x66 => '\u{00b0}', // °
+        0x67 => '\u{00b1}', // ±
+        0x68 => '\u{2424}', // ␤ NL
+        0x69 => '\u{240b}', // ␋ VT
+        0x6a => '\u{2518}', // ┘
+        0x6b => '\u{2510}', // ┐
+        0x6c => '\u{250c}', // ┌
+        0x6d => '\u{2514}', // └
+        0x6e => '\u{253c}', // ┼
+        0x6f => '\u{23ba}', // ⎺ scan line 1
+        0x70 => '\u{23bb}', // ⎻ scan line 3
+        0x71 => '\u{2500}', // ─ scan line 5
+        0x72 => '\u{23bc}', // ⎼ scan line 7
+        0x73 => '\u{23bd}', // ⎽ scan line 9
+        0x74 => '\u{251c}', // ├
+        0x75 => '\u{2524}', // ┤
+        0x76 => '\u{2534}', // ┴
+        0x77 => '\u{252c}', // ┬
+        0x78 => '\u{2502}', // │
+        0x79 => '\u{2264}', // ≤
+        0x7a => '\u{2265}', // ≥
+        0x7b => '\u{03c0}', // π
+        0x7c => '\u{2260}', // ≠
+        0x7d => '\u{00a3}', // £
+        0x7e => '\u{00b7}', // ·
+        _ => byte as char,
+    }
 }
 
 impl Default for Parser {
@@ -240,6 +318,9 @@ impl Parser {
             intermediate_length: 0,
             string_payload: Vec::new(),
             osc_action: None,
+            g0_charset: Charset::Ascii,
+            g1_charset: Charset::Ascii,
+            shifted_to_g1: false,
         }
     }
 
@@ -269,18 +350,38 @@ impl Parser {
             self.clear_csi();
             return TerminalOp::Ignored;
         }
+        // SO (Shift Out) / SI (Shift In) switch the active charset between
+        // the G1 and G0 slots most recently designated by `ESC )` / `ESC (`;
+        // this is how tmux (and ncurses' smacs/rmacs) turn VT100 line
+        // drawing on and off around window borders and dividers.
+        match byte {
+            0x0e => {
+                self.shifted_to_g1 = true;
+                return TerminalOp::Ignored;
+            }
+            0x0f => {
+                self.shifted_to_g1 = false;
+                return TerminalOp::Ignored;
+            }
+            _ => {}
+        }
         if let Some(operation) = c0_operation(byte) {
             return operation;
         }
 
         match self.state {
             ParserState::Ground => match byte {
-                b' '..=b'~' => TerminalOp::Print(byte as char),
+                b' '..=b'~' => TerminalOp::Print(self.translate_printable(byte)),
                 _ => TerminalOp::Ignored,
             },
             ParserState::Escape => self.advance_escape(byte),
             ParserState::EscapeIntermediate => {
                 self.state = ParserState::Ground;
+                TerminalOp::Ignored
+            }
+            ParserState::CharsetDesignate(slot) => {
+                self.state = ParserState::Ground;
+                self.designate_charset(slot, byte);
                 TerminalOp::Ignored
             }
             ParserState::CsiEntry => self.advance_csi_entry(byte),
@@ -299,6 +400,36 @@ impl Parser {
         }
     }
 
+    /// Maps a printable 7-bit byte through the currently shifted-in
+    /// charset (`G1` after `SO`, otherwise `G0`).
+    fn translate_printable(&self, byte: u8) -> char {
+        let charset = if self.shifted_to_g1 {
+            self.g1_charset
+        } else {
+            self.g0_charset
+        };
+        match charset {
+            Charset::Ascii => byte as char,
+            Charset::DecSpecialGraphics => dec_special_graphics(byte),
+        }
+    }
+
+    /// Designates `byte` as the charset for `slot` (the byte following
+    /// `ESC (` / `ESC )`). Only DEC Special Graphics (`0`) is distinguished
+    /// from plain ASCII; every other VT100 designation (`A`, `B`, `1`, `2`,
+    /// ...) prints its bytes unchanged, matching this parser's existing
+    /// 7-bit-printable behavior.
+    fn designate_charset(&mut self, slot: CharsetSlot, byte: u8) {
+        let charset = match byte {
+            b'0' => Charset::DecSpecialGraphics,
+            _ => Charset::Ascii,
+        };
+        match slot {
+            CharsetSlot::G0 => self.g0_charset = charset,
+            CharsetSlot::G1 => self.g1_charset = charset,
+        }
+    }
+
     fn advance_escape(&mut self, byte: u8) -> TerminalOp {
         self.state = match byte {
             b'[' => {
@@ -307,6 +438,8 @@ impl Parser {
             }
             b']' => self.start_string(StringKind::Osc),
             b'P' | b'X' | b'^' | b'_' => self.start_string(StringKind::Other),
+            b'(' => ParserState::CharsetDesignate(CharsetSlot::G0),
+            b')' => ParserState::CharsetDesignate(CharsetSlot::G1),
             0x20..=0x2f => ParserState::EscapeIntermediate,
             _ => ParserState::Ground,
         };

@@ -186,6 +186,68 @@ mod tests {
         );
     }
 
+    /// tmux (and ncurses' `smacs`/`rmacs`) draws every window border and
+    /// status-bar divider by designating DEC Special Graphics into G1 with
+    /// `ESC ) 0`, then toggling it on with SO (0x0E) and off with SI
+    /// (0x0F) around each run of line-drawing bytes. Without this, those
+    /// bytes print as raw ASCII (`q`, `x`, `l`, `k`, `m`, ...) instead of
+    /// the box-drawing glyphs they represent.
+    #[test]
+    fn shift_out_translates_g1_dec_special_graphics_until_shift_in() {
+        let mut parser = Parser::new();
+        // ESC ) 0 designates DEC Special Graphics into G1.
+        assert_eq!(parser.advance(0x1b), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b')'), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'0'), TerminalOp::Ignored);
+
+        // Before SO, G0 (still ASCII) is active: bytes print unchanged.
+        assert_eq!(parser.advance(b'q'), TerminalOp::Print('q'));
+
+        // SO shifts to G1 (DEC Special Graphics).
+        assert_eq!(parser.advance(0x0e), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'q'), TerminalOp::Print('\u{2500}')); // ─
+        assert_eq!(parser.advance(b'x'), TerminalOp::Print('\u{2502}')); // │
+        assert_eq!(parser.advance(b'l'), TerminalOp::Print('\u{250c}')); // ┌
+        assert_eq!(parser.advance(b'k'), TerminalOp::Print('\u{2510}')); // ┐
+        assert_eq!(parser.advance(b'm'), TerminalOp::Print('\u{2514}')); // └
+        assert_eq!(parser.advance(b'j'), TerminalOp::Print('\u{2518}')); // ┘
+
+        // SI shifts back to G0 (ASCII): bytes print unchanged again.
+        assert_eq!(parser.advance(0x0f), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'q'), TerminalOp::Print('q'));
+    }
+
+    #[test]
+    fn designating_dec_special_graphics_into_g0_translates_without_shift_out() {
+        let mut parser = Parser::new();
+        // ESC ( 0 designates DEC Special Graphics directly into G0, the
+        // default active slot (no SO required); some programs use this
+        // form instead of the G1 + SO/SI convention.
+        assert_eq!(parser.advance(0x1b), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'('), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'0'), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'q'), TerminalOp::Print('\u{2500}'));
+
+        // ESC ( B restores G0 to ASCII (US-ASCII designation).
+        assert_eq!(parser.advance(0x1b), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'('), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'B'), TerminalOp::Ignored);
+        assert_eq!(parser.advance(b'q'), TerminalOp::Print('q'));
+    }
+
+    /// End-to-end version of the parser-level SO/SI tests above, through
+    /// `Terminal::ingest`: this is the same byte sequence tmux emits to
+    /// draw a one-cell-tall horizontal rule (e.g. a pane divider).
+    #[test]
+    fn terminal_renders_tmux_style_line_drawing_through_shift_out_and_in() {
+        let mut terminal = terminal(4, 1);
+        terminal.ingest(b"\x1b)0\x0eqqqq\x0f");
+        assert_eq!(
+            terminal.row_text(0).as_deref(),
+            Some("\u{2500}\u{2500}\u{2500}\u{2500}")
+        );
+    }
+
     #[test]
     fn malformed_and_over_limit_sequences_recover_without_printing_payload() {
         let mut terminal = terminal(8, 1);
