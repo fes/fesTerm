@@ -3694,37 +3694,14 @@ mod tests {
         // must be absent/ignored rather than attempted against a dead
         // transport.
         let context = egui::Context::default();
-        let quick_exit = if cfg!(windows) {
-            LocalProfile::new("cmd.exe").with_arguments(["/C", "exit 0"])
-        } else {
-            LocalProfile::new("/bin/sh").with_arguments(["-c", "printf hello; exit 0"])
-        };
-        let (state, tab) =
-            AppState::with_primary_session(&context, Some(quick_exit), Configuration::empty());
-        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
-        app.state = state;
-
-        // A real child process's exit must be observed via the OS (no fixed
-        // number of pumps is guaranteed to suffice), so bound this loop with
-        // a wall-clock deadline rather than an iteration count. 15s gives
-        // ample headroom over the near-instant exit this fixture actually
-        // performs, while still catching a genuine hang.
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        loop {
-            app.pump_all_sessions(&context);
-            let session = app
-                .state
-                .session_tab_mut(tab)
-                .expect("active terminal session");
-            if session.chip_status() == ChipStatus::Exited {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "quick-exit fixture did not reach Exited within the timeout"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .session_tab_mut(tab)
+            .expect("active terminal session")
+            .controller
+            .set_lifecycle_for_test(festerm_session::SessionLifecycle::Exited(
+                festerm_session::SessionExit::with_exit_code(0),
+            ));
 
         let history_before = app
             .state
@@ -4825,9 +4802,13 @@ mod tests {
         harness.run();
         assert!(harness.state().palette.is_open());
         // The Launcher tab is first, so its accessible label includes the
-        // right-aligned "⌘1" quick-switch chord.
+        // platform-specific right-aligned quick-switch chord.
+        let launcher_label = format!(
+            "Launcher, {}",
+            quick_switch_label(0).expect("the first quick-switch label exists")
+        );
         harness
-            .get_by_role_and_label(accesskit::Role::Button, "Launcher, \u{2318} 1")
+            .get_by_role_and_label(accesskit::Role::Button, &launcher_label)
             .click();
         harness.run();
         assert!(!harness.state().palette.is_open());

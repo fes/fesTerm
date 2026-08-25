@@ -419,6 +419,11 @@ impl<S: Session> SessionController<S> {
         self.last_lifecycle.clone()
     }
 
+    #[cfg(test)]
+    pub fn set_lifecycle_for_test(&mut self, lifecycle: SessionLifecycle) {
+        self.last_lifecycle = Some(lifecycle);
+    }
+
     pub const fn lifecycle_generation(&self) -> u64 {
         self.lifecycle_generation
     }
