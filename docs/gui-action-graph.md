@@ -107,7 +107,7 @@ stateDiagram-v2
     Sessions --> PasteConfirm: risky paste
     Sessions --> CloseConfirm: close live session
     Sessions --> ReadOnlyHistory: exit, disconnect, or stop
-    Sessions --> FocusMode: enter focus mode [future]
+    Sessions --> FocusMode: enter focus mode
     Sessions --> Settings: open singleton Settings
     Palette --> Sessions: select session/command or Escape
     Inspector --> Sessions: Close, Escape, or consumed outside click
