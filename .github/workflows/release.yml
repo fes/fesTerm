@@ -132,10 +132,16 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release -p festerm
-          cargo packager --config packaging/macos-release.toml --formats dmg
+          cargo packager --config packaging/macos-release.toml --formats app
           codesign --verify --deep --strict --verbose=2 target/release/fesTerm.app
           xcrun stapler validate target/release/fesTerm.app
           spctl --assess --type execute --verbose=2 target/release/fesTerm.app
+          mkdir dist
+          COPYFILE_DISABLE=1 tar -C target/release -czf \
+            "dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz" fesTerm.app
+          cargo packager signer sign \
+            "dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz"
+          cargo packager --config packaging/macos-release.toml --formats dmg
           dmg=$(find target/release -maxdepth 1 -name '*.dmg' -print -quit)
           test -n "$dmg"
           xcrun notarytool submit "$dmg" \
@@ -150,12 +156,7 @@ jobs:
           xcrun stapler validate "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           hdiutil verify "$dmg"
-          mkdir dist
           mv "$dmg" "dist/fesTerm-${VERSION}-macos-aarch64.dmg"
-          COPYFILE_DISABLE=1 tar -C target/release -czf \
-            "dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz" fesTerm.app
-          cargo packager signer sign \
-            "dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-macos

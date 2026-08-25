@@ -77,6 +77,8 @@ def verify() -> None:
         errors.append("Windows packaging must use the generated ICO container")
     if windows.get("nsis", {}).get("installer-icon") != expected_windows_icon:
         errors.append("NSIS packaging must use the generated installer icon")
+    if windows.get("nsis", {}).get("installMode") != "currentUser":
+        errors.append("NSIS packaging must use cargo-packager's current-user install mode")
     resources = windows.get("resources", [])
     expected_runtime = {
         "src": "../target/release/runtime/conpty",
