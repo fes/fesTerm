@@ -106,7 +106,9 @@ jobs:
         run: sudo apt-get install -y xvfb
 
       - name: Install native smoke dependencies
-        run: sudo apt-get install -y socat pkg-config libudev-dev dbus-x11 gnome-keyring
+        run: >-
+          sudo apt-get install -y socat pkg-config libudev-dev dbus-x11
+          gnome-keyring libxkbcommon-x11-0
 
       - name: Build workspace
         run: cargo build --workspace

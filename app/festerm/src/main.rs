@@ -80,7 +80,11 @@ mod tests {
         assert_eq!((icon.width, icon.height), (256, 256));
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
         assert!(
-            icon.rgba.chunks_exact(4).any(|pixel| pixel[2] > pixel[0]),
+            icon.rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[2] > pixel[0]),
             "the branded icon must retain its cyan prompt treatment"
         );
     }
