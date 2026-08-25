@@ -1,5 +1,5 @@
 name = "festerm"
-version = "0.1.2"
+version = "0.1.3"
 product-name = "fesTerm"
 identifier = "dev.fes.festerm"
 description = "A compact local, SSH, and serial terminal."
