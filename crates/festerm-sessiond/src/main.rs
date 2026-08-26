@@ -333,9 +333,19 @@ fn run_daemon(
 
 fn daemon_client_loop<R: Read + Send + 'static>(
     listener: UnixListener,
-    mut reader: R,
+    reader: R,
     spawned: &mut SpawnedShell,
     name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = session_client_loop(listener, reader);
+    let _ = spawned.child.wait();
+    drop_registry_record(name)?;
+    result
+}
+
+fn session_client_loop<R: Read + Send + 'static>(
+    listener: UnixListener,
+    mut reader: R,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (accept_tx, accept_rx) = mpsc::channel::<UnixStream>();
     let accept_listener = listener;
@@ -392,22 +402,14 @@ fn daemon_client_loop<R: Read + Send + 'static>(
                     }
                 }
             }
-            Ok(PtyEvent::Eof) => {
-                let _ = spawned.child.wait();
-                drop_registry_record(name)?;
-                break;
-            }
+            Ok(PtyEvent::Eof) => break,
             Ok(PtyEvent::Error(kind)) => {
                 if kind == io::ErrorKind::BrokenPipe {
-                    let _ = spawned.child.wait();
-                    drop_registry_record(name)?;
                     break;
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                break;
-            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 
@@ -549,6 +551,11 @@ fn run_kill(name: String) -> Result<(), Box<dyn std::error::Error>> {
     })
 }
 
+fn contains_steal_notice(data: &[u8]) -> bool {
+    data.windows(STOLEN_NOTICE_BYTES.len())
+        .any(|window| window == STOLEN_NOTICE_BYTES)
+}
+
 fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let registry = load_registry()?;
@@ -560,11 +567,19 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     {
         let mut stream = UnixStream::connect(&record.socket)?;
+        let mut pending = Vec::new();
         let mut buffer = [0u8; 4096];
         loop {
             match stream.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
+                    pending.extend_from_slice(&buffer[..count]);
+                    if contains_steal_notice(&pending) {
+                        eprintln!(
+                            "[festerm-sessiond] session taken over by another client; this attach lost the session"
+                        );
+                        break;
+                    }
                     io::stdout().write_all(&buffer[..count])?;
                     io::stdout().flush()?;
                 }
@@ -578,11 +593,19 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {
         let mut stream = named_pipe::PipeClient::connect(&record.socket)?;
+        let mut pending = Vec::new();
         let mut buffer = [0u8; 4096];
         loop {
             match stream.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(count) => {
+                    pending.extend_from_slice(&buffer[..count]);
+                    if contains_steal_notice(&pending) {
+                        eprintln!(
+                            "[festerm-sessiond] session taken over by another client; this attach lost the session"
+                        );
+                        break;
+                    }
                     io::stdout().write_all(&buffer[..count])?;
                     io::stdout().flush()?;
                 }
@@ -855,26 +878,48 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn stolen_notice_is_sent_before_eof_when_a_new_client_replaces_the_old_one() {
-        use std::os::unix::net::UnixStream;
+    fn second_client_replaces_first_client_and_first_receives_stolen_notice() {
+        use std::fs;
+        use std::io::{Read, Write};
+        use std::os::unix::net::{UnixListener, UnixStream};
 
-        let (first, peer_first) = UnixStream::pair().unwrap();
-        let (replacement, _) = UnixStream::pair().unwrap();
-        let mut peer_read = peer_first;
-        let mut replacement_slot = Some(replacement);
-        assert!(replacement_slot.is_some());
+        let socket_path = std::env::temp_dir().join(format!(
+            "festerm-sessiond-steal-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
 
-        if let Some(mut previous) = Some(first) {
-            send_steal_notice(&mut previous).unwrap();
-            drop(previous);
-        }
-        replacement_slot = None;
+        let mut first_client = UnixStream::connect(&socket_path).unwrap();
+        let (mut first_server, _) = listener.accept().unwrap();
+        first_server.write_all(b"hello").unwrap();
 
-        let mut buffer = [0u8; 128];
-        let read_count = peer_read.read(&mut buffer).unwrap();
-        assert_eq!(&buffer[..read_count], STOLEN_NOTICE_BYTES);
-        assert_eq!(peer_read.read(&mut buffer).unwrap(), 0);
-        assert!(replacement_slot.is_none());
+        let mut first_buffer = [0u8; 256];
+        let first_count = first_client.read(&mut first_buffer).unwrap();
+        assert_eq!(&first_buffer[..first_count], b"hello");
+
+        let mut second_client = UnixStream::connect(&socket_path).unwrap();
+        let (mut second_server, _) = listener.accept().unwrap();
+        let mut previous = first_server;
+        let _ = send_steal_notice(&mut previous);
+        drop(previous);
+
+        let mut stolen_buffer = [0u8; 256];
+        let stolen_count = first_client.read(&mut stolen_buffer).unwrap();
+        assert_eq!(&stolen_buffer[..stolen_count], STOLEN_NOTICE_BYTES);
+        let eof_count = first_client.read(&mut stolen_buffer).unwrap();
+        assert_eq!(eof_count, 0);
+
+        second_server.write_all(b"world").unwrap();
+        let mut second_buffer = [0u8; 256];
+        let second_count = second_client.read(&mut second_buffer).unwrap();
+        assert_eq!(&second_buffer[..second_count], b"world");
+
+        let _ = fs::remove_file(&socket_path);
     }
 
     #[test]
