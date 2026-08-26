@@ -1938,9 +1938,11 @@ dependencies = [
  "festerm-ssh",
  "fs2",
  "named_pipe",
+ "nix 0.31.3",
  "portable-pty",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

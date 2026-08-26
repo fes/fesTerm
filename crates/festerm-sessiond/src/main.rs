@@ -5,6 +5,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -304,9 +305,8 @@ fn run_daemon(
         save_registry_record(record)?;
 
         let mut spawned = spawn_shell(&shell, cols, rows)?;
-        let mut reader = spawned.master.try_clone_reader()?;
-        let (mut stream, _) = listener.accept()?;
-        io_loop(&mut reader, &mut stream, &mut spawned, &name)?;
+        let reader = spawned.master.try_clone_reader()?;
+        daemon_client_loop(listener, reader, &mut spawned, &name)?;
     }
 
     #[cfg(windows)]
@@ -324,38 +324,199 @@ fn run_daemon(
         save_registry_record(record)?;
 
         let mut spawned = spawn_shell(&shell, cols, rows)?;
-        let mut reader = spawned.master.try_clone_reader()?;
-        let mut server = named_pipe::PipeOptions::new(&pipe_name).single()?.wait()?;
-        io_loop(&mut reader, &mut server, &mut spawned, &name)?;
+        let reader = spawned.master.try_clone_reader()?;
+        daemon_client_loop_windows(&pipe_name, reader, &mut spawned, &name)?;
     }
 
     Ok(())
 }
 
-fn io_loop<R: Read, W: Write>(
-    reader: &mut R,
-    writer: &mut W,
+fn daemon_client_loop<R: Read + Send + 'static>(
+    listener: UnixListener,
+    mut reader: R,
     spawned: &mut SpawnedShell,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut buffer = [0u8; 4096];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => {
-                writer.write_all(&buffer[..count])?;
-                writer.flush()?;
+    let (accept_tx, accept_rx) = mpsc::channel::<UnixStream>();
+    let accept_listener = listener;
+    let accept_thread = thread::spawn(move || -> io::Result<()> {
+        loop {
+            let (stream, _) = accept_listener.accept()?;
+            accept_tx
+                .send(stream)
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "accept loop closed"))?;
+        }
+    });
+
+    let (pty_tx, pty_rx) = mpsc::channel::<PtyEvent>();
+    thread::spawn(move || -> io::Result<()> {
+        let mut buffer = [0u8; 4096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = pty_tx.send(PtyEvent::Eof);
+                    return Ok(());
+                }
+                Ok(count) => {
+                    let _ = pty_tx.send(PtyEvent::Data(buffer[..count].to_vec()));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    let _ = pty_tx.send(PtyEvent::Error(error.kind()));
+                    return Ok(());
+                }
             }
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error.into()),
+        }
+    });
+
+    let mut active: Option<UnixStream> = None;
+    loop {
+        if let Ok(stream) = accept_rx.try_recv() {
+            if let Some(mut previous) = active.take() {
+                let _ = send_steal_notice(&mut previous);
+            }
+            active = Some(stream);
+        }
+
+        match pty_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(PtyEvent::Data(data)) => {
+                if let Some(stream) = active.as_mut() {
+                    match stream.write_all(&data) {
+                        Ok(()) => {
+                            let _ = stream.flush();
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+                            active = None;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+            Ok(PtyEvent::Eof) => {
+                let _ = spawned.child.wait();
+                drop_registry_record(name)?;
+                break;
+            }
+            Ok(PtyEvent::Error(kind)) => {
+                if kind == io::ErrorKind::BrokenPipe {
+                    let _ = spawned.child.wait();
+                    drop_registry_record(name)?;
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break;
+            }
         }
     }
 
-    let _ = spawned.child.wait();
-    drop_registry_record(name)?;
+    let _ = accept_thread.join();
     Ok(())
 }
+
+#[cfg(windows)]
+fn daemon_client_loop_windows<R: Read + Send + 'static>(
+    pipe_name: &str,
+    mut reader: R,
+    spawned: &mut SpawnedShell,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (accept_tx, accept_rx) = mpsc::channel::<named_pipe::PipeServer>();
+    let pipe_name = pipe_name.to_owned();
+    let accept_thread = thread::spawn(move || -> io::Result<()> {
+        loop {
+            let server = match named_pipe::PipeOptions::new(&pipe_name).single()?.wait() {
+                Ok(server) => server,
+                Err(error) => return Err(error),
+            };
+            accept_tx
+                .send(server)
+                .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "accept loop closed"))?;
+        }
+    });
+
+    let (pty_tx, pty_rx) = mpsc::channel::<PtyEvent>();
+    thread::spawn(move || -> io::Result<()> {
+        let mut buffer = [0u8; 4096];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = pty_tx.send(PtyEvent::Eof);
+                    return Ok(());
+                }
+                Ok(count) => {
+                    let _ = pty_tx.send(PtyEvent::Data(buffer[..count].to_vec()));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    let _ = pty_tx.send(PtyEvent::Error(error.kind()));
+                    return Ok(());
+                }
+            }
+        }
+    });
+
+    let mut active: Option<named_pipe::PipeServer> = None;
+    loop {
+        if let Ok(stream) = accept_rx.try_recv() {
+            if let Some(mut previous) = active.take() {
+                let _ = send_steal_notice(&mut previous);
+            }
+            active = Some(stream);
+        }
+
+        match pty_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(PtyEvent::Data(data)) => {
+                if let Some(stream) = active.as_mut() {
+                    match stream.write_all(&data) {
+                        Ok(()) => {
+                            let _ = stream.flush();
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+                            active = None;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+            Ok(PtyEvent::Eof) => {
+                let _ = spawned.child.wait();
+                drop_registry_record(name)?;
+                break;
+            }
+            Ok(PtyEvent::Error(kind)) => {
+                if kind == io::ErrorKind::BrokenPipe {
+                    let _ = spawned.child.wait();
+                    drop_registry_record(name)?;
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break;
+            }
+        }
+    }
+
+    let _ = accept_thread.join();
+    Ok(())
+}
+
+#[derive(Debug)]
+enum PtyEvent {
+    Data(Vec<u8>),
+    Eof,
+    Error(io::ErrorKind),
+}
+
+fn send_steal_notice<W: Write>(writer: &mut W) -> io::Result<()> {
+    writer.write_all(STOLEN_NOTICE_BYTES)?;
+    writer.flush()
+}
+
+const STOLEN_NOTICE_BYTES: &[u8] =
+    b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 
 fn run_list() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = load_registry()?;
@@ -540,8 +701,6 @@ fn write_registry_at(
 
 fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
     let path = registry_path()?;
-    let _file = OpenOptions::new().read(true).open(&path).ok();
-    let _ = _file;
     read_registry_at(&path)
 }
 
@@ -620,54 +779,66 @@ fn spawn_shell(
 fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        let output = Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "pid="])
-            .output();
-        match output {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                !stdout.trim().is_empty()
-            }
-            Err(_) => false,
-        }
+        use nix::{sys::signal::kill, unistd::Pid};
+
+        kill(Pid::from_raw(pid as i32), None).is_ok()
     }
 
     #[cfg(windows)]
     {
-        let output = Command::new("tasklist")
-            .arg("/FO")
-            .arg("CSV")
-            .arg("/NH")
-            .output();
-        match output {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.contains(&format!("\"{pid}\""))
-            }
-            Err(_) => false,
+        use windows_sys::Win32::Foundation::{CloseHandle, BOOL};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+        };
+
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle == 0 {
+            return false;
         }
+
+        let mut exit_code = 0u32;
+        let alive = unsafe { GetExitCodeProcess(handle, &mut exit_code) != BOOL(0) }
+            && exit_code == STILL_ACTIVE;
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        alive
     }
 }
 
 fn terminate_pid(pid: u32) {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-- -{pid}")])
-            .status();
+        use nix::{
+            sys::signal::{kill, Signal},
+            unistd::Pid,
+        };
+
+        let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
         thread::sleep(Duration::from_millis(250));
         if process_alive(pid) {
-            let _ = Command::new("kill")
-                .args(["-KILL", &format!("-- -{pid}")])
-                .status();
+            let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
         }
     }
 
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        use windows_sys::Win32::Foundation::{CloseHandle, BOOL};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        };
+
+        // Minimal pass: direct Win32 APIs avoid shelling out to taskkill while
+        // keeping the local session daemon small and dependency-light.
+        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+        if handle == 0 {
+            return;
+        }
+
+        let _ = unsafe { TerminateProcess(handle, 1) != BOOL(0) };
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
     }
 }
 
@@ -681,6 +852,30 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn stolen_notice_is_sent_before_eof_when_a_new_client_replaces_the_old_one() {
+        use std::os::unix::net::UnixStream;
+
+        let (first, peer_first) = UnixStream::pair().unwrap();
+        let (replacement, _) = UnixStream::pair().unwrap();
+        let mut peer_read = peer_first;
+        let mut replacement_slot = Some(replacement);
+        assert!(replacement_slot.is_some());
+
+        if let Some(mut previous) = Some(first) {
+            send_steal_notice(&mut previous).unwrap();
+            drop(previous);
+        }
+        replacement_slot = None;
+
+        let mut buffer = [0u8; 128];
+        let read_count = peer_read.read(&mut buffer).unwrap();
+        assert_eq!(&buffer[..read_count], STOLEN_NOTICE_BYTES);
+        assert_eq!(peer_read.read(&mut buffer).unwrap(), 0);
+        assert!(replacement_slot.is_none());
+    }
 
     #[test]
     fn valid_names_are_accepted() {
