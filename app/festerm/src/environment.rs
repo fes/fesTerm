@@ -38,9 +38,14 @@ use festerm_pty::LocalProfile;
 const CORRECTED_VARIABLES: [&str; 4] = ["PATH", "LANG", "LC_ALL", "LC_CTYPE"];
 
 /// Returns `profile` unchanged, except that on macOS any of `PATH`,
-/// `LANG`, `LC_ALL`, and `LC_CTYPE` missing from both the profile's own
-/// environment overrides and fesTerm's own inherited (launchd) environment
-/// are filled in from the user's login shell.
+/// `LANG`, `LC_ALL`, and `LC_CTYPE` missing from the profile's own
+/// environment overrides are filled in from the user's login shell.
+///
+/// This deliberately does not check fesTerm's own inherited (launchd)
+/// process environment: `launchd` always sets some minimal `PATH` (for
+/// example `/usr/bin:/bin:/usr/sbin:/sbin`), so treating "fesTerm's own
+/// process already has a value" as a reason to skip correction would
+/// silently defeat the very gap this module exists to close.
 ///
 /// A profile using [`EnvironmentPolicy::Clear`] is never touched: clearing
 /// the environment is itself an explicit, deliberate choice to control the
@@ -62,7 +67,7 @@ pub fn with_corrected_local_path(profile: LocalProfile) -> LocalProfile {
         let mut changed = false;
         for name in CORRECTED_VARIABLES {
             let key = std::ffi::OsStr::new(name);
-            if overrides.contains_key(key) || std::env::var_os(name).is_some() {
+            if overrides.contains_key(key) {
                 continue;
             }
             if let Some(value) = login_env.get(name) {
