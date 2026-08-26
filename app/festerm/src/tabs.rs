@@ -19,8 +19,8 @@ use std::sync::{
 
 use eframe::egui;
 use festerm_config::{
-    ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, SshProfileConfiguration,
-    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, ScrollSpeedPreference,
+    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
@@ -1040,6 +1040,9 @@ pub enum AppCommand {
     /// Enables or disables eligible multi-cell shaping runs. Cell ownership
     /// remains authoritative regardless of the selected font.
     ToggleTerminalLigatures,
+    /// Selects a clickstop scaling how far one trackpad/wheel scroll step
+    /// moves the scrollback viewport (feature request #67).
+    SetScrollSpeed(festerm_config::ScrollSpeedPreference),
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1158,6 +1161,7 @@ pub struct AppState {
     restore_workspace: bool,
     terminal_font: TerminalFontPreference,
     terminal_ligatures: bool,
+    scroll_speed: ScrollSpeedPreference,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1196,6 +1200,7 @@ impl AppState {
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
+            scroll_speed: settings.scroll_speed(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1230,6 +1235,7 @@ impl AppState {
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
+            scroll_speed: settings.scroll_speed(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1310,6 +1316,7 @@ impl AppState {
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
+            scroll_speed: settings.scroll_speed(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1421,6 +1428,10 @@ impl AppState {
         self.terminal_ligatures
     }
 
+    pub const fn scroll_speed(&self) -> ScrollSpeedPreference {
+        self.scroll_speed
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1433,6 +1444,7 @@ impl AppState {
             self.restore_workspace,
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
+        .with_scroll_speed(self.scroll_speed)
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1589,6 +1601,9 @@ impl AppState {
             AppCommand::ToggleTerminalLigatures => {
                 self.terminal_ligatures = !self.terminal_ligatures;
             }
+            AppCommand::SetScrollSpeed(speed) => {
+                self.scroll_speed = speed;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -1598,6 +1613,7 @@ impl AppState {
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
+                self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -2856,6 +2872,29 @@ mod tests {
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
         assert!(!state.terminal_ligatures());
+    }
+
+    #[test]
+    fn scroll_speed_changes_and_resets_to_normal() {
+        // Feature request #67: scroll speed is a Settings clickstop, not a
+        // toggle, so it needs its own coverage distinct from the boolean
+        // preferences above.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert_eq!(state.scroll_speed(), ScrollSpeedPreference::Normal);
+
+        state.dispatch(
+            AppCommand::SetScrollSpeed(ScrollSpeedPreference::VerySlow),
+            &context,
+        );
+        assert_eq!(state.scroll_speed(), ScrollSpeedPreference::VerySlow);
+        assert_eq!(
+            state.interface_settings().scroll_speed(),
+            ScrollSpeedPreference::VerySlow
+        );
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert_eq!(state.scroll_speed(), ScrollSpeedPreference::Normal);
     }
 
     #[test]

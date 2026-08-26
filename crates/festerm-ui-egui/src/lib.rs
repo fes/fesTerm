@@ -639,6 +639,69 @@ mod tests {
     }
 
     #[test]
+    fn scroll_speed_multiplier_scales_rows_moved_per_wheel_step() {
+        // Feature request #67: `TerminalViewOptions::scroll_speed_multiplier`
+        // must actually change how far one wheel step moves through
+        // scrollback, not just be threaded through unused.
+        fn offset_after_one_wheel_step(multiplier: f32) -> usize {
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(420.0, 240.0))
+                .build_ui_state(
+                    |ui, state: &mut HeadlessViewState| {
+                        state.view.show_with_options(
+                            ui,
+                            &mut state.terminal,
+                            &mut state.sink,
+                            TerminalViewOptions {
+                                scroll_speed_multiplier: multiplier,
+                                ..TerminalViewOptions::default()
+                            },
+                        );
+                    },
+                    HeadlessViewState::new(),
+                );
+            let rows = harness.state().terminal.dimensions().rows();
+            for line in 0..rows + 40 {
+                harness
+                    .state_mut()
+                    .terminal
+                    .ingest(format!("line {line}\r\n").as_bytes());
+            }
+            harness.run();
+            let center = harness
+                .state()
+                .view
+                .diagnostics()
+                .grid_rect
+                .unwrap()
+                .center();
+            harness.event(egui::Event::PointerMoved(center));
+            harness.run();
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, 3.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run();
+            harness.state().view.history_offset_rows()
+        }
+
+        let normal = offset_after_one_wheel_step(1.0);
+        let slow = offset_after_one_wheel_step(0.25);
+        let fast = offset_after_one_wheel_step(2.5);
+
+        assert!(
+            slow < normal,
+            "a below-1.0 multiplier must scroll fewer rows: slow={slow} normal={normal}"
+        );
+        assert!(
+            fast > normal,
+            "an above-1.0 multiplier must scroll more rows: fast={fast} normal={normal}"
+        );
+    }
+
+    #[test]
     fn local_wheel_anchors_history_and_ctrl_end_resumes_following() {
         let mut harness = Harness::builder()
             .with_size(Vec2::new(420.0, 240.0))
@@ -935,6 +998,7 @@ mod tests {
                             terminal_input_enabled: true,
                             keyboard_input_enabled: true,
                             defer_paste_to_application: false,
+                            scroll_speed_multiplier: 1.0,
                         },
                     );
                 },
@@ -973,6 +1037,7 @@ mod tests {
                             terminal_input_enabled: true,
                             keyboard_input_enabled: false,
                             defer_paste_to_application: false,
+                            scroll_speed_multiplier: 1.0,
                         },
                     );
                 },

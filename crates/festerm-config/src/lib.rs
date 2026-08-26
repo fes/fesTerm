@@ -521,6 +521,10 @@ pub struct InterfaceSettings {
     /// across every supported face.
     #[serde(default, skip_serializing_if = "is_false")]
     terminal_ligatures: bool,
+    /// How many scrollback rows a single trackpad/wheel scroll step moves,
+    /// relative to fesTerm's original fixed pixel-to-row mapping.
+    #[serde(default, skip_serializing_if = "ScrollSpeedPreference::is_default")]
+    scroll_speed: ScrollSpeedPreference,
 }
 
 impl InterfaceSettings {
@@ -534,6 +538,7 @@ impl InterfaceSettings {
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,
         terminal_ligatures: false,
+        scroll_speed: ScrollSpeedPreference::Normal,
     };
 
     pub const fn new(
@@ -551,6 +556,7 @@ impl InterfaceSettings {
             restore_workspace,
             terminal_font: TerminalFontPreference::JetBrainsMono,
             terminal_ligatures: false,
+            scroll_speed: ScrollSpeedPreference::Normal,
         }
     }
 
@@ -561,6 +567,12 @@ impl InterfaceSettings {
     ) -> Self {
         self.terminal_font = terminal_font;
         self.terminal_ligatures = terminal_ligatures;
+        self
+    }
+
+    /// Sets the scrollback scroll-speed clickstop (feature request #67).
+    pub const fn with_scroll_speed(mut self, scroll_speed: ScrollSpeedPreference) -> Self {
+        self.scroll_speed = scroll_speed;
         self
     }
 
@@ -592,6 +604,10 @@ impl InterfaceSettings {
         self.terminal_ligatures
     }
 
+    pub const fn scroll_speed(self) -> ScrollSpeedPreference {
+        self.scroll_speed
+    }
+
     fn is_default(&self) -> bool {
         *self == Self::DEFAULT
     }
@@ -612,6 +628,85 @@ pub enum TerminalFontPreference {
 impl TerminalFontPreference {
     const fn is_default(&self) -> bool {
         matches!(self, Self::JetBrainsMono)
+    }
+}
+
+/// A discrete clickstop scaling how many scrollback rows one trackpad/wheel
+/// scroll step moves, relative to fesTerm's original fixed pixel-to-row
+/// mapping (`crates/festerm-ui-egui/src/view.rs`). Deliberately a small,
+/// fixed set of named steps rather than a free-form numeric multiplier,
+/// matching how the rest of Settings favors discrete, previewable choices
+/// over open-ended numeric entry.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScrollSpeedPreference {
+    VerySlow,
+    Slow,
+    #[default]
+    Normal,
+    Fast,
+    VeryFast,
+}
+
+impl ScrollSpeedPreference {
+    /// All clickstops in slowest-to-fastest order, for rendering a slider.
+    pub const ALL: [Self; 5] = [
+        Self::VerySlow,
+        Self::Slow,
+        Self::Normal,
+        Self::Fast,
+        Self::VeryFast,
+    ];
+
+    /// A short, user-displayable name for this clickstop.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VerySlow => "Very slow",
+            Self::Slow => "Slow",
+            Self::Normal => "Normal",
+            Self::Fast => "Fast",
+            Self::VeryFast => "Very fast",
+        }
+    }
+
+    /// The multiplier applied to the rows a scroll step would otherwise
+    /// move. `Normal` is `1.0` and preserves fesTerm's original behavior.
+    pub const fn multiplier(self) -> f32 {
+        match self {
+            Self::VerySlow => 0.25,
+            Self::Slow => 0.5,
+            Self::Normal => 1.0,
+            Self::Fast => 1.75,
+            Self::VeryFast => 2.5,
+        }
+    }
+
+    /// This clickstop's position in [`Self::ALL`], for driving a slider by
+    /// index.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::VerySlow => 0,
+            Self::Slow => 1,
+            Self::Normal => 2,
+            Self::Fast => 3,
+            Self::VeryFast => 4,
+        }
+    }
+
+    /// The clickstop at `index` in [`Self::ALL`], saturating to the nearest
+    /// valid end rather than panicking on an out-of-range slider position.
+    pub const fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::VerySlow,
+            1 => Self::Slow,
+            3 => Self::Fast,
+            n if n >= 4 => Self::VeryFast,
+            _ => Self::Normal,
+        }
+    }
+
+    const fn is_default(&self) -> bool {
+        matches!(self, Self::Normal)
     }
 }
 
@@ -3972,6 +4067,51 @@ schema_version = 99
             "schema_version = 1\n\n[settings]\nterminal_font = \"system\"\n"
         )
         .is_err());
+    }
+
+    #[test]
+    fn scroll_speed_preference_round_trips_through_toml_and_defaults_to_normal() {
+        // Feature request #67.
+        let settings = InterfaceSettings::DEFAULT.with_scroll_speed(ScrollSpeedPreference::Fast);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("scroll_speed = \"fast\""));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+
+        // An older settings table with no `scroll_speed` key defaults to
+        // `Normal`, preserving today's fixed pixel-to-row behavior.
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert_eq!(
+            Configuration::parse(older_document)
+                .unwrap()
+                .interface_settings()
+                .scroll_speed(),
+            ScrollSpeedPreference::Normal
+        );
+    }
+
+    #[test]
+    fn scroll_speed_clickstop_index_mapping_is_stable_and_saturating() {
+        for (index, expected) in ScrollSpeedPreference::ALL.into_iter().enumerate() {
+            assert_eq!(expected.index(), index);
+            assert_eq!(ScrollSpeedPreference::from_index(index), expected);
+        }
+        // Out-of-range indices saturate to the fastest clickstop rather than
+        // panicking, since a slider position should never be able to select
+        // a nonexistent step.
+        assert_eq!(
+            ScrollSpeedPreference::from_index(99),
+            ScrollSpeedPreference::VeryFast
+        );
     }
 
     #[test]

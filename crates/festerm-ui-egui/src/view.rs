@@ -30,7 +30,7 @@ const TERMINAL_ZOOM_STEP: f32 = 1.0;
 
 /// Application-owned terminal capabilities that affect local viewport
 /// commands without exposing a session backend to the presentation crate.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerminalViewOptions {
     /// The current session can accept a paste through its ordered input path.
     pub paste_available: bool,
@@ -51,6 +51,12 @@ pub struct TerminalViewOptions {
     /// being encoded immediately. This lets the composition root apply paste
     /// confirmation without exposing session identity to this crate.
     pub defer_paste_to_application: bool,
+    /// Scales how many scrollback rows one trackpad/wheel scroll step
+    /// moves, on top of the fixed pixel-to-row mapping this view otherwise
+    /// uses. `1.0` preserves fesTerm's original behavior; this crate stays
+    /// unaware of `festerm-config`'s `ScrollSpeedPreference` clickstop names
+    /// and only sees the resulting multiplier (feature request #67).
+    pub scroll_speed_multiplier: f32,
 }
 
 impl Default for TerminalViewOptions {
@@ -60,6 +66,7 @@ impl Default for TerminalViewOptions {
             terminal_input_enabled: true,
             keyboard_input_enabled: true,
             defer_paste_to_application: false,
+            scroll_speed_multiplier: 1.0,
         }
     }
 }
@@ -502,6 +509,9 @@ impl TerminalView {
                                 (delta.y.abs().ceil() as usize).saturating_mul(page_rows)
                             }
                         };
+                        let rows = ((rows as f32) * options.scroll_speed_multiplier.max(0.0))
+                            .round()
+                            .max(1.0) as usize;
                         if delta.y > 0.0 {
                             self.history.scroll_up(rows);
                         } else if delta.y < 0.0 {

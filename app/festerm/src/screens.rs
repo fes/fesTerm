@@ -9,7 +9,7 @@
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, PersistenceConfiguration, PersistenceProviderKind, Profile,
-    SshProfileConfiguration, TerminalFontPreference,
+    ScrollSpeedPreference, SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -1633,6 +1633,7 @@ pub struct SettingsViewModel {
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
     pub terminal_ligatures: bool,
+    pub scroll_speed: ScrollSpeedPreference,
 }
 
 pub fn show_settings(
@@ -1649,6 +1650,7 @@ pub fn show_settings(
         restore_workspace,
         terminal_font,
         terminal_ligatures,
+        scroll_speed,
     } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
@@ -1776,6 +1778,25 @@ pub fn show_settings(
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
                                 command = Some(AppCommand::ResetInterfaceSettings);
+                            }
+                        });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Scrolling", |ui| {
+                            let mut selected_speed = scroll_speed;
+                            if let Some(new_speed) = settings_clickstop_row(
+                                ui,
+                                "Scroll speed",
+                                "How far one trackpad or mouse wheel scroll step moves \
+                                 through scrollback history.",
+                                &ScrollSpeedPreference::ALL,
+                                selected_speed,
+                            ) {
+                                selected_speed = new_speed;
+                            }
+                            if selected_speed != scroll_speed {
+                                command = Some(AppCommand::SetScrollSpeed(selected_speed));
                             }
                         });
 
@@ -1994,6 +2015,61 @@ fn settings_segmented_row(
         },
     );
     clicked
+}
+
+/// A labeled row with a discrete, clickstop-only slider: dragging or
+/// clicking only ever lands on one of `options`' exact indices, unlike a
+/// continuous `egui::Slider`, since a scroll-speed multiplier is meant to be
+/// chosen from a small named set (mirroring `settings_segmented_row`'s
+/// discrete-choice intent) rather than fine-tuned to an arbitrary numeric
+/// value. Returns the newly selected value when the slider moves to a
+/// different clickstop than `selected` this frame.
+fn settings_clickstop_row(
+    ui: &mut Ui,
+    title: &str,
+    description: &str,
+    options: &[ScrollSpeedPreference],
+    selected: ScrollSpeedPreference,
+) -> Option<ScrollSpeedPreference> {
+    let mut changed = None;
+    egui::Sides::new().show(
+        ui,
+        |ui| {
+            // Same defensive width reservation as the other settings rows:
+            // without it the description can measure as one long unwrapped
+            // line and push the slider off the right edge of the card.
+            ui.set_max_width(ui.available_width() - 190.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
+                ssh_paragraph(ui, description);
+            });
+        },
+        |ui| {
+            ui.vertical(|ui| {
+                let max_index = options.len().saturating_sub(1);
+                let mut index = selected.index().min(max_index);
+                ui.style_mut().spacing.slider_width = 160.0;
+                let response = ui.add(
+                    egui::Slider::new(&mut index, 0..=max_index)
+                        .step_by(1.0)
+                        .show_value(false),
+                );
+                if response.changed() {
+                    let new_value = ScrollSpeedPreference::from_index(index);
+                    if new_value != selected {
+                        changed = Some(new_value);
+                    }
+                }
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(selected.label())
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED),
+                );
+            });
+        },
+    );
+    changed
 }
 
 /// One row's stable identifying summary in the Profiles list, without
@@ -3143,7 +3219,7 @@ mod tests {
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 900.0))
+            .with_size(egui::vec2(520.0, 1000.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
@@ -3156,6 +3232,7 @@ mod tests {
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
+                            scroll_speed: ScrollSpeedPreference::Normal,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3301,7 +3378,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 900.0))
+            .with_size(egui::vec2(520.0, 1000.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -3321,6 +3398,7 @@ mod tests {
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
+                            scroll_speed: ScrollSpeedPreference::Normal,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",

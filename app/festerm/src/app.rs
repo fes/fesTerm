@@ -2841,6 +2841,7 @@ impl FesTermApp {
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
         let active_tab_id = self.state.active();
+        let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
         let terminal_font_set = TerminalFontSet::new(
             terminal_font_family(self.state.terminal_font()),
             self.state.terminal_ligatures(),
@@ -2869,6 +2870,7 @@ impl FesTermApp {
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
                             terminal_ligatures: self.state.terminal_ligatures(),
+                            scroll_speed: self.state.scroll_speed(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()
@@ -2914,6 +2916,7 @@ impl FesTermApp {
                                 && !self.palette.is_open(),
                             keyboard_input_enabled: session.accepts_typed_input(),
                             defer_paste_to_application: true,
+                            scroll_speed_multiplier,
                         };
                         session.view.show_with_options(
                             ui,
@@ -3022,7 +3025,8 @@ impl FesTermApp {
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
-                | AppCommand::ToggleTerminalLigatures) => {
+                | AppCommand::ToggleTerminalLigatures
+                | AppCommand::SetScrollSpeed(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     self.persist_interface_settings();

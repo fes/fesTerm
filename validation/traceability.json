@@ -628,7 +628,10 @@
         "toggle_restore_workspace_flips_state_and_resets_to_off",
         "toggle_close_confirmation_flips_state_and_resets_to_on",
         "settings_close_confirmation_control_returns_the_toggle_command",
-        "older_settings_tables_default_close_confirmation_to_on"
+        "older_settings_tables_default_close_confirmation_to_on",
+        "scroll_speed_changes_and_resets_to_normal",
+        "scroll_speed_preference_round_trips_through_toml_and_defaults_to_normal",
+        "scroll_speed_multiplier_scales_rows_moved_per_wheel_step"
       ],
       "manual_scenarios": [
         "AS-02",
