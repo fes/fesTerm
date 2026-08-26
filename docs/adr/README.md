@@ -29,6 +29,10 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0023: `serialport` Crate and Worker-Thread Model for the Serial Session Backend](0023-serialport-worker-thread-serial-backend.md)
 - [ADR 0024: Native Secret Store Extended to Stored Private Keys](0024-native-secret-store-stored-private-keys.md)
 
+## Proposed Decisions
+
+- [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
+
 ## Status Values
 
 - **Proposed:** under discussion and not yet binding.
