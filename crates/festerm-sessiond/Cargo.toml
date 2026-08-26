@@ -1,0 +1,18 @@
+[package]
+name = "festerm-sessiond"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Minimal local persistence daemon for fesTerm sessions."
+
+[dependencies]
+festerm-pty = { path = "../festerm-pty" }
+festerm-ssh = { path = "../festerm-ssh" }
+portable-pty = "0.9.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lints]
+workspace = true

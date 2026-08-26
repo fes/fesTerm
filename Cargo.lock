@@ -1931,6 +1931,17 @@ name = "festerm-session"
 version = "0.1.5"
 
 [[package]]
+name = "festerm-sessiond"
+version = "0.1.5"
+dependencies = [
+ "festerm-pty",
+ "festerm-ssh",
+ "portable-pty",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "festerm-ssh"
 version = "0.1.5"
 dependencies = [

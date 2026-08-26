@@ -9,6 +9,7 @@ members = [
     "crates/festerm-pty-test-child",
     "crates/festerm-serial",
     "crates/festerm-session",
+    "crates/festerm-sessiond",
     "crates/festerm-secret-store",
     "crates/festerm-ssh",
     "crates/festerm-test-support",
