@@ -115,6 +115,33 @@ special case. Concretely:
   explicitly verified to restrict to the owning user SID) on Windows;
   `festerm-sessiond` never listens on a network-reachable port, on any
   platform, as a hard invariant.
+- **Attach policy: single active client, steal-on-reconnect.** Unlike
+  tmux's default `attach -A` behavior — which silently multiplexes multiple
+  simultaneous clients onto one session, mirroring output and shrinking the
+  shared window to the smallest attached client's size with no user-visible
+  signal that another client is attached — `festerm-sessiond` allows at most
+  **one** attached client at a time. When a new `attach` connects to a
+  session that already has a client attached, the daemon **force-detaches
+  the previous client** (closing its stream after writing a final
+  `SESSION_STOLEN` framing marker/notice the previous client's fesTerm tab
+  can render, e.g. "reattached from another window") and hands the session
+  to the new client. This applies uniformly to every attach, including a
+  fesTerm tab reconnecting to a session it was itself previously attached to
+  (for example: closing a laptop, later reopening fesTerm, and reattaching
+  to the same still-running local session) — there is no special case for
+  "the same logical tab reconnecting" versus "a different client attaching";
+  the newest attach always wins. This is a deliberate departure from tmux's
+  multiplex default, chosen because fesTerm's GUI is a single-focus-window
+  model (one tab is either showing a session live or it is not) rather than
+  tmux's terminal-multiplexer philosophy of many simultaneous panes/clients
+  sharing one view; silently mirroring a session into two GUI windows with
+  no on-screen indication, and a shared resize side effect, would be
+  surprising rather than useful in that model. The daemon's `io_loop` must
+  therefore support closing/replacing its single active stream mid-flight
+  (rather than the current implementation's single one-shot `accept()`,
+  which must be corrected as part of implementing this policy — today a
+  second `attach` connects at the socket level but is never read from,
+  hanging indefinitely instead of stealing, multiplexing, or aborting).
 - **Session identity reuses the existing validated name.** The same 1-64
   byte session-name validation `PersistenceConfiguration`
   (`festerm-config`) already enforces for `PROF-06`/`LAUNCH-08` is reused
