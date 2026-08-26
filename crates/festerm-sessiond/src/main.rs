@@ -1,13 +1,18 @@
 use std::{
     collections::BTreeMap,
     env,
-    fs,
+    fs::{self, OpenOptions},
     io::{self, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(unix)]
+use std::os::unix::{
+    fs::PermissionsExt,
+    net::{UnixListener, UnixStream},
 };
 
 #[cfg(windows)]
@@ -15,6 +20,7 @@ use std::os::windows::process::CommandExt;
 
 use festerm_pty::default_local_profile;
 use festerm_ssh::PersistentSessionName;
+use fs2::FileExt;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
 
@@ -42,11 +48,25 @@ struct SessionRegistry {
 
 #[derive(Clone, Debug)]
 enum CommandSpec {
-    Start { name: String, shell: String, cols: u16, rows: u16 },
-    Daemon { name: String, shell: String, cols: u16, rows: u16 },
+    Start {
+        name: String,
+        shell: String,
+        cols: u16,
+        rows: u16,
+    },
+    Daemon {
+        name: String,
+        shell: String,
+        cols: u16,
+        rows: u16,
+    },
     List,
-    Kill { name: String },
-    Attach { name: String },
+    Kill {
+        name: String,
+    },
+    Attach {
+        name: String,
+    },
 }
 
 struct SpawnedShell {
@@ -64,8 +84,18 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let spec = parse_args(env::args().skip(1).collect())?;
     match spec {
-        CommandSpec::Start { name, shell, cols, rows } => run_start(name, shell, cols, rows),
-        CommandSpec::Daemon { name, shell, cols, rows } => run_daemon(name, shell, cols, rows),
+        CommandSpec::Start {
+            name,
+            shell,
+            cols,
+            rows,
+        } => run_start(name, shell, cols, rows),
+        CommandSpec::Daemon {
+            name,
+            shell,
+            cols,
+            rows,
+        } => run_daemon(name, shell, cols, rows),
         CommandSpec::List => run_list(),
         CommandSpec::Kill { name } => run_kill(name),
         CommandSpec::Attach { name } => run_attach(name),
@@ -103,7 +133,12 @@ fn parse_start(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Error
     let shell = take_value(args, "start", "--shell").unwrap_or_else(|_| default_shell());
     let cols = take_u16(args, "--cols").unwrap_or(80);
     let rows = take_u16(args, "--rows").unwrap_or(24);
-    Ok(CommandSpec::Start { name, shell, cols, rows })
+    Ok(CommandSpec::Start {
+        name,
+        shell,
+        cols,
+        rows,
+    })
 }
 
 fn parse_daemon(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Error>> {
@@ -111,10 +146,19 @@ fn parse_daemon(args: &[String]) -> Result<CommandSpec, Box<dyn std::error::Erro
     let shell = take_value(args, "daemon", "--shell").unwrap_or_else(|_| default_shell());
     let cols = take_u16(args, "--cols").unwrap_or(80);
     let rows = take_u16(args, "--rows").unwrap_or(24);
-    Ok(CommandSpec::Daemon { name, shell, cols, rows })
+    Ok(CommandSpec::Daemon {
+        name,
+        shell,
+        cols,
+        rows,
+    })
 }
 
-fn take_value(args: &[String], command: &str, flag: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn take_value(
+    args: &[String],
+    command: &str,
+    flag: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut index = 0;
     while index < args.len() {
         if args[index] == flag {
@@ -157,7 +201,12 @@ fn default_shell() -> String {
         })
 }
 
-fn run_start(name: String, shell: String, cols: u16, rows: u16) -> Result<(), Box<dyn std::error::Error>> {
+fn run_start(
+    name: String,
+    shell: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let registry = load_registry()?;
     if registry.sessions.contains_key(&name) {
@@ -168,11 +217,12 @@ fn run_start(name: String, shell: String, cols: u16, rows: u16) -> Result<(), Bo
     }
 
     let exe = env::current_exe()?;
-    let mut detached = Command::new(&exe);
 
     #[cfg(unix)]
     {
-        detached
+        let mut command = Command::new("setsid");
+        command
+            .arg(&exe)
             .arg("daemon")
             .arg("--name")
             .arg(&name)
@@ -185,29 +235,13 @@ fn run_start(name: String, shell: String, cols: u16, rows: u16) -> Result<(), Bo
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-
-        let mut setsid = Command::new("setsid");
-        setsid
-            .arg(exe)
-            .arg("daemon")
-            .arg("--name")
-            .arg(&name)
-            .arg("--shell")
-            .arg(&shell)
-            .arg("--cols")
-            .arg(cols.to_string())
-            .arg("--rows")
-            .arg(rows.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        setsid.spawn()?;
-        thread::sleep(Duration::from_millis(250));
+        command.spawn()?;
     }
 
     #[cfg(windows)]
     {
-        detached
+        let mut command = Command::new(&exe);
+        command
             .arg("daemon")
             .arg("--name")
             .arg(&name)
@@ -221,49 +255,96 @@ fn run_start(name: String, shell: String, cols: u16, rows: u16) -> Result<(), Bo
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
-        detached.spawn()?;
-        thread::sleep(Duration::from_millis(250));
+        command.spawn()?;
     }
 
+    thread::sleep(Duration::from_millis(250));
     let registry = load_registry()?;
     let record = registry
         .sessions
         .get(&name)
         .ok_or_else(|| format!("failed to register session '{name}'"))?;
 
-    println!("started {} pid={} socket={} shell={}", name, record.pid, record.socket, record.shell);
+    println!(
+        "started {} pid={} socket={} shell={}",
+        name, record.pid, record.socket, record.shell
+    );
     Ok(())
 }
 
-fn run_daemon(name: String, shell: String, cols: u16, rows: u16) -> Result<(), Box<dyn std::error::Error>> {
+fn run_daemon(
+    name: String,
+    shell: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     let runtime_root = runtime_root()?;
     fs::create_dir_all(&runtime_root)?;
+    set_dir_mode(&runtime_root, 0o700);
 
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let socket = listener.local_addr()?.to_string();
-    let record = SessionRecord {
-        name: name.clone(),
-        pid: process::id(),
-        socket: socket.clone(),
-        shell: shell.clone(),
-        cols,
-        rows,
-        created_at_unix_ms: now_ms(),
-    };
-    save_registry_record(record)?;
+    #[cfg(unix)]
+    {
+        let socket_path = session_socket_path(&runtime_root, &name)?;
+        if socket_path.exists() {
+            let _ = fs::remove_file(&socket_path);
+        }
+        let listener = UnixListener::bind(&socket_path)?;
+        set_file_mode(&socket_path, 0o600);
 
-    let mut spawned = spawn_shell(&shell, cols, rows)?;
-    let mut reader = spawned.master.try_clone_reader()?;
-    let (mut stream, _) = listener.accept()?;
+        let record = SessionRecord {
+            name: name.clone(),
+            pid: process::id(),
+            socket: socket_path.to_string_lossy().into_owned(),
+            shell: shell.clone(),
+            cols,
+            rows,
+            created_at_unix_ms: now_ms(),
+        };
+        save_registry_record(record)?;
+
+        let mut spawned = spawn_shell(&shell, cols, rows)?;
+        let mut reader = spawned.master.try_clone_reader()?;
+        let (mut stream, _) = listener.accept()?;
+        io_loop(&mut reader, &mut stream, &mut spawned, &name)?;
+    }
+
+    #[cfg(windows)]
+    {
+        let pipe_name = session_pipe_name(&name);
+        let record = SessionRecord {
+            name: name.clone(),
+            pid: process::id(),
+            socket: pipe_name.clone(),
+            shell: shell.clone(),
+            cols,
+            rows,
+            created_at_unix_ms: now_ms(),
+        };
+        save_registry_record(record)?;
+
+        let mut spawned = spawn_shell(&shell, cols, rows)?;
+        let mut reader = spawned.master.try_clone_reader()?;
+        let mut server = named_pipe::PipeOptions::new(&pipe_name).single()?.wait()?;
+        io_loop(&mut reader, &mut server, &mut spawned, &name)?;
+    }
+
+    Ok(())
+}
+
+fn io_loop<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    spawned: &mut SpawnedShell,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = [0u8; 4096];
-
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(count) => {
-                stream.write_all(&buffer[..count])?;
-                stream.flush()?;
+                writer.write_all(&buffer[..count])?;
+                writer.flush()?;
             }
             Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -272,7 +353,7 @@ fn run_daemon(name: String, shell: String, cols: u16, rows: u16) -> Result<(), B
     }
 
     let _ = spawned.child.wait();
-    drop_registry_record(&name)?;
+    drop_registry_record(name)?;
     Ok(())
 }
 
@@ -288,21 +369,23 @@ fn run_list() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("name\tpid\tsocket\tshell");
     for record in registry.sessions.values() {
-        println!("{}\t{}\t{}\t{}", record.name, record.pid, record.socket, record.shell);
+        println!(
+            "{}\t{}\t{}\t{}",
+            record.name, record.pid, record.socket, record.shell
+        );
     }
     Ok(())
 }
 
 fn run_kill(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
-    let mut registry = load_registry()?;
-    let Some(record) = registry.sessions.remove(&name) else {
-        return Err(format!("session '{name}' is not registered").into());
-    };
-
-    terminate_pid(record.pid);
-    save_registry(&registry)?;
-    Ok(())
+    with_registry_lock(|registry: &mut SessionRegistry| {
+        let Some(record) = registry.sessions.remove(&name) else {
+            return Err(format!("session '{name}' is not registered").into());
+        };
+        terminate_pid(record.pid);
+        Ok(())
+    })
 }
 
 fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -313,21 +396,42 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         .get(&name)
         .ok_or_else(|| format!("session '{name}' is not registered"))?;
 
-    let socket: SocketAddr = record.socket.parse()?;
-    let mut stream = TcpStream::connect(socket)?;
-    let mut buffer = [0u8; 4096];
-    loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => {
-                io::stdout().write_all(&buffer[..count])?;
-                io::stdout().flush()?;
+    #[cfg(unix)]
+    {
+        let mut stream = UnixStream::connect(&record.socket)?;
+        let mut buffer = [0u8; 4096];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    io::stdout().write_all(&buffer[..count])?;
+                    io::stdout().flush()?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
+                Err(error) => return Err(error.into()),
             }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
-            Err(error) => return Err(error.into()),
         }
     }
+
+    #[cfg(windows)]
+    {
+        let mut stream = named_pipe::PipeClient::connect(&record.socket)?;
+        let mut buffer = [0u8; 4096];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    io::stdout().write_all(&buffer[..count])?;
+                    io::stdout().flush()?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == io::ErrorKind::BrokenPipe => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -340,62 +444,128 @@ fn runtime_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     #[cfg(unix)]
     {
         if let Some(root) = env::var_os("XDG_STATE_HOME") {
-            return Ok(PathBuf::from(root).join("festerm").join("sessiond"));
+            Ok(PathBuf::from(root).join("festerm").join("sessiond"))
+        } else if let Some(home) = env::var_os("HOME") {
+            Ok(PathBuf::from(home)
+                .join(".local")
+                .join("state")
+                .join("festerm")
+                .join("sessiond"))
+        } else {
+            Ok(PathBuf::from("/tmp").join("festerm-sessiond"))
         }
-        if let Some(home) = env::var_os("HOME") {
-            return Ok(PathBuf::from(home).join(".local").join("state").join("festerm").join("sessiond"));
-        }
-        return Ok(PathBuf::from("/tmp").join("festerm-sessiond"));
     }
 
     #[cfg(windows)]
     {
         if let Some(root) = env::var_os("LOCALAPPDATA") {
-            return Ok(PathBuf::from(root).join("fesTerm").join("sessiond"));
+            Ok(PathBuf::from(root).join("fesTerm").join("sessiond"))
+        } else if let Some(root) = env::var_os("USERPROFILE") {
+            Ok(PathBuf::from(root)
+                .join("AppData")
+                .join("Local")
+                .join("fesTerm")
+                .join("sessiond"))
+        } else {
+            Ok(PathBuf::from("C:\\Temp\\festerm-sessiond"))
         }
-        if let Some(root) = env::var_os("USERPROFILE") {
-            return Ok(PathBuf::from(root).join("AppData").join("Local").join("fesTerm").join("sessiond"));
-        }
-        return Ok(PathBuf::from("C:\\Temp\\festerm-sessiond"));
     }
+}
+
+fn session_socket_path(
+    runtime_root: &Path,
+    name: &str,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(runtime_root.join(format!("{name}.sock")))
+}
+
+#[cfg(windows)]
+fn session_pipe_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|character| match character {
+            ch if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') => ch,
+            _ => '_',
+        })
+        .collect();
+    format!(r"\\.\pipe\festerm-sessiond-{sanitized}")
 }
 
 fn registry_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(runtime_root()?.join("registry.json"))
 }
 
-fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
-    let path = registry_path()?;
+fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
     if !path.exists() {
         return Ok(SessionRegistry::default());
     }
-    let bytes = fs::read(&path)?;
+    let bytes = fs::read(path)?;
     if bytes.is_empty() {
         return Ok(SessionRegistry::default());
     }
-    let registry: SessionRegistry = serde_json::from_slice(&bytes)?;
-    Ok(registry)
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+fn with_registry_lock<T>(
+    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
+) -> Result<T, Box<dyn std::error::Error>> {
+    let path = registry_path()?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(&path)?;
+    file.lock_exclusive()?;
+    let mut registry = read_registry_at(&path)?;
+    let result = operation(&mut registry);
+    if result.is_ok() {
+        write_registry_at(&path, &registry)?;
+    }
+    file.unlock()?;
+    result
+}
+
+fn write_registry_at(
+    path: &Path,
+    registry: &SessionRegistry,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output = serde_json::to_string_pretty(registry)?;
+    fs::write(path, output)?;
+    set_file_mode(path, 0o600);
+    Ok(())
+}
+
+fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
+    let path = registry_path()?;
+    let _file = OpenOptions::new().read(true).open(&path).ok();
+    let _ = _file;
+    read_registry_at(&path)
 }
 
 fn save_registry(registry: &SessionRegistry) -> Result<(), Box<dyn std::error::Error>> {
     let path = registry_path()?;
-    let runtime_root = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(runtime_root)?;
-    let output = serde_json::to_string_pretty(registry)?;
-    fs::write(path, output)?;
-    Ok(())
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    write_registry_at(&path, registry)
 }
 
 fn save_registry_record(record: SessionRecord) -> Result<(), Box<dyn std::error::Error>> {
-    let mut registry = load_registry()?;
-    registry.sessions.insert(record.name.clone(), record);
-    save_registry(&registry)
+    with_registry_lock(|registry: &mut SessionRegistry| {
+        registry
+            .sessions
+            .insert(record.name.clone(), record.clone());
+        Ok(())
+    })
 }
 
 fn drop_registry_record(name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut registry = load_registry()?;
-    registry.sessions.remove(name);
-    save_registry(&registry)
+    with_registry_lock(|registry: &mut SessionRegistry| {
+        registry.sessions.remove(name);
+        Ok(())
+    })
 }
 
 fn prune_dead_records(registry: &mut SessionRegistry) -> Result<(), Box<dyn std::error::Error>> {
@@ -410,7 +580,27 @@ fn prune_dead_records(registry: &mut SessionRegistry) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-fn spawn_shell(shell: &str, cols: u16, rows: u16) -> Result<SpawnedShell, Box<dyn std::error::Error>> {
+fn set_dir_mode(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        let permissions = fs::Permissions::from_mode(mode);
+        let _ = fs::set_permissions(path, permissions);
+    }
+}
+
+fn set_file_mode(path: &Path, mode: u32) {
+    #[cfg(unix)]
+    {
+        let permissions = fs::Permissions::from_mode(mode);
+        let _ = fs::set_permissions(path, permissions);
+    }
+}
+
+fn spawn_shell(
+    shell: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<SpawnedShell, Box<dyn std::error::Error>> {
     let system = native_pty_system();
     let size = PtySize {
         rows,
@@ -509,7 +699,7 @@ mod tests {
         let record = SessionRecord {
             name: "demo".to_owned(),
             pid: 1234,
-            socket: "127.0.0.1:3000".to_owned(),
+            socket: "/tmp/festerm-sessiond/demo.sock".to_owned(),
             shell: "/bin/bash".to_owned(),
             cols: 80,
             rows: 24,
