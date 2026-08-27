@@ -464,7 +464,10 @@ fn run_daemon(
         let pipe_name = session_pipe_name(&name);
         let initial_listener = create_secure_pipe_listener(&pipe_name, true)?;
         let mut spawned = spawn_shell(&shell, cols, rows)?;
-        trace_daemon(format_args!("shell-spawned"));
+        trace_daemon(format_args!(
+            "shell-spawned executable={:?} arguments={:?}",
+            shell.executable, shell.arguments
+        ));
         let record = SessionRecord {
             name: name.clone(),
             pid: process::id(),
@@ -849,7 +852,10 @@ fn spawn_pty_reader<R: Read + Send + 'static>(
                     return Ok(());
                 }
                 Ok(count) => {
-                    trace_daemon(format_args!("pty-data bytes={count}"));
+                    trace_daemon(format_args!(
+                        "pty-data bytes={count} data={:?}",
+                        &buffer[..count]
+                    ));
                     if sender
                         .send(PtyEvent::Data(buffer[..count].to_vec()))
                         .is_err()
