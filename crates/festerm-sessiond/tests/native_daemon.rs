@@ -65,7 +65,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
 
     let mut first = connect(&endpoint);
     eprintln!("sessiond-native phase=first-connected");
-    send_input(&mut *first, b"first-marker\n").unwrap();
+    send_input(&mut *first, &test_input("first-marker")).unwrap();
     assert_contains(&mut *first, b"first-marker");
     eprintln!("sessiond-native phase=first-output");
 
@@ -76,7 +76,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     assert_contains(&mut *second, b"first-marker");
     eprintln!("sessiond-native phase=takeover");
 
-    send_input(&mut *second, b"second-marker\n").unwrap();
+    send_input(&mut *second, &test_input("second-marker")).unwrap();
     assert_contains(&mut *second, b"second-marker");
     eprintln!("sessiond-native phase=second-output");
 
@@ -173,6 +173,16 @@ fn test_shell() -> &'static str {
 #[cfg(windows)]
 fn test_shell() -> &'static str {
     "cmd.exe"
+}
+
+#[cfg(unix)]
+fn test_input(marker: &str) -> Vec<u8> {
+    format!("{marker}\n").into_bytes()
+}
+
+#[cfg(windows)]
+fn test_input(marker: &str) -> Vec<u8> {
+    format!("echo {marker}\r").into_bytes()
 }
 
 fn registry_endpoint(path: &Path, name: &str) -> String {
