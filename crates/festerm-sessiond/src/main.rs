@@ -1615,21 +1615,27 @@ fn prune_dead_records(registry: &mut SessionRegistry) {
         .retain(|_, record| process_alive(record.pid));
 }
 
+#[cfg(unix)]
 fn set_dir_mode(path: &Path, mode: u32) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let permissions = fs::Permissions::from_mode(mode);
-        fs::set_permissions(path, permissions)?;
-    }
+    let permissions = fs::Permissions::from_mode(mode);
+    fs::set_permissions(path, permissions)?;
     Ok(())
 }
 
+#[cfg(not(unix))]
+fn set_dir_mode(_path: &Path, _mode: u32) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
 fn set_file_mode(path: &Path, mode: u32) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let permissions = fs::Permissions::from_mode(mode);
-        fs::set_permissions(path, permissions)?;
-    }
+    let permissions = fs::Permissions::from_mode(mode);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_file_mode(_path: &Path, _mode: u32) -> io::Result<()> {
     Ok(())
 }
 
@@ -1675,23 +1681,7 @@ fn process_alive(pid: u32) -> bool {
 
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::{CloseHandle, BOOL};
-        use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
-        };
-
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if handle == 0 {
-            return false;
-        }
-
-        let mut exit_code = 0u32;
-        let alive = unsafe { GetExitCodeProcess(handle, &mut exit_code) != BOOL(0) }
-            && exit_code == STILL_ACTIVE;
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
-        alive
+        festerm_windows_job::process_is_alive(pid)
     }
 }
 
@@ -1721,30 +1711,8 @@ fn terminate_pid(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(windows)]
     {
-        use windows_sys::Win32::Foundation::{CloseHandle, BOOL};
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
-        };
-
-        // Minimal pass: direct Win32 APIs avoid shelling out to taskkill while
-        // keeping the local session daemon small and dependency-light.
-        if !process_alive(pid) {
-            return Ok(());
-        }
-        let handle = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
-        if handle == 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-
-        let terminated = unsafe { TerminateProcess(handle, 1) != BOOL(0) };
-        let error = (!terminated).then(io::Error::last_os_error);
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
-        match error {
-            Some(error) => Err(error.into()),
-            None => Ok(()),
-        }
+        festerm_windows_job::terminate_process(pid)?;
+        Ok(())
     }
 }
 

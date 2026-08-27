@@ -20,12 +20,9 @@ serde_json = "1.0"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 
 [target.'cfg(windows)'.dependencies]
+festerm-windows-job = { path = "../festerm-windows-job" }
 festerm-windows-security = { path = "../festerm-windows-security" }
 named_pipe = "0.4.1"
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Threading",
-] }
 
 [lints]
 workspace = true

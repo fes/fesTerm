@@ -150,13 +150,13 @@ if ($env:OS -eq 'Windows_NT' -and
     (Test-Path -LiteralPath $vcvarsallPath) -and
     (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
     Invoke-VisualStudioCommand `
-        -Command 'cargo build -p festerm' `
+        -Command 'cargo build --workspace' `
         -VcVarsAllPath $vcvarsallPath `
         -Architecture $architecture `
         -LlvmBinPath $llvmBinPath
     $nativeBuildExitCode = $LASTEXITCODE
 } else {
-    Invoke-NativeCommand { cargo build -p festerm }
+    Invoke-NativeCommand { cargo build --workspace }
     $nativeBuildExitCode = $LASTEXITCODE
 }
 if ($nativeBuildExitCode -eq 0) {

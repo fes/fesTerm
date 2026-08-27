@@ -10,13 +10,59 @@ mod imp {
     use std::{io, os::windows::io::RawHandle, ptr};
 
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE},
+        Foundation::{CloseHandle, HANDLE, STILL_ACTIVE},
         System::JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
             SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
+        System::Threading::{
+            GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_TERMINATE,
+        },
     };
+
+    struct ProcessHandle(HANDLE);
+
+    impl ProcessHandle {
+        fn open(pid: u32, access: u32) -> io::Result<Self> {
+            let handle = unsafe { OpenProcess(access, 0, pid) };
+            if handle.is_null() {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(Self(handle))
+            }
+        }
+    }
+
+    impl Drop for ProcessHandle {
+        fn drop(&mut self) {
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// Returns whether a process exists and has not exited.
+    pub fn process_is_alive(pid: u32) -> bool {
+        let Ok(process) = ProcessHandle::open(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
+            return false;
+        };
+        let mut exit_code = 0;
+        unsafe { GetExitCodeProcess(process.0, &raw mut exit_code) != 0 }
+        &&exit_code == STILL_ACTIVE as u32
+    }
+
+    /// Terminates a process by identifier.
+    pub fn terminate_process(pid: u32) -> io::Result<()> {
+        if !process_is_alive(pid) {
+            return Ok(());
+        }
+        let process = ProcessHandle::open(pid, PROCESS_TERMINATE)?;
+        if unsafe { TerminateProcess(process.0, 1) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
 
     /// Owns a Windows Job Object with `KILL_ON_JOB_CLOSE` enabled.
     pub struct WindowsJob {
@@ -75,4 +121,4 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::WindowsJob;
+pub use imp::{process_is_alive, terminate_process, WindowsJob};
