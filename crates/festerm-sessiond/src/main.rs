@@ -33,6 +33,8 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+#[cfg(windows)]
+const WINDOWS_CLIENT_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 const CLIENT_QUEUE_CAPACITY: usize = 64;
 const CLIENT_FRAME_HEADER_BYTES: usize = 9;
@@ -813,7 +815,7 @@ fn accept_windows_clients(
 ) -> io::Result<()> {
     for stream in accept_rx.try_iter() {
         let mut stream = stream?;
-        stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL));
+        stream.set_read_timeout(Some(WINDOWS_CLIENT_READ_TIMEOUT));
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
         replace_active(
             active,
