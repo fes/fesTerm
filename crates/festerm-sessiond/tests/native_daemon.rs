@@ -65,7 +65,11 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
 
     let mut first = connect(&endpoint);
     eprintln!("sessiond-native phase=first-connected");
+    #[cfg(windows)]
+    assert_contains(&mut *first, b"READY");
+    eprintln!("sessiond-native phase=initial-output");
     send_input(&mut *first, &test_input("first-marker")).unwrap();
+    eprintln!("sessiond-native phase=first-input-sent");
     assert_contains(&mut *first, b"first-marker");
     eprintln!("sessiond-native phase=first-output");
 
