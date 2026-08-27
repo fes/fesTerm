@@ -19,6 +19,13 @@ status=pass
 printf 'status=running\n' >"$result_path"
 cargo build --workspace
 
+if cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture; then
+    printf 'suite=sessiond-native status=pass\n' >>"$result_path"
+else
+    printf 'suite=sessiond-native status=fail\n' >>"$result_path"
+    status=fail
+fi
+
 if scripts/run-p5-reference.sh; then
     printf 'suite=p5 status=pass\n' >>"$result_path"
 else

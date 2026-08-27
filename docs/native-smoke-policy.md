@@ -33,6 +33,21 @@ still recording it as such; it does not constitute native-focus evidence.
 Platform-native OS input automation remains a later layer for independently
 driven focus and accessibility proof.
 
+### Native local persistence daemon
+
+`crates/festerm-sessiond/tests/native_daemon.rs` launches the packaged daemon
+binary as a separate process and exercises the real platform IPC transport.
+It proves that the daemon outlives its `start` launcher, accepts framed input,
+replays detached output, sends takeover notice plus EOF to the displaced
+client, routes subsequent output only to the newest client, and removes the
+session on native kill. Unix additionally verifies `0700` runtime-directory
+and `0600` registry/socket permissions. Windows executes the same flow through
+the current-user-DACL named pipe and ConPTY; cross-user rejection and explicit
+Job Object breakaway remain native `CP-11` evidence.
+
+The test is ignored by default and runs once in every native-smoke job and in
+the aggregate optional-validation scripts used by the VM evidence adapter.
+
 ### Serial loopback smoke (Linux only)
 
 `crates/festerm-serial/tests/socat_loopback.rs` cross-connects two
@@ -137,6 +152,7 @@ screenshots alone cannot diagnose.
 | Windows | Disposable Credential Manager lifecycle | **Scheduled; required within the Windows native-smoke job** |
 | Linux | Disposable Secret Service lifecycle under an isolated D-Bus session | **Scheduled; required within the Linux native-smoke job** |
 | macOS | Disposable Keychain lifecycle | **Scheduled; advisory with the macOS native-smoke job; passed locally on 2026-08-24** |
+| Windows, Linux, macOS | `native_daemon_survives_launcher_and_supports_input_replay_and_takeover` | **Scheduled in native smoke and VM optional validation; native results pending** |
 
 Update this table after each first-run result, citing the CI run URL and
 commit SHA.

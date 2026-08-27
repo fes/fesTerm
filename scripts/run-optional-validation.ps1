@@ -46,6 +46,14 @@ if ($env:OS -eq 'Windows_NT') {
     if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed.' }
 }
 
+cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+if ($LASTEXITCODE -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=sessiond-native status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=sessiond-native status=fail"
+    $status = 'fail'
+}
+
 & "$PSScriptRoot\run-p5-reference.ps1" -ResultPath $p5ResultPath
 if ($LASTEXITCODE -eq 0) {
     Add-Content -Path $ResultPath -Value "`nsuite=p5 status=pass"

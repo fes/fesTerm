@@ -685,6 +685,7 @@
         "saved_local_profile_can_explicitly_use_named_tmux_persistence",
         "native_persistence_is_local_only_and_preserves_the_shell_profile",
         "session_backend_forwards_input_resize_output_and_takeover",
+        "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
         "second_client_replaces_first_client_and_first_receives_stolen_notice",
         "local_children_identify_festerm_and_drop_an_inherited_terminal_session",
         "profiles_delete_flow_returns_a_delete_profile_command",

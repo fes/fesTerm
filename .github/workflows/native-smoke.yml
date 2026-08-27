@@ -58,6 +58,10 @@ jobs:
         run: |
           cargo test -p festerm windows_conpty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
 
+      - name: Run Windows session daemon smoke
+        run: |
+          cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+
       - name: Run Windows Credential Manager lifecycle
         env:
           FESTERM_RUN_NATIVE_SECRET_STORE_TESTS: "1"
@@ -139,6 +143,7 @@ jobs:
           sleep 1
           cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
           cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+          cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
 
       - name: Run Linux native-window smoke
         env:
@@ -184,6 +189,7 @@ jobs:
         run: |
           cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
           cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+          cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
 
       - name: Run macOS Keychain lifecycle (advisory)
         env:
