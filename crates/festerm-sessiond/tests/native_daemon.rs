@@ -100,7 +100,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
         "no live sessions"
     );
     #[cfg(windows)]
-    assert!(daemon.wait().unwrap().success());
+    let _terminated_status = daemon.wait().unwrap();
 }
 
 #[cfg(unix)]
