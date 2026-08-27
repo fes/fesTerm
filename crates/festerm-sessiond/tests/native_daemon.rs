@@ -66,7 +66,7 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     let mut first = connect(&endpoint);
     eprintln!("sessiond-native phase=first-connected");
     #[cfg(windows)]
-    assert_contains(&mut *first, b"READY");
+    assert_windows_ready(&mut *first);
     eprintln!("sessiond-native phase=initial-output");
     send_input(&mut *first, &test_input("first-marker")).unwrap();
     eprintln!("sessiond-native phase=first-input-sent");
@@ -257,6 +257,26 @@ fn send_input(stream: &mut dyn ClientStream, bytes: &[u8]) -> io::Result<()> {
     #[cfg(not(windows))]
     stream.flush()?;
     Ok(())
+}
+
+#[cfg(windows)]
+fn assert_windows_ready(stream: &mut dyn ClientStream) {
+    let mut received = Vec::new();
+    let mut replied_through = 0;
+    let mut buffer = [0u8; 4096];
+    while !received.windows(5).any(|window| window == b"READY") {
+        let count = stream.read(&mut buffer).unwrap();
+        assert_ne!(count, 0, "stream closed before READY arrived");
+        received.extend_from_slice(&buffer[..count]);
+        let query_count = received[replied_through..]
+            .windows(4)
+            .filter(|sequence| *sequence == b"\x1b[6n")
+            .count();
+        for _ in 0..query_count {
+            send_input(stream, b"\x1b[1;1R").unwrap();
+        }
+        replied_through = received.len().saturating_sub(3);
+    }
 }
 
 fn assert_contains(stream: &mut dyn ClientStream, expected: &[u8]) {
