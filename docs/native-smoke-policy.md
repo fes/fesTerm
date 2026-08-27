@@ -153,7 +153,7 @@ screenshots alone cannot diagnose.
 | Windows | Disposable Credential Manager lifecycle | **Scheduled; required within the Windows native-smoke job** |
 | Linux | Disposable Secret Service lifecycle under an isolated D-Bus session | **Scheduled; required within the Linux native-smoke job** |
 | macOS | Disposable Keychain lifecycle | **Scheduled; advisory with the macOS native-smoke job; passed locally on 2026-08-24** |
-| Windows, Linux, macOS | `native_daemon_survives_launcher_and_supports_input_replay_and_takeover` | **Scheduled in native smoke and VM optional validation; native results pending** |
+| Windows, Linux, macOS | `native_daemon_survives_launcher_and_supports_input_replay_and_takeover` | **Executed 2026-08-27**. macOS qualifying VM optional-validation passed at `f0a41cb` (run `20260827T153358Z-macos-festerm-502c97ba-fa8a-44ee-ad53-773de8be84cd`). Windows diagnostic VM execution passed every daemon phase at `951480c`; its aggregate run remained failed only on the separate OS-input focus smoke. Linux targeted execution passed at `f0a41cb`; its aggregate run was non-qualifying because the archived guest lacked `libudev` development metadata and an obsolete relay initially claimed the job. |
 
 Update this table after each first-run result, citing the CI run URL and
 commit SHA.

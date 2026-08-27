@@ -464,10 +464,6 @@ fn run_daemon(
         let pipe_name = session_pipe_name(&name);
         let initial_listener = create_secure_pipe_listener(&pipe_name, true)?;
         let mut spawned = spawn_shell(&shell, cols, rows)?;
-        trace_daemon(format_args!(
-            "shell-spawned executable={:?} arguments={:?}",
-            shell.executable, shell.arguments
-        ));
         let record = SessionRecord {
             name: name.clone(),
             pid: process::id(),
@@ -821,10 +817,6 @@ fn accept_windows_clients(
 ) -> io::Result<()> {
     for stream in accept_rx.try_iter() {
         let mut stream = stream?;
-        trace_daemon(format_args!(
-            "client-accepted replay={}",
-            replay.bytes.len()
-        ));
         stream.set_read_timeout(Some(WINDOWS_CLIENT_READ_TIMEOUT));
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
         replace_active(
@@ -852,10 +844,6 @@ fn spawn_pty_reader<R: Read + Send + 'static>(
                     return Ok(());
                 }
                 Ok(count) => {
-                    trace_daemon(format_args!(
-                        "pty-data bytes={count} data={:?}",
-                        &buffer[..count]
-                    ));
                     if sender
                         .send(PtyEvent::Data(buffer[..count].to_vec()))
                         .is_err()
@@ -937,7 +925,6 @@ fn replace_active<S: Read + Write + Send + 'static>(
             "new session client could not accept replay",
         ));
     }
-    trace_daemon(format_args!("client-active generation={generation}"));
     *active = Some(client);
     Ok(())
 }
@@ -998,10 +985,8 @@ fn client_io_loop<S: Read + Write>(
         loop {
             match output.try_recv() {
                 Ok(ClientOutput::Data(data)) => {
-                    trace_daemon(format_args!("client-output bytes={}", data.len()));
                     stream.write_all(&data)?;
                     stream.flush()?;
-                    trace_daemon(format_args!("client-output-flushed"));
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
@@ -1010,7 +995,6 @@ fn client_io_loop<S: Read + Write>(
         match stream.read(&mut buffer) {
             Ok(0) => return Ok(()),
             Ok(count) => {
-                trace_daemon(format_args!("client-input bytes={count}"));
                 parser.push(&buffer[..count])?;
                 for command in parser.drain()? {
                     match input.try_send(ClientInput {
@@ -1036,12 +1020,6 @@ fn client_io_loop<S: Read + Write>(
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error),
         }
-    }
-}
-
-fn trace_daemon(arguments: std::fmt::Arguments<'_>) {
-    if env::var_os("FESTERM_SESSIOND_TRACE").is_some() {
-        eprintln!("[festerm-sessiond trace] {arguments}");
     }
 }
 

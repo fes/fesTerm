@@ -122,7 +122,6 @@ fn launch_session(executable: &Path, runtime_root: &Path, name: &str) -> std::pr
 
     let mut command = daemon_command(executable, runtime_root);
     command
-        .env("FESTERM_SESSIOND_TRACE", "1")
         .args(["daemon", "--name", name, "--shell"])
         .arg(test_shell(executable));
     for argument in test_shell_arguments() {
@@ -131,7 +130,7 @@ fn launch_session(executable: &Path, runtime_root: &Path, name: &str) -> std::pr
     let mut daemon = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let registry = runtime_root
