@@ -294,7 +294,21 @@ fn assert_contains(stream: &mut dyn ClientStream, expected: &[u8]) {
 
 fn assert_eof(stream: &mut dyn ClientStream) {
     let mut byte = [0u8; 1];
-    assert_eq!(stream.read(&mut byte).unwrap(), 0);
+    match stream.read(&mut byte) {
+        Ok(0) => {}
+        Err(error) if is_eof_error(&error) => {}
+        result => panic!("expected EOF after takeover, got {result:?}"),
+    }
+}
+
+#[cfg(unix)]
+fn is_eof_error(_error: &io::Error) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn is_eof_error(error: &io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(109 | 233))
 }
 
 #[cfg(unix)]
