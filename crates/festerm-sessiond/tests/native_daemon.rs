@@ -218,7 +218,9 @@ fn send_input(stream: &mut dyn ClientStream, bytes: &[u8]) -> io::Result<()> {
     stream.write_all(&[FRAME_INPUT])?;
     stream.write_all(&(bytes.len() as u32).to_be_bytes())?;
     stream.write_all(bytes)?;
-    stream.flush()
+    #[cfg(not(windows))]
+    stream.flush()?;
+    Ok(())
 }
 
 fn assert_contains(stream: &mut dyn ClientStream, expected: &[u8]) {

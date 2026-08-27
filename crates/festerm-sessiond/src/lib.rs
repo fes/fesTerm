@@ -661,7 +661,9 @@ fn write_frame<W: Write + ?Sized>(writer: &mut W, kind: u8, payload: &[u8]) -> i
     writer.write_all(&[kind])?;
     writer.write_all(&(payload.len() as u32).to_be_bytes())?;
     writer.write_all(payload)?;
-    writer.flush()
+    #[cfg(not(windows))]
+    writer.flush()?;
+    Ok(())
 }
 
 fn write_resize<W: Write + ?Sized>(writer: &mut W, size: TerminalSize) -> io::Result<()> {
