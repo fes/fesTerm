@@ -19,6 +19,32 @@ function Invoke-NativeCommand {
     }
 }
 
+function Invoke-VisualStudioCommand {
+    param(
+        [string] $Command,
+        [string] $VcVarsAllPath,
+        [string] $Architecture,
+        [string] $LlvmBinPath
+    )
+
+    $batchPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "festerm-validation-{0}.cmd" -f [System.Guid]::NewGuid().ToString('N')
+    )
+    try {
+        @(
+            '@echo off'
+            "call `"$VcVarsAllPath`" $Architecture >nul"
+            'if errorlevel 1 exit /b %errorlevel%'
+            "set `"PATH=$LlvmBinPath;%PATH%`""
+            'set "CC=clang"'
+            $Command
+        ) | Set-Content -LiteralPath $batchPath -Encoding Ascii
+        Invoke-NativeCommand { & $batchPath }
+    } finally {
+        Remove-Item -LiteralPath $batchPath -ErrorAction Ignore
+    }
+}
+
 if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
 }
@@ -64,8 +90,11 @@ if ($env:OS -eq 'Windows_NT') {
     if ((Test-Path -LiteralPath $vcvarsallPath) -and
         (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
         $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
-        $command = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture"
-        Invoke-NativeCommand { cmd.exe /d /c $command }
+        Invoke-VisualStudioCommand `
+            -Command 'cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture' `
+            -VcVarsAllPath $vcvarsallPath `
+            -Architecture $architecture `
+            -LlvmBinPath $llvmBinPath
     } else {
         Invoke-NativeCommand {
             cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
@@ -116,8 +145,25 @@ if ($opensshExitCode -eq 0 -and
 Remove-Item $nativeResultPath -ErrorAction Ignore
 $env:FESTERM_NATIVE_WINDOW_SMOKE = '1'
 $env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativeResultPath
-& '.\target\debug\festerm.exe'
+$nativeBuildExitCode = 0
+if ($env:OS -eq 'Windows_NT' -and
+    (Test-Path -LiteralPath $vcvarsallPath) -and
+    (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+    Invoke-VisualStudioCommand `
+        -Command 'cargo build -p festerm' `
+        -VcVarsAllPath $vcvarsallPath `
+        -Architecture $architecture `
+        -LlvmBinPath $llvmBinPath
+    $nativeBuildExitCode = $LASTEXITCODE
+} else {
+    Invoke-NativeCommand { cargo build -p festerm }
+    $nativeBuildExitCode = $LASTEXITCODE
+}
+if ($nativeBuildExitCode -eq 0) {
+    & '.\target\debug\festerm.exe'
+}
 $nativePassed = $LASTEXITCODE -eq 0 -and
+    $nativeBuildExitCode -eq 0 -and
     (Test-Path $nativeResultPath) -and
     ((Get-Content $nativeResultPath -TotalCount 1) -eq 'status=pass')
 Remove-Item Env:FESTERM_NATIVE_WINDOW_SMOKE -ErrorAction Ignore
