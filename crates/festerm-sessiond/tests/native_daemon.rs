@@ -101,11 +101,14 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
 
 #[cfg(unix)]
 fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
-    let output = daemon_command(executable, runtime_root)
+    let mut command = daemon_command(executable, runtime_root);
+    command
         .args(["start", "--name", name, "--shell"])
-        .arg(test_shell())
-        .output()
-        .unwrap();
+        .arg(test_shell(executable));
+    for argument in test_shell_arguments() {
+        command.arg("--arg").arg(argument);
+    }
+    let output = command.output().unwrap();
     assert_success("start", &output);
 }
 
@@ -113,9 +116,14 @@ fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
 fn launch_session(executable: &Path, runtime_root: &Path, name: &str) -> std::process::Child {
     use std::{process::Stdio, thread};
 
-    let mut daemon = daemon_command(executable, runtime_root)
+    let mut command = daemon_command(executable, runtime_root);
+    command
         .args(["daemon", "--name", name, "--shell"])
-        .arg(test_shell())
+        .arg(test_shell(executable));
+    for argument in test_shell_arguments() {
+        command.arg("--arg").arg(argument);
+    }
+    let mut daemon = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -166,13 +174,36 @@ fn short_runtime_root(suffix: &str) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn test_shell() -> &'static str {
-    "/bin/cat"
+fn test_shell(_daemon: &Path) -> PathBuf {
+    PathBuf::from("/bin/cat")
 }
 
 #[cfg(windows)]
-fn test_shell() -> &'static str {
-    "cmd.exe"
+fn test_shell(daemon: &Path) -> PathBuf {
+    daemon
+        .parent()
+        .expect("daemon executable has a parent directory")
+        .join(format!(
+            "festerm-pty-test-child{}",
+            std::env::consts::EXE_SUFFIX
+        ))
+}
+
+#[cfg(unix)]
+fn test_shell_arguments() -> Vec<&'static str> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn test_shell_arguments() -> Vec<&'static str> {
+    vec![
+        "emit:READY",
+        "read-line",
+        "echo:INPUT",
+        "read-line",
+        "echo:INPUT",
+        "spin",
+    ]
 }
 
 #[cfg(unix)]
@@ -182,7 +213,7 @@ fn test_input(marker: &str) -> Vec<u8> {
 
 #[cfg(windows)]
 fn test_input(marker: &str) -> Vec<u8> {
-    format!("echo {marker}\r").into_bytes()
+    format!("{marker}\r\n").into_bytes()
 }
 
 fn registry_endpoint(path: &Path, name: &str) -> String {

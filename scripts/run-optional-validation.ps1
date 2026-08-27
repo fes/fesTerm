@@ -93,13 +93,16 @@ if ($env:OS -eq 'Windows_NT') {
         $env:PATH = "$llvmBinPath;$env:PATH"
         $env:CC = 'clang'
         Invoke-VisualStudioCommand `
-            -Command 'cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture' `
+            -Command 'cargo build -p festerm-pty-test-child && cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture' `
             -VcVarsAllPath $vcvarsallPath `
             -Architecture $architecture `
             -LlvmBinPath $llvmBinPath
     } else {
         Invoke-NativeCommand {
-            cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+            cargo build -p festerm-pty-test-child
+            if ($LASTEXITCODE -eq 0) {
+                cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+            }
         }
     }
 } else {
