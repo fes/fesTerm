@@ -56,9 +56,10 @@ jobs:
         env:
           FESTERM_INSTALLATION_KIND: app
         run: |
-          cargo build --release -p festerm
+          cargo build --release -p festerm -p festerm-sessiond
           cargo packager --config packaging/macos.toml --formats app
           test -x target/release/fesTerm.app/Contents/MacOS/festerm
+          test -x target/release/fesTerm.app/Contents/MacOS/festerm-sessiond
           test -f target/release/fesTerm.app/Contents/Info.plist
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleIdentifier)" = "dev.fes.festerm"
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleExecutable)" = "festerm"
@@ -80,10 +81,14 @@ jobs:
             throw "NSIS clean install failed with exit code $($process.ExitCode)"
           }
           $installedBinary = Join-Path $installDirectory 'festerm.exe'
+          $installedSessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
           $installedConpty = Join-Path $installDirectory 'runtime/conpty/conpty.dll'
           $uninstaller = Join-Path $installDirectory 'uninstall.exe'
           if (-not (Test-Path $installedBinary -PathType Leaf)) {
             throw 'NSIS install did not place festerm.exe'
+          }
+          if (-not (Test-Path $installedSessionDaemon -PathType Leaf)) {
+            throw 'NSIS install did not place festerm-sessiond.exe'
           }
           if (-not (Test-Path $installedConpty -PathType Leaf)) {
             throw 'NSIS install did not place the ConPTY runtime'
@@ -98,12 +103,15 @@ jobs:
           if (Test-Path $installedBinary) {
             throw 'NSIS uninstall left the application binary installed'
           }
+          if (Test-Path $installedSessionDaemon) {
+            throw 'NSIS uninstall left the session daemon installed'
+          }
       - name: Build unsigned Linux AppImage
         if: matrix.platform == 'linux'
         env:
           FESTERM_INSTALLATION_KIND: appimage
         run: |
-          cargo build --release -p festerm
+          cargo build --release -p festerm -p festerm-sessiond
           cargo packager --config packaging/linux.toml --formats appimage
           appimage="$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$appimage"
@@ -114,6 +122,7 @@ jobs:
             "./$(basename "$appimage")" --appimage-extract >/dev/null
             test -x squashfs-root/AppRun
             test -x squashfs-root/usr/bin/festerm
+            test -x squashfs-root/usr/bin/festerm-sessiond
             test -n "$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
             rm -rf squashfs-root
           )
@@ -122,13 +131,16 @@ jobs:
         env:
           FESTERM_INSTALLATION_KIND: managed
         run: |
-          cargo build --release -p festerm
+          cargo build --release -p festerm -p festerm-sessiond
           cargo packager --config packaging/linux.toml --formats deb
           deb="$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$deb"
           dpkg-deb --info "$deb" >/dev/null
           dpkg-deb --contents "$deb" | grep -q '/usr/bin/festerm$'
+          dpkg-deb --contents "$deb" | grep -q '/usr/bin/festerm-sessiond$'
           sudo dpkg --install "$deb"
           test -x /usr/bin/festerm
+          test -x /usr/bin/festerm-sessiond
           sudo dpkg --remove festerm
           test ! -e /usr/bin/festerm
+          test ! -e /usr/bin/festerm-sessiond

@@ -16,6 +16,7 @@ festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
 festerm-session = { path = "../../crates/festerm-session" }
+festerm-sessiond = { path = "../../crates/festerm-sessiond" }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-serial = { path = "../../crates/festerm-serial" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }

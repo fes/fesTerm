@@ -1259,6 +1259,11 @@ impl Profile {
         let persistence = Some(PersistenceConfiguration::new(provider, session_name));
         match &mut self {
             Self::Local(profile) => profile.persistence = persistence,
+            Self::Ssh(_) if provider == PersistenceProviderKind::FestermSessiond => {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::NativePersistenceRequiresLocalProfile,
+                ))
+            }
             Self::Ssh(profile) => profile.persistence = persistence,
             Self::Serial(_) => {
                 return Err(ConfigError::new(
@@ -1425,6 +1430,11 @@ impl LocalProfileConfiguration {
     /// those are runtime concerns of the platform session backend.
     pub fn to_local_profile(&self) -> LocalProfile {
         let profile = match &self.persistence {
+            Some(persistence)
+                if persistence.provider() == PersistenceProviderKind::FestermSessiond =>
+            {
+                LocalProfile::new(&self.executable).with_arguments(self.arguments.clone())
+            }
             Some(persistence) => persistence
                 .to_local_profile()
                 .expect("validated local persistence must remain valid"),
@@ -1459,7 +1469,7 @@ impl LocalProfileConfiguration {
             return Err(ConfigError::new(ConfigErrorKind::InvalidLocalProfile));
         }
         if let Some(persistence) = &self.persistence {
-            persistence.to_local_profile()?;
+            persistence.validate_session_name()?;
         }
         Ok(())
     }
@@ -1815,8 +1825,8 @@ impl From<festerm_serial::FlowControl> for SerialFlowControl {
     }
 }
 
-/// Non-secret configuration selecting a durable remote-session provider and
-/// name for an SSH profile (ADR 0018).
+/// Non-secret configuration selecting a durable-session provider and name
+/// for a Local or SSH profile (ADRs 0018 and 0025).
 ///
 /// Absent by default: an SSH profile with no `PersistenceConfiguration` is an
 /// ordinary plain-shell session (`SessionStrategy::PlainShell`). Storing
@@ -1858,10 +1868,12 @@ impl PersistenceConfiguration {
     /// validating the durable-session name against
     /// [`PersistentSessionName`]'s conservative character-set restriction.
     pub fn to_session_strategy(&self) -> Result<SessionStrategy, ConfigError> {
-        let session_name = PersistentSessionName::new(self.session_name.clone())
-            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPersistenceConfiguration))?;
+        let session_name = self.validate_session_name()?;
+        let provider = self.provider.to_backend().ok_or_else(|| {
+            ConfigError::new(ConfigErrorKind::NativePersistenceRequiresLocalProfile)
+        })?;
         Ok(SessionStrategy::Persistent {
-            provider: self.provider.to_backend(),
+            provider,
             session_name,
         })
     }
@@ -1869,8 +1881,7 @@ impl PersistenceConfiguration {
     /// Builds the direct local provider command for an explicitly persistent
     /// saved local profile. The built-in Local Shell never calls this path.
     pub fn to_local_profile(&self) -> Result<LocalProfile, ConfigError> {
-        let session_name = PersistentSessionName::new(self.session_name.clone())
-            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPersistenceConfiguration))?;
+        let session_name = self.validate_session_name()?;
         let profile = match self.provider {
             // The trailing `;` is passed as its own argv element (not a
             // shell string), which tmux recognizes as a command separator
@@ -1892,12 +1903,23 @@ impl PersistenceConfiguration {
             PersistenceProviderKind::Screen => {
                 LocalProfile::new("screen").with_arguments(["-xRR", session_name.as_str()])
             }
+            PersistenceProviderKind::FestermSessiond => {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::NativePersistenceRequiresLocalProfile,
+                ))
+            }
         };
         Ok(profile)
     }
+
+    /// Validates and returns the provider-independent durable-session name.
+    pub fn validate_session_name(&self) -> Result<PersistentSessionName, ConfigError> {
+        PersistentSessionName::new(self.session_name.clone())
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPersistenceConfiguration))
+    }
 }
 
-/// Which durable remote-session provider a profile uses (ADR 0018).
+/// Which durable-session provider a profile uses (ADRs 0018 and 0025).
 ///
 /// This mirrors `festerm_ssh::PersistenceProvider`, which is deliberately not
 /// `Serialize`/`Deserialize` itself so the SSH backend's protocol/session
@@ -1907,19 +1929,25 @@ impl PersistenceConfiguration {
 pub enum PersistenceProviderKind {
     Tmux,
     Screen,
+    FestermSessiond,
 }
 
 impl PersistenceProviderKind {
-    const fn to_backend(self) -> PersistenceProvider {
+    const fn to_backend(self) -> Option<PersistenceProvider> {
         match self {
-            Self::Tmux => PersistenceProvider::Tmux,
-            Self::Screen => PersistenceProvider::Screen,
+            Self::Tmux => Some(PersistenceProvider::Tmux),
+            Self::Screen => Some(PersistenceProvider::Screen),
+            Self::FestermSessiond => None,
         }
     }
 
     /// A short, user-displayable name for this provider.
     pub const fn label(self) -> &'static str {
-        self.to_backend().label()
+        match self {
+            Self::Tmux => PersistenceProvider::Tmux.label(),
+            Self::Screen => PersistenceProvider::Screen.label(),
+            Self::FestermSessiond => "fesTerm session daemon",
+        }
     }
 }
 
@@ -2117,6 +2145,7 @@ pub enum ConfigErrorKind {
     InvalidCredentialReference,
     CredentialReferenceRequiresSshProfile,
     PersistenceRequiresLocalOrSshProfile,
+    NativePersistenceRequiresLocalProfile,
     WorkspacePresentWhenDisabled,
     WorkspaceMissingWhenEnabled,
     EmptyWorkspace,
@@ -2203,6 +2232,9 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::PersistenceRequiresLocalOrSshProfile => formatter.write_str(
                 "durable-session persistence may only be attached to local or SSH profiles",
+            ),
+            ConfigErrorKind::NativePersistenceRequiresLocalProfile => formatter.write_str(
+                "fesTerm's native persistence provider may only be attached to local profiles",
             ),
             ConfigErrorKind::WorkspacePresentWhenDisabled => formatter.write_str(
                 "workspace metadata requires workspace_enabled = true",
@@ -3906,6 +3938,45 @@ credential_id = "{CREDENTIAL_REFERENCE}"
                 Some("status"),
                 Some("off"),
             ]
+        );
+    }
+
+    #[test]
+    fn native_persistence_is_local_only_and_preserves_the_shell_profile() {
+        let local = Profile::local(
+            "local",
+            "/bin/sh",
+            vec!["-l".to_owned()],
+            Some("/tmp".to_owned()),
+        )
+        .unwrap()
+        .with_persistence(PersistenceProviderKind::FestermSessiond, "editor")
+        .unwrap();
+        let local = local.as_local().unwrap();
+        assert_eq!(
+            local.persistence().unwrap().provider(),
+            PersistenceProviderKind::FestermSessiond
+        );
+        let launch = local.to_local_profile();
+        assert_eq!(launch.executable(), Path::new("/bin/sh"));
+        assert_eq!(launch.arguments(), [std::ffi::OsString::from("-l")]);
+        assert_eq!(launch.working_directory(), Some(Path::new("/tmp")));
+
+        let error = Profile::ssh(
+            "remote",
+            "example.test",
+            22,
+            "alice",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_persistence(PersistenceProviderKind::FestermSessiond, "editor")
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            ConfigErrorKind::NativePersistenceRequiresLocalProfile
         );
     }
 

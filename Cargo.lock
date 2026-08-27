@@ -1837,6 +1837,7 @@ dependencies = [
  "festerm-secret-store",
  "festerm-serial",
  "festerm-session",
+ "festerm-sessiond",
  "festerm-ssh",
  "festerm-ui-egui",
  "festerm-windows-power",
@@ -1935,7 +1936,9 @@ name = "festerm-sessiond"
 version = "0.1.5"
 dependencies = [
  "festerm-pty",
+ "festerm-session",
  "festerm-ssh",
+ "festerm-windows-security",
  "fs2",
  "named_pipe",
  "nix 0.31.3",
@@ -1990,6 +1993,13 @@ dependencies = [
 
 [[package]]
 name = "festerm-windows-runtime"
+version = "0.1.5"
+dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "festerm-windows-security"
 version = "0.1.5"
 dependencies = [
  "windows-sys 0.61.2",

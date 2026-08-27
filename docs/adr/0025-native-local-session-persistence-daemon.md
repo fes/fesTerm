@@ -111,8 +111,8 @@ special case. Concretely:
   independent of any attached client. This keeps its surface closer to
   `dtach`/`abduco` than to tmux, and is deliberately the smallest useful
   scope. Transport is a Unix domain socket (mode `0600`, in a `0700`
-  fesTerm-owned runtime directory) on Unix and a named pipe (default DACL,
-  explicitly verified to restrict to the owning user SID) on Windows;
+  fesTerm-owned runtime directory) on Unix and a named pipe created with a
+  DACL granting access only to the current user SID on Windows;
   `festerm-sessiond` never listens on a network-reachable port, on any
   platform, as a hard invariant.
 - **Attach policy: single active client, steal-on-reconnect.** Unlike
@@ -142,6 +142,12 @@ special case. Concretely:
   which must be corrected as part of implementing this policy — today a
   second `attach` connects at the socket level but is never read from,
   hanging indefinitely instead of stealing, multiplexing, or aborting).
+- **The attached byte stream is duplex and bounded at the session boundary.**
+  Shell output and replay remain an unstructured byte stream with fixed
+  takeover/exit sentinels. Client-to-daemon commands use a small length-framed
+  internal protocol for input and terminal resize, each capped at 64 KiB.
+  This lets the library target implement `festerm-session::Session` directly
+  without nesting a second PTY around the standalone `attach` command.
 - **Session identity reuses the existing validated name.** The same 1-64
   byte session-name validation `PersistenceConfiguration`
   (`festerm-config`) already enforces for `PROF-06`/`LAUNCH-08` is reused
@@ -169,13 +175,10 @@ special case. Concretely:
   that an SSH profile cannot select a provider that only makes sense as a
   local child process of the connecting machine.
 
-This ADR documents the intended shape of the capability and the constraints
-it must satisfy. Per `docs/development-governance.md`'s scope-classification
-framework, this is a **deferred product capability**: it is not scheduled
-against a current milestone, and no implementation is authorized by this ADR
-alone. A follow-up ADR status change to Accepted (or a superseding ADR) is
-expected before implementation begins, once crate boundaries, the exact wire
-protocol, and milestone placement are settled.
+This ADR remains Proposed for merge governance while the implementation is
+evaluated. Implementation was explicitly authorized locally without changing
+that status; moving the ADR to Accepted remains a separate decision after
+cross-platform evidence and review.
 
 ## Alternatives considered
 
@@ -237,17 +240,23 @@ protocol, and milestone placement are settled.
 
 ## Validation impact
 
-- **Invariants introduced or changed:** None yet — no implementation is
-  authorized by this Proposed-status ADR.
-- **GUI/action edges affected:** `None` — no user-observable workflow change
-  ships with this ADR. `PROF-06`/`LAUNCH-08` will need updated edges only if
-  and when a follow-up ADR moves this to Accepted and implementation begins.
-- **Automated tests required:** None yet; planned tests (daemon lifecycle,
-  attach/detach/reattach, orphan-registry pruning, Windows breakaway-from-job
-  behavior) will be named in the Accepted follow-up ADR once the protocol is
-  finalized.
-- **Native/manual evidence required:** None yet — deferred to implementation.
+- **Invariants introduced or changed:** The provisional implementation creates
+  one detached local daemon per reusable session identity, exposes it only
+  through owner-scoped local IPC, serializes registry mutation, retains bounded
+  replay, and gives the newest attaching client exclusive ownership.
+- **GUI/action edges affected:** `PROF-06` now covers selecting the native
+  local provider, attach-or-create launch, Inspector facts, non-destructive
+  tab detach, replay, and newest-client takeover.
+- **Automated tests required:** `festerm-sessiond` covers argument and identity
+  validation, registry round trips and PID-safe removal, replay bounds,
+  split-marker client handling, and an end-to-end Unix service-loop test in
+  which a second client steals the session from the first.
+- **Native/manual evidence required:** `CP-11` verifies packaged executable
+  presence, detach/reattach replay, single-client stealing, natural-exit and
+  kill cleanup, lifecycle independence, Unix ownership modes, and Windows
+  named-pipe current-user isolation and Job Object breakaway.
 - **Coverage superseded:** None.
 
-No `validation/traceability.json` changes accompany this ADR, since it
-introduces no invariants, tests, or GUI edges yet.
+The ADR remains Proposed while this implementation is evaluated.
+`validation/traceability.json` maps `PROF-06` to ADR-0025, deterministic
+coverage, and native scenario `CP-11`.

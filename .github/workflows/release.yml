@@ -131,7 +131,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release -p festerm
+          cargo build --release -p festerm -p festerm-sessiond
           cargo packager --config packaging/macos-release.toml --formats app
           codesign --verify --deep --strict --verbose=2 target/release/fesTerm.app
           xcrun stapler validate target/release/fesTerm.app
@@ -234,7 +234,9 @@ jobs:
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
-          files: ${{ github.workspace }}\target\release\festerm.exe
+          files: |
+            ${{ github.workspace }}\target\release\festerm.exe
+            ${{ github.workspace }}\target\release\festerm-sessiond.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -304,7 +306,7 @@ jobs:
           FESTERM_INSTALLATION_KIND: appimage
         run: |
           set -euo pipefail
-          cargo build --release -p festerm
+          cargo build --release -p festerm -p festerm-sessiond
           cargo packager --config packaging/linux.toml --formats appimage
           appimage=$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)
           test -n "$appimage"
@@ -317,7 +319,7 @@ jobs:
           FESTERM_INSTALLATION_KIND: managed
         run: |
           set -euo pipefail
-          cargo build --release -p festerm
+          cargo build --release -p festerm -p festerm-sessiond
           cargo packager --config packaging/linux.toml --formats deb
           deb=$(find target/release -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"

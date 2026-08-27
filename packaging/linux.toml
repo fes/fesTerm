@@ -15,7 +15,10 @@ icons = [
   "../assets/app-icon/app-icon-512.png",
   "../assets/app-icon/app-icon-1024.png",
 ]
-binaries = [{ path = "festerm", main = true }]
+binaries = [
+  { path = "festerm", main = true },
+  { path = "festerm-sessiond", main = false },
+]
 
 [linux]
 generate-desktop-entry = true

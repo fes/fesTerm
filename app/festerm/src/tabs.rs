@@ -19,11 +19,12 @@ use std::sync::{
 
 use eframe::egui;
 use festerm_config::{
-    ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, ScrollSpeedPreference,
-    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, PersistenceConfiguration,
+    PersistenceProviderKind, ScrollSpeedPreference, SshProfileConfiguration,
+    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
-use festerm_pty::{default_local_profile, LocalProfile, LocalPtyError, LocalPtySession};
+use festerm_pty::{default_local_profile, LocalProfile, LocalPtySession};
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
@@ -31,6 +32,7 @@ use festerm_session::{
     SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
     ShutdownError, ShutdownResult, TerminalSize,
 };
+use festerm_sessiond::PersistentSession;
 use festerm_ssh::{
     HostKeyDecisionResolutionError, HostTrustDecision, PasswordDecisionResolutionError,
     SessionStrategy, SshAuthentication, SshConnectionProfile, SshLivenessCheckError,
@@ -85,6 +87,7 @@ fn make_notifier(context: &egui::Context) -> Arc<dyn SessionEventNotifier> {
 /// `SessionController`; no secret material is exposed here.
 pub enum ApplicationSession {
     Local(LocalPtySession),
+    Persistent(PersistentSession),
     Ssh(SshSession),
     Serial(SerialSession),
 }
@@ -234,6 +237,7 @@ impl Session for ApplicationSession {
     fn id(&self) -> SessionId {
         match self {
             Self::Local(session) => session.id(),
+            Self::Persistent(session) => session.id(),
             Self::Ssh(session) => session.id(),
             Self::Serial(session) => session.id(),
         }
@@ -242,6 +246,7 @@ impl Session for ApplicationSession {
     fn lifecycle(&self) -> SessionLifecycle {
         match self {
             Self::Local(session) => session.lifecycle(),
+            Self::Persistent(session) => session.lifecycle(),
             Self::Ssh(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
         }
@@ -250,6 +255,7 @@ impl Session for ApplicationSession {
     fn metrics(&self) -> SessionMetrics {
         match self {
             Self::Local(session) => session.metrics(),
+            Self::Persistent(session) => session.metrics(),
             Self::Ssh(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
         }
@@ -258,6 +264,7 @@ impl Session for ApplicationSession {
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
         match self {
             Self::Local(session) => session.try_send_input(bytes),
+            Self::Persistent(session) => session.try_send_input(bytes),
             Self::Ssh(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
         }
@@ -266,6 +273,7 @@ impl Session for ApplicationSession {
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
         match self {
             Self::Local(session) => session.try_resize(size),
+            Self::Persistent(session) => session.try_resize(size),
             Self::Ssh(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
         }
@@ -274,6 +282,7 @@ impl Session for ApplicationSession {
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         match self {
             Self::Local(session) => session.try_shutdown(),
+            Self::Persistent(session) => session.try_shutdown(),
             Self::Ssh(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
         }
@@ -282,6 +291,7 @@ impl Session for ApplicationSession {
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
         match self {
             Self::Local(session) => session.try_recv_event(),
+            Self::Persistent(session) => session.try_recv_event(),
             Self::Ssh(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
         }
@@ -290,6 +300,7 @@ impl Session for ApplicationSession {
     fn shutdown(&self, timeout: std::time::Duration) -> Result<ShutdownResult, ShutdownError> {
         match self {
             Self::Local(session) => session.shutdown(timeout),
+            Self::Persistent(session) => session.shutdown(timeout),
             Self::Ssh(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
         }
@@ -331,7 +342,9 @@ pub struct SessionTab {
 /// Narrow transport metadata safe for application chrome. Keeping this owned
 /// by the tab prevents egui code from reaching into PTY or SSH backends.
 pub enum InspectorTransport {
-    Local,
+    Local {
+        persistence: Option<InspectorPersistence>,
+    },
     Ssh {
         username: String,
         host: String,
@@ -422,6 +435,7 @@ impl SessionTab {
                 .ok()
                 .and_then(|profile| local_profile_secondary(&profile)),
             None,
+            None,
         )
     }
 
@@ -453,6 +467,7 @@ impl SessionTab {
             "Local Shell",
             launch_secondary,
             None,
+            None,
         )
     }
 
@@ -462,6 +477,7 @@ impl SessionTab {
     fn start_local_profile(
         profile: LocalProfile,
         profile_id: &str,
+        persistence: Option<&PersistenceConfiguration>,
         context: &egui::Context,
         window_dimensions: Option<Dimensions>,
     ) -> Self {
@@ -470,13 +486,34 @@ impl SessionTab {
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
         let launch_secondary = local_profile_secondary(&profile);
-        let result = LocalPtySession::start_with_notifier(profile, size, make_notifier(context));
+        let inspector_persistence = persistence.map(|persistence| InspectorPersistence {
+            provider_label: persistence.provider().label(),
+            session_name: persistence.session_name().to_owned(),
+        });
+        let result = match persistence {
+            Some(persistence)
+                if persistence.provider() == PersistenceProviderKind::FestermSessiond =>
+            {
+                PersistentSession::start_with_notifier(
+                    persistence.session_name(),
+                    &profile,
+                    size,
+                    make_notifier(context),
+                )
+                .map(ApplicationSession::Persistent)
+                .map_err(|error| error.to_string())
+            }
+            _ => LocalPtySession::start_with_notifier(profile, size, make_notifier(context))
+                .map(ApplicationSession::Local)
+                .map_err(|error| error.to_string()),
+        };
         Self::from_local_session_result(
-            result.map(ApplicationSession::Local),
+            result,
             dimensions,
             profile_id,
             launch_secondary,
             Some(profile_id.to_owned()),
+            inspector_persistence,
         )
     }
 
@@ -540,12 +577,13 @@ impl SessionTab {
         )
     }
 
-    fn from_local_session_result(
-        result: Result<ApplicationSession, LocalPtyError>,
+    fn from_local_session_result<E: std::fmt::Display>(
+        result: Result<ApplicationSession, E>,
         dimensions: Dimensions,
         label: &str,
         launch_secondary: Option<String>,
         profile_identifier: Option<String>,
+        persistence: Option<InspectorPersistence>,
     ) -> Self {
         Self::from_session_result(
             result,
@@ -555,7 +593,7 @@ impl SessionTab {
                 launch_secondary,
                 profile_identifier,
                 session_name: "Local shell",
-                inspector_transport: InspectorTransport::Local,
+                inspector_transport: InspectorTransport::Local { persistence },
                 ssh_password_retry: None,
             },
         )
@@ -726,7 +764,12 @@ impl SessionTab {
     /// Whether closing this tab still ends an owned transport attempt or live
     /// transport and therefore requires explicit destructive confirmation.
     pub fn close_requires_confirmation(&self) -> bool {
-        self.controller.start_error().is_none()
+        !matches!(
+            &self.inspector_transport,
+            InspectorTransport::Local {
+                persistence: Some(_)
+            }
+        ) && self.controller.start_error().is_none()
             && matches!(
                 self.controller.lifecycle(),
                 Some(SessionLifecycle::Starting | SessionLifecycle::Running)
@@ -738,9 +781,9 @@ impl SessionTab {
         match &self.inspector_transport {
             InspectorTransport::Ssh { .. } => "Remote",
             InspectorTransport::Serial { .. } => "Serial",
-            InspectorTransport::Local if cfg!(windows) => "Local · Windows",
-            InspectorTransport::Local if cfg!(target_os = "macos") => "Local · macOS",
-            InspectorTransport::Local => "Local · Linux",
+            InspectorTransport::Local { .. } if cfg!(windows) => "Local · Windows",
+            InspectorTransport::Local { .. } if cfg!(target_os = "macos") => "Local · macOS",
+            InspectorTransport::Local { .. } => "Local · Linux",
         }
     }
 
@@ -753,7 +796,7 @@ impl SessionTab {
             (_, ChipStatus::AuthRequired) => "Authentication required",
             (_, ChipStatus::Failed) => "Failed",
             (_, ChipStatus::Exited) => "Exited",
-            (InspectorTransport::Local, ChipStatus::Connected) => "Running",
+            (InspectorTransport::Local { .. }, ChipStatus::Connected) => "Running",
             (InspectorTransport::Ssh { .. }, ChipStatus::Connected) => "Connected",
             (InspectorTransport::Serial { .. }, ChipStatus::Connected) => "Open",
             (_, ChipStatus::Neutral) => "",
@@ -1270,6 +1313,7 @@ impl AppState {
                     TabContent::Session(Box::new(SessionTab::start_local_profile(
                         local.to_local_profile(),
                         local.identifier(),
+                        local.persistence(),
                         context,
                         None,
                     )))
@@ -1733,6 +1777,7 @@ impl AppState {
         self.place_session(SessionTab::start_local_profile(
             local.to_local_profile(),
             local.identifier(),
+            local.persistence(),
             context,
             dimensions,
         ));

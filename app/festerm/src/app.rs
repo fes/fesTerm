@@ -633,7 +633,7 @@ impl FesTermApp {
                             tab: id,
                             identity: session.label.clone(),
                             consequence: match session.inspector_transport {
-                                InspectorTransport::Local => {
+                                InspectorTransport::Local { .. } => {
                                     CloseConsequence::TerminateLocalProcess
                                 }
                                 InspectorTransport::Ssh { .. } => CloseConsequence::DisconnectSsh,
@@ -705,7 +705,7 @@ impl FesTermApp {
                     && session.controller.lifecycle_generation() == pending.lifecycle_generation
                     && matches!(
                         (&session.inspector_transport, pending.consequence),
-                        (InspectorTransport::Local, CloseConsequence::TerminateLocalProcess)
+                        (InspectorTransport::Local { persistence: None }, CloseConsequence::TerminateLocalProcess)
                             | (InspectorTransport::Ssh { .. }, CloseConsequence::DisconnectSsh)
                             | (InspectorTransport::Serial { .. }, CloseConsequence::TerminateLocalProcess)
                     ))
@@ -2325,7 +2325,7 @@ impl FesTermApp {
         let status = session.status_bar_label();
         let chip_status = session.chip_status();
         let transport = match &session.inspector_transport {
-            InspectorTransport::Local => TransportFacts::Local,
+            InspectorTransport::Local { .. } => TransportFacts::Local,
             InspectorTransport::Ssh {
                 username,
                 host,
@@ -2353,25 +2353,28 @@ impl FesTermApp {
             },
         };
         let persistent_session = match &session.inspector_transport {
-            InspectorTransport::Ssh {
+            InspectorTransport::Local {
+                persistence: Some(persistence),
+            }
+            | InspectorTransport::Ssh {
                 persistence: Some(persistence),
                 ..
             } => Some(crate::inspector::PersistentSessionFacts {
                 provider_label: persistence.provider_label,
                 session_name: &persistence.session_name,
             }),
-            InspectorTransport::Local
+            InspectorTransport::Local { .. }
             | InspectorTransport::Ssh { .. }
             | InspectorTransport::Serial { .. } => None,
         };
         let type_label = match session.inspector_transport {
-            InspectorTransport::Local => "Local shell",
+            InspectorTransport::Local { .. } => "Local shell",
             InspectorTransport::Ssh { .. } => "SSH",
             InspectorTransport::Serial { .. } => "Serial",
         };
         let state_message = match chip_status {
             ChipStatus::Failed => Some(match session.inspector_transport {
-                InspectorTransport::Local => {
+                InspectorTransport::Local { .. } => {
                     "The local shell could not start. Review Diagnostics for the failure detail."
                 }
                 InspectorTransport::Ssh { .. } => {

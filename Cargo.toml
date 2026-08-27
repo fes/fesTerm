@@ -16,6 +16,7 @@ members = [
     "crates/festerm-ui-egui",
     "crates/festerm-windows-job",
     "crates/festerm-windows-power",
+    "crates/festerm-windows-security",
     "crates/festerm-windows-runtime",
 ]
 resolver = "2"

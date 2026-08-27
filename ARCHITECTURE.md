@@ -4,7 +4,7 @@
 
 This document defines the proposed subsystem boundaries, dependency direction,
 runtime data flow, and Rust workspace structure for fesTerm. The repository
-contains `festerm-core`, `festerm-session`, `festerm-pty`,
+contains `festerm-core`, `festerm-session`, `festerm-pty`, `festerm-sessiond`,
 `festerm-test-support`, the `festerm-ui-egui` presentation crate, and the
 application composition shell. Native SSH, strict `festerm-config` loading,
 profile-backed local launch, opaque native-secret-store SSH password
@@ -32,11 +32,13 @@ Dependencies should point inward toward stable domain logic:
 festerm-app
   |-- festerm-ui-egui
   |-- festerm-pty -----> festerm-session
+  |-- festerm-sessiond -> festerm-session and festerm-pty
   |-- festerm-config
   |-- festerm-ssh -----> festerm-session
 
 festerm-ui-egui ------> festerm-core
 festerm-pty ----------> festerm-session
+festerm-sessiond -----> festerm-session
 festerm-ssh ----------> festerm-session
 festerm-test-support -> festerm-core and session implementations
 ```
@@ -58,10 +60,12 @@ change, but the responsibilities should remain distinct.
     festerm-session/       # implemented M5 common lifecycle boundary
     festerm-pty/           # implemented M5 local PTY/ConPTY backend
     festerm-pty-test-child/ # implemented M6 deterministic PTY test child
+    festerm-sessiond/      # ADR-0025 local persistence daemon and Session client
     festerm-ssh/
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
     festerm-windows-job/   # Windows process-tree shutdown support
+    festerm-windows-security/ # current-user named-pipe DACL support
     festerm-windows-runtime/ # trusted optional ConPTY sidecar loading
     festerm-test-support/
   app/
@@ -161,6 +165,21 @@ relative `conpty.dll` name. Missing or invalid sidecars use inbox Kernel32
 ConPTY; an unverified module loaded before selection is an error. This preserves
 the `Session` byte/event contract while making the Windows runtime decision
 explicit and safe.
+
+### `festerm-sessiond`
+
+Implements ADR-0025's opt-in persistent local-session backend. Its packaged
+standalone executable owns one detached PTY/ConPTY and a bounded replay
+buffer. The crate's library target implements `festerm-session::Session`
+directly over owner-scoped Unix-domain sockets or Windows named pipes, with
+bounded input/resize commands and single-client steal-on-reconnect semantics.
+Closing the application session detaches from the daemon rather than
+terminating its shell.
+
+Platform-sensitive Windows DACL manipulation remains isolated in
+`festerm-windows-security`: each named-pipe instance is created while the
+daemon token temporarily has a current-user-only default DACL, and the
+original token DACL is restored before the shell is launched.
 
 ### `festerm-ssh`
 

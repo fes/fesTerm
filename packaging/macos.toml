@@ -14,4 +14,7 @@ icons = [
   "../assets/app-icon/app-icon-256.png",
   "../assets/app-icon/app-icon-512.png",
 ]
-binaries = [{ path = "festerm", main = true }]
+binaries = [
+  { path = "festerm", main = true },
+  { path = "festerm-sessiond", main = false },
+]

@@ -5,15 +5,12 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
-#[cfg(windows)]
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
 };
 
 #[cfg(unix)]
@@ -37,6 +34,12 @@ use serde::{Deserialize, Serialize};
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+const CLIENT_QUEUE_CAPACITY: usize = 64;
+const CLIENT_FRAME_HEADER_BYTES: usize = 9;
+const CLIENT_FRAME_MAGIC: &[u8; 4] = b"FSD1";
+const CLIENT_FRAME_INPUT: u8 = 1;
+const CLIENT_FRAME_RESIZE: u8 = 2;
+const MAX_CLIENT_FRAME_BYTES: usize = 64 * 1024;
 const REPLAY_CAPACITY_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +48,10 @@ struct SessionRecord {
     pid: u32,
     socket: String,
     shell: String,
+    #[serde(default)]
+    arguments: Vec<String>,
+    #[serde(default)]
+    working_directory: Option<String>,
     cols: u16,
     rows: u16,
     created_at_unix_ms: u128,
@@ -60,13 +67,13 @@ struct SessionRegistry {
 enum CommandSpec {
     Start {
         name: String,
-        shell: String,
+        shell: ShellSpec,
         cols: u16,
         rows: u16,
     },
     Daemon {
         name: String,
-        shell: String,
+        shell: ShellSpec,
         cols: u16,
         rows: u16,
     },
@@ -77,6 +84,13 @@ enum CommandSpec {
     Attach {
         name: String,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ShellSpec {
+    executable: String,
+    arguments: Vec<String>,
+    working_directory: Option<String>,
 }
 
 struct SpawnedShell {
@@ -170,9 +184,11 @@ fn parse_name_only(args: &[String], command: &str) -> Result<String, Box<dyn std
 fn parse_session_options(
     args: &[String],
     command: &str,
-) -> Result<(String, String, u16, u16), Box<dyn std::error::Error>> {
+) -> Result<(String, ShellSpec, u16, u16), Box<dyn std::error::Error>> {
     let mut name = None;
     let mut shell = None;
+    let mut shell_arguments = Vec::new();
+    let mut working_directory = None;
     let mut cols = None;
     let mut rows = None;
     let mut index = 0;
@@ -184,6 +200,8 @@ fn parse_session_options(
         match flag {
             "--name" => set_once(&mut name, value.clone(), command, flag)?,
             "--shell" => set_once(&mut shell, value.clone(), command, flag)?,
+            "--arg" => shell_arguments.push(value.clone()),
+            "--cwd" => set_once(&mut working_directory, value.clone(), command, flag)?,
             "--cols" => {
                 let value = value
                     .parse::<u16>()
@@ -202,7 +220,19 @@ fn parse_session_options(
     }
     Ok((
         name.ok_or_else(|| format!("{command} requires --name <value>"))?,
-        shell.unwrap_or_else(default_shell),
+        match shell {
+            Some(executable) => ShellSpec {
+                executable,
+                arguments: shell_arguments,
+                working_directory,
+            },
+            None => {
+                if !shell_arguments.is_empty() || working_directory.is_some() {
+                    return Err(format!("{command} requires --shell with --arg or --cwd").into());
+                }
+                default_shell()
+            }
+        },
         cols.unwrap_or(80),
         rows.unwrap_or(24),
     ))
@@ -220,24 +250,42 @@ fn set_once<T>(
     Ok(())
 }
 
-fn default_shell() -> String {
+fn default_shell() -> ShellSpec {
     default_local_profile()
-        .map(|profile| profile.executable().to_string_lossy().into_owned())
+        .map(|profile| ShellSpec {
+            executable: profile.executable().to_string_lossy().into_owned(),
+            arguments: profile
+                .arguments()
+                .iter()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect(),
+            working_directory: profile
+                .working_directory()
+                .map(|directory| directory.to_string_lossy().into_owned()),
+        })
         .unwrap_or_else(|_| {
             #[cfg(unix)]
             {
-                "/bin/sh".to_owned()
+                ShellSpec {
+                    executable: "/bin/sh".to_owned(),
+                    arguments: vec!["-l".to_owned()],
+                    working_directory: None,
+                }
             }
             #[cfg(windows)]
             {
-                "cmd.exe".to_owned()
+                ShellSpec {
+                    executable: "cmd.exe".to_owned(),
+                    arguments: vec!["/Q".to_owned()],
+                    working_directory: None,
+                }
             }
         })
 }
 
 fn run_start(
     name: String,
-    shell: String,
+    shell: ShellSpec,
     cols: u16,
     rows: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -269,14 +317,14 @@ fn run_start(
     let exe = env::current_exe()?;
 
     #[cfg(unix)]
-    let daemon_pid = {
+    let mut daemon = {
         let mut command = Command::new(&exe);
         command
             .arg("daemon")
             .arg("--name")
             .arg(&name)
             .arg("--shell")
-            .arg(&shell)
+            .arg(&shell.executable)
             .arg("--cols")
             .arg(cols.to_string())
             .arg("--rows")
@@ -284,18 +332,24 @@ fn run_start(
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        command.spawn()?.id()
+        for argument in &shell.arguments {
+            command.arg("--arg").arg(argument);
+        }
+        if let Some(working_directory) = &shell.working_directory {
+            command.arg("--cwd").arg(working_directory);
+        }
+        command.spawn()?
     };
 
     #[cfg(windows)]
-    let daemon_pid = {
+    let mut daemon = {
         let mut command = Command::new(&exe);
         command
             .arg("daemon")
             .arg("--name")
             .arg(&name)
             .arg("--shell")
-            .arg(&shell)
+            .arg(&shell.executable)
             .arg("--cols")
             .arg(cols.to_string())
             .arg("--rows")
@@ -308,8 +362,15 @@ fn run_start(
             .creation_flags(
                 CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB,
             );
-        command.spawn()?.id()
+        for argument in &shell.arguments {
+            command.arg("--arg").arg(argument);
+        }
+        if let Some(working_directory) = &shell.working_directory {
+            command.arg("--cwd").arg(working_directory);
+        }
+        command.spawn()?
     };
+    let daemon_pid = daemon.id();
 
     let registration = (|| -> Result<SessionRecord, Box<dyn std::error::Error>> {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -320,8 +381,11 @@ fn run_start(
                     return Ok(record.clone());
                 }
             }
-            if !process_alive(daemon_pid) {
-                return Err(format!("session daemon for '{name}' exited during startup").into());
+            if let Some(status) = daemon.try_wait()? {
+                return Err(format!(
+                    "session daemon for '{name}' exited during startup with {status}"
+                )
+                .into());
             }
             if std::time::Instant::now() >= deadline {
                 return Err(format!("timed out waiting for session '{name}' to register").into());
@@ -332,7 +396,10 @@ fn run_start(
     let record = match registration {
         Ok(record) => record,
         Err(error) => {
-            let _ = terminate_pid(daemon_pid);
+            if daemon.try_wait()?.is_none() {
+                let _ = terminate_pid(daemon_pid);
+                let _ = daemon.wait();
+            }
             return Err(error);
         }
     };
@@ -347,7 +414,7 @@ fn run_start(
 
 fn run_daemon(
     name: String,
-    shell: String,
+    shell: ShellSpec,
     cols: u16,
     rows: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -370,7 +437,9 @@ fn run_daemon(
             name: name.clone(),
             pid: process::id(),
             socket: socket_path.to_string_lossy().into_owned(),
-            shell: shell.clone(),
+            shell: shell.executable.clone(),
+            arguments: shell.arguments.clone(),
+            working_directory: shell.working_directory.clone(),
             cols,
             rows,
             created_at_unix_ms: now_ms(),
@@ -383,20 +452,23 @@ fn run_daemon(
         }
 
         let reader = spawned.master.try_clone_reader()?;
-        daemon_client_loop(listener, reader, &mut spawned, &name)?;
+        let writer = spawned.master.take_writer()?;
+        daemon_client_loop(listener, reader, writer, &mut spawned, &name)?;
         let _ = fs::remove_file(socket_path);
     }
 
     #[cfg(windows)]
     {
         let pipe_name = session_pipe_name(&name);
-        let initial_listener = named_pipe::PipeOptions::new(&pipe_name).single()?;
+        let initial_listener = create_secure_pipe_listener(&pipe_name, true)?;
         let mut spawned = spawn_shell(&shell, cols, rows)?;
         let record = SessionRecord {
             name: name.clone(),
             pid: process::id(),
             socket: pipe_name.clone(),
-            shell: shell.clone(),
+            shell: shell.executable.clone(),
+            arguments: shell.arguments.clone(),
+            working_directory: shell.working_directory.clone(),
             cols,
             rows,
             created_at_unix_ms: now_ms(),
@@ -408,7 +480,15 @@ fn run_daemon(
         }
 
         let reader = spawned.master.try_clone_reader()?;
-        daemon_client_loop_windows(&pipe_name, initial_listener, reader, &mut spawned, &name)?;
+        let writer = spawned.master.take_writer()?;
+        daemon_client_loop_windows(
+            &pipe_name,
+            initial_listener,
+            reader,
+            writer,
+            &mut spawned,
+            &name,
+        )?;
     }
 
     Ok(())
@@ -436,12 +516,25 @@ fn bind_unix_listener(path: &Path) -> io::Result<UnixListener> {
 fn daemon_client_loop<R: Read + Send + 'static>(
     listener: UnixListener,
     reader: R,
+    mut writer: Box<dyn Write + Send>,
     spawned: &mut SpawnedShell,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let result = session_client_loop(listener, reader, None, || {
-        let _ = spawned.child.kill();
-    });
+    let result = session_client_loop(
+        listener,
+        reader,
+        None,
+        |command| match command {
+            ClientCommand::Input(data) => writer.write_all(&data),
+            ClientCommand::Resize(size) => spawned
+                .master
+                .resize(size)
+                .map_err(|error| io::Error::other(error.to_string())),
+        },
+        || {
+            let _ = spawned.child.kill();
+        },
+    );
     if result.is_err() {
         let _ = spawned.child.kill();
     }
@@ -455,23 +548,52 @@ fn session_client_loop<R: Read + Send + 'static>(
     listener: UnixListener,
     reader: R,
     observer: Option<mpsc::Sender<ClientLoopEvent>>,
+    mut handle_client_command: impl FnMut(ClientCommand) -> io::Result<()>,
     mut shutdown: impl FnMut(),
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
-    let mut active: Option<UnixStream> = None;
+    let (client_input_tx, client_input_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+    let mut active: Option<ActiveClient> = None;
+    let mut retired_clients = Vec::new();
+    let mut next_generation = 1u64;
     let mut replay = ReplayBuffer::default();
     let result = loop {
-        if let Err(error) = accept_unix_clients(&listener, &mut active, &replay, observer.as_ref())
-        {
+        if let Err(error) = reap_client_threads(&mut retired_clients) {
+            shutdown();
+            break Err(error);
+        }
+        if let Err(error) = accept_unix_clients(
+            &listener,
+            &mut active,
+            &mut retired_clients,
+            &replay,
+            observer.as_ref(),
+            &client_input_tx,
+            &mut next_generation,
+        ) {
+            shutdown();
+            break Err(error);
+        }
+        if let Err(error) = handle_pending_client_input(
+            &client_input_rx,
+            active.as_ref(),
+            &mut handle_client_command,
+        ) {
             shutdown();
             break Err(error);
         }
         match pty_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(PtyEvent::Data(data)) => {
-                if let Err(error) =
-                    accept_unix_clients(&listener, &mut active, &replay, observer.as_ref())
-                {
+                if let Err(error) = accept_unix_clients(
+                    &listener,
+                    &mut active,
+                    &mut retired_clients,
+                    &replay,
+                    observer.as_ref(),
+                    &client_input_tx,
+                    &mut next_generation,
+                ) {
                     shutdown();
                     break Err(error);
                 }
@@ -479,15 +601,26 @@ fn session_client_loop<R: Read + Send + 'static>(
                 if let Some(observer) = observer.as_ref() {
                     let _ = observer.send(ClientLoopEvent::OutputBuffered);
                 }
-                write_to_active(&mut active, &data);
+                send_to_active(&mut active, &mut retired_clients, data);
             }
-            Ok(PtyEvent::Eof) => break Ok(()),
+            Ok(PtyEvent::Eof) => {
+                send_to_active(
+                    &mut active,
+                    &mut retired_clients,
+                    EXITED_NOTICE_BYTES.to_vec(),
+                );
+                break Ok(());
+            }
             Ok(PtyEvent::Error(error)) => break Err(error),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(()),
         }
     };
 
+    retire_active(&mut active, &mut retired_clients, false);
+    for client in retired_clients {
+        join_client_thread(client)?;
+    }
     join_io_thread(reader_thread)?;
     result
 }
@@ -495,15 +628,26 @@ fn session_client_loop<R: Read + Send + 'static>(
 #[cfg(unix)]
 fn accept_unix_clients(
     listener: &UnixListener,
-    active: &mut Option<UnixStream>,
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     replay: &ReplayBuffer,
     observer: Option<&mpsc::Sender<ClientLoopEvent>>,
+    client_input_tx: &mpsc::SyncSender<ClientInput>,
+    next_generation: &mut u64,
 ) -> io::Result<()> {
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
                 stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
-                replace_active(active, stream, replay);
+                replace_active(
+                    active,
+                    retired_clients,
+                    stream,
+                    replay,
+                    client_input_tx.clone(),
+                    next_generation,
+                )?;
                 if let Some(observer) = observer {
                     let _ = observer.send(ClientLoopEvent::ClientAttached);
                 }
@@ -527,6 +671,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     pipe_name: &str,
     initial_listener: named_pipe::ConnectingServer,
     reader: R,
+    mut writer: Box<dyn Write + Send>,
     spawned: &mut SpawnedShell,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -540,11 +685,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
         while accept_running.load(Ordering::Acquire) {
             let server = match initial_listener.take() {
                 Some(listener) => listener.wait(),
-                None => {
-                    let mut options = named_pipe::PipeOptions::new(&accept_pipe_name);
-                    options.first(false);
-                    options.single()?.wait()
-                }
+                None => create_secure_pipe_listener(&accept_pipe_name, false)?.wait(),
             };
             let server = match server {
                 Ok(server) => server,
@@ -566,23 +707,65 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     });
 
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
-    let mut active: Option<named_pipe::PipeServer> = None;
+    let (client_input_tx, client_input_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+    let mut active: Option<ActiveClient> = None;
+    let mut retired_clients = Vec::new();
+    let mut next_generation = 1u64;
     let mut replay = ReplayBuffer::default();
     let result = loop {
-        if let Err(error) = accept_windows_clients(&accept_rx, &mut active, &replay) {
+        if let Err(error) = reap_client_threads(&mut retired_clients) {
+            let _ = spawned.child.kill();
+            break Err(error);
+        }
+        if let Err(error) = accept_windows_clients(
+            &accept_rx,
+            &mut active,
+            &mut retired_clients,
+            &replay,
+            &client_input_tx,
+            &mut next_generation,
+        ) {
+            let _ = spawned.child.kill();
+            break Err(error);
+        }
+        if let Err(error) =
+            handle_pending_client_input(&client_input_rx, active.as_ref(), &mut |command| {
+                match command {
+                    ClientCommand::Input(data) => writer.write_all(&data),
+                    ClientCommand::Resize(size) => spawned
+                        .master
+                        .resize(size)
+                        .map_err(|error| io::Error::other(error.to_string())),
+                }
+            })
+        {
             let _ = spawned.child.kill();
             break Err(error);
         }
         match pty_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(PtyEvent::Data(data)) => {
-                if let Err(error) = accept_windows_clients(&accept_rx, &mut active, &replay) {
+                if let Err(error) = accept_windows_clients(
+                    &accept_rx,
+                    &mut active,
+                    &mut retired_clients,
+                    &replay,
+                    &client_input_tx,
+                    &mut next_generation,
+                ) {
                     let _ = spawned.child.kill();
                     break Err(error);
                 }
                 replay.push(&data);
-                write_to_active(&mut active, &data);
+                send_to_active(&mut active, &mut retired_clients, data);
             }
-            Ok(PtyEvent::Eof) => break Ok(()),
+            Ok(PtyEvent::Eof) => {
+                send_to_active(
+                    &mut active,
+                    &mut retired_clients,
+                    EXITED_NOTICE_BYTES.to_vec(),
+                );
+                break Ok(());
+            }
             Ok(PtyEvent::Error(error)) => break Err(error),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(()),
@@ -590,10 +773,11 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     };
 
     accepting.store(false, Ordering::Release);
-    drop(active);
+    retire_active(&mut active, &mut retired_clients, false);
     let _ = named_pipe::PipeClient::connect_ms(&pipe_name, 100);
     let reader_result = join_io_thread(reader_thread);
     let accept_result = join_io_thread(accept_thread);
+    let client_result = retired_clients.into_iter().try_for_each(join_client_thread);
     if result.is_err() {
         let _ = spawned.child.kill();
     }
@@ -601,19 +785,44 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     drop_registry_record(name, process::id())?;
     reader_result?;
     accept_result?;
+    client_result?;
     result.map_err(Into::into)
+}
+
+#[cfg(windows)]
+fn create_secure_pipe_listener(
+    pipe_name: &str,
+    first: bool,
+) -> io::Result<named_pipe::ConnectingServer> {
+    let guard = festerm_windows_security::restrict_default_dacl_to_current_user()?;
+    let mut options = named_pipe::PipeOptions::new(pipe_name);
+    options.first(first);
+    let listener = options.single()?;
+    guard.restore()?;
+    Ok(listener)
 }
 
 #[cfg(windows)]
 fn accept_windows_clients(
     accept_rx: &mpsc::Receiver<io::Result<named_pipe::PipeServer>>,
-    active: &mut Option<named_pipe::PipeServer>,
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     replay: &ReplayBuffer,
+    client_input_tx: &mpsc::SyncSender<ClientInput>,
+    next_generation: &mut u64,
 ) -> io::Result<()> {
     for stream in accept_rx.try_iter() {
         let mut stream = stream?;
+        stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL));
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
-        replace_active(active, stream, replay);
+        replace_active(
+            active,
+            retired_clients,
+            stream,
+            replay,
+            client_input_tx.clone(),
+            next_generation,
+        )?;
     }
     Ok(())
 }
@@ -651,30 +860,274 @@ fn spawn_pty_reader<R: Read + Send + 'static>(
     (receiver, thread)
 }
 
-fn replace_active<W: Write>(active: &mut Option<W>, replacement: W, replay: &ReplayBuffer) {
-    if let Some(mut previous) = active.take() {
-        let _ = send_steal_notice(&mut previous);
-    }
-    *active = Some(replacement);
-    replay.write_to(active);
+#[derive(Debug)]
+enum ClientCommand {
+    Input(Vec<u8>),
+    Resize(PtySize),
 }
 
-fn write_to_active<W: Write>(active: &mut Option<W>, data: &[u8]) {
-    let failed = active.as_mut().is_some_and(|stream| {
-        stream
-            .write_all(data)
-            .and_then(|()| stream.flush())
+#[derive(Debug)]
+struct ClientInput {
+    generation: u64,
+    command: ClientCommand,
+}
+
+enum ClientOutput {
+    Data(Vec<u8>),
+}
+
+struct ActiveClient {
+    generation: u64,
+    output: mpsc::SyncSender<ClientOutput>,
+    stolen: Arc<AtomicBool>,
+    thread: thread::JoinHandle<io::Result<()>>,
+}
+
+fn replace_active<S: Read + Write + Send + 'static>(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    replacement: S,
+    replay: &ReplayBuffer,
+    input: mpsc::SyncSender<ClientInput>,
+    next_generation: &mut u64,
+) -> io::Result<()> {
+    retire_active(active, retired_clients, true);
+
+    let generation = *next_generation;
+    *next_generation = next_generation.wrapping_add(1);
+    let (output, output_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+    let stolen = Arc::new(AtomicBool::new(false));
+    let worker_stolen = Arc::clone(&stolen);
+    let thread = thread::Builder::new()
+        .name(format!("festerm-sessiond-client-{generation}"))
+        .spawn(move || client_io_loop(replacement, generation, input, output_rx, worker_stolen))?;
+    let client = ActiveClient {
+        generation,
+        output,
+        stolen,
+        thread,
+    };
+    if !replay.is_empty()
+        && client
+            .output
+            .try_send(ClientOutput::Data(replay.to_vec()))
             .is_err()
-    });
-    if failed {
-        *active = None;
+    {
+        client.stolen.store(false, Ordering::Release);
+        drop(client.output);
+        join_io_thread(client.thread)?;
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "new session client could not accept replay",
+        ));
     }
+    *active = Some(client);
+    Ok(())
+}
+
+fn retire_active(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    stolen: bool,
+) {
+    if let Some(previous) = active.take() {
+        previous.stolen.store(stolen, Ordering::Release);
+        drop(previous.output);
+        retired_clients.push(previous.thread);
+    }
+}
+
+fn send_to_active(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    data: Vec<u8>,
+) {
+    let failed = active
+        .as_ref()
+        .is_some_and(|client| client.output.try_send(ClientOutput::Data(data)).is_err());
+    if failed {
+        retire_active(active, retired_clients, false);
+    }
+}
+
+fn handle_pending_client_input(
+    input: &mpsc::Receiver<ClientInput>,
+    active: Option<&ActiveClient>,
+    handle: &mut impl FnMut(ClientCommand) -> io::Result<()>,
+) -> io::Result<()> {
+    for input in input.try_iter() {
+        if active.is_some_and(|client| client.generation == input.generation) {
+            handle(input.command)?;
+        }
+    }
+    Ok(())
+}
+
+fn client_io_loop<S: Read + Write>(
+    mut stream: S,
+    generation: u64,
+    input: mpsc::SyncSender<ClientInput>,
+    output: mpsc::Receiver<ClientOutput>,
+    stolen: Arc<AtomicBool>,
+) -> io::Result<()> {
+    let mut parser = ClientFrameParser::default();
+    let mut buffer = [0u8; 4096];
+    loop {
+        if stolen.load(Ordering::Acquire) {
+            stream.write_all(STOLEN_NOTICE_BYTES)?;
+            stream.flush()?;
+            return Ok(());
+        }
+        loop {
+            match output.try_recv() {
+                Ok(ClientOutput::Data(data)) => {
+                    stream.write_all(&data)?;
+                    stream.flush()?;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            }
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(count) => {
+                parser.push(&buffer[..count])?;
+                for command in parser.drain()? {
+                    match input.try_send(ClientInput {
+                        generation,
+                        command,
+                    }) {
+                        Ok(()) => {}
+                        Err(mpsc::TrySendError::Full(_)) => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::WouldBlock,
+                                "session client input queue is full",
+                            ))
+                        }
+                        Err(mpsc::TrySendError::Disconnected(_)) => return Ok(()),
+                    }
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ClientFrameParser {
+    bytes: Vec<u8>,
+}
+
+impl ClientFrameParser {
+    fn push(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if self.bytes.len().saturating_add(bytes.len())
+            > MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session client frame exceeds the protocol limit",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn drain(&mut self) -> io::Result<Vec<ClientCommand>> {
+        let mut commands = Vec::new();
+        loop {
+            if self.bytes.len() < CLIENT_FRAME_HEADER_BYTES {
+                break;
+            }
+            if &self.bytes[..CLIENT_FRAME_MAGIC.len()] != CLIENT_FRAME_MAGIC {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "session client frame has an invalid magic value",
+                ));
+            }
+            let kind = self.bytes[4];
+            let payload_len =
+                u32::from_be_bytes(self.bytes[5..9].try_into().expect("fixed frame header"))
+                    as usize;
+            if payload_len > MAX_CLIENT_FRAME_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "session client frame payload exceeds the protocol limit",
+                ));
+            }
+            let frame_len = CLIENT_FRAME_HEADER_BYTES + payload_len;
+            if self.bytes.len() < frame_len {
+                break;
+            }
+            let payload = &self.bytes[CLIENT_FRAME_HEADER_BYTES..frame_len];
+            let command = match kind {
+                CLIENT_FRAME_INPUT => ClientCommand::Input(payload.to_vec()),
+                CLIENT_FRAME_RESIZE => ClientCommand::Resize(parse_resize_frame(payload)?),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "session client frame has an unknown command",
+                    ))
+                }
+            };
+            self.bytes.drain(..frame_len);
+            commands.push(command);
+        }
+        Ok(commands)
+    }
+}
+
+fn parse_resize_frame(payload: &[u8]) -> io::Result<PtySize> {
+    if payload.len() != 8 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session resize frame has an invalid length",
+        ));
+    }
+    let value = |offset| u16::from_be_bytes([payload[offset], payload[offset + 1]]);
+    let size = PtySize {
+        cols: value(0),
+        rows: value(2),
+        pixel_width: value(4),
+        pixel_height: value(6),
+    };
+    if size.cols < 2 || size.rows == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session resize frame has invalid terminal dimensions",
+        ));
+    }
+    Ok(size)
 }
 
 fn join_io_thread(thread: thread::JoinHandle<io::Result<()>>) -> io::Result<()> {
     thread
         .join()
         .map_err(|_| io::Error::other("session daemon worker thread panicked"))?
+}
+
+fn join_client_thread(thread: thread::JoinHandle<io::Result<()>>) -> io::Result<()> {
+    let _ = thread
+        .join()
+        .map_err(|_| io::Error::other("session client worker thread panicked"))?;
+    Ok(())
+}
+
+fn reap_client_threads(clients: &mut Vec<thread::JoinHandle<io::Result<()>>>) -> io::Result<()> {
+    let mut index = 0;
+    while index < clients.len() {
+        if clients[index].is_finished() {
+            join_client_thread(clients.swap_remove(index))?;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -693,6 +1146,14 @@ impl Default for ReplayBuffer {
 }
 
 impl ReplayBuffer {
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn to_vec(&self) -> Vec<u8> {
+        self.bytes.iter().copied().collect()
+    }
+
     fn push(&mut self, data: &[u8]) {
         if data.len() >= self.capacity {
             self.bytes.clear();
@@ -712,20 +1173,6 @@ impl ReplayBuffer {
         self.bytes.drain(..overflow);
         self.bytes.extend(data.iter().copied());
     }
-
-    fn write_to<W: Write>(&self, active: &mut Option<W>) {
-        let failed = active.as_mut().is_some_and(|stream| {
-            let (first, second) = self.bytes.as_slices();
-            stream
-                .write_all(first)
-                .and_then(|()| stream.write_all(second))
-                .and_then(|()| stream.flush())
-                .is_err()
-        });
-        if failed {
-            *active = None;
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -735,13 +1182,9 @@ enum PtyEvent {
     Error(io::Error),
 }
 
-fn send_steal_notice<W: Write>(writer: &mut W) -> io::Result<()> {
-    writer.write_all(STOLEN_NOTICE_BYTES)?;
-    writer.flush()
-}
-
 const STOLEN_NOTICE_BYTES: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
+const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
 fn run_list() -> Result<(), Box<dyn std::error::Error>> {
     let registry = with_registry_lock(|registry| {
@@ -805,54 +1248,88 @@ fn endpoint_reachable(record: &SessionRecord) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AttachOutcome {
     Closed,
+    Exited,
     Stolen,
 }
 
+#[cfg(test)]
 fn forward_attach_stream<R: Read, W: Write>(
     reader: &mut R,
     output: &mut W,
 ) -> io::Result<AttachOutcome> {
     let mut buffer = [0u8; 4096];
-    let mut pending = Vec::with_capacity(STOLEN_NOTICE_BYTES.len() + buffer.len());
+    let mut scanner = AttachOutputScanner::default();
     loop {
         match reader.read(&mut buffer) {
-            Ok(0) => {
-                output.write_all(&pending)?;
-                output.flush()?;
-                return Ok(AttachOutcome::Closed);
-            }
+            Ok(0) => return scanner.close(output),
             Ok(count) => {
-                pending.extend_from_slice(&buffer[..count]);
-                if let Some(position) = find_bytes(&pending, STOLEN_NOTICE_BYTES) {
-                    output.write_all(&pending[..position])?;
-                    output.flush()?;
-                    return Ok(AttachOutcome::Stolen);
-                }
-
-                let retained = partial_marker_suffix_len(&pending);
-                let flush_count = pending.len() - retained;
-                if flush_count > 0 {
-                    output.write_all(&pending[..flush_count])?;
-                    pending.drain(..flush_count);
-                    output.flush()?;
+                if let Some(outcome) = scanner.push(&buffer[..count], output)? {
+                    return Ok(outcome);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
-                output.write_all(&pending)?;
-                output.flush()?;
-                return Ok(AttachOutcome::Closed);
+                return scanner.close(output)
             }
             Err(error) => return Err(error),
         }
     }
 }
 
+#[derive(Default)]
+struct AttachOutputScanner {
+    pending: Vec<u8>,
+}
+
+impl AttachOutputScanner {
+    fn push<W: Write>(
+        &mut self,
+        bytes: &[u8],
+        output: &mut W,
+    ) -> io::Result<Option<AttachOutcome>> {
+        self.pending.extend_from_slice(bytes);
+        if let Some(position) = find_bytes(&self.pending, STOLEN_NOTICE_BYTES) {
+            output.write_all(&self.pending[..position])?;
+            output.flush()?;
+            self.pending.clear();
+            return Ok(Some(AttachOutcome::Stolen));
+        }
+        if let Some(position) = find_bytes(&self.pending, EXITED_NOTICE_BYTES) {
+            output.write_all(&self.pending[..position])?;
+            output.flush()?;
+            self.pending.clear();
+            return Ok(Some(AttachOutcome::Exited));
+        }
+
+        let retained = partial_marker_suffix_len(&self.pending);
+        let flush_count = self.pending.len() - retained;
+        if flush_count > 0 {
+            output.write_all(&self.pending[..flush_count])?;
+            self.pending.drain(..flush_count);
+            output.flush()?;
+        }
+        Ok(None)
+    }
+
+    fn close<W: Write>(&mut self, output: &mut W) -> io::Result<AttachOutcome> {
+        output.write_all(&self.pending)?;
+        output.flush()?;
+        self.pending.clear();
+        Ok(AttachOutcome::Closed)
+    }
+}
+
 fn partial_marker_suffix_len(data: &[u8]) -> usize {
-    let maximum = data.len().min(STOLEN_NOTICE_BYTES.len().saturating_sub(1));
-    (1..=maximum)
-        .rev()
-        .find(|&length| data.ends_with(&STOLEN_NOTICE_BYTES[..length]))
+    [STOLEN_NOTICE_BYTES, EXITED_NOTICE_BYTES]
+        .into_iter()
+        .map(|marker| {
+            let maximum = data.len().min(marker.len().saturating_sub(1));
+            (1..=maximum)
+                .rev()
+                .find(|&length| data.ends_with(&marker[..length]))
+                .unwrap_or(0)
+        })
+        .max()
         .unwrap_or(0)
 }
 
@@ -873,13 +1350,17 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     let outcome = {
         let mut stream = UnixStream::connect(&record.socket)?;
-        forward_attach_stream(&mut stream, &mut io::stdout())?
+        stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
+        stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
+        forward_attach_duplex(&mut stream, &mut io::stdout())?
     };
 
     #[cfg(windows)]
     let outcome = {
         let mut stream = named_pipe::PipeClient::connect(&record.socket)?;
-        forward_attach_stream(&mut stream, &mut io::stdout())?
+        stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL));
+        stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
+        forward_attach_duplex(&mut stream, &mut io::stdout())?
     };
 
     if outcome == AttachOutcome::Stolen {
@@ -889,6 +1370,77 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn forward_attach_duplex<S: Read + Write, W: Write>(
+    stream: &mut S,
+    output: &mut W,
+) -> io::Result<AttachOutcome> {
+    let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(CLIENT_QUEUE_CAPACITY);
+    thread::Builder::new()
+        .name("festerm-sessiond-stdin".to_owned())
+        .spawn(move || {
+            let mut stdin = io::stdin();
+            let mut buffer = [0u8; 4096];
+            loop {
+                match stdin.read(&mut buffer) {
+                    Ok(0) => return,
+                    Ok(count) => {
+                        if input_tx.send(buffer[..count].to_vec()).is_err() {
+                            return;
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => return,
+                }
+            }
+        })?;
+
+    let mut scanner = AttachOutputScanner::default();
+    let mut buffer = [0u8; 4096];
+    loop {
+        for input in input_rx.try_iter() {
+            write_client_frame(stream, CLIENT_FRAME_INPUT, &input)?;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => return scanner.close(output),
+            Ok(count) => {
+                if let Some(outcome) = scanner.push(&buffer[..count], output)? {
+                    return Ok(outcome);
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
+                return scanner.close(output)
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn write_client_frame<W: Write>(writer: &mut W, kind: u8, payload: &[u8]) -> io::Result<()> {
+    let payload_len = u32::try_from(payload.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "session client frame payload is too large",
+        )
+    })?;
+    if payload.len() > MAX_CLIENT_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "session client frame payload exceeds the protocol limit",
+        ));
+    }
+    writer.write_all(CLIENT_FRAME_MAGIC)?;
+    writer.write_all(&[kind])?;
+    writer.write_all(&payload_len.to_be_bytes())?;
+    writer.write_all(payload)?;
+    writer.flush()
 }
 
 fn validate_name(name: String) -> Result<String, Box<dyn std::error::Error>> {
@@ -926,7 +1478,10 @@ fn runtime_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
                 .join("fesTerm")
                 .join("sessiond"))
         } else {
-            Ok(PathBuf::from("C:\\Temp\\festerm-sessiond"))
+            Err(
+                "neither LOCALAPPDATA nor USERPROFILE is set; refusing an unscoped runtime directory"
+                    .into(),
+            )
         }
     }
 }
@@ -1079,10 +1634,13 @@ fn set_file_mode(path: &Path, mode: u32) -> io::Result<()> {
 }
 
 fn spawn_shell(
-    shell: &str,
+    shell: &ShellSpec,
     cols: u16,
     rows: u16,
 ) -> Result<SpawnedShell, Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    festerm_pty::prepare_windows_conpty_runtime()?;
+
     let system = native_pty_system();
     let size = PtySize {
         rows,
@@ -1091,8 +1649,12 @@ fn spawn_shell(
         pixel_height: 0,
     };
     let pair = system.openpty(size)?;
-    let mut command = CommandBuilder::new(shell);
-    command.cwd(env::current_dir()?);
+    let mut command = CommandBuilder::new(&shell.executable);
+    command.args(&shell.arguments);
+    command.cwd(match &shell.working_directory {
+        Some(working_directory) => PathBuf::from(working_directory),
+        None => env::current_dir()?,
+    });
     command.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(command)?;
     let master = pair.master;
@@ -1246,6 +1808,7 @@ mod tests {
         let listener = UnixListener::bind(&socket_path).unwrap();
         let (pty_sender, pty_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
+        let (command_sender, command_receiver) = mpsc::channel();
         let service = thread::spawn(move || {
             session_client_loop(
                 listener,
@@ -1254,6 +1817,11 @@ mod tests {
                     pending: Vec::new(),
                 },
                 Some(event_sender),
+                move |command| {
+                    command_sender
+                        .send(command)
+                        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "test closed"))
+                },
                 || {},
             )
         });
@@ -1272,6 +1840,11 @@ mod tests {
         let mut replayed = [0u8; 8];
         first.read_exact(&mut replayed).unwrap();
         assert_eq!(&replayed, b"detached");
+        write_client_frame(&mut first, CLIENT_FRAME_INPUT, b"typed").unwrap();
+        match command_receiver.recv().unwrap() {
+            ClientCommand::Input(data) => assert_eq!(data, b"typed"),
+            command => panic!("expected input command, received {command:?}"),
+        }
 
         assert_eq!(
             send_and_receive(&pty_sender, &mut first, b"first"),
@@ -1296,6 +1869,20 @@ mod tests {
         let mut second_replay = [0u8; 13];
         second.read_exact(&mut second_replay).unwrap();
         assert_eq!(&second_replay, b"detachedfirst");
+        let mut resize = Vec::new();
+        for value in [120u16, 40, 1200, 800] {
+            resize.extend_from_slice(&value.to_be_bytes());
+        }
+        write_client_frame(&mut second, CLIENT_FRAME_RESIZE, &resize).unwrap();
+        match command_receiver.recv().unwrap() {
+            ClientCommand::Resize(size) => {
+                assert_eq!(size.cols, 120);
+                assert_eq!(size.rows, 40);
+                assert_eq!(size.pixel_width, 1200);
+                assert_eq!(size.pixel_height, 800);
+            }
+            command => panic!("expected resize command, received {command:?}"),
+        }
 
         assert_eq!(
             send_and_receive(&pty_sender, &mut second, b"second"),
@@ -1307,6 +1894,10 @@ mod tests {
         );
 
         drop(pty_sender);
+        let mut exited = vec![0; EXITED_NOTICE_BYTES.len()];
+        second.read_exact(&mut exited).unwrap();
+        assert_eq!(exited, EXITED_NOTICE_BYTES);
+        assert_eq!(second.read(&mut eof).unwrap(), 0);
         service.join().unwrap().unwrap();
         let _ = fs::remove_dir_all(directory);
     }
@@ -1403,6 +1994,8 @@ mod tests {
                     pid: 22,
                     socket: "demo.sock".to_owned(),
                     shell: "shell".to_owned(),
+                    arguments: Vec::new(),
+                    working_directory: None,
                     cols: 80,
                     rows: 24,
                     created_at_unix_ms: 2,
@@ -1430,6 +2023,26 @@ mod tests {
     }
 
     #[test]
+    fn failed_client_output_is_retired_for_worker_join() {
+        let (output, _receiver) = mpsc::sync_channel(0);
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            output,
+            stolen: Arc::new(AtomicBool::new(false)),
+            thread: thread::spawn(|| -> io::Result<()> {
+                panic!("test client worker panic");
+            }),
+        });
+        let mut retired = Vec::new();
+
+        send_to_active(&mut active, &mut retired, b"output".to_vec());
+
+        assert!(active.is_none());
+        assert_eq!(retired.len(), 1);
+        assert!(join_client_thread(retired.pop().unwrap()).is_err());
+    }
+
+    #[test]
     fn valid_names_are_accepted() {
         assert_eq!(validate_name("demo-01".to_owned()).unwrap(), "demo-01");
         assert_eq!(validate_name("session_2".to_owned()).unwrap(), "session_2");
@@ -1448,6 +2061,8 @@ mod tests {
             pid: 1234,
             socket: "/tmp/festerm-sessiond/demo.sock".to_owned(),
             shell: "/bin/bash".to_owned(),
+            arguments: vec!["-l".to_owned()],
+            working_directory: Some("/tmp".to_owned()),
             cols: 80,
             rows: 24,
             created_at_unix_ms: 1_700_000_000_000,
@@ -1458,6 +2073,33 @@ mod tests {
         let serialized = serde_json::to_string(&registry).unwrap();
         let parsed: SessionRegistry = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.sessions.get("demo"), Some(&record));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawned_shell_honors_the_configured_working_directory() {
+        let directory = unique_test_directory("cwd");
+        fs::create_dir_all(&directory).unwrap();
+        let mut spawned = spawn_shell(
+            &ShellSpec {
+                executable: "/bin/pwd".to_owned(),
+                arguments: Vec::new(),
+                working_directory: Some(directory.to_string_lossy().into_owned()),
+            },
+            80,
+            24,
+        )
+        .unwrap();
+        let mut reader = spawned.master.try_clone_reader().unwrap();
+        let mut output = String::new();
+        reader.read_to_string(&mut output).unwrap();
+        let status = spawned.child.wait().unwrap();
+        assert!(status.success());
+        assert_eq!(
+            Path::new(output.trim()),
+            directory.canonicalize().unwrap().as_path()
+        );
+        fs::remove_dir(directory).unwrap();
     }
 
     fn unique_test_directory(label: &str) -> PathBuf {

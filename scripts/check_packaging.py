@@ -23,6 +23,10 @@ EXPECTED_MACOS_ICONS = [
     f"../assets/app-icon/app-icon-{size}.png"
     for size in (16, 32, 128, 256, 512)
 ]
+EXPECTED_BINARIES = [
+    {"path": "festerm", "main": True},
+    {"path": "festerm-sessiond", "main": False},
+]
 
 
 class PackagingError(Exception):
@@ -64,8 +68,10 @@ def verify() -> None:
         if config.get("formats") != EXPECTED_FORMATS[platform]:
             errors.append(f"{path.relative_to(ROOT)} has unexpected package formats")
         binaries = config.get("binaries")
-        if binaries != [{"path": "festerm", "main": True}]:
-            errors.append(f"{path.relative_to(ROOT)} must package only the fesTerm binary")
+        if binaries != EXPECTED_BINARIES:
+            errors.append(
+                f"{path.relative_to(ROOT)} must package fesTerm and festerm-sessiond"
+            )
 
     macos = load_toml(CONFIGS["macos"])
     if macos.get("icons") != EXPECTED_MACOS_ICONS:

@@ -7,6 +7,11 @@ The checked-in `cargo-packager` 0.11.8 manifests implement ADR-0021:
   hash-verified ConPTY runtime staged by `scripts/stage-conpty.ps1`;
 - `linux.toml` produces AppImage and Debian packages.
 
+Every native package includes both the `festerm` application and its
+`festerm-sessiond` local-session persistence helper. They must be built from
+the same workspace revision and installed beside each other so the application
+can resolve the helper without searching `PATH`.
+
 The macOS packager builds its ICNS container from supported PNG sizes. Windows
 uses the checked-in `assets/app-icon/festerm.ico`, reproducibly generated with:
 

@@ -281,7 +281,7 @@ impl DurableSessionDraft {
         }
         let persistence = PersistenceConfiguration::new(self.provider, self.session_name.trim());
         persistence
-            .to_session_strategy()
+            .validate_session_name()
             .map_err(|error| error.to_string())?;
         Ok(Some(persistence))
     }
@@ -831,7 +831,7 @@ fn show_durable_session_controls(
         DurableSessionTarget::Local => (
             "Durable local session",
             "Use a durable local session",
-            "Attach to the named local tmux or screen session, creating it when needed.",
+            "Keep the named shell in fesTerm's local daemon, or use tmux/GNU screen.",
         ),
         DurableSessionTarget::Remote => (
             "Durable remote session",
@@ -843,6 +843,9 @@ fn show_durable_session_controls(
         ui.label(egui::RichText::new(heading).color(theme::TEXT_PRIMARY));
         if toggle_switch(ui, draft.enabled, toggle_label).clicked() {
             draft.enabled = !draft.enabled;
+            if draft.enabled && matches!(target, DurableSessionTarget::Local) {
+                draft.provider = PersistenceProviderKind::FestermSessiond;
+            }
         }
     });
     ssh_paragraph(ui, description);
@@ -852,6 +855,13 @@ fn show_durable_session_controls(
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
+        if matches!(target, DurableSessionTarget::Local) {
+            ui.radio_value(
+                &mut draft.provider,
+                PersistenceProviderKind::FestermSessiond,
+                "fesTerm native",
+            );
+        }
         ui.radio_value(&mut draft.provider, PersistenceProviderKind::Tmux, "tmux");
         ui.radio_value(
             &mut draft.provider,
@@ -4692,7 +4702,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_local_profile_can_opt_into_named_tmux_persistence() {
+    fn saved_local_profile_defaults_to_named_native_persistence() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
@@ -4717,7 +4727,10 @@ mod tests {
         let persistence = local
             .persistence()
             .expect("saved local profile must retain explicit persistence");
-        assert_eq!(persistence.provider(), PersistenceProviderKind::Tmux);
+        assert_eq!(
+            persistence.provider(),
+            PersistenceProviderKind::FestermSessiond
+        );
         assert_eq!(persistence.session_name(), "main");
     }
 

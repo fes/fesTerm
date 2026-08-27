@@ -8,7 +8,10 @@ authors = ["fes"]
 out-dir = "../target/release"
 formats = ["nsis"]
 icons = ["../assets/app-icon/festerm.ico"]
-binaries = [{ path = "festerm", main = true }]
+binaries = [
+  { path = "festerm", main = true },
+  { path = "festerm-sessiond", main = false },
+]
 resources = [
   { src = "../target/release/runtime/conpty", target = "runtime/conpty" },
 ]
