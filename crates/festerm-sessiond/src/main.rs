@@ -527,7 +527,7 @@ fn daemon_client_loop<R: Read + Send + 'static>(
         reader,
         None,
         |command| match command {
-            ClientCommand::Input(data) => writer.write_all(&data),
+            ClientCommand::Input(data) => writer.write_all(&data).and_then(|()| writer.flush()),
             ClientCommand::Resize(size) => spawned
                 .master
                 .resize(size)
@@ -733,7 +733,9 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
         if let Err(error) =
             handle_pending_client_input(&client_input_rx, active.as_ref(), &mut |command| {
                 match command {
-                    ClientCommand::Input(data) => writer.write_all(&data),
+                    ClientCommand::Input(data) => {
+                        writer.write_all(&data).and_then(|()| writer.flush())
+                    }
                     ClientCommand::Resize(size) => spawned
                         .master
                         .resize(size)
