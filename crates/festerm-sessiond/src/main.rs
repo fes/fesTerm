@@ -1486,6 +1486,7 @@ fn runtime_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 }
 
+#[cfg(unix)]
 fn session_socket_path(
     runtime_root: &Path,
     name: &str,

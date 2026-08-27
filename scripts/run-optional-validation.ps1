@@ -90,6 +90,8 @@ if ($env:OS -eq 'Windows_NT') {
     if ((Test-Path -LiteralPath $vcvarsallPath) -and
         (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
         $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+        $env:PATH = "$llvmBinPath;$env:PATH"
+        $env:CC = 'clang'
         Invoke-VisualStudioCommand `
             -Command 'cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture' `
             -VcVarsAllPath $vcvarsallPath `

@@ -35,15 +35,16 @@ driven focus and accessibility proof.
 
 ### Native local persistence daemon
 
-`crates/festerm-sessiond/tests/native_daemon.rs` launches the packaged daemon
-binary as a separate process and exercises the real platform IPC transport.
-It proves that the daemon outlives its `start` launcher, accepts framed input,
-replays detached output, sends takeover notice plus EOF to the displaced
-client, routes subsequent output only to the newest client, and removes the
-session on native kill. Unix additionally verifies `0700` runtime-directory
-and `0600` registry/socket permissions. Windows executes the same flow through
-the current-user-DACL named pipe and ConPTY; cross-user rejection and explicit
-Job Object breakaway remain native `CP-11` evidence.
+`crates/festerm-sessiond/tests/native_daemon.rs` launches the daemon binary as
+a separate process and exercises the real platform IPC transport. It proves
+framed input, detached replay, takeover notice plus EOF for the displaced
+client, subsequent output routing only to the newest client, and native kill
+cleanup. Unix launches through `start`, proves that the daemon outlives that
+launcher, and verifies `0700` runtime-directory and `0600` registry/socket
+permissions. Windows launches `daemon` directly because CI and VM test runners
+may place the test in a Job Object that forbids breakaway, then executes the
+same flow through the current-user-DACL named pipe and ConPTY. Cross-user
+rejection and explicit Job Object breakaway remain native `CP-11` evidence.
 
 The test is ignored by default and runs once in every native-smoke job and in
 the aggregate optional-validation scripts used by the VM evidence adapter.

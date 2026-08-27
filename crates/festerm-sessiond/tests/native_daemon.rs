@@ -53,12 +53,10 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
         name: name.clone(),
     };
 
-    let mut start = daemon_command(&executable, &runtime_root);
-    start
-        .args(["start", "--name", &name, "--shell"])
-        .arg(test_shell());
-    let output = start.output().unwrap();
-    assert_success("start", &output);
+    #[cfg(unix)]
+    launch_session(&executable, &runtime_root, &name);
+    #[cfg(windows)]
+    let mut daemon = launch_session(&executable, &runtime_root, &name);
 
     let registry = runtime_root.join("festerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
@@ -90,6 +88,55 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
         String::from_utf8(output.stdout).unwrap().trim(),
         "no live sessions"
     );
+    #[cfg(windows)]
+    assert!(daemon.wait().unwrap().success());
+}
+
+#[cfg(unix)]
+fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
+    let output = daemon_command(executable, runtime_root)
+        .args(["start", "--name", name, "--shell"])
+        .arg(test_shell())
+        .output()
+        .unwrap();
+    assert_success("start", &output);
+}
+
+#[cfg(windows)]
+fn launch_session(executable: &Path, runtime_root: &Path, name: &str) -> std::process::Child {
+    use std::{process::Stdio, thread};
+
+    let mut daemon = daemon_command(executable, runtime_root)
+        .args(["daemon", "--name", name, "--shell"])
+        .arg(test_shell())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let registry = runtime_root
+        .join("fesTerm")
+        .join("sessiond")
+        .join("registry.json");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if fs::read(&registry)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|value| value["sessions"].get(name).is_some())
+        {
+            return daemon;
+        }
+        assert!(
+            daemon.try_wait().unwrap().is_none(),
+            "daemon exited before registering"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "daemon did not register within two seconds"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn daemon_command(executable: &Path, runtime_root: &Path) -> Command {
