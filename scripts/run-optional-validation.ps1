@@ -7,6 +7,18 @@ param(
     })
 )
 
+function Invoke-NativeCommand {
+    param([scriptblock] $Command)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 if ($env:FESTERM_RUN_OPTIONAL_VALIDATION -ne '1') {
     throw 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.'
 }
@@ -46,7 +58,22 @@ if ($env:OS -eq 'Windows_NT') {
     if ($LASTEXITCODE -ne 0) { throw 'Workspace build failed.' }
 }
 
-cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+if ($env:OS -eq 'Windows_NT') {
+    $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+    $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
+    if ((Test-Path -LiteralPath $vcvarsallPath) -and
+        (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+        $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+        $command = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture"
+        Invoke-NativeCommand { cmd.exe /d /c $command }
+    } else {
+        Invoke-NativeCommand {
+            cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+        }
+    }
+} else {
+    cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+}
 if ($LASTEXITCODE -eq 0) {
     Add-Content -Path $ResultPath -Value "`nsuite=sessiond-native status=pass"
 } else {
