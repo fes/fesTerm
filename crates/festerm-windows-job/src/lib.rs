@@ -47,8 +47,8 @@ mod imp {
             return false;
         };
         let mut exit_code = 0;
-        unsafe { GetExitCodeProcess(process.0, &raw mut exit_code) != 0 }
-        &&exit_code == STILL_ACTIVE as u32
+        let queried = unsafe { GetExitCodeProcess(process.0, &raw mut exit_code) != 0 };
+        queried && exit_code == STILL_ACTIVE as u32
     }
 
     /// Terminates a process by identifier.
