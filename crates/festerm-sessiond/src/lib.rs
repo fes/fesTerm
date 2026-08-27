@@ -466,7 +466,7 @@ fn connect_or_start(
     size: TerminalSize,
 ) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
     if let Some(record) = load_registry()?.sessions.get(name) {
-        if let Ok(stream) = connect_record(record) {
+        if let Ok(stream) = connect_record(record, size) {
             return Ok(stream);
         }
     }
@@ -492,21 +492,7 @@ fn connect_or_start(
     if let Some(directory) = profile.working_directory() {
         command.arg("--cwd").arg(directory);
     }
-    match profile.environment() {
-        EnvironmentPolicy::Inherit => {}
-        EnvironmentPolicy::InheritWith(environment)
-            if environment
-                .keys()
-                .all(|key| key.to_string_lossy().eq_ignore_ascii_case("PATH")) =>
-        {
-            command.envs(environment);
-        }
-        EnvironmentPolicy::Clear(_) | EnvironmentPolicy::InheritWith(_) => {
-            return Err(PersistentSessionError::new(
-                "persistent local sessions do not support explicit environment maps",
-            ))
-        }
-    }
+    append_environment_options(&mut command, profile.environment())?;
     let output = command.output().map_err(|error| {
         PersistentSessionError::new(format!("could not start {}: {error}", daemon.display()))
     })?;
@@ -521,7 +507,7 @@ fn connect_or_start(
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         if let Some(record) = load_registry()?.sessions.get(name) {
-            if let Ok(stream) = connect_record(record) {
+            if let Ok(stream) = connect_record(record, size) {
                 return Ok(stream);
             }
         }
@@ -536,6 +522,7 @@ fn connect_or_start(
 
 fn connect_record(
     record: &SessionRecord,
+    size: TerminalSize,
 ) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
     let _pid = record.pid;
     #[cfg(unix)]
@@ -549,7 +536,13 @@ fn connect_record(
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        Ok(Box::new(stream))
+        let mut stream: Box<dyn SessionStream> = Box::new(stream);
+        write_resize(&mut stream, size).map_err(|error| {
+            PersistentSessionError::new(format!(
+                "could not initialize persistent session geometry: {error}"
+            ))
+        })?;
+        Ok(stream)
     }
 
     #[cfg(windows)]
@@ -559,8 +552,40 @@ fn connect_record(
         })?;
         stream.set_read_timeout(Some(POLL_INTERVAL));
         stream.set_write_timeout(Some(WRITE_TIMEOUT));
-        Ok(Box::new(stream))
+        let mut stream: Box<dyn SessionStream> = Box::new(stream);
+        write_resize(&mut stream, size).map_err(|error| {
+            PersistentSessionError::new(format!(
+                "could not initialize persistent session geometry: {error}"
+            ))
+        })?;
+        Ok(stream)
     }
+}
+
+fn append_environment_options(
+    command: &mut Command,
+    policy: &EnvironmentPolicy,
+) -> Result<(), PersistentSessionError> {
+    let (policy_name, environment) = match policy {
+        EnvironmentPolicy::Inherit => return Ok(()),
+        EnvironmentPolicy::Clear(environment) => ("clear", environment),
+        EnvironmentPolicy::InheritWith(environment) => ("inherit-with", environment),
+    };
+    command.arg("--env-policy").arg(policy_name);
+    for (key, value) in environment {
+        let key = key.to_str().ok_or_else(|| {
+            PersistentSessionError::new(
+                "persistent local session environment keys must be valid Unicode",
+            )
+        })?;
+        let value = value.to_str().ok_or_else(|| {
+            PersistentSessionError::new(
+                "persistent local session environment values must be valid Unicode",
+            )
+        })?;
+        command.arg("--env").arg(key).arg(value);
+    }
+    Ok(())
 }
 
 fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
@@ -814,6 +839,35 @@ mod tests {
             wait_for_lifecycle(&session, SessionLifecycle::is_terminal),
             SessionLifecycle::Exited(exit) if exit.success()
         ));
+    }
+
+    #[test]
+    fn daemon_command_carries_explicit_environment_policy() {
+        let policy = EnvironmentPolicy::InheritWith(std::collections::BTreeMap::from([
+            ("LANG".into(), "en_US.UTF-8".into()),
+            ("PATH".into(), "/opt/homebrew/bin:/usr/bin".into()),
+        ]));
+        let mut command = Command::new("festerm-sessiond");
+
+        append_environment_options(&mut command, &policy).unwrap();
+
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                "--env-policy",
+                "inherit-with",
+                "--env",
+                "LANG",
+                "en_US.UTF-8",
+                "--env",
+                "PATH",
+                "/opt/homebrew/bin:/usr/bin",
+            ]
+        );
     }
 
     fn read_frame(reader: &mut impl Read) -> (u8, Vec<u8>) {

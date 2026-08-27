@@ -101,8 +101,14 @@ The repository pins the stable Rust toolchain in `rust-toolchain.toml`.
 
 ```sh
 cargo build
-cargo run -p festerm
+scripts/run-festerm-dev.sh
 ```
+
+The development launcher builds `festerm-sessiond` and isolates both the
+configuration file and native-persistence registry beneath
+`target/festerm-dev`. This prevents a repository-built fesTerm from reading,
+rewriting, attaching to, or terminating sessions owned by an installed
+fesTerm. On Windows, use `scripts/run-festerm-dev.ps1`.
 
 Without an enabled workspace, the first run opens the singleton Launcher;
 selecting Local Shell replaces that chip in place with the platform default

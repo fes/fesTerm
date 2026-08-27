@@ -106,15 +106,17 @@ terminal_ligatures = false
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
-`working_directory` directly to `festerm_pty::LocalProfile`; they do not
-contain environment overrides. A saved Local profile may add the same optional
-`persistence` table shown above to select a local `tmux` or `screen` session.
-When present, the provider command replaces the profile executable for that
-launch. tmux attaches or creates the named session, hides its status bar, and
-uses the latest attached client for window sizing; GNU Screen starts with
-`-c /dev/null` so user screenrc captions/hardstatus do not wrap the shell. The
-working directory still applies. The built-in **Local Shell** is not a profile
-and never enables persistence.
+`working_directory` directly to `festerm_pty::LocalProfile`. On macOS, fesTerm
+also supplies login-shell `PATH` and locale corrections as inherited
+environment overrides. A saved Local profile may add the same optional
+`persistence` table shown above to select local `tmux`, `screen`, or
+`festerm-sessiond` persistence. tmux attaches or creates the named session,
+hides its status bar, and uses the latest attached client for window sizing;
+GNU Screen starts with `-c /dev/null` so user screenrc captions/hardstatus do
+not wrap the shell. `festerm-sessiond` preserves the original executable,
+arguments, working directory, and environment policy while keeping the PTY in
+a standalone local daemon. The built-in **Local Shell** is not a profile and
+never enables persistence.
 
 SSH profiles convert host, port, username, terminal type, and initial
 dimensions to `festerm_ssh::SshConnectionProfile`. Their optional

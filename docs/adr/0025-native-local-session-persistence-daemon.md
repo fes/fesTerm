@@ -248,9 +248,11 @@ cross-platform evidence and review.
   local provider, attach-or-create launch, Inspector facts, non-destructive
   tab detach, replay, and newest-client takeover.
 - **Automated tests required:** `festerm-sessiond` covers argument and identity
-  validation, registry round trips and PID-safe removal, replay bounds,
-  split-marker client handling, and an end-to-end Unix service-loop test in
-  which a second client steals the session from the first.
+  validation, registry round trips and PID-safe removal, replay bounds and
+  truncation recovery, split-marker client handling, and an end-to-end service
+  test in which clients repeatedly steal the session, apply new geometry before
+  replay, preserve explicit child environment, and remain connected through
+  bounded burst-output backpressure.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

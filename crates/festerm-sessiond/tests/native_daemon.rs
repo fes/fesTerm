@@ -11,6 +11,7 @@ use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 
 const FRAME_MAGIC: &[u8; 4] = b"FSD1";
 const FRAME_INPUT: u8 = 1;
+const FRAME_RESIZE: u8 = 2;
 const STOLEN_NOTICE: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 
@@ -63,17 +64,25 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
     assert_native_permissions(&registry, &endpoint);
 
-    let mut first = connect(&endpoint);
+    let mut first = connect(&endpoint, 80, 24);
     eprintln!("sessiond-native phase=first-connected");
     #[cfg(windows)]
-    assert_windows_ready(&mut *first);
+    let initial_output = assert_windows_ready(&mut *first);
+    #[cfg(unix)]
+    let initial_output = Vec::new();
     eprintln!("sessiond-native phase=initial-output");
+    assert_contains_or_received(
+        &mut *first,
+        &initial_output,
+        b"ENV:FESTERM_SESSIOND_SMOKE=explicit-environment",
+    );
+    eprintln!("sessiond-native phase=environment");
     send_input(&mut *first, &test_input("first-marker")).unwrap();
     eprintln!("sessiond-native phase=first-input-sent");
     assert_contains(&mut *first, b"first-marker");
     eprintln!("sessiond-native phase=first-output");
 
-    let mut second = connect(&endpoint);
+    let mut second = connect(&endpoint, 100, 40);
     eprintln!("sessiond-native phase=second-connected");
     assert_contains(&mut *first, STOLEN_NOTICE);
     assert_eof(&mut *first);
@@ -83,6 +92,24 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     send_input(&mut *second, &test_input("second-marker")).unwrap();
     assert_contains(&mut *second, b"second-marker");
     eprintln!("sessiond-native phase=second-output");
+
+    assert_contains(&mut *second, b"BURST-ONE-DONE");
+    eprintln!("sessiond-native phase=burst-output");
+
+    send_input(&mut *second, &test_input("report-size")).unwrap();
+    assert_contains(&mut *second, b"40 100");
+    eprintln!("sessiond-native phase=resize");
+
+    send_input(&mut *second, &test_input("preempt-marker")).unwrap();
+    assert_contains(&mut *second, b"INPUT:preempt-marker");
+    std::thread::sleep(Duration::from_millis(100));
+    let mut third = connect(&endpoint, 120, 50);
+    assert_contains(&mut *second, STOLEN_NOTICE);
+    assert_eof(&mut *second);
+    assert_contains(&mut *third, b"BURST-TWO-DONE");
+    send_input(&mut *third, &test_input("report-size-again")).unwrap();
+    assert_contains(&mut *third, b"50 120");
+    eprintln!("sessiond-native phase=reconnect-resize");
 
     let output = daemon_command(&executable, &runtime_root)
         .args(["kill", "--name", &name])
@@ -112,6 +139,13 @@ fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
     for argument in test_shell_arguments() {
         command.arg("--arg").arg(argument);
     }
+    command.args([
+        "--env-policy",
+        "clear",
+        "--env",
+        "FESTERM_SESSIOND_SMOKE",
+        "explicit-environment",
+    ]);
     let output = command.output().unwrap();
     assert_success("start", &output);
 }
@@ -127,6 +161,13 @@ fn launch_session(executable: &Path, runtime_root: &Path, name: &str) -> std::pr
     for argument in test_shell_arguments() {
         command.arg("--arg").arg(argument);
     }
+    command.args([
+        "--env-policy",
+        "clear",
+        "--env",
+        "FESTERM_SESSIOND_SMOKE",
+        "explicit-environment",
+    ]);
     let mut daemon = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -177,12 +218,6 @@ fn short_runtime_root(suffix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("fsd-native-{suffix}"))
 }
 
-#[cfg(unix)]
-fn test_shell(_daemon: &Path) -> PathBuf {
-    PathBuf::from("/bin/cat")
-}
-
-#[cfg(windows)]
 fn test_shell(daemon: &Path) -> PathBuf {
     daemon
         .parent()
@@ -193,19 +228,22 @@ fn test_shell(daemon: &Path) -> PathBuf {
         ))
 }
 
-#[cfg(unix)]
-fn test_shell_arguments() -> Vec<&'static str> {
-    Vec::new()
-}
-
-#[cfg(windows)]
 fn test_shell_arguments() -> Vec<&'static str> {
     vec![
+        "report-env:FESTERM_SESSIOND_SMOKE",
         "emit:READY",
         "read-line",
         "echo:INPUT",
         "read-line",
         "echo:INPUT",
+        "emit-bytes:524288:BURST-ONE-DONE",
+        "read-line",
+        "report-size",
+        "read-line",
+        "echo:INPUT",
+        "emit-bytes:524288:BURST-TWO-DONE",
+        "read-line",
+        "report-size",
         "spin",
     ]
 }
@@ -229,28 +267,42 @@ fn registry_endpoint(path: &Path, name: &str) -> String {
 }
 
 #[cfg(unix)]
-fn connect(endpoint: &str) -> Box<dyn ClientStream> {
-    let stream = UnixStream::connect(endpoint).unwrap();
+fn connect(endpoint: &str, cols: u16, rows: u16) -> Box<dyn ClientStream> {
+    let mut stream = UnixStream::connect(endpoint).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
         .unwrap();
+    send_resize(&mut stream, cols, rows).unwrap();
     Box::new(stream)
 }
 
 #[cfg(windows)]
-fn connect(endpoint: &str) -> Box<dyn ClientStream> {
+fn connect(endpoint: &str, cols: u16, rows: u16) -> Box<dyn ClientStream> {
     let mut stream = named_pipe::PipeClient::connect_ms(endpoint, 2_000).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(2)));
     stream.set_write_timeout(Some(Duration::from_secs(2)));
+    send_resize(&mut stream, cols, rows).unwrap();
     Box::new(stream)
 }
 
 fn send_input(stream: &mut dyn ClientStream, bytes: &[u8]) -> io::Result<()> {
+    send_frame(stream, FRAME_INPUT, bytes)
+}
+
+fn send_resize(stream: &mut dyn ClientStream, cols: u16, rows: u16) -> io::Result<()> {
+    let mut payload = Vec::with_capacity(8);
+    for value in [cols, rows, 0, 0] {
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
+    send_frame(stream, FRAME_RESIZE, &payload)
+}
+
+fn send_frame(stream: &mut dyn ClientStream, kind: u8, bytes: &[u8]) -> io::Result<()> {
     stream.write_all(FRAME_MAGIC)?;
-    stream.write_all(&[FRAME_INPUT])?;
+    stream.write_all(&[kind])?;
     stream.write_all(&(bytes.len() as u32).to_be_bytes())?;
     stream.write_all(bytes)?;
     #[cfg(not(windows))]
@@ -259,7 +311,7 @@ fn send_input(stream: &mut dyn ClientStream, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn assert_windows_ready(stream: &mut dyn ClientStream) {
+fn assert_windows_ready(stream: &mut dyn ClientStream) -> Vec<u8> {
     let mut received = Vec::new();
     let mut replied_through = 0;
     let mut buffer = [0u8; 4096];
@@ -275,6 +327,16 @@ fn assert_windows_ready(stream: &mut dyn ClientStream) {
             send_input(stream, b"\x1b[1;1R").unwrap();
         }
         replied_through = received.len().saturating_sub(3);
+    }
+    received
+}
+
+fn assert_contains_or_received(stream: &mut dyn ClientStream, received: &[u8], expected: &[u8]) {
+    if !received
+        .windows(expected.len())
+        .any(|window| window == expected)
+    {
+        assert_contains(stream, expected);
     }
 }
 

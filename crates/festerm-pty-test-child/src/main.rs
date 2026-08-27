@@ -12,7 +12,9 @@
 //! | Command | Action |
 //! |---------|--------|
 //! | `emit:TEXT` | Write `TEXT\n` to stdout. |
+//! | `emit-bytes:COUNT:MARKER` | Write `COUNT` `x` bytes followed by `\nMARKER\n`. |
 //! | `emit-frames:COUNT:MILLIS` | Write `FRAME:00` through `FRAME:COUNT-1`, pausing `MILLIS` between lines. |
+//! | `report-env:NAME` | Write `ENV:NAME=VALUE\n`, or `<unset>` when absent. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
@@ -41,6 +43,24 @@ fn main() {
                 .expect("emit: stdout write succeeds");
             out.write_all(b"\n").expect("emit: stdout newline succeeds");
             out.flush().expect("emit: stdout flush succeeds");
+        } else if let Some(specification) = arg.strip_prefix("emit-bytes:") {
+            let (count, marker) = specification.split_once(':').unwrap_or_else(|| {
+                panic!("emit-bytes argument must be emit-bytes:COUNT:MARKER, got {arg:?}")
+            });
+            let count = count.parse::<usize>().unwrap_or_else(|_| {
+                panic!("emit-bytes argument must contain a byte count, got {arg:?}")
+            });
+            let mut out = stdout.lock();
+            let block = [b'x'; 4096];
+            let mut remaining = count;
+            while remaining > 0 {
+                let chunk = remaining.min(block.len());
+                out.write_all(&block[..chunk])
+                    .expect("emit-bytes: stdout write succeeds");
+                remaining -= chunk;
+            }
+            writeln!(out, "\n{marker}").expect("emit-bytes: marker write succeeds");
+            out.flush().expect("emit-bytes: stdout flush succeeds");
         } else if let Some(specification) = arg.strip_prefix("emit-frames:") {
             let (count, interval_millis) = specification
                 .split_once(':')
@@ -56,6 +76,11 @@ fn main() {
                 out.flush().expect("emit-frames: stdout flush succeeds");
                 thread::sleep(Duration::from_millis(interval_millis));
             }
+        } else if let Some(name) = arg.strip_prefix("report-env:") {
+            let value = std::env::var(name).unwrap_or_else(|_| "<unset>".to_owned());
+            let mut out = stdout.lock();
+            writeln!(out, "ENV:{name}={value}").expect("report-env: stdout write succeeds");
+            out.flush().expect("report-env: stdout flush succeeds");
         } else if arg == "read-line" {
             last_line.clear();
             stdin

@@ -8,7 +8,8 @@ fixture, or log.
 
 ## Baseline
 
-Run the local shell with `cargo run -p festerm`. Confirm that resizing preserves
+Run the local shell with `scripts/run-festerm-dev.sh` (or
+`scripts/run-festerm-dev.ps1` on Windows). Confirm that resizing preserves
 the visible grid, typed input reaches the child, selection yields to a mouse-
 reporting application, and exiting the child shuts down cleanly.
 
