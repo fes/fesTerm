@@ -57,28 +57,35 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     launch_session(&executable, &runtime_root, &name);
     #[cfg(windows)]
     let mut daemon = launch_session(&executable, &runtime_root, &name);
+    eprintln!("sessiond-native phase=launched");
 
     let registry = runtime_root.join("festerm").join("sessiond");
     let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
     assert_native_permissions(&registry, &endpoint);
 
     let mut first = connect(&endpoint);
+    eprintln!("sessiond-native phase=first-connected");
     send_input(&mut *first, b"first-marker\n").unwrap();
     assert_contains(&mut *first, b"first-marker");
+    eprintln!("sessiond-native phase=first-output");
 
     let mut second = connect(&endpoint);
+    eprintln!("sessiond-native phase=second-connected");
     assert_contains(&mut *first, STOLEN_NOTICE);
     assert_eof(&mut *first);
     assert_contains(&mut *second, b"first-marker");
+    eprintln!("sessiond-native phase=takeover");
 
     send_input(&mut *second, b"second-marker\n").unwrap();
     assert_contains(&mut *second, b"second-marker");
+    eprintln!("sessiond-native phase=second-output");
 
     let output = daemon_command(&executable, &runtime_root)
         .args(["kill", "--name", &name])
         .output()
         .unwrap();
     assert_success("kill", &output);
+    eprintln!("sessiond-native phase=killed");
     let output = daemon_command(&executable, &runtime_root)
         .arg("list")
         .output()
