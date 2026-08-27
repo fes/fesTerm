@@ -4,6 +4,9 @@
 # reference applications.
 set -eu
 
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$script_directory/.."
+
 if [ "${FESTERM_RUN_OPTIONAL_VALIDATION:-}" != "1" ]; then
     echo 'Set FESTERM_RUN_OPTIONAL_VALIDATION=1 to run optional validation.' >&2
     exit 2
