@@ -185,9 +185,11 @@ if ($nativePassed) {
 }
 
 if ($env:OS -eq 'Windows_NT') {
-    & "$PSScriptRoot\run-windows-os-input-smoke.ps1" `
-        -HostInputStateDirectory $HostInputStateDirectory `
-        -HostInputRunId $HostInputRunId
+    Invoke-NativeCommand {
+        & "$PSScriptRoot\run-windows-os-input-smoke.ps1" `
+            -HostInputStateDirectory $HostInputStateDirectory `
+            -HostInputRunId $HostInputRunId
+    }
     if ($LASTEXITCODE -eq 0) {
         Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=pass"
     } else {
