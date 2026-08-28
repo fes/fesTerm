@@ -2166,4 +2166,57 @@ mod tests {
             assert_eq!(cache.row(2).unwrap()[0].text(), expected[2]);
         }
     }
+
+    #[test]
+    fn persistent_reconnect_resize_stress_keeps_latest_rendered_state_coherent() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+
+        for generation in 0..100 {
+            let (width, height) = if generation % 2 == 0 {
+                (430.0, 280.0)
+            } else {
+                (930.0, 680.0)
+            };
+            harness.set_size(Vec2::new(width, height));
+            let marker = format!("\x1bc\x1b[3JRECONNECT:{generation:03}\r\nprompt> ");
+            harness.state_mut().terminal.ingest(marker.as_bytes());
+            harness.run();
+
+            let state = harness.state();
+            assert_eq!(
+                state.view.cache.dimensions(),
+                Some(state.terminal.dimensions()),
+                "render cache geometry diverged at reconnect generation {generation}"
+            );
+            let rendered = (0..state.terminal.dimensions().rows())
+                .filter_map(|row| state.view.cache.row(row))
+                .flatten()
+                .map(RenderedCell::text)
+                .collect::<String>();
+            assert!(
+                rendered.contains(&format!("RECONNECT:{generation:03}")),
+                "latest reconnect marker was not rendered at generation {generation}: {rendered:?}"
+            );
+            assert!(
+                rendered.contains("prompt>"),
+                "prompt disappeared at reconnect generation {generation}: {rendered:?}"
+            );
+            if generation > 0 {
+                let previous = format!("RECONNECT:{:03}", generation - 1);
+                if rendered.contains(&previous) {
+                    panic!(
+                        "stale reconnect content {previous:?} survived at generation \
+                         {generation}: {rendered:?}"
+                    );
+                }
+            }
+        }
+    }
 }

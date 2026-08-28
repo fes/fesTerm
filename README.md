@@ -38,6 +38,13 @@ real-provider reattach evidence remains open in
 keyboard-interactive/2FA, key-file references, and OpenSSH-config import remain
 future work.
 
+ADR 0025's provisional native local persistence daemon now supports
+owner-scoped IPC, explicit profile environment policies, resize-before-replay,
+bounded output backpressure, newest-client takeover, and truncated-replay
+recovery. Repository-built testing is isolated from an installed fesTerm
+beneath `target/festerm-dev`. The ADR remains Proposed pending final review and
+acceptance.
+
 Native packaging and signed updates are implemented under
 [ADR 0021](docs/adr/0021-cargo-packager-github-releases-distribution.md):
 signed/notarized macOS DMG, Authenticode-signed Windows NSIS, Linux AppImage

@@ -148,6 +148,7 @@ pub enum TerminalOp {
     SaveDec,
     RestoreDec,
     SetTabStop,
+    Reset,
     SetApplicationKeypad(bool),
     SetCursorStyle(CsiParameters),
     CursorUp(CsiParameters),
@@ -450,6 +451,7 @@ impl Parser {
             b'7' => TerminalOp::SaveDec,
             b'8' => TerminalOp::RestoreDec,
             b'H' => TerminalOp::SetTabStop,
+            b'c' => TerminalOp::Reset,
             b'=' => TerminalOp::SetApplicationKeypad(true),
             b'>' => TerminalOp::SetApplicationKeypad(false),
             _ => TerminalOp::Ignored,
@@ -507,7 +509,11 @@ impl Parser {
                 }
             }
             ParserState::StringEscape { kind, bytes } => {
-                if byte == b'\\' {
+                if byte == b'c' {
+                    self.state = ParserState::Ground;
+                    self.string_payload.clear();
+                    return TerminalOp::Reset;
+                } else if byte == b'\\' {
                     self.state = ParserState::Ground;
                     return self.finish_string(kind);
                 } else if byte == 0x1b {

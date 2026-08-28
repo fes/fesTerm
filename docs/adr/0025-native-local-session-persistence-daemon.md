@@ -252,7 +252,12 @@ cross-platform evidence and review.
   truncation recovery, split-marker client handling, and an end-to-end service
   test in which clients repeatedly steal the session, apply new geometry before
   replay, preserve explicit child environment, and remain connected through
-  bounded burst-output backpressure.
+  bounded burst-output backpressure. Truncated daemon replay is also fed through
+  the production terminal parser to verify RIS clears stale parser/display
+  state and renders only the safe suffix. A 100-generation headless
+  `TerminalView` stress test alternates viewport sizes and recovery replay,
+  asserting render-cache geometry, latest output, prompt continuity, and
+  absence of stale prior-generation cells.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

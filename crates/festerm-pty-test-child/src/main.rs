@@ -16,15 +16,17 @@
 //! | `emit-frames:COUNT:MILLIS` | Write `FRAME:00` through `FRAME:COUNT-1`, pausing `MILLIS` between lines. |
 //! | `report-env:NAME` | Write `ENV:NAME=VALUE\n`, or `<unset>` when absent. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
+//! | `read-until-enter` | Read raw bytes through CR or LF and retain the preceding bytes. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
 //! | `echo-hex:PREFIX` | Write `PREFIX:{last-line bytes as lowercase hex}\n` to stdout. |
+//! | `set-raw-input` | On Windows, disable console line editing and echo. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
 //! | `spin` | Sleep until the process is killed. |
 //! | `spawn` | Spawn self as a long-running descendant, write `CHILD:{pid}\n`, then wait for it. |
 //! | `exit:N` | Exit with decimal code N. |
 
 use std::{
-    io::{BufRead, Write},
+    io::{BufRead, Read, Write},
     process, thread,
     time::Duration,
 };
@@ -91,6 +93,20 @@ fn main() {
             // Strip any trailing CR or LF so echo output is clean.
             let trimmed = last_line.trim_end_matches(['\r', '\n']);
             last_line = trimmed.to_owned();
+        } else if arg == "read-until-enter" {
+            let mut bytes = Vec::new();
+            let mut byte = [0u8; 1];
+            loop {
+                stdin
+                    .lock()
+                    .read_exact(&mut byte)
+                    .expect("read-until-enter: stdin read succeeds");
+                if matches!(byte[0], b'\r' | b'\n') {
+                    break;
+                }
+                bytes.push(byte[0]);
+            }
+            last_line = String::from_utf8(bytes).expect("read-until-enter: input is valid UTF-8");
         } else if let Some(prefix) = arg.strip_prefix("echo:") {
             let mut out = stdout.lock();
             writeln!(out, "{prefix}:{last_line}").expect("echo: stdout write succeeds");
@@ -104,6 +120,8 @@ fn main() {
             let mut out = stdout.lock();
             writeln!(out, "{prefix}:{hex}").expect("echo-hex: stdout write succeeds");
             out.flush().expect("echo-hex: stdout flush succeeds");
+        } else if arg == "set-raw-input" {
+            set_raw_input();
         } else if arg == "report-size" {
             let (Width(cols), Height(rows)) =
                 terminal_size().expect("report-size: PTY provides terminal dimensions");
@@ -143,5 +161,39 @@ fn main() {
             eprintln!("festerm-pty-test-child: unknown command: {arg:?}");
             process::exit(1);
         }
+    }
+
+    #[cfg(windows)]
+    fn set_raw_input() {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Console::{
+            GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT,
+            ENABLE_PROCESSED_INPUT, STD_INPUT_HANDLE,
+        };
+
+        unsafe {
+            let input = GetStdHandle(STD_INPUT_HANDLE);
+            assert!(
+                !input.is_null() && input != INVALID_HANDLE_VALUE,
+                "set-raw-input: stdin handle is valid"
+            );
+            let mut mode = 0;
+            assert_ne!(
+                GetConsoleMode(input, &mut mode),
+                0,
+                "set-raw-input: stdin is a console"
+            );
+            mode &= !(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT);
+            assert_ne!(
+                SetConsoleMode(input, mode),
+                0,
+                "set-raw-input: console mode is writable"
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn set_raw_input() {
+        panic!("set-raw-input is supported only on Windows");
     }
 }

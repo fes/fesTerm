@@ -476,6 +476,29 @@ mod tests {
     }
 
     #[test]
+    fn ris_resets_visible_and_parser_state_before_replay() {
+        for incomplete_sequence in [
+            b"\x1b[".as_slice(),
+            b"\x1b]0;unterminated title".as_slice(),
+            b"\x1bPunterminated control string".as_slice(),
+        ] {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"stale\x1b[31mred");
+            terminal.ingest(incomplete_sequence);
+            terminal.ingest(b"\x1bc\x1b[3Jfresh");
+
+            assert!(terminal
+                .row_text(0)
+                .is_some_and(|row| row.starts_with("fresh")));
+            assert!(!(0..terminal.dimensions().rows())
+                .filter_map(|row| terminal.row_text(row))
+                .any(|row| row.contains("stale") || row.contains("red")));
+            assert_eq!(terminal.cell(0, 0).unwrap().foreground(), Color::Default);
+            assert_eq!(terminal.scrollback_stats().physical_rows(), 0);
+        }
+    }
+
+    #[test]
     fn repeated_resize_reflows_banner_and_prompt_cells_and_recovers_scrolled_off_lines() {
         // Under reflow (ADR 0017), shrinking the row count can push older
         // hard-broken lines into retained history rather than always

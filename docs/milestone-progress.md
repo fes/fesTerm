@@ -56,6 +56,29 @@ Fresh native-window confirmation for the current candidate remains part of
 [#50](https://github.com/fes/fesTerm/issues/50), not reopened P3
 implementation work.
 
+Real use of ADR 0025 native local persistence then exposed three boundaries
+that byte-only tests had missed: profile login-shell corrections looked like
+unsupported explicit environments; a full client queue was mistaken for a
+dead reader; and reconnect replay could arrive before current geometry or
+begin inside UTF-8/control state. The daemon now carries child-only environment
+policy, applies resize before activation/replay, propagates bounded
+backpressure, associates deferred output with a client generation, and resets
+and safely aligns truncated replay. Development launchers isolate config and
+daemon state from the installed fesTerm.
+
+The rendering investigation also found that the daemon correctly emitted RIS
+before truncated replay while the terminal parser ignored `ESC c`. A new
+parser implementation and rendered regression fixed that stale-screen path,
+and a 100-cycle `TerminalView` reconnect/resize stress now checks cache
+geometry, latest output, prompt continuity, and stale-cell removal.
+
+The same evidence work repaired stale VM baselines and their relay ownership,
+Linux dependencies/sudo/LVM capacity, and all three snapshot selections.
+Fresh optional validation passed on macOS and Linux on 2026-08-27. Windows
+guest-side synthetic input remained nondeterministic (5/20 baseline passes);
+a pinned host/provider plan now drives Parallels input through atomic,
+content-free readiness stages without retries or candidate-defined events.
+
 An available WSLg Wayland session reproduced the existing Linux P4 blocker at
 `8a3d331`: focus was achieved, but initial PTY output timed out under
 llvmpipe/EGL fallback. That corroborates [#35](https://github.com/fes/fesTerm/issues/35);

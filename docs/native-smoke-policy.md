@@ -158,7 +158,7 @@ screenshots alone cannot diagnose.
 | macOS | Disposable Keychain lifecycle | **Scheduled; advisory with the macOS native-smoke job; passed locally on 2026-08-24** |
 | Windows, Linux, macOS | `native_daemon_survives_launcher_and_supports_input_replay_and_takeover` | **Executed 2026-08-27 at `79fbadc`**. The smoke requires explicit child-environment propagation, resize-before-replay on two geometry-changing reconnects, sustained 512 KiB output bursts, and takeover while the prior client is backpressured. Fresh optional-validation passed from repaired qualifying snapshots on macOS (run `20260827T221759Z-macos-festerm-160a5ff6-72da-4369-a85a-9a0ac3634b09`) and Linux (run `20260827T224857Z-linux-festerm-0716c210-6e78-43df-819a-746e3ba9629d`). The repaired Windows diagnostic snapshot restored and dispatched run `20260827T220936Z-windows-festerm-284c1f64-7faf-4586-93f2-8a911eba775f`; the daemon smoke passed, while the aggregate remained failed on separate validation-wrapper/OS-input checks. A follow-up graphical-session execution again passed the daemon smoke after hardening the PowerShell wrappers. |
 
-The Windows VM OS-input check is not currently qualifying evidence. A
+The Windows VM OS-input check is not yet qualifying evidence. A
 20-cycle baseline investigation passed only 5 runs: the guest-side driver
 often left `ShellHost` as the input owner, and other failures dropped
 synthetic keys despite fesTerm reporting native focus. Instrumented
@@ -166,12 +166,15 @@ guest-side foreground, thread-attachment, and `SendInput` attempts did not
 make that boundary deterministic (the final variant passed 1 of 20), so
 retries would only hide an infrastructure defect. The replacement must drive
 keyboard events from the host/provider after a content-free guest readiness
-handshake. A two-stage proof using Parallels host key events passed the
-controlled PTY oracle after guest-side click/key injection failed. The
-existing check remains useful for a directly operated Windows desktop, but an
-aggregate VM failure caused only by this check is
-infrastructure evidence rather than a product failure until that driver
-exists.
+handshake. The permanent shared-lab driver now loads a fixed plan only from
+the pinned adapter commit, validates a narrow key/click allowlist, enforces
+ordered per-run atomic stages and deadlines, records engagement in the
+manifest, and has no guest-input fallback. Its first exact-byte diagnostic
+proved both host stages and native focus, then exposed ConPTY canonical input
+processing; the controlled child now uses raw input for the oracle. During the
+same work, a rendered replay stress test found that fesTerm ignored the
+daemon's RIS recovery sequence; `ESC c` is now implemented and covered through
+the render cache.
 
 Update this table after each first-run result, citing the CI run URL and
 commit SHA.

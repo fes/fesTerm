@@ -69,6 +69,17 @@ separate per-launch opt-in. Plain SSH remains manual reconnect and always
 creates a fresh shell. Real-provider create/detach/reattach evidence remains
 tracked by [#49](https://github.com/fes/fesTerm/issues/49).
 
+ADR 0025's provisional `festerm-sessiond` backend provides native persistent
+local sessions. It transports `Inherit`, `InheritWith`, and `Clear` profile
+environment policies to the child, requires each attaching client to apply its
+current geometry before replay, bounds PTY/client queues, backpressures slow
+readers instead of disconnecting them, and prefixes truncated replay with
+terminal reset/scrollback-clear recovery. Repeated takeover and two 512 KiB
+bursts are covered by the real-process daemon smoke. The terminal parser now
+implements RIS (`ESC c`); a rendered replay regression and a 100-generation
+`TerminalView` reconnect/resize stress test prevent stale cells from surviving
+the daemon's recovery sequence.
+
 Not implemented: OpenSSH configuration import, real keyboard-interactive/2FA
 authentication ([#60](https://github.com/fes/fesTerm/issues/60)),
 [#40](https://github.com/fes/fesTerm/issues/40) SSH-agent adapters, key-file
@@ -273,8 +284,11 @@ The suite does not replace manual P5 observations that require screen
 semantics or user intent: GitHub Copilot CLI, `vttest`, `tack`, native
 selection/focus, paste behavior, and application-specific visual inspection.
 On Windows, it additionally invokes `run-windows-os-input-smoke.ps1`, which
-uses real OS focus, click, resize, and key events to prove the event-to-PTY
-path without recording terminal content.
+uses real OS focus and resize. VM evidence uses a pinned adapter-owned,
+controller-validated Parallels click/key plan after atomic per-run readiness
+markers; it never falls back to guest synthetic input. The controlled child
+switches ConPTY input to raw mode so Tab and arrow bytes can be distinguished
+from console line editing without recording terminal content.
 
 ## Diagnostics and Safety
 

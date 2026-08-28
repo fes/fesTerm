@@ -2355,6 +2355,40 @@ mod tests {
     }
 
     #[test]
+    fn truncated_replay_resets_parser_and_renders_only_the_safe_suffix() {
+        use festerm_core::{Dimensions, Terminal};
+
+        let mut terminal =
+            Terminal::new(Dimensions::new(24, 4).unwrap()).expect("terminal allocation");
+        terminal.ingest(b"stale-before-reconnect\x1b[31mBROKEN");
+
+        let mut replay = ReplayBuffer {
+            bytes: VecDeque::from(
+                b"partial-utf8-\xf0\x9f\n\x1b[2JRECONNECTED\r\nprompt> ".to_vec(),
+            ),
+            capacity: 64,
+            truncated: true,
+        };
+        replay.align_truncated_start();
+        terminal.ingest(&replay.to_vec());
+
+        let history = terminal
+            .scrollback_lines()
+            .flat_map(|line| line.cells())
+            .map(|cell| cell.character())
+            .collect::<String>();
+        let visible = (0..terminal.dimensions().rows())
+            .filter_map(|row| terminal.row_text(row))
+            .collect::<String>();
+        let rendered = format!("{history}{visible}");
+        assert!(rendered.contains("RECONNECTED"));
+        assert!(rendered.contains("prompt>"));
+        assert!(!rendered.contains("stale-before-reconnect"));
+        assert!(!rendered.contains("BROKEN"));
+        assert!(!rendered.contains('\u{fffd}'));
+    }
+
+    #[test]
     fn failed_client_output_is_retired_for_worker_join() {
         let (output, receiver) = mpsc::sync_channel(1);
         drop(receiver);

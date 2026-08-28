@@ -679,6 +679,7 @@ impl Terminal {
             TerminalOp::SaveDec => self.save_dec(),
             TerminalOp::RestoreDec => self.restore_dec(),
             TerminalOp::SetTabStop => self.set_tab_stop(),
+            TerminalOp::Reset => self.reset_to_initial_state(),
             TerminalOp::SetApplicationKeypad(enabled) => self.modes.application_keypad = enabled,
             TerminalOp::SetCursorStyle(parameters) => self.set_cursor_style(parameters),
             TerminalOp::CursorUp(parameters) => self.move_vertical(parameters, false),

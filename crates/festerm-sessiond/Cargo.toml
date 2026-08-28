@@ -25,5 +25,8 @@ festerm-windows-security = { path = "../festerm-windows-security" }
 named_pipe = "0.4.1"
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
+[dev-dependencies]
+festerm-core = { path = "../festerm-core" }
+
 [lints]
 workspace = true

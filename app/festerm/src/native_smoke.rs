@@ -169,9 +169,10 @@ impl NativeWindowSmoke {
             // events make it through the UI and PTY input path.
             SmokeKind::OsInput if self.host_input.is_some() => &[
                 "emit:READY",
-                "read-line",
+                "set-raw-input",
+                "read-until-enter",
                 "echo:FOCUS",
-                "read-line",
+                "read-until-enter",
                 "echo-hex:OS-INPUT",
                 "spin",
             ],
