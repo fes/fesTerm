@@ -78,6 +78,15 @@ Fresh optional validation passed on macOS and Linux on 2026-08-27. Windows
 guest-side synthetic input remained nondeterministic (5/20 baseline passes);
 a pinned host/provider plan now drives Parallels input through atomic,
 content-free readiness stages without retries or candidate-defined events.
+The final single-stage plan adds bounded click-to-key settling and per-event
+pacing, filters OS key-repeat events in the controlled oracle, and passed both
+targeted clean-snapshot run
+`20260828T202443Z-windows-festerm-0bc6ff9f-31a0-4eab-b6d5-bcca67b19a48`
+and full Windows optional run
+`20260828T202853Z-windows-festerm-2669a82b-6349-4963-887d-295715a8b0b2`.
+The shared controller now uses absolute wall-clock deadlines, fails fast when
+the graphical relay exits, retries only transient Windows result-file sharing,
+and collects guest logs before stopping a failed VM.
 
 An available WSLg Wayland session reproduced the existing Linux P4 blocker at
 `8a3d331`: focus was achieved, but initial PTY output timed out under

@@ -258,6 +258,9 @@ cross-platform evidence and review.
   `TerminalView` stress test alternates viewport sizes and recovery replay,
   asserting render-cache geometry, latest output, prompt continuity, and
   absence of stale prior-generation cells.
+  Clean-snapshot optional validation passed on Windows in run
+  `20260828T202853Z-windows-festerm-2669a82b-6349-4963-887d-295715a8b0b2`,
+  including the real daemon smoke and host-driven exact-input oracle.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows
