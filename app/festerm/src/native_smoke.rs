@@ -194,12 +194,17 @@ impl NativeWindowSmoke {
             return;
         }
         if self.started.elapsed() > TIMEOUT {
+            let observed_host_input = if self.phase == Phase::AwaitHostInput {
+                observed_os_input_hex(terminal).unwrap_or_else(|| "missing".to_owned())
+            } else {
+                "not-applicable".to_owned()
+            };
             self.finish(
                 context,
                 "fail",
                 &format!(
-                    "timeout while in {:?}; focus={}",
-                    self.phase, self.focus_observed
+                    "timeout while in {:?}; focus={}; observed_host_input={observed_host_input}",
+                    self.phase, self.focus_observed,
                 ),
             );
             return;
@@ -532,6 +537,18 @@ fn terminal_text_including_scrollback(terminal: &Terminal) -> String {
         .filter_map(|row| terminal.row_text(row))
         .collect::<String>();
     format!("{history}{visible}")
+}
+
+fn observed_os_input_hex(terminal: &Terminal) -> Option<String> {
+    let text = terminal_text_including_scrollback(terminal);
+    let observed = text
+        .split_once("OS-INPUT:")?
+        .1
+        .chars()
+        .take_while(char::is_ascii_hexdigit)
+        .take(128)
+        .collect::<String>();
+    (!observed.is_empty()).then_some(observed)
 }
 
 fn test_child_path() -> PathBuf {
