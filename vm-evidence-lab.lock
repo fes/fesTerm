@@ -1,3 +1,3 @@
 # Reviewed shared VM evidence infrastructure for opt-in native VM runs.
 repository=https://github.com/fes/vm-evidence-lab.git
-commit=17e73869549351152b8c40c11334dfaa4ea04ad2
+commit=6fb825917a52cc29d3e29c161cbab97496faab70
