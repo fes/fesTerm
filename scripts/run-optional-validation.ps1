@@ -185,12 +185,19 @@ if ($nativePassed) {
 }
 
 if ($env:OS -eq 'Windows_NT') {
+    $osInputResultPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "festerm-os-input-result-{0}.txt" -f [System.Guid]::NewGuid().ToString('N')
+    )
     Invoke-NativeCommand {
         & "$PSScriptRoot\run-windows-os-input-smoke.ps1" `
+            -ResultPath $osInputResultPath `
             -HostInputStateDirectory $HostInputStateDirectory `
             -HostInputRunId $HostInputRunId
     }
-    if ($LASTEXITCODE -eq 0) {
+    $osInputPassed = (Test-Path -LiteralPath $osInputResultPath) -and
+        ((Get-Content -LiteralPath $osInputResultPath -TotalCount 1) -eq 'status=pass')
+    Remove-Item -LiteralPath $osInputResultPath -Force -ErrorAction Ignore
+    if ($osInputPassed) {
         Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=pass"
     } else {
         Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=fail"
