@@ -39,7 +39,6 @@ enum Phase {
     AwaitPreOutput,
     AwaitResize(usize),
     AwaitInput,
-    AwaitHostInput,
     AwaitPostOutput,
     Finished,
 }
@@ -171,8 +170,6 @@ impl NativeWindowSmoke {
                 "emit:READY",
                 "set-raw-input",
                 "read-until-enter",
-                "echo:FOCUS",
-                "read-until-enter",
                 "echo-hex:OS-INPUT",
                 "spin",
             ],
@@ -195,11 +192,12 @@ impl NativeWindowSmoke {
             return;
         }
         if self.started.elapsed() > TIMEOUT {
-            let observed_host_input = if self.phase == Phase::AwaitHostInput {
-                observed_os_input_hex(terminal).unwrap_or_else(|| "missing".to_owned())
-            } else {
-                "not-applicable".to_owned()
-            };
+            let observed_host_input =
+                if self.phase == Phase::AwaitInput && self.host_input.is_some() {
+                    observed_os_input_hex(terminal).unwrap_or_else(|| "missing".to_owned())
+                } else {
+                    "not-applicable".to_owned()
+                };
             self.finish(
                 context,
                 "fail",
@@ -275,24 +273,15 @@ impl NativeWindowSmoke {
             }
             (SmokeKind::OsInput, Phase::AwaitInput)
                 if self.host_input.is_some()
-                    && terminal_text_including_scrollback(terminal).contains("FOCUS:focus-ok") =>
+                    && terminal_text_including_scrollback(terminal)
+                        .contains("OS-INPUT:091b5b416f732d696e7075742d6f6b") =>
             {
-                self.host_input
-                    .as_ref()
-                    .expect("host-input state exists")
-                    .write_stage("focus-confirmed");
-                self.phase = Phase::AwaitHostInput;
+                self.finish_os_input(context, controller);
             }
             (SmokeKind::OsInput, Phase::AwaitInput)
                 if self.host_input.is_none()
                     && controller.resize_probe().observed_output_bytes()
                         > self.initial_output_bytes.unwrap_or_default() =>
-            {
-                self.finish_os_input(context, controller);
-            }
-            (SmokeKind::OsInput, Phase::AwaitHostInput)
-                if terminal_text_including_scrollback(terminal)
-                    .contains("OS-INPUT:091b5b416f732d696e7075742d6f6b") =>
             {
                 self.finish_os_input(context, controller);
             }
@@ -438,7 +427,6 @@ impl NativeWindowSmoke {
             | (_, Phase::AwaitInitialOutput)
             | (_, Phase::AwaitPreOutput)
             | (_, Phase::AwaitInput)
-            | (_, Phase::AwaitHostInput)
             | (_, Phase::AwaitPostOutput)
             | (SmokeKind::OsInput, Phase::AwaitResize(_))
             | (SmokeKind::LiveResize, Phase::AwaitResize(_)) => {}

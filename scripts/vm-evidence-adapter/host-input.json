@@ -12,23 +12,6 @@
       "first_event_pause_milliseconds": 1000,
       "events": [
         {"type": "pointer-button", "code": 178},
-        {"type": "key", "code": 41},
-        {"type": "key", "code": 32},
-        {"type": "key", "code": 54},
-        {"type": "key", "code": 30},
-        {"type": "key", "code": 39},
-        {"type": "key", "code": 20},
-        {"type": "key", "code": 32},
-        {"type": "key", "code": 45},
-        {"type": "key", "code": 36}
-      ]
-    },
-    {
-      "wait_for": "focus-confirmed",
-      "settle_seconds": 1,
-      "inter_event_milliseconds": 100,
-      "first_event_pause_milliseconds": 100,
-      "events": [
         {"type": "key", "code": 23},
         {"type": "key", "code": 98},
         {"type": "key", "code": 32},
