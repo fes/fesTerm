@@ -532,6 +532,12 @@ pub struct InterfaceSettings {
     /// preferences here.
     #[serde(default, skip_serializing_if = "is_false")]
     quick_switch_overlay: bool,
+    /// Whether the Launcher's New Session list uses a responsive
+    /// multi-column layout for saved profiles when the window is wide
+    /// enough (feature request #64). Off by default: the single-column
+    /// list remains the baseline presentation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    compact_launcher_grid: bool,
 }
 
 impl InterfaceSettings {
@@ -547,6 +553,7 @@ impl InterfaceSettings {
         terminal_ligatures: false,
         scroll_speed: ScrollSpeedPreference::Normal,
         quick_switch_overlay: false,
+        compact_launcher_grid: false,
     };
 
     pub const fn new(
@@ -566,6 +573,7 @@ impl InterfaceSettings {
             terminal_ligatures: false,
             scroll_speed: ScrollSpeedPreference::Normal,
             quick_switch_overlay: false,
+            compact_launcher_grid: false,
         }
     }
 
@@ -589,6 +597,13 @@ impl InterfaceSettings {
     /// (feature request #69).
     pub const fn with_quick_switch_overlay(mut self, quick_switch_overlay: bool) -> Self {
         self.quick_switch_overlay = quick_switch_overlay;
+        self
+    }
+
+    /// Sets whether the Launcher's New Session list uses a responsive
+    /// multi-column layout for saved profiles (feature request #64).
+    pub const fn with_compact_launcher_grid(mut self, compact_launcher_grid: bool) -> Self {
+        self.compact_launcher_grid = compact_launcher_grid;
         self
     }
 
@@ -626,6 +641,10 @@ impl InterfaceSettings {
 
     pub const fn quick_switch_overlay(self) -> bool {
         self.quick_switch_overlay
+    }
+
+    pub const fn compact_launcher_grid(self) -> bool {
+        self.compact_launcher_grid
     }
 
     fn is_default(&self) -> bool {
@@ -4239,6 +4258,42 @@ schema_version = 99
             .to_toml()
             .unwrap();
         assert!(!default_serialized.contains("quick_switch_overlay"));
+    }
+
+    #[test]
+    fn compact_launcher_grid_preference_round_trips_through_toml_and_defaults_to_off() {
+        // Feature request #64.
+        let settings = InterfaceSettings::DEFAULT.with_compact_launcher_grid(true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("compact_launcher_grid = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+
+        // An older settings table with no `compact_launcher_grid` key
+        // defaults to off, preserving today's single-column Launcher list.
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert!(!Configuration::parse(older_document)
+            .unwrap()
+            .interface_settings()
+            .compact_launcher_grid());
+
+        // The off state is the default and is omitted from serialization
+        // entirely, matching the other opt-in booleans here.
+        let default_serialized = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        assert!(!default_serialized.contains("compact_launcher_grid"));
     }
 
     #[test]

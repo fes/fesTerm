@@ -82,6 +82,38 @@ impl LauncherItem<'_> {
     }
 }
 
+/// Applies one Launcher item's click/edit-icon response to its shared
+/// mutable state: opens the profile editor for an edit-icon click, opens
+/// the SSH/Serial connection forms for those fixed entries, or dispatches
+/// the item's launch command otherwise. Shared by both the single-column
+/// and multi-column (feature request #64) rendering paths so their click
+/// handling can never drift apart.
+fn handle_launcher_item_response(
+    item: &LauncherItem<'_>,
+    response: egui::Response,
+    edit_response: Option<egui::Response>,
+    state: &mut LauncherState,
+    command: &mut Option<AppCommand>,
+) {
+    if edit_response.is_some_and(|edit| edit.clicked()) {
+        *command = Some(AppCommand::OpenProfileEditor {
+            identifier: item
+                .profile_id()
+                .expect("editable launcher items always carry a profile id")
+                .to_owned(),
+        });
+    } else if response.clicked() {
+        if matches!(item.kind, LauncherItemKind::NewSsh) {
+            state.ssh_open = true;
+            state.ssh.focus_username = true;
+        } else if matches!(item.kind, LauncherItemKind::NewSerial) {
+            state.serial_open = true;
+        } else {
+            *command = Some(item.command());
+        }
+    }
+}
+
 /// Renders one Launcher card. Saved profiles (`editable`) also get a small
 /// edit-icon control in the card's upper-right corner: clicking it opens
 /// that profile's editor instead of launching it, while clicking anywhere
@@ -94,8 +126,9 @@ fn show_launcher_choice(
     selected: bool,
     remote: bool,
     editable: bool,
+    fixed_width: Option<f32>,
 ) -> (egui::Response, Option<egui::Response>) {
-    let width = ui.available_width().clamp(220.0, 420.0);
+    let width = fixed_width.unwrap_or_else(|| ui.available_width().clamp(220.0, 420.0));
     let (rect, response) = ui.allocate_exact_size(vec2(width, 54.0), Sense::click());
     let active = selected || response.hovered();
     ui.painter().rect(
@@ -1084,6 +1117,7 @@ pub fn show_launcher(
     profiles: &[Profile],
     native_store_available: bool,
     secure_storage_status: Option<&str>,
+    compact_launcher_grid: bool,
 ) -> Option<AppCommand> {
     let mut items = vec![
         LauncherItem {
@@ -1375,19 +1409,13 @@ pub fn show_launcher(
                         ui.add_space(26.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            for (index, item) in items.iter().enumerate() {
-                                if index == profiles_start && profiles_start < items.len() {
-                                    ui.add_space(8.0);
-                                    // Matches the 26px left inset applied above so the
-                                    // divider reads as evenly padded on both sides
-                                    // instead of running flush to the pane's right edge.
-                                    let separator_width = (ui.available_width() - 26.0).max(0.0);
-                                    ui.scope(|ui| {
-                                        ui.set_width(separator_width);
-                                        ui.separator();
-                                    });
-                                    ui.add_space(8.0);
-                                }
+                            // Fixed "new session" entries (Local Shell, SSH,
+                            // Serial) always render single-column, one per
+                            // row, regardless of the compact-grid preference
+                            // (feature request #64): the grid only applies
+                            // to saved profiles, which is what tends to grow
+                            // long enough to need it.
+                            for (index, item) in items[..profiles_start].iter().enumerate() {
                                 let (response, edit_response) = show_launcher_choice(
                                     ui,
                                     &item.label,
@@ -1395,27 +1423,101 @@ pub fn show_launcher(
                                     index == state.selected,
                                     item.remote(),
                                     item.profile_id().is_some(),
+                                    None,
                                 );
-                                if edit_response.is_some_and(|edit| edit.clicked()) {
-                                    command = Some(AppCommand::OpenProfileEditor {
-                                        identifier: item
-                                            .profile_id()
-                                            .expect(
-                                                "editable launcher items always carry a profile id",
-                                            )
-                                            .to_owned(),
-                                    });
-                                } else if response.clicked() {
-                                    if matches!(item.kind, LauncherItemKind::NewSsh) {
-                                        state.ssh_open = true;
-                                        state.ssh.focus_username = true;
-                                    } else if matches!(item.kind, LauncherItemKind::NewSerial) {
-                                        state.serial_open = true;
-                                    } else {
-                                        command = Some(item.command());
-                                    }
-                                }
+                                handle_launcher_item_response(
+                                    item,
+                                    response,
+                                    edit_response,
+                                    &mut state,
+                                    &mut command,
+                                );
                                 ui.add_space(12.0);
+                            }
+
+                            let profile_items = &items[profiles_start..];
+                            if !profile_items.is_empty() {
+                                ui.add_space(8.0);
+                                // Matches the 26px left inset applied above so
+                                // the divider reads as evenly padded on both
+                                // sides instead of running flush to the
+                                // pane's right edge.
+                                let separator_width = (ui.available_width() - 26.0).max(0.0);
+                                ui.scope(|ui| {
+                                    ui.set_width(separator_width);
+                                    ui.separator();
+                                });
+                                ui.add_space(8.0);
+                            }
+
+                            // Feature request #64: when enabled and the
+                            // window is wide enough for more than one
+                            // column, saved profiles lay out in a
+                            // responsive grid instead of a single vertical
+                            // list, reducing scrolling for users with many
+                            // saved profiles. Falls back to the original
+                            // single-column list at narrow widths or when
+                            // the preference is off.
+                            const LAUNCHER_CARD_WIDTH: f32 = 260.0;
+                            const LAUNCHER_CARD_SPACING: f32 = 12.0;
+                            let columns = if compact_launcher_grid {
+                                let available = ui.available_width();
+                                (((available + LAUNCHER_CARD_SPACING)
+                                    / (LAUNCHER_CARD_WIDTH + LAUNCHER_CARD_SPACING))
+                                    .floor() as usize)
+                                    .max(1)
+                            } else {
+                                1
+                            };
+
+                            if columns <= 1 {
+                                for (offset, item) in profile_items.iter().enumerate() {
+                                    let index = profiles_start + offset;
+                                    let (response, edit_response) = show_launcher_choice(
+                                        ui,
+                                        &item.label,
+                                        &item.description,
+                                        index == state.selected,
+                                        item.remote(),
+                                        item.profile_id().is_some(),
+                                        None,
+                                    );
+                                    handle_launcher_item_response(
+                                        item,
+                                        response,
+                                        edit_response,
+                                        &mut state,
+                                        &mut command,
+                                    );
+                                    ui.add_space(12.0);
+                                }
+                            } else {
+                                ui.spacing_mut().item_spacing.x = LAUNCHER_CARD_SPACING;
+                                for (row_index, row) in profile_items.chunks(columns).enumerate() {
+                                    ui.horizontal(|ui| {
+                                        for (column, item) in row.iter().enumerate() {
+                                            let index =
+                                                profiles_start + row_index * columns + column;
+                                            let (response, edit_response) = show_launcher_choice(
+                                                ui,
+                                                &item.label,
+                                                &item.description,
+                                                index == state.selected,
+                                                item.remote(),
+                                                item.profile_id().is_some(),
+                                                Some(LAUNCHER_CARD_WIDTH),
+                                            );
+                                            handle_launcher_item_response(
+                                                item,
+                                                response,
+                                                edit_response,
+                                                &mut state,
+                                                &mut command,
+                                            );
+                                        }
+                                    });
+                                    ui.add_space(12.0);
+                                }
                             }
                         });
                     });
@@ -1645,6 +1747,7 @@ pub struct SettingsViewModel {
     pub terminal_ligatures: bool,
     pub scroll_speed: ScrollSpeedPreference,
     pub quick_switch_overlay: bool,
+    pub compact_launcher_grid: bool,
 }
 
 pub fn show_settings(
@@ -1663,6 +1766,7 @@ pub fn show_settings(
         terminal_ligatures,
         scroll_speed,
         quick_switch_overlay,
+        compact_launcher_grid,
     } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
@@ -1786,6 +1890,20 @@ pub fn show_settings(
                                 restore_workspace,
                             ) {
                                 command = Some(AppCommand::ToggleRestoreWorkspace);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Compact multi-column New Session list",
+                                "Show saved profiles in a responsive multi-column grid on \
+                                 the New Session tab when the window is wide enough, \
+                                 reducing vertical scrolling. Falls back to a single \
+                                 column at narrow widths. Off by default.",
+                                compact_launcher_grid,
+                            ) {
+                                command = Some(AppCommand::ToggleCompactLauncherGrid);
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
@@ -3220,13 +3338,26 @@ mod tests {
     }
 
     fn harness_with_profiles(profiles: Vec<Profile>) -> Harness<'static, LauncherHarnessState> {
+        harness_with_profiles_and_grid(profiles, false, 520.0)
+    }
+
+    fn harness_with_profiles_and_grid(
+        profiles: Vec<Profile>,
+        compact_launcher_grid: bool,
+        width: f32,
+    ) -> Harness<'static, LauncherHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 560.0))
+            .with_size(egui::vec2(width, 560.0))
             .build_ui_state(
-                |ui, state: &mut LauncherHarnessState| {
-                    if let Some(command) =
-                        show_launcher(ui, state.tab_id, &state.profiles, true, None)
-                    {
+                move |ui, state: &mut LauncherHarnessState| {
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.profiles,
+                        true,
+                        None,
+                        compact_launcher_grid,
+                    ) {
                         state.command = Some(command);
                     }
                 },
@@ -3259,6 +3390,7 @@ mod tests {
                             terminal_ligatures: false,
                             scroll_speed: ScrollSpeedPreference::Normal,
                             quick_switch_overlay: false,
+                            compact_launcher_grid: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3353,6 +3485,35 @@ mod tests {
     }
 
     #[test]
+    fn settings_toggle_compact_launcher_grid_control_returns_the_toggle_command() {
+        // Regression test for the "Compact multi-column New Session list"
+        // preference (feature request #64): off by default, with its own
+        // explicit toggle in the Interface card.
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness
+            .query_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Compact multi-column New Session list"
+            )
+            .is_some());
+
+        harness
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Compact multi-column New Session list",
+            )
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleCompactLauncherGrid)
+        ));
+    }
+
+    #[test]
     fn settings_close_confirmation_control_returns_the_toggle_command() {
         let mut harness = settings_harness();
         harness.run();
@@ -3404,7 +3565,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1000.0))
+            .with_size(egui::vec2(520.0, 1100.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -3426,6 +3587,7 @@ mod tests {
                             terminal_ligatures: false,
                             scroll_speed: ScrollSpeedPreference::Normal,
                             quick_switch_overlay: false,
+                            compact_launcher_grid: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3999,6 +4161,79 @@ mod tests {
     }
 
     #[test]
+    fn compact_launcher_grid_off_keeps_saved_profiles_single_column() {
+        // Regression test for feature request #64: with the preference off
+        // (the default), saved profiles should stack vertically one per
+        // row even in a window wide enough to fit multiple grid columns.
+        let profiles = vec![
+            Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+            Profile::local("beta", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles_and_grid(profiles, false, 900.0);
+        harness.run();
+
+        let alpha_rect = harness.get_by_label("alpha — Saved local profile").rect();
+        let beta_rect = harness.get_by_label("beta — Saved local profile").rect();
+
+        assert!(
+            alpha_rect.top() < beta_rect.top()
+                && (alpha_rect.left() - beta_rect.left()).abs() < 1.0,
+            "expected alpha above beta in the same column when the grid preference is off"
+        );
+    }
+
+    #[test]
+    fn compact_launcher_grid_on_lays_out_saved_profiles_side_by_side_when_wide_enough() {
+        // Regression test for feature request #64: with the preference on
+        // and a window wide enough for multiple columns, saved profiles
+        // should lay out side by side instead of one per row.
+        let profiles = vec![
+            Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+            Profile::local("beta", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles_and_grid(profiles, true, 900.0);
+        harness.run();
+
+        let alpha_rect = harness.get_by_label("alpha — Saved local profile").rect();
+        let beta_rect = harness.get_by_label("beta — Saved local profile").rect();
+
+        assert!(
+            (alpha_rect.top() - beta_rect.top()).abs() < 1.0
+                && alpha_rect.left() < beta_rect.left(),
+            "expected alpha and beta side by side in the same row when the grid preference is on \
+             and the window is wide enough for multiple columns"
+        );
+    }
+
+    #[test]
+    fn compact_launcher_grid_on_falls_back_to_single_column_when_narrow() {
+        // Regression test for feature request #64: even with the
+        // preference on, a narrow window that can only fit one card-width
+        // column should fall back to the single-column layout.
+        let profiles = vec![
+            Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+            Profile::local("beta", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles_and_grid(profiles, true, 360.0);
+        harness.run();
+
+        let alpha_rect = harness.get_by_label("alpha — Saved local profile").rect();
+        let beta_rect = harness.get_by_label("beta — Saved local profile").rect();
+
+        assert!(
+            alpha_rect.top() < beta_rect.top()
+                && (alpha_rect.left() - beta_rect.left()).abs() < 1.0,
+            "expected a single-column fallback when the window is too narrow for a second column"
+        );
+    }
+
+    #[test]
     fn local_profile_is_keyboard_accessible_and_returns_a_typed_command() {
         let profiles = vec![
             Profile::local("development", "cargo", vec!["run".to_owned()], None)
@@ -4139,7 +4374,7 @@ mod tests {
                             ui.set_max_height(24.0);
                         });
                     if let Some(command) =
-                        show_launcher(ui, state.tab_id, &state.profiles, true, None)
+                        show_launcher(ui, state.tab_id, &state.profiles, true, None, false)
                     {
                         state.command = Some(command);
                     }

@@ -1090,6 +1090,10 @@ pub enum AppCommand {
     /// elsewhere) overlays each eligible chip's quick-switch number in
     /// place of its usual status presentation (feature request #69).
     ToggleQuickSwitchOverlay,
+    /// Toggles whether the Launcher's New Session list uses a responsive
+    /// multi-column layout for saved profiles when the window is wide
+    /// enough (feature request #64).
+    ToggleCompactLauncherGrid,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1210,6 +1214,7 @@ pub struct AppState {
     terminal_ligatures: bool,
     scroll_speed: ScrollSpeedPreference,
     quick_switch_overlay: bool,
+    compact_launcher_grid: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1250,6 +1255,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
+            compact_launcher_grid: settings.compact_launcher_grid(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1286,6 +1292,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
+            compact_launcher_grid: settings.compact_launcher_grid(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1369,6 +1376,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
+            compact_launcher_grid: settings.compact_launcher_grid(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1488,6 +1496,10 @@ impl AppState {
         self.quick_switch_overlay
     }
 
+    pub const fn compact_launcher_grid(&self) -> bool {
+        self.compact_launcher_grid
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1502,6 +1514,7 @@ impl AppState {
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_scroll_speed(self.scroll_speed)
         .with_quick_switch_overlay(self.quick_switch_overlay)
+        .with_compact_launcher_grid(self.compact_launcher_grid)
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1664,6 +1677,9 @@ impl AppState {
             AppCommand::ToggleQuickSwitchOverlay => {
                 self.quick_switch_overlay = !self.quick_switch_overlay;
             }
+            AppCommand::ToggleCompactLauncherGrid => {
+                self.compact_launcher_grid = !self.compact_launcher_grid;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -1675,6 +1691,7 @@ impl AppState {
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
+                self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring

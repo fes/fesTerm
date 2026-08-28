@@ -2869,6 +2869,7 @@ impl FesTermApp {
                         self.state.configuration().profiles(),
                         native_store_available,
                         secure_storage_status,
+                        self.state.compact_launcher_grid(),
                     );
                 }
                 TabContent::Settings => {
@@ -2884,6 +2885,7 @@ impl FesTermApp {
                             terminal_ligatures: self.state.terminal_ligatures(),
                             scroll_speed: self.state.scroll_speed(),
                             quick_switch_overlay: self.state.quick_switch_overlay(),
+                            compact_launcher_grid: self.state.compact_launcher_grid(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()
