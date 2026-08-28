@@ -71,8 +71,21 @@ $status = 'pass'
 Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
 
 if ($env:OS -eq 'Windows_NT') {
+    $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+    $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
+    $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
     try {
-        & "$PSScriptRoot\stage-conpty.ps1" -RunSmoke
+        if ((Test-Path -LiteralPath $vcvarsallPath) -and
+            (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+            $stageConptyPath = Join-Path $PSScriptRoot 'stage-conpty.ps1'
+            Invoke-VisualStudioCommand `
+                -Command "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$stageConptyPath`" -RunSmoke" `
+                -VcVarsAllPath $vcvarsallPath `
+                -Architecture $architecture `
+                -LlvmBinPath $llvmBinPath
+        } else {
+            & "$PSScriptRoot\stage-conpty.ps1" -RunSmoke
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "Windows ConPTY staging failed with exit code $LASTEXITCODE."
         }
@@ -87,11 +100,8 @@ if ($env:OS -eq 'Windows_NT') {
 }
 
 if ($env:OS -eq 'Windows_NT') {
-    $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
-    $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
     if ((Test-Path -LiteralPath $vcvarsallPath) -and
         (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
-        $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
         $env:PATH = "$llvmBinPath;$env:PATH"
         $env:CC = 'clang'
         Invoke-VisualStudioCommand `
