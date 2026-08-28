@@ -36,9 +36,13 @@ function Get-FesTermSource {
 function Require-PassStatus {
     param([string] $Path)
 
-    if (-not (Test-Path -LiteralPath $Path) -or
-        (Get-Content -LiteralPath $Path -TotalCount 1) -ne 'status=pass') {
+    if (-not (Test-Path -LiteralPath $Path)) {
         throw "Evidence runner did not write status=pass: $Path"
+    }
+    $statuses = @(Get-Content -LiteralPath $Path |
+        Where-Object { $_ -in @('status=pass', 'status=fail') })
+    if ($statuses.Count -ne 1 -or $statuses[0] -ne 'status=pass') {
+        throw "Evidence runner did not write one successful aggregate status: $Path"
     }
 }
 
