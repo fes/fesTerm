@@ -3,7 +3,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Output},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -315,7 +315,9 @@ fn assert_windows_ready(stream: &mut dyn ClientStream) -> Vec<u8> {
     let mut received = Vec::new();
     let mut replied_through = 0;
     let mut buffer = [0u8; 4096];
+    let deadline = Instant::now() + Duration::from_secs(15);
     while !received.windows(5).any(|window| window == b"READY") {
+        assert!(Instant::now() < deadline, "timed out waiting for READY");
         let count = stream.read(&mut buffer).unwrap();
         assert_ne!(count, 0, "stream closed before READY arrived");
         received.extend_from_slice(&buffer[..count]);
@@ -343,13 +345,25 @@ fn assert_contains_or_received(stream: &mut dyn ClientStream, received: &[u8], e
 fn assert_contains(stream: &mut dyn ClientStream, expected: &[u8]) {
     let mut received = Vec::new();
     let mut buffer = [0u8; 4096];
+    let mut received_bytes = 0usize;
+    let deadline = Instant::now() + Duration::from_secs(15);
     while !received
         .windows(expected.len())
         .any(|window| window == expected)
     {
+        assert!(
+            Instant::now() < deadline,
+            "timed out after {received_bytes} bytes waiting for {:?}",
+            String::from_utf8_lossy(expected)
+        );
         let count = stream.read(&mut buffer).unwrap();
         assert_ne!(count, 0, "stream closed before expected marker arrived");
+        received_bytes = received_bytes.saturating_add(count);
         received.extend_from_slice(&buffer[..count]);
+        if received.len() > 1_048_576 {
+            let retained = expected.len().saturating_sub(1).max(4096);
+            received.drain(..received.len().saturating_sub(retained));
+        }
     }
 }
 
