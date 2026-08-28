@@ -29,6 +29,7 @@ enum LauncherItemKind<'a> {
     LocalProfile(&'a str),
     SshProfile(&'a str),
     SerialProfile(&'a str),
+    ResumeSession(&'a str),
 }
 
 struct LauncherItem<'a> {
@@ -42,7 +43,8 @@ impl LauncherItem<'_> {
         match self.kind {
             LauncherItemKind::LocalDefault
             | LauncherItemKind::NewSsh
-            | LauncherItemKind::NewSerial => None,
+            | LauncherItemKind::NewSerial
+            | LauncherItemKind::ResumeSession(_) => None,
             LauncherItemKind::LocalProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SerialProfile(id) => Some(id),
@@ -78,6 +80,9 @@ impl LauncherItem<'_> {
                     profile_id: profile_id.to_owned(),
                 }
             }
+            LauncherItemKind::ResumeSession(name) => AppCommand::ResumeUnattachedSession {
+                name: name.to_owned(),
+            },
         }
     }
 }
@@ -1118,6 +1123,7 @@ pub fn show_launcher(
     native_store_available: bool,
     secure_storage_status: Option<&str>,
     compact_launcher_grid: bool,
+    resumable_sessions: &[festerm_sessiond::UnattachedSession],
 ) -> Option<AppCommand> {
     let mut items = vec![
         LauncherItem {
@@ -1136,6 +1142,20 @@ pub fn show_launcher(
             kind: LauncherItemKind::NewSerial,
         },
     ];
+    // Resumable, unattached `festerm-sessiond` sessions (feature request
+    // #70) are listed next, so a one-click "Resume" is available before the
+    // saved-profile list, but still after the fixed "new session" entries.
+    items.extend(resumable_sessions.iter().map(|session| {
+        LauncherItem {
+            label: format!("Resume: {}", session.name),
+            description: session
+                .working_directory
+                .as_deref()
+                .map(|directory| format!("{} · {directory}", session.shell))
+                .unwrap_or_else(|| session.shell.clone()),
+            kind: LauncherItemKind::ResumeSession(&session.name),
+        }
+    }));
     // Saved profiles are listed last, after the two fixed "new session"
     // entries above, with a subtle separator (rendered when painting the
     // list below) marking where they start.
@@ -1749,6 +1769,7 @@ pub struct SettingsViewModel {
     pub quick_switch_overlay: bool,
     pub compact_launcher_grid: bool,
     pub pulse_new_output_dot: bool,
+    pub show_resumable_sessions: bool,
 }
 
 pub fn show_settings(
@@ -1769,6 +1790,7 @@ pub fn show_settings(
         quick_switch_overlay,
         compact_launcher_grid,
         pulse_new_output_dot,
+        show_resumable_sessions,
     } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
@@ -1921,6 +1943,20 @@ pub fn show_settings(
                                 pulse_new_output_dot,
                             ) {
                                 command = Some(AppCommand::TogglePulseNewOutputDot);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Resume unattached local sessions from New Session",
+                                "Surface locally running festerm-sessiond persistence \
+                                 sessions that have no attached window as one-click \
+                                 \"Resume\" entries on the New Session tab. Off by \
+                                 default.",
+                                show_resumable_sessions,
+                            ) {
+                                command = Some(AppCommand::ToggleShowResumableSessions);
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
@@ -3363,6 +3399,15 @@ mod tests {
         compact_launcher_grid: bool,
         width: f32,
     ) -> Harness<'static, LauncherHarnessState> {
+        harness_with_profiles_grid_and_resumable(profiles, compact_launcher_grid, width, Vec::new())
+    }
+
+    fn harness_with_profiles_grid_and_resumable(
+        profiles: Vec<Profile>,
+        compact_launcher_grid: bool,
+        width: f32,
+        resumable_sessions: Vec<festerm_sessiond::UnattachedSession>,
+    ) -> Harness<'static, LauncherHarnessState> {
         Harness::builder()
             .with_size(egui::vec2(width, 560.0))
             .build_ui_state(
@@ -3374,6 +3419,7 @@ mod tests {
                         true,
                         None,
                         compact_launcher_grid,
+                        &resumable_sessions,
                     ) {
                         state.command = Some(command);
                     }
@@ -3392,7 +3438,7 @@ mod tests {
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 1200.0))
+            .with_size(egui::vec2(520.0, 1300.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
@@ -3409,6 +3455,7 @@ mod tests {
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
+                            show_resumable_sessions: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3561,6 +3608,35 @@ mod tests {
     }
 
     #[test]
+    fn settings_toggle_show_resumable_sessions_control_returns_the_toggle_command() {
+        // Regression test for the "Resume unattached local sessions from
+        // New Session" preference (feature request #70): off by default,
+        // with its own explicit toggle in the Interface card.
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness
+            .query_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Resume unattached local sessions from New Session"
+            )
+            .is_some());
+
+        harness
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Resume unattached local sessions from New Session",
+            )
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleShowResumableSessions)
+        ));
+    }
+
+    #[test]
     fn settings_close_confirmation_control_returns_the_toggle_command() {
         let mut harness = settings_harness();
         harness.run();
@@ -3612,7 +3688,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1200.0))
+            .with_size(egui::vec2(520.0, 1300.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -3636,6 +3712,7 @@ mod tests {
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
+                            show_resumable_sessions: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -4209,6 +4286,51 @@ mod tests {
     }
 
     #[test]
+    fn resumable_sessions_appear_before_saved_profiles_and_dispatch_resume() {
+        // Feature request #70: unattached, locally running festerm-sessiond
+        // sessions should surface as one-click "Resume" entries, listed
+        // after the fixed "new session" entries but before saved profiles.
+        let profiles = vec![
+            Profile::local("development", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let resumable_sessions = vec![festerm_sessiond::UnattachedSession {
+            name: "orphaned".to_owned(),
+            shell: "/bin/bash".to_owned(),
+            arguments: Vec::new(),
+            working_directory: Some("/tmp".to_owned()),
+            created_at_unix_ms: 0,
+        }];
+        let mut harness =
+            harness_with_profiles_grid_and_resumable(profiles, false, 520.0, resumable_sessions);
+        harness.run();
+
+        let ssh_top = harness
+            .get_by_label("SSH — Connect to a remote host")
+            .rect()
+            .top();
+        let resume_node = harness.get_by_label("Resume: orphaned — /bin/bash · /tmp");
+        let resume_top = resume_node.rect().top();
+        let profile_top = harness
+            .get_by_label("development — Saved local profile")
+            .rect()
+            .top();
+
+        assert!(
+            ssh_top < resume_top && resume_top < profile_top,
+            "expected New Session entries, then Resume entries, then saved profiles"
+        );
+
+        resume_node.click();
+        harness.run();
+
+        assert!(matches!(
+            &harness.state().command,
+            Some(AppCommand::ResumeUnattachedSession { name }) if name == "orphaned"
+        ));
+    }
+
+    #[test]
     fn compact_launcher_grid_off_keeps_saved_profiles_single_column() {
         // Regression test for feature request #64: with the preference off
         // (the default), saved profiles should stack vertically one per
@@ -4422,7 +4544,7 @@ mod tests {
                             ui.set_max_height(24.0);
                         });
                     if let Some(command) =
-                        show_launcher(ui, state.tab_id, &state.profiles, true, None, false)
+                        show_launcher(ui, state.tab_id, &state.profiles, true, None, false, &[])
                     {
                         state.command = Some(command);
                     }

@@ -523,6 +523,21 @@ impl SessionTab {
         )
     }
 
+    /// Attaches to an already-running, unattached `festerm-sessiond` session
+    /// discovered on the Launcher's "Resume" list (feature request #70),
+    /// without going through any saved profile's start-if-missing logic.
+    fn start_resumed_session(name: &str, context: &egui::Context) -> Self {
+        let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
+        let result = PersistentSession::resume_with_notifier(name, make_notifier(context))
+            .map(ApplicationSession::Persistent)
+            .map_err(|error| error.to_string());
+        let inspector_persistence = Some(InspectorPersistence {
+            provider_label: PersistenceProviderKind::FestermSessiond.label(),
+            session_name: name.to_owned(),
+        });
+        Self::from_local_session_result(result, dimensions, name, None, None, inspector_persistence)
+    }
+
     fn start_ssh(
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
@@ -1105,6 +1120,16 @@ pub enum AppCommand {
     /// slow-pulses when that session has emitted output since the tab was
     /// last active (feature request #68).
     TogglePulseNewOutputDot,
+    /// Toggles whether the New Session/Launcher screen surfaces locally
+    /// running, unattached `festerm-sessiond` sessions as one-click
+    /// "Resume" entries (feature request #70).
+    ToggleShowResumableSessions,
+    /// Resumes a locally running, unattached `festerm-sessiond` session by
+    /// name, surfaced via the Launcher's "Resume" list (feature request
+    /// #70). The composition root attaches to it and opens a new tab.
+    ResumeUnattachedSession {
+        name: String,
+    },
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1227,6 +1252,10 @@ pub struct AppState {
     quick_switch_overlay: bool,
     compact_launcher_grid: bool,
     pulse_new_output_dot: bool,
+    /// Whether the New Session/Launcher screen surfaces locally running,
+    /// unattached `festerm-sessiond` sessions as one-click "Resume" entries
+    /// (feature request #70).
+    show_resumable_sessions: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1269,6 +1298,7 @@ impl AppState {
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
+            show_resumable_sessions: settings.show_resumable_sessions(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1307,6 +1337,7 @@ impl AppState {
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
+            show_resumable_sessions: settings.show_resumable_sessions(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1392,6 +1423,7 @@ impl AppState {
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
+            show_resumable_sessions: settings.show_resumable_sessions(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1519,6 +1551,10 @@ impl AppState {
         self.pulse_new_output_dot
     }
 
+    pub const fn show_resumable_sessions(&self) -> bool {
+        self.show_resumable_sessions
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1535,6 +1571,7 @@ impl AppState {
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
+        .with_show_resumable_sessions(self.show_resumable_sessions)
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1704,6 +1741,12 @@ impl AppState {
             AppCommand::TogglePulseNewOutputDot => {
                 self.pulse_new_output_dot = !self.pulse_new_output_dot;
             }
+            AppCommand::ToggleShowResumableSessions => {
+                self.show_resumable_sessions = !self.show_resumable_sessions;
+            }
+            AppCommand::ResumeUnattachedSession { name } => {
+                self.start_resumed_session(&name, context);
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -1717,6 +1760,7 @@ impl AppState {
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
+                self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -1823,6 +1867,10 @@ impl AppState {
     fn start_local_session(&mut self, context: &egui::Context) {
         let dimensions = self.current_session_dimensions();
         self.place_session(SessionTab::start_default(context, dimensions));
+    }
+
+    fn start_resumed_session(&mut self, name: &str, context: &egui::Context) {
+        self.place_session(SessionTab::start_resumed_session(name, context));
     }
 
     fn start_configured_local_profile(&mut self, profile_id: &str, context: &egui::Context) {
@@ -3030,6 +3078,21 @@ mod tests {
     }
 
     #[test]
+    fn toggle_show_resumable_sessions_flips_state_and_resets_to_off() {
+        // Feature request #70.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.show_resumable_sessions());
+
+        state.dispatch(AppCommand::ToggleShowResumableSessions, &context);
+        assert!(state.show_resumable_sessions());
+        assert!(state.interface_settings().show_resumable_sessions());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.show_resumable_sessions());
+    }
+
+    #[test]
     fn activating_a_tab_clears_its_new_output_flag() {
         // Feature request #68: switching back to a tab that had unseen
         // background output must clear the flag, since the user is now
@@ -3253,6 +3316,30 @@ mod tests {
             .terminal
             .row_text(0)
             .is_some_and(|row| row.starts_with("Serial session could not start.")));
+    }
+
+    #[test]
+    fn resuming_a_missing_session_surfaces_a_concise_error() {
+        // Feature request #70: attempting to resume a session that has
+        // vanished by the time the user clicks it (e.g. it exited) must
+        // surface an ordinary startup error, not panic.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+
+        state.dispatch(
+            AppCommand::ResumeUnattachedSession {
+                name: "nonexistent-resumable-session".to_owned(),
+            },
+            &context,
+        );
+
+        let TabContent::Session(session) = &state.active_tab_mut().content else {
+            panic!("resuming a session always opens a session tab, even on failure");
+        };
+        assert!(
+            session.controller.start_error().is_some(),
+            "resuming a missing session must surface a startup error"
+        );
     }
 
     #[test]

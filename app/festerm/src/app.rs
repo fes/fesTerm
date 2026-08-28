@@ -2881,6 +2881,11 @@ impl FesTermApp {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
                 TabContent::Launcher => {
+                    let resumable_sessions = if self.state.show_resumable_sessions() {
+                        festerm_sessiond::list_unattached_local_sessions()
+                    } else {
+                        Vec::new()
+                    };
                     screen_command = screens::show_launcher(
                         ui,
                         active_tab_id,
@@ -2888,6 +2893,7 @@ impl FesTermApp {
                         native_store_available,
                         secure_storage_status,
                         self.state.compact_launcher_grid(),
+                        &resumable_sessions,
                     );
                 }
                 TabContent::Settings => {
@@ -2905,6 +2911,7 @@ impl FesTermApp {
                             quick_switch_overlay: self.state.quick_switch_overlay(),
                             compact_launcher_grid: self.state.compact_launcher_grid(),
                             pulse_new_output_dot: self.state.pulse_new_output_dot(),
+                            show_resumable_sessions: self.state.show_resumable_sessions(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()

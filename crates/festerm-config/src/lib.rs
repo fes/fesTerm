@@ -544,6 +544,13 @@ pub struct InterfaceSettings {
     /// do today with no behavior change.
     #[serde(default, skip_serializing_if = "is_false")]
     pulse_new_output_dot: bool,
+    /// Whether the New Session/Launcher screen surfaces locally running,
+    /// unattached `festerm-sessiond` persistence sessions as one-click
+    /// "Resume" entries (feature request #70). Off by default: the
+    /// Launcher lists only saved profiles and ad-hoc new-session options,
+    /// exactly as it does today.
+    #[serde(default, skip_serializing_if = "is_false")]
+    show_resumable_sessions: bool,
 }
 
 impl InterfaceSettings {
@@ -561,6 +568,7 @@ impl InterfaceSettings {
         quick_switch_overlay: false,
         compact_launcher_grid: false,
         pulse_new_output_dot: false,
+        show_resumable_sessions: false,
     };
 
     pub const fn new(
@@ -582,6 +590,7 @@ impl InterfaceSettings {
             quick_switch_overlay: false,
             compact_launcher_grid: false,
             pulse_new_output_dot: false,
+            show_resumable_sessions: false,
         }
     }
 
@@ -619,6 +628,14 @@ impl InterfaceSettings {
     /// output has arrived since it was last active (feature request #68).
     pub const fn with_pulse_new_output_dot(mut self, pulse_new_output_dot: bool) -> Self {
         self.pulse_new_output_dot = pulse_new_output_dot;
+        self
+    }
+
+    /// Sets whether the Launcher surfaces locally running, unattached
+    /// `festerm-sessiond` sessions as one-click "Resume" entries (feature
+    /// request #70).
+    pub const fn with_show_resumable_sessions(mut self, show_resumable_sessions: bool) -> Self {
+        self.show_resumable_sessions = show_resumable_sessions;
         self
     }
 
@@ -664,6 +681,10 @@ impl InterfaceSettings {
 
     pub const fn pulse_new_output_dot(self) -> bool {
         self.pulse_new_output_dot
+    }
+
+    pub const fn show_resumable_sessions(self) -> bool {
+        self.show_resumable_sessions
     }
 
     fn is_default(&self) -> bool {
@@ -4349,6 +4370,42 @@ schema_version = 99
             .to_toml()
             .unwrap();
         assert!(!default_serialized.contains("pulse_new_output_dot"));
+    }
+
+    #[test]
+    fn show_resumable_sessions_preference_round_trips_through_toml_and_defaults_to_off() {
+        // Feature request #70.
+        let settings = InterfaceSettings::DEFAULT.with_show_resumable_sessions(true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("show_resumable_sessions = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+
+        // An older settings table with no `show_resumable_sessions` key
+        // defaults to off, preserving today's Launcher behavior.
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert!(!Configuration::parse(older_document)
+            .unwrap()
+            .interface_settings()
+            .show_resumable_sessions());
+
+        // The off state is the default and is omitted from serialization
+        // entirely, matching the other opt-in booleans here.
+        let default_serialized = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        assert!(!default_serialized.contains("show_resumable_sessions"));
     }
 
     #[test]

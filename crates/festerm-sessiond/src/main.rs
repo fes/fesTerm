@@ -57,6 +57,8 @@ struct SessionRecord {
     cols: u16,
     rows: u16,
     created_at_unix_ms: u128,
+    #[serde(default)]
+    attached: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -445,6 +447,7 @@ fn run_daemon(
             cols,
             rows,
             created_at_unix_ms: now_ms(),
+            attached: false,
         };
         if let Err(error) = save_registry_record(record) {
             let _ = spawned.child.kill();
@@ -474,6 +477,7 @@ fn run_daemon(
             cols,
             rows,
             created_at_unix_ms: now_ms(),
+            attached: false,
         };
         if let Err(error) = save_registry_record(record) {
             let _ = spawned.child.kill();
@@ -522,6 +526,8 @@ fn daemon_client_loop<R: Read + Send + 'static>(
     spawned: &mut SpawnedShell,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let pid = process::id();
+    let name_owned = name.to_owned();
     let result = session_client_loop(
         listener,
         reader,
@@ -536,6 +542,7 @@ fn daemon_client_loop<R: Read + Send + 'static>(
         || {
             let _ = spawned.child.kill();
         },
+        move |attached| set_registry_attached(&name_owned, pid, attached),
     );
     if result.is_err() {
         let _ = spawned.child.kill();
@@ -552,6 +559,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     observer: Option<mpsc::Sender<ClientLoopEvent>>,
     mut handle_client_command: impl FnMut(ClientCommand) -> io::Result<()>,
     mut shutdown: impl FnMut(),
+    mut on_attach_changed: impl FnMut(bool),
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
@@ -560,6 +568,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     let mut retired_clients = Vec::new();
     let mut next_generation = 1u64;
     let mut replay = ReplayBuffer::default();
+    let mut attached_reported = false;
     let result = loop {
         if let Err(error) = reap_client_threads(&mut retired_clients) {
             shutdown();
@@ -577,6 +586,11 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
+        report_attach_state_change(
+            active.is_some(),
+            &mut attached_reported,
+            &mut on_attach_changed,
+        );
         if let Err(error) = handle_pending_client_input(
             &client_input_rx,
             active.as_ref(),
@@ -599,11 +613,21 @@ fn session_client_loop<R: Read + Send + 'static>(
                     shutdown();
                     break Err(error);
                 }
+                report_attach_state_change(
+                    active.is_some(),
+                    &mut attached_reported,
+                    &mut on_attach_changed,
+                );
                 replay.push(&data);
                 if let Some(observer) = observer.as_ref() {
                     let _ = observer.send(ClientLoopEvent::OutputBuffered);
                 }
                 send_to_active(&mut active, &mut retired_clients, data);
+                report_attach_state_change(
+                    active.is_some(),
+                    &mut attached_reported,
+                    &mut on_attach_changed,
+                );
             }
             Ok(PtyEvent::Eof) => {
                 send_to_active(
@@ -620,11 +644,23 @@ fn session_client_loop<R: Read + Send + 'static>(
     };
 
     retire_active(&mut active, &mut retired_clients, false);
+    report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
     for client in retired_clients {
         join_client_thread(client)?;
     }
     join_io_thread(reader_thread)?;
     result
+}
+
+fn report_attach_state_change(
+    currently_attached: bool,
+    previously_reported: &mut bool,
+    on_change: &mut impl FnMut(bool),
+) {
+    if currently_attached != *previously_reported {
+        *previously_reported = currently_attached;
+        on_change(currently_attached);
+    }
 }
 
 #[cfg(unix)]
@@ -666,6 +702,17 @@ fn accept_unix_clients(
 enum ClientLoopEvent {
     ClientAttached,
     OutputBuffered,
+}
+
+fn set_registry_attached(name: &str, pid: u32, attached: bool) {
+    let _ = with_registry_lock(|registry: &mut SessionRegistry| {
+        if let Some(record) = registry.sessions.get_mut(name) {
+            if record.pid == pid {
+                record.attached = attached;
+            }
+        }
+        Ok(())
+    });
 }
 
 #[cfg(windows)]
@@ -714,6 +761,11 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut retired_clients = Vec::new();
     let mut next_generation = 1u64;
     let mut replay = ReplayBuffer::default();
+    let mut attached_reported = false;
+    let pid = process::id();
+    let name_owned = name.to_owned();
+    let mut on_attach_changed =
+        move |attached: bool| set_registry_attached(&name_owned, pid, attached);
     let result = loop {
         if let Err(error) = reap_client_threads(&mut retired_clients) {
             let _ = spawned.child.kill();
@@ -730,6 +782,11 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             let _ = spawned.child.kill();
             break Err(error);
         }
+        report_attach_state_change(
+            active.is_some(),
+            &mut attached_reported,
+            &mut on_attach_changed,
+        );
         if let Err(error) =
             handle_pending_client_input(&client_input_rx, active.as_ref(), &mut |command| {
                 match command {
@@ -759,8 +816,18 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                     let _ = spawned.child.kill();
                     break Err(error);
                 }
+                report_attach_state_change(
+                    active.is_some(),
+                    &mut attached_reported,
+                    &mut on_attach_changed,
+                );
                 replay.push(&data);
                 send_to_active(&mut active, &mut retired_clients, data);
+                report_attach_state_change(
+                    active.is_some(),
+                    &mut attached_reported,
+                    &mut on_attach_changed,
+                );
             }
             Ok(PtyEvent::Eof) => {
                 send_to_active(
@@ -778,6 +845,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
 
     accepting.store(false, Ordering::Release);
     retire_active(&mut active, &mut retired_clients, false);
+    report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
     let _ = named_pipe::PipeClient::connect_ms(&pipe_name, 100);
     let reader_result = join_io_thread(reader_thread);
     let accept_result = join_io_thread(accept_thread);
@@ -1201,11 +1269,11 @@ fn run_list() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    println!("name\tpid\tsocket\tshell");
+    println!("name\tpid\tsocket\tshell\tattached");
     for record in registry.sessions.values() {
         println!(
-            "{}\t{}\t{}\t{}",
-            record.name, record.pid, record.socket, record.shell
+            "{}\t{}\t{}\t{}\t{}",
+            record.name, record.pid, record.socket, record.shell, record.attached
         );
     }
     Ok(())
@@ -1731,6 +1799,8 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[cfg(unix)]
     #[test]
@@ -1796,6 +1866,7 @@ mod tests {
                         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "test closed"))
                 },
                 || {},
+                |_attached| {},
             )
         });
 
@@ -1972,6 +2043,7 @@ mod tests {
                     cols: 80,
                     rows: 24,
                     created_at_unix_ms: 2,
+                    attached: false,
                 },
             )]),
         };
@@ -2039,6 +2111,7 @@ mod tests {
             cols: 80,
             rows: 24,
             created_at_unix_ms: 1_700_000_000_000,
+            attached: true,
         };
         let registry = SessionRegistry {
             sessions: BTreeMap::from([(record.name.clone(), record.clone())]),
@@ -2077,5 +2150,25 @@ mod tests {
 
     fn unique_test_directory(label: &str) -> PathBuf {
         env::temp_dir().join(format!("fsd-{label}-{}-{}", process::id(), now_ms()))
+    }
+
+    #[test]
+    fn attach_state_change_reports_only_on_transition() {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut reported = false;
+        let events_clone = Rc::clone(&events);
+        let mut on_change = move |attached: bool| events_clone.borrow_mut().push(attached);
+
+        report_attach_state_change(false, &mut reported, &mut on_change);
+        assert!(events.borrow().is_empty());
+
+        report_attach_state_change(true, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![true]);
+
+        report_attach_state_change(true, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![true]);
+
+        report_attach_state_change(false, &mut reported, &mut on_change);
+        assert_eq!(*events.borrow(), vec![true, false]);
     }
 }

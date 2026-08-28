@@ -45,14 +45,77 @@ impl<T: Read + Write + Send> SessionStream for T {}
 
 #[derive(Clone, Debug, Deserialize)]
 struct SessionRecord {
+    #[serde(default)]
+    name: String,
     pid: u32,
     socket: String,
+    #[serde(default)]
+    shell: String,
+    #[serde(default)]
+    arguments: Vec<String>,
+    #[serde(default)]
+    working_directory: Option<String>,
+    #[serde(default)]
+    created_at_unix_ms: u128,
+    #[serde(default)]
+    attached: bool,
 }
 
 #[derive(Default, Deserialize)]
 struct SessionRegistry {
     #[serde(default)]
     sessions: BTreeMap<String, SessionRecord>,
+}
+
+/// A locally running `festerm-sessiond` session with no attached client.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnattachedSession {
+    pub name: String,
+    pub shell: String,
+    pub arguments: Vec<String>,
+    pub working_directory: Option<String>,
+    pub created_at_unix_ms: u128,
+}
+
+/// Enumerates locally registered `festerm-sessiond` sessions that are alive
+/// but currently have no attached client, suitable for surfacing as
+/// one-click "resume" entries on the New Session/Launcher screen.
+///
+/// Returns an empty list (rather than an error) if the daemon's registry is
+/// unavailable, absent, or otherwise unreadable, since the Launcher should
+/// behave exactly as it does today when `festerm-sessiond` is disabled or
+/// not present.
+pub fn list_unattached_local_sessions() -> Vec<UnattachedSession> {
+    let Ok(registry) = load_registry() else {
+        return Vec::new();
+    };
+    registry
+        .sessions
+        .into_values()
+        .filter(|record| !record.attached && process_alive(record.pid))
+        .map(|record| UnattachedSession {
+            name: record.name,
+            shell: record.shell,
+            arguments: record.arguments,
+            working_directory: record.working_directory,
+            created_at_unix_ms: record.created_at_unix_ms,
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+    match kill(Pid::from_raw(pid as i32), None) {
+        Ok(()) => true,
+        Err(Errno::EPERM) => true,
+        Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    festerm_windows_job::process_is_alive(pid)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -174,6 +237,34 @@ impl PersistentSession {
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
 
         let stream = connect_or_start(name.as_str(), profile, size)?;
+        Self::from_stream(stream, notifier)
+    }
+
+    /// Attaches to an already-running, unattached `festerm-sessiond` session
+    /// by name, without spawning a new session if one isn't already
+    /// registered. Intended for resuming a session surfaced via
+    /// [`list_unattached_local_sessions`] rather than starting one from a
+    /// saved profile.
+    pub fn resume(name: &str) -> Result<Self, PersistentSessionError> {
+        Self::resume_with_notifier(name, noop_session_event_notifier())
+    }
+
+    /// Like [`PersistentSession::resume`], but delivers session events
+    /// through the given notifier.
+    pub fn resume_with_notifier(
+        name: &str,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let name = PersistentSessionName::new(name.to_owned())
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        let registry = load_registry()?;
+        let record = registry.sessions.get(name.as_str()).ok_or_else(|| {
+            PersistentSessionError::new(format!(
+                "no locally running session named '{}' is registered",
+                name.as_str()
+            ))
+        })?;
+        let stream = connect_record(record)?;
         Self::from_stream(stream, notifier)
     }
 
@@ -851,5 +942,80 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for lifecycle");
             thread::sleep(Duration::from_millis(5));
         }
+    }
+}
+
+#[cfg(test)]
+mod registry_filtering_tests {
+    use super::*;
+
+    #[test]
+    fn registry_round_trip_ignores_unknown_fields_and_defaults_new_ones() {
+        let json = r#"{"sessions":{"demo":{"pid":42,"socket":"demo.sock"}}}"#;
+        let registry: SessionRegistry = serde_json::from_str(json).unwrap();
+        let record = registry.sessions.get("demo").unwrap();
+        assert_eq!(record.pid, 42);
+        assert_eq!(record.socket, "demo.sock");
+        assert_eq!(record.name, "");
+        assert!(!record.attached);
+    }
+
+    #[test]
+    fn unattached_session_carries_expected_metadata() {
+        let record = SessionRecord {
+            name: "demo".to_owned(),
+            pid: 1,
+            socket: "demo.sock".to_owned(),
+            shell: "/bin/bash".to_owned(),
+            arguments: vec!["-l".to_owned()],
+            working_directory: Some("/tmp".to_owned()),
+            created_at_unix_ms: 123,
+            attached: false,
+        };
+        let mut registry = SessionRegistry::default();
+        registry.sessions.insert(record.name.clone(), record);
+
+        let unattached: Vec<_> = registry
+            .sessions
+            .into_values()
+            .filter(|record| !record.attached)
+            .map(|record| UnattachedSession {
+                name: record.name,
+                shell: record.shell,
+                arguments: record.arguments,
+                working_directory: record.working_directory,
+                created_at_unix_ms: record.created_at_unix_ms,
+            })
+            .collect();
+
+        assert_eq!(unattached.len(), 1);
+        assert_eq!(unattached[0].name, "demo");
+        assert_eq!(unattached[0].shell, "/bin/bash");
+        assert_eq!(unattached[0].working_directory.as_deref(), Some("/tmp"));
+    }
+
+    #[test]
+    fn attached_sessions_are_excluded_from_the_unattached_view() {
+        let mut registry = SessionRegistry::default();
+        registry.sessions.insert(
+            "attached-demo".to_owned(),
+            SessionRecord {
+                name: "attached-demo".to_owned(),
+                pid: 1,
+                socket: "demo.sock".to_owned(),
+                shell: "/bin/bash".to_owned(),
+                arguments: Vec::new(),
+                working_directory: None,
+                created_at_unix_ms: 0,
+                attached: true,
+            },
+        );
+
+        let unattached: Vec<_> = registry
+            .sessions
+            .into_values()
+            .filter(|record| !record.attached)
+            .collect();
+        assert!(unattached.is_empty());
     }
 }
