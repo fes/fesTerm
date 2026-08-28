@@ -20,6 +20,8 @@ const SMOKE_ENV: &str = "FESTERM_NATIVE_WINDOW_SMOKE";
 const OS_INPUT_SMOKE_ENV: &str = "FESTERM_NATIVE_OS_INPUT_SMOKE";
 const LIVE_RESIZE_SMOKE_ENV: &str = "FESTERM_NATIVE_LIVE_RESIZE_SMOKE";
 const RESULT_PATH_ENV: &str = "FESTERM_NATIVE_SMOKE_RESULT_PATH";
+const HOST_INPUT_STATE_DIRECTORY_ENV: &str = "FESTERM_NATIVE_HOST_INPUT_STATE_DIRECTORY";
+const HOST_INPUT_RUN_ID_ENV: &str = "FESTERM_NATIVE_HOST_INPUT_RUN_ID";
 const LIVE_RESIZE_DRIVER_RESULT_PATH_ENV: &str = "FESTERM_NATIVE_LIVE_RESIZE_DRIVER_RESULT_PATH";
 const ALLOW_UNFOCUSED_ENV: &str = "FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED";
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -37,6 +39,7 @@ enum Phase {
     AwaitPreOutput,
     AwaitResize(usize),
     AwaitInput,
+    AwaitHostInput,
     AwaitPostOutput,
     Finished,
 }
@@ -62,6 +65,12 @@ pub struct NativeWindowSmoke {
     allow_unfocused: bool,
     kind: SmokeKind,
     live_resize_driver_result_path: Option<PathBuf>,
+    host_input: Option<HostInputState>,
+}
+
+struct HostInputState {
+    directory: PathBuf,
+    run_id: String,
 }
 
 impl NativeWindowSmoke {
@@ -101,6 +110,24 @@ impl NativeWindowSmoke {
             ),
             SmokeKind::NativeWindow | SmokeKind::OsInput => None,
         };
+        let host_input = match (
+            std::env::var_os(HOST_INPUT_STATE_DIRECTORY_ENV),
+            std::env::var(HOST_INPUT_RUN_ID_ENV).ok(),
+        ) {
+            (None, None) => None,
+            (Some(directory), Some(run_id))
+                if kind == SmokeKind::OsInput && valid_run_id(&run_id) =>
+            {
+                Some(HostInputState {
+                    directory: directory.into(),
+                    run_id,
+                })
+            }
+            _ => panic!(
+                "{HOST_INPUT_STATE_DIRECTORY_ENV} and {HOST_INPUT_RUN_ID_ENV} must be set \
+                 together with a valid run ID in OS-input smoke mode"
+            ),
+        };
 
         Some(Self {
             result_path,
@@ -117,6 +144,7 @@ impl NativeWindowSmoke {
                 && std::env::var_os(ALLOW_UNFOCUSED_ENV).is_some(),
             kind,
             live_resize_driver_result_path,
+            host_input,
         })
     }
 
@@ -139,6 +167,14 @@ impl NativeWindowSmoke {
             // The OS driver sends Tab, Up, a fixed token, and Enter. The
             // child cannot emit its post-read line until those real window
             // events make it through the UI and PTY input path.
+            SmokeKind::OsInput if self.host_input.is_some() => &[
+                "emit:READY",
+                "read-line",
+                "echo:FOCUS",
+                "read-line",
+                "echo-hex:OS-INPUT",
+                "spin",
+            ],
             SmokeKind::OsInput => &["emit:READY", "read-line", "echo:OS-INPUT", "spin"],
             // The macOS driver performs a real, rapid corner drag while this
             // child emits for three seconds. Keeping the source independent
@@ -226,28 +262,33 @@ impl NativeWindowSmoke {
                 if controller.resize_probe().observed_output_bytes() > 0 =>
             {
                 self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
+                if let Some(host_input) = &self.host_input {
+                    host_input.write_stage("pty-ready");
+                }
                 self.phase = Phase::AwaitInput;
             }
             (SmokeKind::OsInput, Phase::AwaitInput)
-                if controller.resize_probe().observed_output_bytes()
-                    > self.initial_output_bytes.unwrap_or_default() =>
+                if self.host_input.is_some()
+                    && terminal_text_including_scrollback(terminal).contains("FOCUS:focus-ok") =>
             {
-                let generations = controller.resize_probe().generations();
-                let resize_applied = generations
-                    .iter()
-                    .any(|generation| generation.applied && generation.visible_nonblank_cells > 0);
-                if self.focus_observed && resize_applied {
-                    self.finish(
-                        context,
-                        "pass",
-                        &format!(
-                            "OS input reached PTY; resize generations {}; output {}B->{}B",
-                            generations.len(),
-                            self.initial_output_bytes.unwrap_or_default(),
-                            controller.resize_probe().observed_output_bytes(),
-                        ),
-                    );
-                }
+                self.host_input
+                    .as_ref()
+                    .expect("host-input state exists")
+                    .write_stage("focus-confirmed");
+                self.phase = Phase::AwaitHostInput;
+            }
+            (SmokeKind::OsInput, Phase::AwaitInput)
+                if self.host_input.is_none()
+                    && controller.resize_probe().observed_output_bytes()
+                        > self.initial_output_bytes.unwrap_or_default() =>
+            {
+                self.finish_os_input(context, controller);
+            }
+            (SmokeKind::OsInput, Phase::AwaitHostInput)
+                if terminal_text_including_scrollback(terminal)
+                    .contains("OS-INPUT:091b5b416f732d696e7075742d6f6b") =>
+            {
+                self.finish_os_input(context, controller);
             }
             (SmokeKind::NativeWindow, Phase::AwaitInitialOutput)
                 if controller.resize_probe().observed_output_bytes() > 0 =>
@@ -391,6 +432,7 @@ impl NativeWindowSmoke {
             | (_, Phase::AwaitInitialOutput)
             | (_, Phase::AwaitPreOutput)
             | (_, Phase::AwaitInput)
+            | (_, Phase::AwaitHostInput)
             | (_, Phase::AwaitPostOutput)
             | (SmokeKind::OsInput, Phase::AwaitResize(_))
             | (SmokeKind::LiveResize, Phase::AwaitResize(_)) => {}
@@ -419,6 +461,29 @@ impl NativeWindowSmoke {
         self.phase_started = Instant::now();
     }
 
+    fn finish_os_input<S: Session>(
+        &mut self,
+        context: &eframe::egui::Context,
+        controller: &SessionController<S>,
+    ) {
+        let generations = controller.resize_probe().generations();
+        let resize_applied = generations
+            .iter()
+            .any(|generation| generation.applied && generation.visible_nonblank_cells > 0);
+        if self.focus_observed && resize_applied {
+            self.finish(
+                context,
+                "pass",
+                &format!(
+                    "OS input reached PTY; resize generations {}; output {}B->{}B",
+                    generations.len(),
+                    self.initial_output_bytes.unwrap_or_default(),
+                    controller.resize_probe().observed_output_bytes(),
+                ),
+            );
+        }
+    }
+
     fn finish(&mut self, context: &eframe::egui::Context, status: &str, detail: &str) {
         Self::write_result(&self.result_path, status, detail);
         self.phase = Phase::Finished;
@@ -432,6 +497,29 @@ impl NativeWindowSmoke {
         );
         std::fs::write(path, body).expect("native smoke result is writable");
     }
+}
+
+impl HostInputState {
+    fn write_stage(&self, stage: &str) {
+        std::fs::create_dir_all(&self.directory).expect("host-input state directory is writable");
+        let path = self.directory.join(format!("{stage}.json"));
+        assert!(!path.exists(), "host-input stage must be published once");
+        let partial_path = self.directory.join(format!(".{stage}.json.partial"));
+        let body = format!(
+            "{{\"schema_version\":1,\"run_id\":\"{}\",\"stage\":\"{stage}\"}}\n",
+            self.run_id
+        );
+        std::fs::write(&partial_path, body).expect("host-input partial state is writable");
+        std::fs::rename(&partial_path, &path).expect("host-input state is atomically publishable");
+    }
+}
+
+fn valid_run_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn terminal_text_including_scrollback(terminal: &Terminal) -> String {
@@ -467,5 +555,7 @@ mod tests {
         assert_eq!(OS_INPUT_SMOKE_ENV, "FESTERM_NATIVE_OS_INPUT_SMOKE");
         assert_eq!(LIVE_RESIZE_SMOKE_ENV, "FESTERM_NATIVE_LIVE_RESIZE_SMOKE");
         assert_eq!(RESULT_PATH_ENV, "FESTERM_NATIVE_SMOKE_RESULT_PATH");
+        assert!(valid_run_id("20260827T220936Z-windows-festerm-run"));
+        assert!(!valid_run_id("../run"));
     }
 }

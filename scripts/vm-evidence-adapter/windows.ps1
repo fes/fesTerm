@@ -94,7 +94,13 @@ try {
         }
         'os-input-smoke' {
             $resultPath = Join-Path $ArtifactDirectory 'os-input-smoke.txt'
-            Invoke-NativeCommand { & (Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1') $resultPath }
+            $hostInputDirectory = Join-Path $ArtifactDirectory 'host-input'
+            Invoke-NativeCommand {
+                & (Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1') `
+                    -ResultPath $resultPath `
+                    -HostInputStateDirectory $hostInputDirectory `
+                    -HostInputRunId $job.run_id
+            }
             if ($LASTEXITCODE -ne 0) {
                 throw 'OS-input validation failed.'
             }
@@ -104,7 +110,11 @@ try {
             $resultPath = Join-Path $ArtifactDirectory 'optional-validation.txt'
             $env:FESTERM_RUN_OPTIONAL_VALIDATION = '1'
             $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH = $resultPath
-            Invoke-NativeCommand { & (Join-Path $sourcePath 'scripts\run-optional-validation.ps1') }
+            Invoke-NativeCommand {
+                & (Join-Path $sourcePath 'scripts\run-optional-validation.ps1') `
+                    -HostInputStateDirectory (Join-Path $ArtifactDirectory 'host-input') `
+                    -HostInputRunId $job.run_id
+            }
             if ($LASTEXITCODE -ne 0) {
                 throw 'Optional validation failed.'
             }
@@ -117,4 +127,6 @@ try {
     Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
     Remove-Item Env:FESTERM_RUN_OPTIONAL_VALIDATION -ErrorAction Ignore
     Remove-Item Env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH -ErrorAction Ignore
+    Remove-Item Env:FESTERM_NATIVE_HOST_INPUT_STATE_DIRECTORY -ErrorAction Ignore
+    Remove-Item Env:FESTERM_NATIVE_HOST_INPUT_RUN_ID -ErrorAction Ignore
 }

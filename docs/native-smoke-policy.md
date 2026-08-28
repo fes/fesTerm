@@ -30,8 +30,11 @@ sequence, and validates real PTY input/output before closing. It runs under
 Xvfb on Linux and is advisory on macOS. Xvfb has no window manager to assign
 focus, so the Linux workflow explicitly permits an unfocused result while
 still recording it as such; it does not constitute native-focus evidence.
-Platform-native OS input automation remains a later layer for independently
-driven focus and accessibility proof.
+Platform-native OS input automation provides the independently driven focus
+and keyboard proof. On Windows VM runs, a pinned adapter-owned plan waits for
+atomic, content-free guest readiness stages and injects a fixed click and key
+sequence through the Parallels host provider. Candidate source cannot select
+the events, and host-driver modes never fall back to guest-side injection.
 
 ### Native local persistence daemon
 
@@ -153,7 +156,22 @@ screenshots alone cannot diagnose.
 | Windows | Disposable Credential Manager lifecycle | **Scheduled; required within the Windows native-smoke job** |
 | Linux | Disposable Secret Service lifecycle under an isolated D-Bus session | **Scheduled; required within the Linux native-smoke job** |
 | macOS | Disposable Keychain lifecycle | **Scheduled; advisory with the macOS native-smoke job; passed locally on 2026-08-24** |
-| Windows, Linux, macOS | `native_daemon_survives_launcher_and_supports_input_replay_and_takeover` | **Executed 2026-08-27**. The smoke now also requires explicit child-environment propagation, resize-before-replay on two geometry-changing reconnects, sustained 512 KiB output bursts, and takeover while the prior client is backpressured. macOS qualifying VM optional-validation passed the earlier baseline at `f0a41cb` (run `20260827T153358Z-macos-festerm-502c97ba-fa8a-44ee-ad53-773de8be84cd`). Windows diagnostic VM execution passed the earlier daemon phases at `951480c`; its aggregate run remained failed only on the separate OS-input focus smoke. Linux targeted execution passed the earlier baseline at `f0a41cb`; its aggregate run was non-qualifying because the archived guest lacked `libudev` development metadata and an obsolete relay initially claimed the job. The expanded smoke requires fresh cross-platform evidence. |
+| Windows, Linux, macOS | `native_daemon_survives_launcher_and_supports_input_replay_and_takeover` | **Executed 2026-08-27 at `79fbadc`**. The smoke requires explicit child-environment propagation, resize-before-replay on two geometry-changing reconnects, sustained 512 KiB output bursts, and takeover while the prior client is backpressured. Fresh optional-validation passed from repaired qualifying snapshots on macOS (run `20260827T221759Z-macos-festerm-160a5ff6-72da-4369-a85a-9a0ac3634b09`) and Linux (run `20260827T224857Z-linux-festerm-0716c210-6e78-43df-819a-746e3ba9629d`). The repaired Windows diagnostic snapshot restored and dispatched run `20260827T220936Z-windows-festerm-284c1f64-7faf-4586-93f2-8a911eba775f`; the daemon smoke passed, while the aggregate remained failed on separate validation-wrapper/OS-input checks. A follow-up graphical-session execution again passed the daemon smoke after hardening the PowerShell wrappers. |
+
+The Windows VM OS-input check is not currently qualifying evidence. A
+20-cycle baseline investigation passed only 5 runs: the guest-side driver
+often left `ShellHost` as the input owner, and other failures dropped
+synthetic keys despite fesTerm reporting native focus. Instrumented
+guest-side foreground, thread-attachment, and `SendInput` attempts did not
+make that boundary deterministic (the final variant passed 1 of 20), so
+retries would only hide an infrastructure defect. The replacement must drive
+keyboard events from the host/provider after a content-free guest readiness
+handshake. A two-stage proof using Parallels host key events passed the
+controlled PTY oracle after guest-side click/key injection failed. The
+existing check remains useful for a directly operated Windows desktop, but an
+aggregate VM failure caused only by this check is
+infrastructure evidence rather than a product failure until that driver
+exists.
 
 Update this table after each first-run result, citing the CI run URL and
 commit SHA.

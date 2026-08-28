@@ -17,6 +17,7 @@
 //! | `report-env:NAME` | Write `ENV:NAME=VALUE\n`, or `<unset>` when absent. |
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
+//! | `echo-hex:PREFIX` | Write `PREFIX:{last-line bytes as lowercase hex}\n` to stdout. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
 //! | `spin` | Sleep until the process is killed. |
 //! | `spawn` | Spawn self as a long-running descendant, write `CHILD:{pid}\n`, then wait for it. |
@@ -94,6 +95,15 @@ fn main() {
             let mut out = stdout.lock();
             writeln!(out, "{prefix}:{last_line}").expect("echo: stdout write succeeds");
             out.flush().expect("echo: stdout flush succeeds");
+        } else if let Some(prefix) = arg.strip_prefix("echo-hex:") {
+            let hex = last_line
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let mut out = stdout.lock();
+            writeln!(out, "{prefix}:{hex}").expect("echo-hex: stdout write succeeds");
+            out.flush().expect("echo-hex: stdout flush succeeds");
         } else if arg == "report-size" {
             let (Width(cols), Height(rows)) =
                 terminal_size().expect("report-size: PTY provides terminal dimensions");

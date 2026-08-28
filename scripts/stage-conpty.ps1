@@ -9,6 +9,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Invoke-NativeCommand {
+    param([scriptblock] $Command)
+
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Get-Sha512 {
     param(
         [Parameter(Mandatory = $true)]
@@ -151,7 +163,7 @@ try {
     if ($Configuration -eq 'Release') {
         $cargoArguments += '--release'
     }
-    & cargo @cargoArguments
+    Invoke-NativeCommand { & cargo @cargoArguments }
     if ($LASTEXITCODE -ne 0) {
         throw "cargo build --workspace failed with exit code $LASTEXITCODE"
     }
@@ -173,7 +185,9 @@ try {
     Write-Host "Staged verified x64 ConPTY runtime in target\$profileDirectory and target\$profileDirectory\deps."
 
     if ($RunSmoke) {
-        & cargo test -p festerm windows_conpty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+        Invoke-NativeCommand {
+            & cargo test -p festerm windows_conpty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "Pinned Windows ConPTY retention smoke failed with exit code $LASTEXITCODE"
         }

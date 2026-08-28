@@ -198,6 +198,13 @@ Treat a guest running the same major macOS version as the host as the safest
 baseline unless current Parallels documentation explicitly supports the desired
 host/guest combination.
 
+Host-driven input is selected only by a descriptor from the configured
+adapter repository at its pinned commit. The descriptor contains fixed,
+controller-validated Parallels event codes and bounded stage deadlines.
+Candidate jobs cannot provide commands or event codes. Guest readiness uses
+atomic, per-run, content-free marker files, and the evidence manifest records
+whether the host plan completed.
+
 Parallels documentation currently notes that snapshots of macOS guests on
 Apple Silicon require macOS Sonoma 14 or newer on the host. If the lab cannot
 use snapshots, the provider must support an equivalent clean-clone/template

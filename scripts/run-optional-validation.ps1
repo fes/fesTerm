@@ -4,7 +4,9 @@ param(
         $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
     } else {
         'optional-validation-result.txt'
-    })
+    }),
+    [string] $HostInputStateDirectory = $env:FESTERM_NATIVE_HOST_INPUT_STATE_DIRECTORY,
+    [string] $HostInputRunId = $env:FESTERM_NATIVE_HOST_INPUT_RUN_ID
 )
 
 function Invoke-NativeCommand {
@@ -183,7 +185,9 @@ if ($nativePassed) {
 }
 
 if ($env:OS -eq 'Windows_NT') {
-    & "$PSScriptRoot\run-windows-os-input-smoke.ps1"
+    & "$PSScriptRoot\run-windows-os-input-smoke.ps1" `
+        -HostInputStateDirectory $HostInputStateDirectory `
+        -HostInputRunId $HostInputRunId
     if ($LASTEXITCODE -eq 0) {
         Add-Content -Path $ResultPath -Value "`nsuite=p5-windows-os-input status=pass"
     } else {

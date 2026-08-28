@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "platform": "windows",
+  "modes": ["os-input-smoke", "optional-validation"],
+  "initial_timeout_seconds": 1500,
+  "stage_timeout_seconds": 30,
+  "stages": [
+    {
+      "wait_for": "ready",
+      "events": [
+        {"type": "pointer-button", "code": 178},
+        {"type": "key", "code": 41},
+        {"type": "key", "code": 32},
+        {"type": "key", "code": 54},
+        {"type": "key", "code": 30},
+        {"type": "key", "code": 39},
+        {"type": "key", "code": 20},
+        {"type": "key", "code": 32},
+        {"type": "key", "code": 45},
+        {"type": "key", "code": 36}
+      ]
+    },
+    {
+      "wait_for": "focus-confirmed",
+      "events": [
+        {"type": "key", "code": 23},
+        {"type": "key", "code": 98},
+        {"type": "key", "code": 32},
+        {"type": "key", "code": 39},
+        {"type": "key", "code": 20},
+        {"type": "key", "code": 31},
+        {"type": "key", "code": 57},
+        {"type": "key", "code": 33},
+        {"type": "key", "code": 30},
+        {"type": "key", "code": 28},
+        {"type": "key", "code": 20},
+        {"type": "key", "code": 32},
+        {"type": "key", "code": 45},
+        {"type": "key", "code": 36}
+      ]
+    }
+  ]
+}
