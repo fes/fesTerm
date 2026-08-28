@@ -17,6 +17,32 @@ function Invoke-NativeCommand {
     }
 }
 
+function Invoke-VisualStudioCommand {
+    param(
+        [string] $Command,
+        [string] $VcVarsAllPath,
+        [string] $Architecture,
+        [string] $LlvmBinPath
+    )
+
+    $batchPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "festerm-os-input-{0}.cmd" -f [System.Guid]::NewGuid().ToString('N')
+    )
+    try {
+        @(
+            '@echo off'
+            "call `"$VcVarsAllPath`" $Architecture >nul"
+            'if errorlevel 1 exit /b %errorlevel%'
+            "set `"PATH=$LlvmBinPath;%PATH%`""
+            'set "CC=clang"'
+            $Command
+        ) | Set-Content -LiteralPath $batchPath -Encoding Ascii
+        Invoke-NativeCommand { & $batchPath }
+    } finally {
+        Remove-Item -LiteralPath $batchPath -Force -ErrorAction Ignore
+    }
+}
+
 function Publish-HostInputState {
     param([string] $Stage)
 
@@ -67,7 +93,19 @@ if (-not [System.IO.Path]::IsPathRooted($ResultPath)) {
 }
 $nativeResultPath = [System.IO.Path]::GetFullPath($ResultPath)
 
-Invoke-NativeCommand { cargo build --workspace }
+$vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
+$llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
+if ((Test-Path -LiteralPath $vcvarsallPath) -and
+    (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+    $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+    Invoke-VisualStudioCommand `
+        -Command 'cargo build --workspace' `
+        -VcVarsAllPath $vcvarsallPath `
+        -Architecture $architecture `
+        -LlvmBinPath $llvmBinPath
+} else {
+    Invoke-NativeCommand { cargo build --workspace }
+}
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Remove-Item $nativeResultPath -ErrorAction Ignore
