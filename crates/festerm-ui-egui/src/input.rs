@@ -139,6 +139,12 @@ pub fn route_mouse_input(
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct KeyboardOwnership {
     pub(crate) terminal_owned: bool,
+    /// Set when the OS window loses focus while this view held terminal
+    /// keyboard ownership, so a later regain of OS window focus knows this
+    /// was the view the user was last typing into and should reclaim
+    /// egui's own widget-level keyboard focus, not just resume in-band PTY
+    /// focus reporting. Cleared once consumed.
+    reclaim_focus_on_window_refocus: bool,
 }
 
 impl KeyboardOwnership {
@@ -161,6 +167,22 @@ impl KeyboardOwnership {
         } else {
             None
         }
+    }
+
+    /// Records, when the OS window is losing focus, whether this view
+    /// currently owns terminal keyboard input - so it can reclaim egui's
+    /// widget-level focus if the window regains focus later.
+    pub(crate) fn note_window_losing_focus(&mut self) {
+        if self.terminal_owned {
+            self.reclaim_focus_on_window_refocus = true;
+        }
+    }
+
+    /// Consumes the pending reclaim flag, if set, returning whether this
+    /// view should re-request egui keyboard focus now that the OS window
+    /// has regained focus.
+    pub(crate) fn take_reclaim_focus_on_window_refocus(&mut self) -> bool {
+        std::mem::take(&mut self.reclaim_focus_on_window_refocus)
     }
 }
 
@@ -327,6 +349,16 @@ pub(crate) fn route_egui_events(
                 }
             }
             egui::Event::WindowFocused(focused) => {
+                if !focused {
+                    // Remember whether this view owned terminal keyboard
+                    // input at the moment the OS window lost focus, so a
+                    // later regain of window focus can reclaim egui's own
+                    // widget focus here rather than leaving it stranded
+                    // until the user clicks the terminal again.
+                    keyboard.note_window_losing_focus();
+                } else if keyboard.take_reclaim_focus_on_window_refocus() {
+                    response.request_focus();
+                }
                 let focus = if focused {
                     keyboard.focus_in_if_needed(keyboard_focused)
                 } else {
