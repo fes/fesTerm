@@ -8,7 +8,7 @@
     {
       "wait_for": "ready",
       "settle_seconds": 0,
-      "inter_event_milliseconds": 100,
+      "inter_event_milliseconds": 500,
       "first_event_pause_milliseconds": 1000,
       "events": [
         {"type": "pointer-button", "code": 178},
