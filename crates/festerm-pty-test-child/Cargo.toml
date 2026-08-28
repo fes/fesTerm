@@ -16,10 +16,7 @@ path = "src/main.rs"
 terminal_size = "0.4"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Console",
-] }
+crossterm = "0.29"
 
 [lints]
 workspace = true

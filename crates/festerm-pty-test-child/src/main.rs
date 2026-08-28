@@ -165,31 +165,7 @@ fn main() {
 
     #[cfg(windows)]
     fn set_raw_input() {
-        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-        use windows_sys::Win32::System::Console::{
-            GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT,
-            ENABLE_PROCESSED_INPUT, STD_INPUT_HANDLE,
-        };
-
-        unsafe {
-            let input = GetStdHandle(STD_INPUT_HANDLE);
-            assert!(
-                !input.is_null() && input != INVALID_HANDLE_VALUE,
-                "set-raw-input: stdin handle is valid"
-            );
-            let mut mode = 0;
-            assert_ne!(
-                GetConsoleMode(input, &mut mode),
-                0,
-                "set-raw-input: stdin is a console"
-            );
-            mode &= !(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT);
-            assert_ne!(
-                SetConsoleMode(input, mode),
-                0,
-                "set-raw-input: console mode is writable"
-            );
-        }
+        crossterm::terminal::enable_raw_mode().expect("set-raw-input: console mode is writable");
     }
 
     #[cfg(not(windows))]
