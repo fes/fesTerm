@@ -7,6 +7,7 @@
   "stages": [
     {
       "wait_for": "ready",
+      "settle_seconds": 0,
       "events": [
         {"type": "pointer-button", "code": 178},
         {"type": "key", "code": 41},
@@ -22,6 +23,7 @@
     },
     {
       "wait_for": "focus-confirmed",
+      "settle_seconds": 1,
       "events": [
         {"type": "key", "code": 23},
         {"type": "key", "code": 98},

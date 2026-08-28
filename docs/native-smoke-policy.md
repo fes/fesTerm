@@ -168,7 +168,7 @@ retries would only hide an infrastructure defect. The replacement must drive
 keyboard events from the host/provider after a content-free guest readiness
 handshake. The permanent shared-lab driver now loads a fixed plan only from
 the pinned adapter commit, validates a narrow key/click allowlist, enforces
-ordered per-run atomic stages and deadlines, records engagement in the
+ordered per-run atomic stages, bounded settle intervals, and deadlines, records engagement in the
 manifest, and has no guest-input fallback. Its first exact-byte diagnostic
 proved both host stages and native focus, then exposed ConPTY canonical input
 processing; the controlled child now uses raw input for the oracle. During the
