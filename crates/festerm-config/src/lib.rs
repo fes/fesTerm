@@ -538,6 +538,12 @@ pub struct InterfaceSettings {
     /// list remains the baseline presentation.
     #[serde(default, skip_serializing_if = "is_false")]
     compact_launcher_grid: bool,
+    /// Whether a background session tab's chip status dot slow-pulses when
+    /// that session has emitted output since the tab was last active
+    /// (feature request #68). Off by default: chips render exactly as they
+    /// do today with no behavior change.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pulse_new_output_dot: bool,
 }
 
 impl InterfaceSettings {
@@ -554,6 +560,7 @@ impl InterfaceSettings {
         scroll_speed: ScrollSpeedPreference::Normal,
         quick_switch_overlay: false,
         compact_launcher_grid: false,
+        pulse_new_output_dot: false,
     };
 
     pub const fn new(
@@ -574,6 +581,7 @@ impl InterfaceSettings {
             scroll_speed: ScrollSpeedPreference::Normal,
             quick_switch_overlay: false,
             compact_launcher_grid: false,
+            pulse_new_output_dot: false,
         }
     }
 
@@ -604,6 +612,13 @@ impl InterfaceSettings {
     /// multi-column layout for saved profiles (feature request #64).
     pub const fn with_compact_launcher_grid(mut self, compact_launcher_grid: bool) -> Self {
         self.compact_launcher_grid = compact_launcher_grid;
+        self
+    }
+
+    /// Sets whether a background tab's chip status dot slow-pulses when new
+    /// output has arrived since it was last active (feature request #68).
+    pub const fn with_pulse_new_output_dot(mut self, pulse_new_output_dot: bool) -> Self {
+        self.pulse_new_output_dot = pulse_new_output_dot;
         self
     }
 
@@ -645,6 +660,10 @@ impl InterfaceSettings {
 
     pub const fn compact_launcher_grid(self) -> bool {
         self.compact_launcher_grid
+    }
+
+    pub const fn pulse_new_output_dot(self) -> bool {
+        self.pulse_new_output_dot
     }
 
     fn is_default(&self) -> bool {
@@ -4294,6 +4313,42 @@ schema_version = 99
             .to_toml()
             .unwrap();
         assert!(!default_serialized.contains("compact_launcher_grid"));
+    }
+
+    #[test]
+    fn pulse_new_output_dot_preference_round_trips_through_toml_and_defaults_to_off() {
+        // Feature request #68.
+        let settings = InterfaceSettings::DEFAULT.with_pulse_new_output_dot(true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("pulse_new_output_dot = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+
+        // An older settings table with no `pulse_new_output_dot` key
+        // defaults to off, preserving today's static status dot.
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert!(!Configuration::parse(older_document)
+            .unwrap()
+            .interface_settings()
+            .pulse_new_output_dot());
+
+        // The off state is the default and is omitted from serialization
+        // entirely, matching the other opt-in booleans here.
+        let default_serialized = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        assert!(!default_serialized.contains("pulse_new_output_dot"));
     }
 
     #[test]

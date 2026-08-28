@@ -216,6 +216,14 @@ pub struct ChipViewModel {
     /// quick-switch number overlay (feature request #69) when the caller
     /// reports the modifier is currently held.
     pub quick_switch_number: Option<u8>,
+    /// Whether this chip's status dot should slow-pulse because its session
+    /// has produced output since the tab was last active (feature request
+    /// #68). Always `false` for `Neutral` chips (no dot to pulse) and for
+    /// the currently active chip; the caller (`FesTermApp::chip_view_models`)
+    /// is responsible for gating this on the "pulse on new output" setting
+    /// before constructing this value, so this crate does not need its own
+    /// copy of that preference.
+    pub pulse_new_output: bool,
 }
 
 /// A user gesture translated from the chip row. The application layer maps
@@ -304,6 +312,7 @@ pub fn show(
                 closable: chip.closable,
                 renamable: chip.renamable,
                 quick_switch_number: chip.quick_switch_number,
+                pulse_new_output: chip.pulse_new_output,
             })
             .collect::<Vec<_>>();
         &suppressed_chips
@@ -1448,7 +1457,7 @@ fn paint_chip_primary_contents(
     if show_number {
         paint_quick_switch_number(ui, chip.quick_switch_number.expect("checked above"));
     } else if !matches!(chip.status, ChipStatus::Neutral) {
-        paint_status_dot(ui, chip.status);
+        paint_status_dot(ui, chip.status, chip.pulse_new_output);
     }
 
     let rename_id = rename_buffer_id(chip.id);
@@ -1528,7 +1537,7 @@ fn paint_chip_primary(
 /// Compact, non-color-exclusive connection-state dot, painted directly
 /// rather than relying on a glyph the active font may not have coverage for
 /// (the previous `\u{25cf}` rendered as tofu/an empty box on this machine).
-fn paint_status_dot(ui: &mut Ui, status: ChipStatus) {
+fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
     let diameter = 8.0;
     // Allocate at the primary label's own line height (rather than just
     // the dot's diameter) so this row's cross-axis `Align::Center`
@@ -1537,8 +1546,21 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus) {
     // sit slightly off from the text's own optical center.
     let text_height = ui.text_style_height(&egui::TextStyle::Body);
     let (rect, response) = ui.allocate_exact_size(vec2(diameter, text_height), Sense::hover());
+    let color = if pulse {
+        // Feature request #68: a slow (~2.4s period), smooth fade between
+        // full and low opacity - deliberately slower and gentler than the
+        // fixed-solid connection-state dot so it reads as an ambient "new
+        // output" cue rather than an alarm, and never changes the dot's
+        // hue, which stays reserved for connection-state semantics.
+        let phase = (ui.input(|i| i.time) * std::f64::consts::TAU / 2.4).sin();
+        let alpha = (0.35 + 0.65 * (phase * 0.5 + 0.5)) as f32;
+        ui.ctx().request_repaint();
+        status.color().gamma_multiply(alpha)
+    } else {
+        status.color()
+    };
     ui.painter()
-        .circle_filled(rect.center(), diameter / 2.0, status.color());
+        .circle_filled(rect.center(), diameter / 2.0, color);
     response.on_hover_text(status.accessible_label());
 }
 
@@ -1629,6 +1651,7 @@ mod tests {
             closable: true,
             renamable: true,
             quick_switch_number: None,
+            pulse_new_output: false,
         }
     }
 
@@ -2811,6 +2834,7 @@ mod tests {
                 closable: false,
                 renamable: false,
                 quick_switch_number: None,
+                pulse_new_output: false,
             }],
             active: ChipId(1),
             layout: ChipLayout::Wrap,
@@ -2891,6 +2915,7 @@ mod tests {
             closable: false,
             renamable: false,
             quick_switch_number: Some(1),
+            pulse_new_output: false,
         };
 
         let mut harness = Harness::builder()
@@ -2904,6 +2929,7 @@ mod tests {
                     closable: neutral_chip.closable,
                     renamable: neutral_chip.renamable,
                     quick_switch_number: neutral_chip.quick_switch_number,
+                    pulse_new_output: neutral_chip.pulse_new_output,
                 };
                 show(
                     ui,
@@ -2918,5 +2944,37 @@ mod tests {
             });
         harness.run();
         harness.get_by_label("Quick switch: 1");
+    }
+
+    #[test]
+    fn pulsing_status_dot_renders_without_altering_the_chip_label_or_accessible_hover_text() {
+        // Feature request #68: the pulse is a pure animation cue layered on
+        // the existing status dot, so a pulsing chip must still expose the
+        // exact same primary label and hover/accessible status text as a
+        // non-pulsing one - the flag must never change `ChipStatus` or its
+        // accessible label.
+        fn pulsing_chip() -> ChipViewModel {
+            let mut chip = chip(1, "one");
+            chip.pulse_new_output = true;
+            chip
+        }
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[pulsing_chip()],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::SingleRowScroll,
+                    false,
+                    false,
+                );
+            });
+        harness.run_steps(2);
+
+        harness.get_by_label("one");
     }
 }

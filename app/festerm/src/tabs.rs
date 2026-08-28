@@ -337,6 +337,12 @@ pub struct SessionTab {
     /// Present only when this session authenticated with a plain password.
     /// See [`SshPasswordRetryState`].
     pub ssh_password_retry: Option<SshPasswordRetryState>,
+    /// Whether this session has emitted output since the tab was last the
+    /// active/focused tab (feature request #68). Set whenever output is
+    /// pumped into a *non-active* tab's terminal; cleared whenever the tab
+    /// becomes active. Purely a presentation cue for the chip's slow-pulse
+    /// animation — it never changes `ChipStatus`/connection-state semantics.
+    pub has_new_output_since_active: bool,
 }
 
 /// Narrow transport metadata safe for application chrome. Keeping this owned
@@ -718,6 +724,7 @@ impl SessionTab {
             inspector_transport,
             eviction_notice_shown: false,
             ssh_password_retry,
+            has_new_output_since_active: false,
         }
     }
 
@@ -1094,6 +1101,10 @@ pub enum AppCommand {
     /// multi-column layout for saved profiles when the window is wide
     /// enough (feature request #64).
     ToggleCompactLauncherGrid,
+    /// Toggles whether a background session tab's chip status dot
+    /// slow-pulses when that session has emitted output since the tab was
+    /// last active (feature request #68).
+    TogglePulseNewOutputDot,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1215,6 +1226,7 @@ pub struct AppState {
     scroll_speed: ScrollSpeedPreference,
     quick_switch_overlay: bool,
     compact_launcher_grid: bool,
+    pulse_new_output_dot: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1256,6 +1268,7 @@ impl AppState {
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
+            pulse_new_output_dot: settings.pulse_new_output_dot(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1293,6 +1306,7 @@ impl AppState {
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
+            pulse_new_output_dot: settings.pulse_new_output_dot(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1377,6 +1391,7 @@ impl AppState {
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
+            pulse_new_output_dot: settings.pulse_new_output_dot(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1500,6 +1515,10 @@ impl AppState {
         self.compact_launcher_grid
     }
 
+    pub const fn pulse_new_output_dot(&self) -> bool {
+        self.pulse_new_output_dot
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1515,6 +1534,7 @@ impl AppState {
         .with_scroll_speed(self.scroll_speed)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
+        .with_pulse_new_output_dot(self.pulse_new_output_dot)
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1566,14 +1586,15 @@ impl AppState {
         })
     }
 
-    /// Every running session tab, independent of which is active. Each open
-    /// session remains a persistent object that must keep draining its
-    /// bounded backend queues even while another tab is focused.
-    pub fn session_tabs_mut(&mut self) -> impl Iterator<Item = &mut SessionTab> {
+    /// Every running session tab paired with its `TabId`, independent of
+    /// which is active. Used where a caller needs to compare each tab
+    /// against the currently active tab (feature request #68: only a
+    /// *non-active* tab's output should mark it as having new output).
+    pub fn session_tabs_with_id_mut(&mut self) -> impl Iterator<Item = (TabId, &mut SessionTab)> {
         self.tabs
             .iter_mut()
             .filter_map(|tab| match &mut tab.content {
-                TabContent::Session(session) => Some(session.as_mut()),
+                TabContent::Session(session) => Some((tab.id, session.as_mut())),
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
@@ -1680,6 +1701,9 @@ impl AppState {
             AppCommand::ToggleCompactLauncherGrid => {
                 self.compact_launcher_grid = !self.compact_launcher_grid;
             }
+            AppCommand::TogglePulseNewOutputDot => {
+                self.pulse_new_output_dot = !self.pulse_new_output_dot;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -1692,6 +1716,7 @@ impl AppState {
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
+                self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -1717,7 +1742,7 @@ impl AppState {
             .iter()
             .find(|tab| matches!(tab.content, TabContent::Launcher))
         {
-            self.active = existing.id;
+            self.set_active(existing.id);
             self.workspace_dirty = true;
             return;
         }
@@ -1726,7 +1751,7 @@ impl AppState {
             id,
             content: TabContent::Launcher,
         });
-        self.active = id;
+        self.set_active(id);
         self.workspace_dirty = true;
     }
 
@@ -1737,7 +1762,7 @@ impl AppState {
             .iter()
             .find(|tab| matches!(tab.content, TabContent::Settings))
         {
-            self.active = existing.id;
+            self.set_active(existing.id);
             self.workspace_dirty = true;
             return;
         }
@@ -1746,7 +1771,7 @@ impl AppState {
             id,
             content: TabContent::Settings,
         });
-        self.active = id;
+        self.set_active(id);
         self.workspace_dirty = true;
     }
 
@@ -1758,7 +1783,7 @@ impl AppState {
             .iter()
             .find(|tab| matches!(tab.content, TabContent::Profiles))
         {
-            self.active = existing.id;
+            self.set_active(existing.id);
             self.workspace_dirty = true;
             return;
         }
@@ -1767,7 +1792,7 @@ impl AppState {
             id,
             content: TabContent::Profiles,
         });
-        self.active = id;
+        self.set_active(id);
         self.workspace_dirty = true;
     }
 
@@ -2003,7 +2028,7 @@ impl AppState {
             id,
             content: TabContent::Session(Box::new(session)),
         });
-        self.active = id;
+        self.set_active(id);
     }
 
     fn resolve_ssh_password(&mut self, tab: TabId, password: String) {
@@ -2064,7 +2089,7 @@ impl AppState {
 
     fn activate(&mut self, id: TabId) {
         if self.tabs.iter().any(|tab| tab.id == id) {
-            self.active = id;
+            self.set_active(id);
             self.workspace_dirty = true;
         }
     }
@@ -2082,8 +2107,21 @@ impl AppState {
             return;
         }
         let next = (index as i64 + delta).rem_euclid(len) as usize;
-        self.active = self.tabs[next].id;
+        self.set_active(self.tabs[next].id);
         self.workspace_dirty = true;
+    }
+
+    /// Switches the active tab and, if the newly active tab is a session,
+    /// clears its "new output since last active" flag (feature request
+    /// #68): once the user is looking at it again there is nothing left to
+    /// notify them about.
+    fn set_active(&mut self, id: TabId) {
+        self.active = id;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            if let TabContent::Session(session) = &mut tab.content {
+                session.has_new_output_since_active = false;
+            }
+        }
     }
 
     /// Relocates `moved` to sit immediately before `before` (or at the end of
@@ -2160,7 +2198,7 @@ impl AppState {
         }
         if self.active == id {
             let next_index = index.min(self.tabs.len() - 1);
-            self.active = self.tabs[next_index].id;
+            self.set_active(self.tabs[next_index].id);
         }
     }
 }
@@ -2403,11 +2441,11 @@ mod tests {
         assert_eq!(tab.profile.port(), 2200);
         assert_eq!(tab.profile.username(), "deploy");
         assert!(
-            state.session_tabs_mut().next().is_some(),
+            state.session_tabs_with_id_mut().next().is_some(),
             "only the separately restored local profile started a session"
         );
         assert_eq!(
-            state.session_tabs_mut().count(),
+            state.session_tabs_with_id_mut().count(),
             1,
             "the SSH restoration starts no network transport"
         );
@@ -2974,6 +3012,46 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert_eq!(state.scroll_speed(), ScrollSpeedPreference::Normal);
+    }
+
+    #[test]
+    fn toggle_pulse_new_output_dot_flips_state_and_resets_to_off() {
+        // Feature request #68.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.pulse_new_output_dot());
+
+        state.dispatch(AppCommand::TogglePulseNewOutputDot, &context);
+        assert!(state.pulse_new_output_dot());
+        assert!(state.interface_settings().pulse_new_output_dot());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.pulse_new_output_dot());
+    }
+
+    #[test]
+    fn activating_a_tab_clears_its_new_output_flag() {
+        // Feature request #68: switching back to a tab that had unseen
+        // background output must clear the flag, since the user is now
+        // looking at it and there is nothing left to notify them of.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let first = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let second = state.active();
+
+        let TabContent::Session(session) = &mut state.active_tab_mut().content else {
+            panic!("expected a session tab");
+        };
+        session.has_new_output_since_active = true;
+
+        // Switching away and back to the flagged tab clears it.
+        state.dispatch(AppCommand::ActivateTab(first), &context);
+        state.dispatch(AppCommand::ActivateTab(second), &context);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("expected a session tab");
+        };
+        assert!(!session.has_new_output_since_active);
     }
 
     #[test]

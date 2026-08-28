@@ -1407,9 +1407,16 @@ impl FesTermApp {
     /// must keep making progress while another tab is focused.
     fn pump_all_sessions(&mut self, context: &egui::Context) {
         let mut needs_repaint = false;
-        for session in self.state.session_tabs_mut() {
+        let active = self.state.active();
+        for (id, session) in self.state.session_tabs_with_id_mut() {
             if session.controller.pump_events(&mut session.terminal) {
                 needs_repaint = true;
+                // Feature request #68: only mark a *background* tab as
+                // having new output; the active tab is already visible, so
+                // there is nothing to notify the user of.
+                if id != active {
+                    session.has_new_output_since_active = true;
+                }
             }
             session
                 .controller
@@ -2292,6 +2299,16 @@ impl FesTermApp {
                     }
                 };
                 let renamable = matches!(tab.content, TabContent::Session(_));
+                // Feature request #68: only a background session tab with
+                // unseen output pulses, and only when the preference is on.
+                // The active tab's own chip never pulses - there is nothing
+                // to notify the user of while they're already looking at it.
+                let pulse_new_output = self.state.pulse_new_output_dot()
+                    && tab.id != self.state.active()
+                    && matches!(
+                        &tab.content,
+                        TabContent::Session(session) if session.has_new_output_since_active
+                    );
                 ChipViewModel {
                     id: ChipId(tab.id.chip_id()),
                     primary,
@@ -2300,6 +2317,7 @@ impl FesTermApp {
                     closable: true,
                     renamable,
                     quick_switch_number: (index < MAX_QUICK_SWITCH_TABS).then(|| (index + 1) as u8),
+                    pulse_new_output,
                 }
             })
             .collect();
@@ -2886,6 +2904,7 @@ impl FesTermApp {
                             scroll_speed: self.state.scroll_speed(),
                             quick_switch_overlay: self.state.quick_switch_overlay(),
                             compact_launcher_grid: self.state.compact_launcher_grid(),
+                            pulse_new_output_dot: self.state.pulse_new_output_dot(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()
@@ -3397,6 +3416,56 @@ mod tests {
         harness.state_mut().focus_mode = true;
         harness.step();
         assert!(!harness.state().focus_mode);
+    }
+
+    #[test]
+    fn chip_pulses_only_for_a_background_session_with_new_output_and_the_preference_on() {
+        // Feature request #68: `chip_view_models` gates the pulse flag on
+        // (a) the "pulse on new output" preference being on, (b) the tab
+        // being a session with unseen output, and (c) that tab NOT being
+        // the currently active one - the active tab's own chip must never
+        // pulse even if its flag happens to be set.
+        let context = egui::Context::default();
+        let (mut app, first) = FesTermApp::for_test_with_live_session(&context);
+        app.state.dispatch(AppCommand::StartLocalSession, &context);
+        let second = app.state.active();
+
+        // Preference off (default): even a flagged background tab does not
+        // pulse.
+        if let Some(session) = app.state.session_tab_mut(first) {
+            session.has_new_output_since_active = true;
+        }
+        let (chips, _) = app.chip_view_models();
+        assert!(
+            chips.iter().all(|chip| !chip.pulse_new_output),
+            "no chip should pulse while the preference is off"
+        );
+
+        // Preference on: the flagged background tab (`first`) pulses, but
+        // the active tab (`second`) never does, even if its own flag were
+        // also set.
+        app.state
+            .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
+        if let Some(session) = app.state.session_tab_mut(second) {
+            session.has_new_output_since_active = true;
+        }
+        let (chips, active_chip) = app.chip_view_models();
+        let first_chip = chips
+            .iter()
+            .find(|chip| chip.id != active_chip)
+            .expect("expected a background chip");
+        let second_chip = chips
+            .iter()
+            .find(|chip| chip.id == active_chip)
+            .expect("expected the active chip");
+        assert!(
+            first_chip.pulse_new_output,
+            "a flagged background tab must pulse when the preference is on"
+        );
+        assert!(
+            !second_chip.pulse_new_output,
+            "the active tab's own chip must never pulse"
+        );
     }
 
     #[test]

@@ -1748,6 +1748,7 @@ pub struct SettingsViewModel {
     pub scroll_speed: ScrollSpeedPreference,
     pub quick_switch_overlay: bool,
     pub compact_launcher_grid: bool,
+    pub pulse_new_output_dot: bool,
 }
 
 pub fn show_settings(
@@ -1767,6 +1768,7 @@ pub fn show_settings(
         scroll_speed,
         quick_switch_overlay,
         compact_launcher_grid,
+        pulse_new_output_dot,
     } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
@@ -1904,6 +1906,21 @@ pub fn show_settings(
                                 compact_launcher_grid,
                             ) {
                                 command = Some(AppCommand::ToggleCompactLauncherGrid);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Pulse status dot on new background output",
+                                "Slow-pulse a background tab's chip status dot when that \
+                                 session has produced output since you last looked at it, \
+                                 so it can quietly draw your eye without changing its \
+                                 connection-state color. The active tab's own chip never \
+                                 pulses. Off by default.",
+                                pulse_new_output_dot,
+                            ) {
+                                command = Some(AppCommand::TogglePulseNewOutputDot);
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
@@ -3375,7 +3392,7 @@ mod tests {
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 1000.0))
+            .with_size(egui::vec2(520.0, 1200.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
@@ -3391,6 +3408,7 @@ mod tests {
                             scroll_speed: ScrollSpeedPreference::Normal,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
+                            pulse_new_output_dot: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3514,6 +3532,35 @@ mod tests {
     }
 
     #[test]
+    fn settings_toggle_pulse_new_output_dot_control_returns_the_toggle_command() {
+        // Regression test for the "Pulse status dot on new background
+        // output" preference (feature request #68): off by default, with
+        // its own explicit toggle in the Interface card.
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness
+            .query_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Pulse status dot on new background output"
+            )
+            .is_some());
+
+        harness
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Pulse status dot on new background output",
+            )
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::TogglePulseNewOutputDot)
+        ));
+    }
+
+    #[test]
     fn settings_close_confirmation_control_returns_the_toggle_command() {
         let mut harness = settings_harness();
         harness.run();
@@ -3565,7 +3612,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1100.0))
+            .with_size(egui::vec2(520.0, 1200.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -3588,6 +3635,7 @@ mod tests {
                             scroll_speed: ScrollSpeedPreference::Normal,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
+                            pulse_new_output_dot: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
