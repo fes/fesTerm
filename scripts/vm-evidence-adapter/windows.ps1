@@ -37,7 +37,7 @@ function Require-PassStatus {
     param([string] $Path)
 
     if (-not (Test-Path -LiteralPath $Path) -or
-        (Get-Content -LiteralPath $Path -Tail 1) -ne 'status=pass') {
+        (Get-Content -LiteralPath $Path -TotalCount 1) -ne 'status=pass') {
         throw "Evidence runner did not write status=pass: $Path"
     }
 }
