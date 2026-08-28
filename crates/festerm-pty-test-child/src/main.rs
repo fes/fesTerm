@@ -191,7 +191,7 @@ fn read_until_enter(_stdin: &std::io::Stdin) -> String {
         else {
             continue;
         };
-        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        if key.kind != KeyEventKind::Press {
             continue;
         }
         match key.code {
