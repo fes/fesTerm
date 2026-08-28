@@ -26,7 +26,7 @@
 //! | `exit:N` | Exit with decimal code N. |
 
 use std::{
-    io::{BufRead, Read, Write},
+    io::{BufRead, Write},
     process, thread,
     time::Duration,
 };
@@ -94,19 +94,7 @@ fn main() {
             let trimmed = last_line.trim_end_matches(['\r', '\n']);
             last_line = trimmed.to_owned();
         } else if arg == "read-until-enter" {
-            let mut bytes = Vec::new();
-            let mut byte = [0u8; 1];
-            loop {
-                stdin
-                    .lock()
-                    .read_exact(&mut byte)
-                    .expect("read-until-enter: stdin read succeeds");
-                if matches!(byte[0], b'\r' | b'\n') {
-                    break;
-                }
-                bytes.push(byte[0]);
-            }
-            last_line = String::from_utf8(bytes).expect("read-until-enter: input is valid UTF-8");
+            last_line = read_until_enter(&stdin);
         } else if let Some(prefix) = arg.strip_prefix("echo:") {
             let mut out = stdout.lock();
             writeln!(out, "{prefix}:{last_line}").expect("echo: stdout write succeeds");
@@ -171,5 +159,47 @@ fn main() {
     #[cfg(not(windows))]
     fn set_raw_input() {
         panic!("set-raw-input is supported only on Windows");
+    }
+}
+
+#[cfg(not(windows))]
+fn read_until_enter(stdin: &std::io::Stdin) -> String {
+    use std::io::Read as _;
+
+    let mut bytes = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        stdin
+            .lock()
+            .read_exact(&mut byte)
+            .expect("read-until-enter: stdin read succeeds");
+        if matches!(byte[0], b'\r' | b'\n') {
+            break;
+        }
+        bytes.push(byte[0]);
+    }
+    String::from_utf8(bytes).expect("read-until-enter: input is valid UTF-8")
+}
+
+#[cfg(windows)]
+fn read_until_enter(_stdin: &std::io::Stdin) -> String {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+
+    let mut value = String::new();
+    loop {
+        let Event::Key(key) = event::read().expect("read-until-enter: console event read succeeds")
+        else {
+            continue;
+        };
+        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            continue;
+        }
+        match key.code {
+            KeyCode::Enter => return value,
+            KeyCode::Tab => value.push('\t'),
+            KeyCode::Up => value.push_str("\x1b[A"),
+            KeyCode::Char(character) => value.push(character),
+            _ => {}
+        }
     }
 }
