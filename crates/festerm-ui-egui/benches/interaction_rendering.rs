@@ -128,7 +128,7 @@ impl RenderState {
 
     fn frame(&mut self) -> usize {
         let context = self.context.clone();
-        let output = context.run_ui(
+        let mut output = context.run_ui(
             RawInput {
                 screen_rect: Some(Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -140,7 +140,9 @@ impl RenderState {
                 self.view.show_in_ui(ui, &mut self.terminal, &mut self.sink);
             },
         );
-        output.shapes.len()
+        let shape_count = output.shapes.len();
+        output.textures_delta.clear();
+        shape_count
     }
 }
 
