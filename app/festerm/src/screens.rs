@@ -1644,6 +1644,7 @@ pub struct SettingsViewModel {
     pub terminal_font: TerminalFontPreference,
     pub terminal_ligatures: bool,
     pub scroll_speed: ScrollSpeedPreference,
+    pub quick_switch_overlay: bool,
 }
 
 pub fn show_settings(
@@ -1661,6 +1662,7 @@ pub fn show_settings(
         terminal_font,
         terminal_ligatures,
         scroll_speed,
+        quick_switch_overlay,
     } = settings;
     let mut command = None;
     ui.horizontal(|ui| {
@@ -1889,6 +1891,19 @@ pub fn show_settings(
                                         .color(theme::TEXT_MUTED),
                                 );
                             });
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Show quick-switch numbers",
+                                "While the quick-switch modifier is held, briefly overlay each \
+                                 eligible chip's number (1-9) in place of its usual status \
+                                 presentation.",
+                                quick_switch_overlay,
+                            ) {
+                                command = Some(AppCommand::ToggleQuickSwitchOverlay);
+                            }
                         });
                     });
                 });
@@ -3243,6 +3258,7 @@ mod tests {
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
                             scroll_speed: ScrollSpeedPreference::Normal,
+                            quick_switch_overlay: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3409,6 +3425,7 @@ mod tests {
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
                             scroll_speed: ScrollSpeedPreference::Normal,
+                            quick_switch_overlay: false,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",

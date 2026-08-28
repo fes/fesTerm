@@ -2256,7 +2256,8 @@ impl FesTermApp {
             .state
             .tabs()
             .iter()
-            .map(|tab| {
+            .enumerate()
+            .map(|(index, tab)| {
                 let (primary, secondary, status) = match &tab.content {
                     TabContent::Launcher => (
                         "New Session".to_owned(),
@@ -2298,6 +2299,7 @@ impl FesTermApp {
                     status,
                     closable: true,
                     renamable,
+                    quick_switch_number: (index < MAX_QUICK_SWITCH_TABS).then(|| (index + 1) as u8),
                 }
             })
             .collect();
@@ -2778,6 +2780,12 @@ impl FesTermApp {
             let inspector_open = self.state.inspector_open();
             let inspector_available =
                 matches!(self.state.active_tab().content, TabContent::Session(_));
+            // Feature request #69: only overlays chip quick-switch numbers
+            // while the same modifier the quick-switch shortcut itself uses
+            // is currently held, so the visual cue always matches the live
+            // shortcut, not just at the moment a chord completes.
+            let quick_switch_overlay_active = self.state.quick_switch_overlay()
+                && ui.ctx().input(|input| input.modifiers.command);
             let actions = chrome::show(
                 ui,
                 &chips,
@@ -2786,6 +2794,7 @@ impl FesTermApp {
                 inspector_available,
                 self.state.chip_layout(),
                 self.state.show_session_details(),
+                quick_switch_overlay_active,
             );
             self.dispatch_chrome_actions(actions, &ui.ctx().clone());
         }
@@ -2874,6 +2883,7 @@ impl FesTermApp {
                             terminal_font: self.state.terminal_font(),
                             terminal_ligatures: self.state.terminal_ligatures(),
                             scroll_speed: self.state.scroll_speed(),
+                            quick_switch_overlay: self.state.quick_switch_overlay(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()

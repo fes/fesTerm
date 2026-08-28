@@ -13,8 +13,8 @@
 //! `docs/application-command-model.md`.
 
 use egui::{
-    emath::TSTransform, vec2, Align, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order, Popup,
-    RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, WidgetInfo, WidgetType,
+    emath::TSTransform, vec2, Align, Align2, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order,
+    Popup, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, WidgetInfo, WidgetType,
 };
 
 use crate::{icon, icon::Icon, theme};
@@ -86,6 +86,9 @@ const CHROME_ICON_COLOR_HOVERED: Color32 = theme::TEXT_PRIMARY;
 /// Close-button hover color, distinct from the chip outline/icon palette to
 /// keep its "destructive" affordance recognizable.
 const CHROME_CLOSE_HOVER: Color32 = theme::STATUS_ERROR;
+/// Quick-switch number overlay color (feature request #69): distinct from
+/// every `ChipStatus` color so it never reads as a new connection state.
+const CHIP_QUICK_SWITCH_NUMBER: Color32 = theme::TEXT_PRIMARY;
 
 /// Background fill for the top chrome band. It deliberately matches the
 /// terminal well so there is no extra title-band border; chips and controls
@@ -207,6 +210,12 @@ pub struct ChipViewModel {
     /// real, storable label, while singleton application surfaces such as
     /// Launcher and Settings do not.
     pub renamable: bool,
+    /// This chip's 1-based quick-switch position (`Cmd+1`..`Cmd+9` /
+    /// `Ctrl+1`..`Ctrl+9`), or `None` if it's beyond the first
+    /// `MAX_QUICK_SWITCH_TABS` chips and has no shortcut. Used to paint the
+    /// quick-switch number overlay (feature request #69) when the caller
+    /// reports the modifier is currently held.
+    pub quick_switch_number: Option<u8>,
 }
 
 /// A user gesture translated from the chip row. The application layer maps
@@ -265,6 +274,7 @@ pub enum ChipLayout {
 /// Renders the top-of-window chrome band: New Tab, the independent session
 /// chips, and the session-inspector toggle. Returns every gesture observed
 /// this frame; callers apply at most the ones they recognize.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut Ui,
     chips: &[ChipViewModel],
@@ -273,6 +283,7 @@ pub fn show(
     inspector_available: bool,
     layout: ChipLayout,
     show_session_details: bool,
+    quick_switch_overlay_active: bool,
 ) -> Vec<ChromeAction> {
     // Compact chips (`docs/gui-design.md` "Show session details in chips"):
     // when the preference is off, every chip is a single-line chip - the
@@ -292,6 +303,7 @@ pub fn show(
                 status: chip.status,
                 closable: chip.closable,
                 renamable: chip.renamable,
+                quick_switch_number: chip.quick_switch_number,
             })
             .collect::<Vec<_>>();
         &suppressed_chips
@@ -444,6 +456,7 @@ pub fn show(
                                 forced_width: forced_widths.map(|widths| widths[index]),
                                 row_height: chip_row_height,
                                 reveal: is_active && reveal_active,
+                                quick_switch_overlay_active,
                             },
                             &mut actions,
                         );
@@ -1031,6 +1044,7 @@ struct ChipPresentation {
     forced_width: Option<f32>,
     row_height: f32,
     reveal: bool,
+    quick_switch_overlay_active: bool,
 }
 
 fn show_chip(
@@ -1046,6 +1060,7 @@ fn show_chip(
         forced_width,
         row_height,
         reveal,
+        quick_switch_overlay_active,
     } = presentation;
     let chip_id = chip_widget_id(chip.id);
     let ctx = ui.ctx().clone();
@@ -1087,6 +1102,7 @@ fn show_chip(
                 show_close: active,
                 chip_id,
                 outer_rect: ghost_rect,
+                quick_switch_overlay_active,
             },
             actions,
         );
@@ -1143,6 +1159,7 @@ fn show_chip(
             show_close,
             chip_id,
             outer_rect: bg_rect,
+            quick_switch_overlay_active,
         },
         actions,
     );
@@ -1277,6 +1294,7 @@ struct ChipPaintState {
     show_close: bool,
     chip_id: Id,
     outer_rect: egui::Rect,
+    quick_switch_overlay_active: bool,
 }
 
 fn paint_chip(
@@ -1292,6 +1310,7 @@ fn paint_chip(
         show_close,
         chip_id,
         outer_rect,
+        quick_switch_overlay_active,
     } = state;
     let corner_radius = 6;
     // The active chip's fill is the lightest surface in the row (measured
@@ -1355,7 +1374,13 @@ fn paint_chip(
                 ui.set_min_size(outer_rect.size());
                 ui.add_space(3.0);
                 ui.horizontal(|ui| {
-                    paint_chip_primary_contents(ui, chip, reserved, actions);
+                    paint_chip_primary_contents(
+                        ui,
+                        chip,
+                        reserved,
+                        actions,
+                        quick_switch_overlay_active,
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(if matches!(chip.status, ChipStatus::Neutral) {
@@ -1393,7 +1418,13 @@ fn paint_chip(
                     .max_rect(line_rect)
                     .layout(Layout::left_to_right(Align::Center)),
             );
-            paint_chip_primary_contents(&mut line_ui, chip, reserved, actions);
+            paint_chip_primary_contents(
+                &mut line_ui,
+                chip,
+                reserved,
+                actions,
+                quick_switch_overlay_active,
+            );
         }
     });
 
@@ -1405,9 +1436,18 @@ fn paint_chip_primary_contents(
     chip: &ChipViewModel,
     reserved: f32,
     actions: &mut Vec<ChromeAction>,
+    quick_switch_overlay_active: bool,
 ) {
     ui.add_space(8.0);
-    if !matches!(chip.status, ChipStatus::Neutral) {
+    // Feature request #69: while the quick-switch modifier is held and the
+    // preference is on, an eligible chip's quick-switch number temporarily
+    // takes the place of its usual status presentation - the status dot
+    // for session chips, or a reserved slot for `Neutral` chips (Launcher/
+    // Settings/etc.) that otherwise paint no dot at all.
+    let show_number = quick_switch_overlay_active && chip.quick_switch_number.is_some();
+    if show_number {
+        paint_quick_switch_number(ui, chip.quick_switch_number.expect("checked above"));
+    } else if !matches!(chip.status, ChipStatus::Neutral) {
         paint_status_dot(ui, chip.status);
     }
 
@@ -1502,6 +1542,28 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus) {
     response.on_hover_text(status.accessible_label());
 }
 
+/// Overlay painted in the status-dot's slot (or, for `Neutral` chips that
+/// have no dot slot at all, a same-sized reserved slot) while the
+/// quick-switch modifier is held and the preference is on (feature request
+/// #69): the chip's 1-based `Cmd+N`/`Ctrl+N` quick-switch digit, in an
+/// accent color distinct from any status color so it never reads as a new
+/// connection state.
+fn paint_quick_switch_number(ui: &mut Ui, number: u8) {
+    let diameter = 8.0;
+    let text_height = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, response) = ui.allocate_exact_size(vec2(diameter, text_height), Sense::hover());
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        number.to_string(),
+        egui::FontId::new(10.0, egui::FontFamily::Monospace),
+        CHIP_QUICK_SWITCH_NUMBER,
+    );
+    let label = format!("Quick switch: {number}");
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label.clone()));
+    response.on_hover_text(label);
+}
+
 /// Painter-drawn close control (replacing the previous `\u{2715}` glyph,
 /// which likewise rendered as tofu): two crossed lines inside a small
 /// clickable square, with an explicit accessible label so screen readers
@@ -1566,6 +1628,7 @@ mod tests {
             status: ChipStatus::Connected,
             closable: true,
             renamable: true,
+            quick_switch_number: None,
         }
     }
 
@@ -1599,6 +1662,7 @@ mod tests {
                         true,
                         state.layout,
                         true,
+                        false,
                     );
                     state.observed.extend(actions);
                 },
@@ -1746,6 +1810,7 @@ mod tests {
                         true,
                         state.layout,
                         true,
+                        false,
                     );
                     state.observed.extend(actions);
                     // Mirrors `app.rs`'s `ui_content`, which adds
@@ -1800,6 +1865,7 @@ mod tests {
                         true,
                         state.layout,
                         true,
+                        false,
                     );
                     state.observed.extend(actions);
                 },
@@ -1851,6 +1917,7 @@ mod tests {
                         true,
                         state.layout,
                         true,
+                        false,
                     );
                     state.observed.extend(actions);
                 },
@@ -1904,6 +1971,7 @@ mod tests {
                     true,
                     ChipLayout::SingleRowScroll,
                     true,
+                    false,
                 );
             });
         harness.run();
@@ -1933,6 +2001,7 @@ mod tests {
                         true,
                         state.layout,
                         true,
+                        false,
                     );
                     state.observed.extend(actions);
                 },
@@ -2017,6 +2086,7 @@ mod tests {
                         true,
                         state.layout,
                         false,
+                        false,
                     );
                     state.observed.extend(actions);
                 },
@@ -2073,6 +2143,7 @@ mod tests {
                         true,
                         state.layout,
                         true,
+                        false,
                     );
                     state.observed.extend(actions);
                 },
@@ -2165,6 +2236,7 @@ mod tests {
                         true,
                         ChipLayout::SingleRowScroll,
                         show_session_details,
+                        false,
                     );
                 });
             harness.run();
@@ -2311,6 +2383,7 @@ mod tests {
                     true,
                     ChipLayout::Wrap,
                     false,
+                    false,
                 );
             });
         harness.run();
@@ -2340,6 +2413,7 @@ mod tests {
                     true,
                     ChipLayout::Wrap,
                     true,
+                    false,
                 );
             });
         harness.run();
@@ -2365,6 +2439,7 @@ mod tests {
                         true,
                         ChipLayout::Wrap,
                         show_session_details,
+                        false,
                     );
                 });
             harness.run();
@@ -2400,6 +2475,7 @@ mod tests {
                     true,
                     ChipLayout::SingleRowScroll,
                     false,
+                    false,
                 );
             });
         harness.run();
@@ -2432,6 +2508,7 @@ mod tests {
                         true,
                         ChipLayout::Wrap,
                         show_session_details,
+                        false,
                     );
                 });
             harness.run();
@@ -2733,6 +2810,7 @@ mod tests {
                 status: ChipStatus::Neutral,
                 closable: false,
                 renamable: false,
+                quick_switch_number: None,
             }],
             active: ChipId(1),
             layout: ChipLayout::Wrap,
@@ -2751,5 +2829,94 @@ mod tests {
             .observed
             .iter()
             .all(|action| !matches!(action, ChromeAction::Rename { .. })));
+    }
+
+    #[test]
+    fn quick_switch_overlay_shows_number_only_while_active_and_hides_the_status_dot() {
+        // Feature request #69: while the overlay is active, an eligible
+        // chip's quick-switch number takes the status dot's slot; while
+        // inactive, the ordinary status dot (identified by its accessible
+        // hover label) is present instead and no number is shown.
+        fn eligible_chip() -> ChipViewModel {
+            let mut chip = chip(1, "one");
+            chip.quick_switch_number = Some(1);
+            chip
+        }
+
+        let mut inactive_harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[eligible_chip()],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::SingleRowScroll,
+                    false,
+                    false,
+                );
+            });
+        inactive_harness.run();
+        assert!(inactive_harness.query_by_label("Quick switch: 1").is_none());
+        inactive_harness.get_by_label("one");
+
+        let mut active_harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    &[eligible_chip()],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::SingleRowScroll,
+                    false,
+                    true,
+                );
+            });
+        active_harness.run();
+        active_harness.get_by_label("Quick switch: 1");
+    }
+
+    #[test]
+    fn quick_switch_overlay_reserves_a_number_slot_on_neutral_chips_with_no_status_dot() {
+        // `Neutral` chips (Launcher/Settings/etc.) never paint a status dot
+        // at all, so the overlay must still be able to show their number.
+        let neutral_chip = ChipViewModel {
+            id: ChipId(1),
+            primary: "Launcher".to_owned(),
+            secondary: None,
+            status: ChipStatus::Neutral,
+            closable: false,
+            renamable: false,
+            quick_switch_number: Some(1),
+        };
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 200.0))
+            .build_ui(move |ui| {
+                let chip = ChipViewModel {
+                    id: neutral_chip.id,
+                    primary: neutral_chip.primary.clone(),
+                    secondary: neutral_chip.secondary.clone(),
+                    status: neutral_chip.status,
+                    closable: neutral_chip.closable,
+                    renamable: neutral_chip.renamable,
+                    quick_switch_number: neutral_chip.quick_switch_number,
+                };
+                show(
+                    ui,
+                    &[chip],
+                    ChipId(1),
+                    false,
+                    true,
+                    ChipLayout::SingleRowScroll,
+                    false,
+                    true,
+                );
+            });
+        harness.run();
+        harness.get_by_label("Quick switch: 1");
     }
 }

@@ -1086,6 +1086,10 @@ pub enum AppCommand {
     /// Selects a clickstop scaling how far one trackpad/wheel scroll step
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
+    /// Toggles whether holding the quick-switch modifier (Cmd on macOS, Ctrl
+    /// elsewhere) overlays each eligible chip's quick-switch number in
+    /// place of its usual status presentation (feature request #69).
+    ToggleQuickSwitchOverlay,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1205,6 +1209,7 @@ pub struct AppState {
     terminal_font: TerminalFontPreference,
     terminal_ligatures: bool,
     scroll_speed: ScrollSpeedPreference,
+    quick_switch_overlay: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1244,6 +1249,7 @@ impl AppState {
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
             scroll_speed: settings.scroll_speed(),
+            quick_switch_overlay: settings.quick_switch_overlay(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1279,6 +1285,7 @@ impl AppState {
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
             scroll_speed: settings.scroll_speed(),
+            quick_switch_overlay: settings.quick_switch_overlay(),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1361,6 +1368,7 @@ impl AppState {
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
             scroll_speed: settings.scroll_speed(),
+            quick_switch_overlay: settings.quick_switch_overlay(),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1476,6 +1484,10 @@ impl AppState {
         self.scroll_speed
     }
 
+    pub const fn quick_switch_overlay(&self) -> bool {
+        self.quick_switch_overlay
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
@@ -1489,6 +1501,7 @@ impl AppState {
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_scroll_speed(self.scroll_speed)
+        .with_quick_switch_overlay(self.quick_switch_overlay)
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1648,6 +1661,9 @@ impl AppState {
             AppCommand::SetScrollSpeed(speed) => {
                 self.scroll_speed = speed;
             }
+            AppCommand::ToggleQuickSwitchOverlay => {
+                self.quick_switch_overlay = !self.quick_switch_overlay;
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -1658,6 +1674,7 @@ impl AppState {
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
+                self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring

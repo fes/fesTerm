@@ -525,6 +525,13 @@ pub struct InterfaceSettings {
     /// relative to fesTerm's original fixed pixel-to-row mapping.
     #[serde(default, skip_serializing_if = "ScrollSpeedPreference::is_default")]
     scroll_speed: ScrollSpeedPreference,
+    /// Whether holding the quick-switch modifier (Cmd on macOS, Ctrl
+    /// elsewhere) temporarily overlays each eligible chip's quick-switch
+    /// number in place of its usual status presentation (feature request
+    /// #69). Off by default, matching the other opt-in presentation
+    /// preferences here.
+    #[serde(default, skip_serializing_if = "is_false")]
+    quick_switch_overlay: bool,
 }
 
 impl InterfaceSettings {
@@ -539,6 +546,7 @@ impl InterfaceSettings {
         terminal_font: TerminalFontPreference::JetBrainsMono,
         terminal_ligatures: false,
         scroll_speed: ScrollSpeedPreference::Normal,
+        quick_switch_overlay: false,
     };
 
     pub const fn new(
@@ -557,6 +565,7 @@ impl InterfaceSettings {
             terminal_font: TerminalFontPreference::JetBrainsMono,
             terminal_ligatures: false,
             scroll_speed: ScrollSpeedPreference::Normal,
+            quick_switch_overlay: false,
         }
     }
 
@@ -573,6 +582,13 @@ impl InterfaceSettings {
     /// Sets the scrollback scroll-speed clickstop (feature request #67).
     pub const fn with_scroll_speed(mut self, scroll_speed: ScrollSpeedPreference) -> Self {
         self.scroll_speed = scroll_speed;
+        self
+    }
+
+    /// Sets whether holding the quick-switch modifier overlays chip numbers
+    /// (feature request #69).
+    pub const fn with_quick_switch_overlay(mut self, quick_switch_overlay: bool) -> Self {
+        self.quick_switch_overlay = quick_switch_overlay;
         self
     }
 
@@ -606,6 +622,10 @@ impl InterfaceSettings {
 
     pub const fn scroll_speed(self) -> ScrollSpeedPreference {
         self.scroll_speed
+    }
+
+    pub const fn quick_switch_overlay(self) -> bool {
+        self.quick_switch_overlay
     }
 
     fn is_default(&self) -> bool {
@@ -4183,6 +4203,42 @@ schema_version = 99
             ScrollSpeedPreference::from_index(99),
             ScrollSpeedPreference::VeryFast
         );
+    }
+
+    #[test]
+    fn quick_switch_overlay_preference_round_trips_through_toml_and_defaults_to_off() {
+        // Feature request #69.
+        let settings = InterfaceSettings::DEFAULT.with_quick_switch_overlay(true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("quick_switch_overlay = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+
+        // An older settings table with no `quick_switch_overlay` key
+        // defaults to off, preserving today's chip presentation.
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert!(!Configuration::parse(older_document)
+            .unwrap()
+            .interface_settings()
+            .quick_switch_overlay());
+
+        // The off state is the default and is omitted from serialization
+        // entirely, matching the other opt-in booleans here.
+        let default_serialized = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        assert!(!default_serialized.contains("quick_switch_overlay"));
     }
 
     #[test]
