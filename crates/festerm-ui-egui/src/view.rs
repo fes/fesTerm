@@ -115,6 +115,18 @@ pub struct TerminalView {
     history: HistoryViewport,
     scrollbar_dragging: bool,
     pending_paste_requests: VecDeque<String>,
+    /// Fractional scroll rows left over from the last wheel event after
+    /// applying `scroll_speed_multiplier`, carried into the next event so a
+    /// slow clickstop (e.g. "Very slow", well under `1.0`) actually slows
+    /// scrolling down rather than being silently rounded back up to at
+    /// least one row per event. Reset whenever the wheel direction flips so
+    /// a reversed scroll doesn't inherit a stale carry from the opposite
+    /// direction.
+    scroll_fraction_carry: f32,
+    /// Sign of the most recent wheel delta.y this carry was accumulated
+    /// under (`1.0`, `-1.0`, or `0.0` before the first event), used to
+    /// detect a direction reversal above.
+    scroll_fraction_sign: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -181,6 +193,20 @@ struct ScrollbarGeometry {
     hit_track: Rect,
     visual_track: Rect,
     thumb: Rect,
+}
+
+/// Scales `raw_rows` (the pixel/line/page-derived row count from a single
+/// wheel event) by `multiplier`, carrying any fractional row leftover into
+/// `carry` for the next call instead of rounding every event up to at least
+/// one row. Without this, a clickstop like "Very slow" (well under `1.0`)
+/// would be indistinguishable from `Normal` on devices that emit many small
+/// wheel events per swipe (e.g. a trackpad), since each individual event's
+/// scaled row count would otherwise get floored back up to `1`.
+fn scaled_scroll_rows(raw_rows: usize, multiplier: f32, carry: &mut f32) -> usize {
+    let scaled = (raw_rows as f32) * multiplier.max(0.0) + *carry;
+    let rows = scaled.floor().max(0.0) as usize;
+    *carry = scaled - scaled.floor();
+    rows
 }
 
 fn scrollbar_geometry(
@@ -500,7 +526,7 @@ impl TerminalView {
                     } if terminal_hovered
                         && (!mouse_reporting || modifiers.shift || over_scrollbar) =>
                     {
-                        let rows = match unit {
+                        let raw_rows = match unit {
                             egui::MouseWheelUnit::Point => {
                                 ((delta.y.abs() / metrics.height).ceil() as usize).max(1)
                             }
@@ -509,15 +535,36 @@ impl TerminalView {
                                 (delta.y.abs().ceil() as usize).saturating_mul(page_rows)
                             }
                         };
-                        let rows = ((rows as f32) * options.scroll_speed_multiplier.max(0.0))
-                            .round()
-                            .max(1.0) as usize;
-                        if delta.y > 0.0 {
-                            self.history.scroll_up(rows);
-                        } else if delta.y < 0.0 {
-                            self.history.scroll_down(rows);
+                        // Accumulate the fractional row this event didn't
+                        // quite earn (e.g. a 0.1x "Very slow" clickstop)
+                        // into the next same-direction event instead of
+                        // rounding every event up to at least one row,
+                        // which would otherwise make slow clickstops
+                        // indistinguishable from Normal on a trackpad's
+                        // rapid small wheel events. A direction reversal
+                        // drops any stale carry from the opposite way; a
+                        // horizontal-only event (delta.y == 0.0) leaves the
+                        // carry and its recorded direction untouched.
+                        if delta.y != 0.0 {
+                            let sign = delta.y.signum();
+                            if sign != self.scroll_fraction_sign {
+                                self.scroll_fraction_carry = 0.0;
+                                self.scroll_fraction_sign = sign;
+                            }
                         }
-                        history_changed = delta.y != 0.0;
+                        let rows = scaled_scroll_rows(
+                            raw_rows,
+                            options.scroll_speed_multiplier,
+                            &mut self.scroll_fraction_carry,
+                        );
+                        if rows > 0 {
+                            if delta.y > 0.0 {
+                                self.history.scroll_up(rows);
+                            } else if delta.y < 0.0 {
+                                self.history.scroll_down(rows);
+                            }
+                            history_changed = true;
+                        }
                         false
                     }
                     egui::Event::Key {
@@ -943,6 +990,46 @@ mod history_overlay_tests {
         let geometry = scrollbar_geometry(viewport, 10, 10_000, 5_000).unwrap();
         assert_eq!(geometry.thumb.height(), 24.0);
         assert!(scrollbar_geometry(viewport, 10, 0, 0).is_none());
+    }
+
+    #[test]
+    fn scaled_scroll_rows_preserves_a_slow_clickstop_instead_of_flooring_every_event_to_one() {
+        // Regression test: "Very slow" (0.1x) previously had no effect at
+        // all on trackpad-style scrolling, because each wheel event's
+        // single-event row count was rounded back up to a minimum of one
+        // row regardless of the multiplier. With a fractional carry, ten
+        // consecutive one-row events at 0.1x should move a total of one
+        // row, not ten.
+        let mut carry = 0.0f32;
+        let mut total_rows = 0usize;
+        for _ in 0..10 {
+            total_rows += scaled_scroll_rows(1, 0.1, &mut carry);
+        }
+        assert_eq!(total_rows, 1);
+
+        // The next nine events should still produce nothing (0.1 * 10 == 1
+        // exactly lands the carry back at 0.0, restarting the cycle).
+        for _ in 0..9 {
+            assert_eq!(scaled_scroll_rows(1, 0.1, &mut carry), 0);
+        }
+        assert_eq!(scaled_scroll_rows(1, 0.1, &mut carry), 1);
+    }
+
+    #[test]
+    fn scaled_scroll_rows_at_normal_multiplier_moves_every_event_immediately() {
+        let mut carry = 0.0f32;
+        assert_eq!(scaled_scroll_rows(3, 1.0, &mut carry), 3);
+        assert_eq!(carry, 0.0);
+        assert_eq!(scaled_scroll_rows(1, 1.0, &mut carry), 1);
+    }
+
+    #[test]
+    fn scaled_scroll_rows_at_fast_multiplier_still_moves_every_event() {
+        let mut carry = 0.0f32;
+        assert_eq!(scaled_scroll_rows(1, 1.75, &mut carry), 1);
+        assert!((carry - 0.75).abs() < 1e-6);
+        assert_eq!(scaled_scroll_rows(1, 1.75, &mut carry), 2);
+        assert!((carry - 0.5).abs() < 1e-6);
     }
 
     #[test]
