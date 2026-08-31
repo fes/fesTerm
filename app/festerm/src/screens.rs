@@ -2227,8 +2227,15 @@ fn settings_clickstop_row(
     options: &[ScrollSpeedPreference],
     selected: ScrollSpeedPreference,
 ) -> Option<ScrollSpeedPreference> {
+    const SLIDER_WIDTH: f32 = 160.0;
+
     let mut changed = None;
-    egui::Sides::new().show(
+    // `egui::Sides` defaults its row height to a single `interact_size.y`
+    // (matching the toggle/segmented rows' one-line right side), but this
+    // row's right side stacks a slider *and* a value label underneath it.
+    // Reserve enough height for both stacked lines up front.
+    let row_height = ui.spacing().interact_size.y * 2.0 + 4.0;
+    egui::Sides::new().height(row_height).show(
         ui,
         |ui| {
             // Same defensive width reservation as the other settings rows:
@@ -2241,28 +2248,51 @@ fn settings_clickstop_row(
             });
         },
         |ui| {
-            ui.vertical(|ui| {
-                let max_index = options.len().saturating_sub(1);
-                let mut index = selected.index().min(max_index);
-                ui.style_mut().spacing.slider_width = 160.0;
-                let response = ui.add(
-                    egui::Slider::new(&mut index, 0..=max_index)
-                        .step_by(1.0)
-                        .show_value(false),
-                );
-                if response.changed() {
-                    let new_value = ScrollSpeedPreference::from_index(index);
-                    if new_value != selected {
-                        changed = Some(new_value);
+            // Unlike `ui.horizontal`, plain `ui.vertical` always lays out
+            // its children with `Layout::top_down(Align::Min)` and does
+            // not mirror the enclosing `Sides` right-to-left direction (see
+            // `egui::Ui::horizontal`, which explicitly checks
+            // `placer.prefer_right_to_left()` and `ui.vertical`, which
+            // does not). A bare `ui.vertical(...)` here inherited the
+            // *entire* remaining card width as its rect and then
+            // left-aligned the slider and label inside it, so on any card
+            // wider than description-text-plus-slider, the block rendered
+            // immediately after the description paragraph instead of
+            // pinned to the card's right edge - squeezing the slider down
+            // to a sliver-sized hit target and spilling the value label
+            // over the description (reported: "you can't tell it's
+            // actually a slider" and "sliding the value doesn't seem to
+            // change scroll speed"). Explicitly allocating a
+            // `SLIDER_WIDTH`-wide block lets the *outer* right-to-left
+            // cursor place it, matching how `toggle_switch` and
+            // `settings_segmented_row`'s `ui.horizontal` already anchor to
+            // the right edge.
+            ui.allocate_ui_with_layout(
+                egui::vec2(SLIDER_WIDTH, row_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    let max_index = options.len().saturating_sub(1);
+                    let mut index = selected.index().min(max_index);
+                    ui.style_mut().spacing.slider_width = SLIDER_WIDTH;
+                    let response = ui.add(
+                        egui::Slider::new(&mut index, 0..=max_index)
+                            .step_by(1.0)
+                            .show_value(false),
+                    );
+                    if response.changed() {
+                        let new_value = ScrollSpeedPreference::from_index(index);
+                        if new_value != selected {
+                            changed = Some(new_value);
+                        }
                     }
-                }
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(selected.label())
-                        .size(12.0)
-                        .color(theme::TEXT_MUTED),
-                );
-            });
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(selected.label())
+                            .size(12.0)
+                            .color(theme::TEXT_MUTED),
+                    );
+                },
+            );
         },
     );
     changed
@@ -3437,8 +3467,22 @@ mod tests {
     }
 
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
+        settings_harness_with_width(520.0)
+    }
+
+    /// A wider settings harness, matching a typical desktop window rather
+    /// than the other settings tests' narrow fixed harness width. Needed to
+    /// reproduce the "Scroll speed" slider mispositioning regression (see
+    /// `scroll_speed_slider_is_reachable_and_dispatches_the_next_clickstop`):
+    /// the bug only appears once the card is wider than the description
+    /// text plus the slider's own width, which the narrow harness never is.
+    fn wide_settings_harness() -> Harness<'static, SettingsHarnessState> {
+        settings_harness_with_width(1400.0)
+    }
+
+    fn settings_harness_with_width(width: f32) -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(520.0, 1300.0))
+            .with_size(egui::vec2(width, 1300.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
@@ -3604,6 +3648,58 @@ mod tests {
         assert!(matches!(
             harness.state().command,
             Some(AppCommand::TogglePulseNewOutputDot)
+        ));
+    }
+
+    #[test]
+    fn scroll_speed_slider_is_reachable_and_dispatches_the_next_clickstop() {
+        // Regression test for `settings_clickstop_row` rendering the
+        // "Scroll speed" slider unusably: unlike `ui.horizontal` (used by
+        // `settings_segmented_row`), plain `ui.vertical` does not mirror
+        // `egui::Sides`' right-to-left direction (see `egui::Ui::horizontal`,
+        // which checks `placer.prefer_right_to_left()`, versus `ui.vertical`,
+        // which always lays out `Layout::top_down(Align::Min)`). A bare
+        // `ui.vertical(...)` on the right side inherited the *entire*
+        // remaining card width and then left-aligned the slider inside it,
+        // so on any card wider than description-text-plus-slider the block
+        // rendered immediately after the description paragraph instead of
+        // pinned to the card's right edge like every other settings row -
+        // squeezing the slider down to a tiny hit target and spilling the
+        // value label over the description (reported: "you can't tell it's
+        // actually a slider" and "sliding the value doesn't seem to change
+        // scroll speed"). A width at least as wide as `docs/gui-mockups`'
+        // settings card is required to reproduce this: the bug was invisible
+        // at the narrow fixed-size harness width used by the other settings
+        // tests here.
+        let mut harness = wide_settings_harness();
+        harness.run();
+
+        let slider = harness.get_by_role(accesskit::Role::Slider);
+        let card_right_edge = harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Workspace restore")
+            .rect()
+            .right();
+        assert!(
+            slider.rect().width() >= 100.0,
+            "expected the clickstop slider to render at its configured width, got {:?}",
+            slider.rect()
+        );
+        assert!(
+            (slider.rect().right() - card_right_edge).abs() <= 40.0,
+            "expected the slider to be pinned to the card's right edge like every \
+             other settings control, but it rendered at {:?} while the card's \
+             right edge is at {card_right_edge}",
+            slider.rect()
+        );
+
+        slider.focus();
+        harness.run();
+        harness.key_press(egui::Key::ArrowRight);
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SetScrollSpeed(ScrollSpeedPreference::Fast))
         ));
     }
 

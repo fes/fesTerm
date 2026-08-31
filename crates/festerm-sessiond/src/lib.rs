@@ -551,6 +551,25 @@ fn send_output(shared: &Shared, output: Vec<u8>) {
     shared.send_event(SessionEvent::Output(output));
 }
 
+/// Environment variables the macOS launchd-environment correction
+/// (`app/festerm/src/environment.rs::with_corrected_local_path`) is allowed
+/// to backfill on a profile before it reaches a persistent session: `PATH`
+/// plus the locale variables `LANG`, `LC_ALL`, and `LC_CTYPE`. These are the
+/// only variables that correction ever adds, they carry no secrets, and
+/// forwarding them through the `festerm-sessiond start` launch command
+/// (whose own environment the daemon's spawned shell inherits) is what lets
+/// a native persistent session render UTF-8 glyphs and resolve `PATH`
+/// correctly when fesTerm itself was launched from Finder/Launchpad under
+/// launchd. An explicit environment map containing any other key is
+/// rejected below: persistent sessions do not otherwise support arbitrary
+/// per-profile environment overrides.
+fn is_launchd_correction_variable(key: &std::ffi::OsStr) -> bool {
+    const ALLOWED: [&str; 4] = ["PATH", "LANG", "LC_ALL", "LC_CTYPE"];
+    ALLOWED
+        .iter()
+        .any(|name| key.to_string_lossy().eq_ignore_ascii_case(name))
+}
+
 fn connect_or_start(
     name: &str,
     profile: &LocalProfile,
@@ -588,7 +607,7 @@ fn connect_or_start(
         EnvironmentPolicy::InheritWith(environment)
             if environment
                 .keys()
-                .all(|key| key.to_string_lossy().eq_ignore_ascii_case("PATH")) =>
+                .all(|key| is_launchd_correction_variable(key)) =>
         {
             command.envs(environment);
         }
@@ -905,6 +924,22 @@ mod tests {
             wait_for_lifecycle(&session, SessionLifecycle::is_terminal),
             SessionLifecycle::Exited(exit) if exit.success()
         ));
+    }
+
+    #[test]
+    fn launchd_correction_allowlist_accepts_path_and_locale_only() {
+        for allowed in ["PATH", "path", "LANG", "LC_ALL", "LC_CTYPE"] {
+            assert!(
+                is_launchd_correction_variable(std::ffi::OsStr::new(allowed)),
+                "{allowed} should be forwardable to a persistent session"
+            );
+        }
+        for rejected in ["HOME", "SHELL", "MY_SECRET", "LC_TIME"] {
+            assert!(
+                !is_launchd_correction_variable(std::ffi::OsStr::new(rejected)),
+                "{rejected} should not be forwardable to a persistent session"
+            );
+        }
     }
 
     fn read_frame(reader: &mut impl Read) -> (u8, Vec<u8>) {
