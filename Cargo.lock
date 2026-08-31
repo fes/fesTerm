@@ -1822,7 +1822,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "festerm"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "accesskit",
  "cargo-packager-updater",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-config"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "festerm-pty",
  "festerm-secret-store",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "icu_properties",
@@ -1871,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-linux-power"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-macos-window"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-pty"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "festerm-session",
  "festerm-windows-job",
@@ -1900,14 +1900,14 @@ dependencies = [
 
 [[package]]
 name = "festerm-pty-test-child"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "terminal_size",
 ]
 
 [[package]]
 name = "festerm-secret-store"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-serial"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "festerm-session",
  "serialport",
@@ -1929,11 +1929,11 @@ dependencies = [
 
 [[package]]
 name = "festerm-session"
-version = "0.1.6"
+version = "0.1.7"
 
 [[package]]
 name = "festerm-sessiond"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "festerm-pty",
  "festerm-session",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "festerm-ssh"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "festerm-secret-store",
  "festerm-session",
@@ -1962,14 +1962,14 @@ dependencies = [
 
 [[package]]
 name = "festerm-test-support"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "festerm-core",
 ]
 
 [[package]]
 name = "festerm-ui-egui"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "egui",
@@ -1980,28 +1980,28 @@ dependencies = [
 
 [[package]]
 name = "festerm-windows-job"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "festerm-windows-power"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "festerm-windows-runtime"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "festerm-windows-security"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "windows-sys 0.61.2",
 ]
