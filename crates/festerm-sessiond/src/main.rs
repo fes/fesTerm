@@ -574,6 +574,7 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
+        retire_active_if_finished(&mut active, &mut retired_clients);
         if let Err(error) = accept_unix_clients(
             &listener,
             &mut active,
@@ -771,6 +772,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             let _ = spawned.child.kill();
             break Err(error);
         }
+        retire_active_if_finished(&mut active, &mut retired_clients);
         if let Err(error) = accept_windows_clients(
             &accept_rx,
             &mut active,
@@ -1006,6 +1008,33 @@ fn retire_active(
         previous.stolen.store(stolen, Ordering::Release);
         drop(previous.output);
         retired_clients.push(previous.thread);
+    }
+}
+
+/// Retires `active` if its I/O thread has already exited on its own (e.g.
+/// the client disconnected after reading `Ok(0)`/EOF from the socket).
+///
+/// [`send_to_active`] is the *other* place a dead client gets noticed, but
+/// it only runs when the pty produces new output to relay. A client whose
+/// process was killed while its shell sits idle (no output at all) would
+/// otherwise never be detected: the socket has already closed and the I/O
+/// thread has returned, but nothing pushes data through `client.output` to
+/// surface that via a failed `try_send`. Left unnoticed, `active` (and thus
+/// the on-disk registry's `attached` flag surfaced by
+/// `list_unattached_local_sessions` in `festerm-sessiond`'s library crate)
+/// stays `true` forever, hiding a perfectly resumable session from the
+/// Launcher's "resume" list. Since this is checked once per main-loop
+/// iteration, which runs at least every `CLIENT_POLL_INTERVAL`, a dead
+/// client is noticed within one poll interval regardless of pty activity.
+fn retire_active_if_finished(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+) {
+    if active
+        .as_ref()
+        .is_some_and(|client| client.thread.is_finished())
+    {
+        retire_active(active, retired_clients, false);
     }
 }
 
@@ -1942,6 +1971,85 @@ mod tests {
         second.read_exact(&mut exited).unwrap();
         assert_eq!(exited, EXITED_NOTICE_BYTES);
         assert_eq!(second.read(&mut eof).unwrap(), 0);
+        service.join().unwrap().unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// Regression test for a client that disappears (crashes/is killed)
+    /// while its shell sits completely idle, i.e. with no pty output at all
+    /// after the disconnect. `send_to_active`'s failed-`try_send` detection
+    /// only runs when there is data to relay, so before
+    /// `retire_active_if_finished` was added the daemon would keep
+    /// reporting `attached: true` forever in this scenario, hiding an
+    /// otherwise-resumable session from `list_unattached_local_sessions`.
+    #[test]
+    fn idle_client_disconnect_is_detected_without_pty_output() {
+        use std::{
+            io::{self, Read},
+            os::unix::net::{UnixListener, UnixStream},
+            sync::{mpsc, Mutex},
+        };
+
+        let directory = unique_test_directory("idle-disconnect");
+        fs::create_dir_all(&directory).unwrap();
+        let socket_path = directory.join("session.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let (_pty_sender, pty_receiver) = mpsc::channel::<Vec<u8>>();
+        let attach_events: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
+        let attach_events_clone = Arc::clone(&attach_events);
+
+        struct ChannelReader {
+            receiver: mpsc::Receiver<Vec<u8>>,
+        }
+
+        impl Read for ChannelReader {
+            fn read(&mut self, _output: &mut [u8]) -> io::Result<usize> {
+                match self.receiver.recv() {
+                    Ok(_) => unreachable!("this test never sends pty output"),
+                    Err(_) => Ok(0),
+                }
+            }
+        }
+
+        let service = thread::spawn(move || {
+            session_client_loop(
+                listener,
+                ChannelReader {
+                    receiver: pty_receiver,
+                },
+                None,
+                |_command| Ok(()),
+                || {},
+                move |attached| attach_events_clone.lock().unwrap().push(attached),
+            )
+        });
+
+        let client = UnixStream::connect(&socket_path).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while attach_events.lock().unwrap().as_slice() != [true] {
+            if std::time::Instant::now() > deadline {
+                panic!("daemon never reported the client as attached");
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        // Simulate the client process crashing/being killed: the socket
+        // closes with no further protocol activity and the shell stays
+        // idle (no pty output is ever sent on `_pty_sender`).
+        drop(client);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while attach_events.lock().unwrap().as_slice() != [true, false] {
+            if std::time::Instant::now() > deadline {
+                panic!(
+                    "idle client disconnect was never detected; attach events: {:?}",
+                    attach_events.lock().unwrap()
+                );
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        drop(_pty_sender);
         service.join().unwrap().unwrap();
         let _ = fs::remove_dir_all(directory);
     }

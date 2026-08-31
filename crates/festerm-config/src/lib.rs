@@ -752,8 +752,8 @@ impl ScrollSpeedPreference {
     /// move. `Normal` is `1.0` and preserves fesTerm's original behavior.
     pub const fn multiplier(self) -> f32 {
         match self {
-            Self::VerySlow => 0.25,
-            Self::Slow => 0.5,
+            Self::VerySlow => 0.1,
+            Self::Slow => 0.35,
             Self::Normal => 1.0,
             Self::Fast => 1.75,
             Self::VeryFast => 2.5,
