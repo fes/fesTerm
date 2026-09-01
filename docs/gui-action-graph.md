@@ -322,7 +322,7 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `TYPE-01` | Representative sessions | Render ASCII, CJK, combining, emoji/fallback, non-Latin UI, styles and ligature boundaries. | Cell ownership/cursor/selection/mouse geometry remains authoritative; application Inter/fallback independent from terminal font. | Reset fixture/baseline font. | P,V,N,U; partial |
+| `TYPE-01` | Representative sessions | Render ASCII, CJK, combining, VS15/VS16, ZWJ, keycap, flag, Agency-style emoji/fallback, non-Latin UI, styles and ligature boundaries. | Cell ownership/cursor/selection/mouse geometry remains authoritative; owned color glyphs are clipped to their core span; application Inter/fallback remains independent from terminal font. | Reset fixture/baseline font. | P,V,N,U; partial |
 | `ZOOM-01` | `K2 → zoomed` | Zoom in/out/reset through shortcuts/palette. | Per-session only; temporary noninteractive factual overlay; one coalesced resize; bottom/anchor preserved; chrome unchanged; profile not rewritten. | Reset Zoom. | P,H,V,N; partial |
 | `ZOOM-02` | Zoomed + DPI move | Clamp extremes and move displays. | Tested readable range; point size stable across DPI; physical pixels/grid recalc coherently. | Reset Zoom and baseline display. | P,V,N,U; partial |
 | `SCHEME-01` | Session → alternate scheme | Choose complete real scheme when implemented. | Per-session re-presentation of history, explicit protocol colors faithful, accessibility fallback, no profile rewrite/remote inference. | Restore default scheme. | P,V,N,U; deferred |

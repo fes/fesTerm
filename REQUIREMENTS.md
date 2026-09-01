@@ -96,6 +96,11 @@ disk-backed terminal history remains outside this requirement.
 
 The terminal shall support practical Unicode terminal behavior, including common wide characters, combining marks, emoji, and font fallback without corrupting cell alignment.
 
+Implemented: streamed text uses pinned extended-grapheme boundaries and
+sequence widths; the renderer supplies owned monochrome and color emoji
+fallback while keeping cursor, selection, hit testing, and resize geometry
+cell-authoritative.
+
 ### REQ-TERM-012 — Terminal replies
 
 The core shall generate required device-status, identification, and protocol replies independently of the session backend.

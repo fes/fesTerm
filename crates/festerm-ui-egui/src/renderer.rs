@@ -6,16 +6,23 @@ use std::{
 
 use egui::{
     text::{LayoutJob, TextFormat},
-    Color32, FontFamily, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2,
+    Color32, ColorImage, FontFamily, FontId, Pos2, Rect, Stroke, StrokeKind, TextureHandle,
+    TextureOptions, Vec2,
 };
 use festerm_core::{Attributes, Color, CursorStyle, Dimensions};
+use swash::{
+    scale::{image::Content, Render, ScaleContext, Source, StrikeWith},
+    shape::ShapeContext,
+    text::Script,
+    FontRef,
+};
 
 use crate::{
     cache::{RenderedCell, TerminalRenderCache},
     fonts::{
-        TerminalFontSet, BOLD_FAMILY, BOLD_ITALIC_FAMILY, ITALIC_FAMILY, LIGATURE_BOLD_FAMILY,
-        LIGATURE_BOLD_ITALIC_FAMILY, LIGATURE_ITALIC_FAMILY, LIGATURE_REGULAR_FAMILY,
-        REGULAR_FAMILY,
+        is_color_emoji, TerminalFontSet, BOLD_FAMILY, BOLD_ITALIC_FAMILY, COLOR_EMOJI_BYTES,
+        EMOJI_FAMILY, ITALIC_FAMILY, LIGATURE_BOLD_FAMILY, LIGATURE_BOLD_ITALIC_FAMILY,
+        LIGATURE_ITALIC_FAMILY, LIGATURE_REGULAR_FAMILY, REGULAR_FAMILY,
     },
     geometry::{CellGeometry, CellPosition, CellRange},
     selection::Selection,
@@ -74,6 +81,14 @@ impl FontSettings {
         };
         FontId::new(self.size_points, FontFamily::Name(family.into()))
     }
+
+    fn font_id_for_text(&self, attributes: Attributes, text: &str) -> FontId {
+        if is_color_emoji(text) {
+            FontId::new(self.size_points, FontFamily::Name(EMOJI_FAMILY.into()))
+        } else {
+            self.font_id(attributes)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -91,11 +106,13 @@ struct GlyphKey {
 #[derive(Default)]
 pub(crate) struct GlyphCache {
     layouts: HashMap<GlyphKey, Arc<egui::Galley>>,
+    color_emoji: ColorEmojiCache,
 }
 
 impl GlyphCache {
     pub(crate) fn clear(&mut self) {
         self.layouts.clear();
+        self.color_emoji.clear();
     }
 
     pub(crate) fn layout(
@@ -129,7 +146,7 @@ impl GlyphCache {
             text,
             0.0,
             TextFormat {
-                font_id: font.font_id(attributes),
+                font_id: font.font_id_for_text(attributes, text),
                 color: foreground,
                 // Italic terminal cells use the bundled italic face rather
                 // than synthetic skewing. This keeps metrics deterministic.
@@ -141,6 +158,234 @@ impl GlyphCache {
         self.layouts.insert(key, layout.clone());
         layout
     }
+
+    fn paint_color_emoji(
+        &mut self,
+        painter: &egui::Painter,
+        text: &str,
+        rect: Rect,
+        attributes: Attributes,
+    ) -> bool {
+        if attributes.contains(Attributes::CONCEALED) || !is_color_emoji(text) {
+            return false;
+        }
+        self.color_emoji
+            .paint(painter, text, rect, attributes.contains(Attributes::FAINT))
+    }
+}
+
+const COLOR_EMOJI_CACHE_CAPACITY: usize = 512;
+const COLOR_EMOJI_CACHE_BYTE_CAPACITY: usize = 32 * 1024 * 1024;
+const MAX_COLOR_EMOJI_INPUT_BYTES: usize = 256;
+const MAX_COLOR_EMOJI_LAYERS: usize = 64;
+const MAX_COLOR_EMOJI_PIXELS: u32 = 256;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ColorEmojiKey {
+    text: String,
+    pixel_size: u16,
+}
+
+struct ColorEmojiTexture {
+    texture: TextureHandle,
+    aspect_ratio: f32,
+}
+
+struct ColorEmojiCache {
+    textures: HashMap<ColorEmojiKey, ColorEmojiTexture>,
+    texture_bytes: usize,
+    shape_context: ShapeContext,
+    scale_context: ScaleContext,
+}
+
+impl Default for ColorEmojiCache {
+    fn default() -> Self {
+        Self {
+            textures: HashMap::new(),
+            texture_bytes: 0,
+            shape_context: ShapeContext::new(),
+            scale_context: ScaleContext::new(),
+        }
+    }
+}
+
+impl ColorEmojiCache {
+    fn clear(&mut self) {
+        self.textures.clear();
+        self.texture_bytes = 0;
+    }
+
+    fn paint(&mut self, painter: &egui::Painter, text: &str, rect: Rect, faint: bool) -> bool {
+        let pixels_per_point = painter.ctx().pixels_per_point();
+        let pixel_size = (rect.height() * pixels_per_point)
+            .round()
+            .clamp(1.0, MAX_COLOR_EMOJI_PIXELS as f32) as u16;
+        let key = ColorEmojiKey {
+            text: text.to_owned(),
+            pixel_size,
+        };
+        if !self.textures.contains_key(&key) {
+            let Some(image) = self.rasterize(text, pixel_size) else {
+                return false;
+            };
+            let byte_size = image.width() * image.height() * 4;
+            self.prepare_for_insert(byte_size);
+            let aspect_ratio = image.width() as f32 / image.height() as f32;
+            let texture_name = format!(
+                "festerm-color-emoji-{}-{}",
+                stable_text_hash(text),
+                pixel_size
+            );
+            let texture = painter
+                .ctx()
+                .load_texture(texture_name, image, TextureOptions::LINEAR);
+            self.textures.insert(
+                key.clone(),
+                ColorEmojiTexture {
+                    texture,
+                    aspect_ratio,
+                },
+            );
+            self.texture_bytes += byte_size;
+        }
+        let Some(entry) = self.textures.get(&key) else {
+            return false;
+        };
+        let max_size = rect.size() * 0.92;
+        let size = if max_size.x / max_size.y > entry.aspect_ratio {
+            Vec2::new(max_size.y * entry.aspect_ratio, max_size.y)
+        } else {
+            Vec2::new(max_size.x, max_size.x / entry.aspect_ratio)
+        };
+        let destination = Rect::from_center_size(rect.center(), size);
+        painter.image(
+            entry.texture.id(),
+            destination,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            if faint {
+                Color32::from_white_alpha(128)
+            } else {
+                Color32::WHITE
+            },
+        );
+        true
+    }
+
+    fn prepare_for_insert(&mut self, byte_size: usize) {
+        if self.textures.len() >= COLOR_EMOJI_CACHE_CAPACITY
+            || self.texture_bytes.saturating_add(byte_size) > COLOR_EMOJI_CACHE_BYTE_CAPACITY
+        {
+            self.textures.clear();
+            self.texture_bytes = 0;
+        }
+    }
+
+    fn rasterize(&mut self, text: &str, pixel_size: u16) -> Option<ColorImage> {
+        if text.len() > MAX_COLOR_EMOJI_INPUT_BYTES {
+            return None;
+        }
+        let font = FontRef::from_index(COLOR_EMOJI_BYTES, 0)?;
+        let mut glyphs = Vec::new();
+        let mut pen_x = 0.0;
+        let mut too_many_layers = false;
+        // This font exposes keycaps as foreground/background bitmap layers
+        // instead of a single substituted glyph through Swash.
+        let is_keycap = text.contains('\u{20e3}');
+        {
+            let mut shaper = self
+                .shape_context
+                .builder(font)
+                .size(f32::from(pixel_size))
+                .script(Script::Common)
+                .build();
+            shaper.add_str(text);
+            shaper.shape_with(|cluster| {
+                for glyph in cluster.glyphs {
+                    if glyph.id != 0 {
+                        if glyphs.len() >= MAX_COLOR_EMOJI_LAYERS {
+                            too_many_layers = true;
+                        } else {
+                            let x = if is_keycap { glyph.x } else { pen_x + glyph.x };
+                            glyphs.push((glyph.id, x, glyph.y));
+                        }
+                        pen_x += glyph.advance;
+                    }
+                }
+            });
+        }
+        if glyphs.is_empty() || too_many_layers {
+            return None;
+        }
+        let mut scaler = self
+            .scale_context
+            .builder(font)
+            .size(f32::from(pixel_size))
+            .hint(true)
+            .build();
+        let renderer = Render::new(&[
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::ColorOutline(0),
+        ]);
+        let mut layers = Vec::with_capacity(glyphs.len());
+        let mut bounds = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for (glyph_id, x, y) in glyphs {
+            let image = renderer.render(&mut scaler, glyph_id)?;
+            if image.content != Content::Color
+                || image.placement.width == 0
+                || image.placement.height == 0
+                || image.placement.width > u32::from(pixel_size) * 4
+                || image.placement.height > u32::from(pixel_size) * 4
+            {
+                return None;
+            }
+            let left = x.round() as i32 + image.placement.left;
+            let top = -(y.round() as i32 + image.placement.top);
+            let right = left + image.placement.width as i32;
+            let bottom = top + image.placement.height as i32;
+            bounds.0 = bounds.0.min(left);
+            bounds.1 = bounds.1.min(top);
+            bounds.2 = bounds.2.max(right);
+            bounds.3 = bounds.3.max(bottom);
+            layers.push((image, left, top));
+        }
+        let width = bounds.2.checked_sub(bounds.0)? as usize;
+        let height = bounds.3.checked_sub(bounds.1)? as usize;
+        if width == 0
+            || height == 0
+            || width > usize::from(pixel_size) * 4
+            || height > usize::from(pixel_size) * 4
+        {
+            return None;
+        }
+        if is_keycap {
+            layers.reverse();
+        }
+        let mut pixels = vec![Color32::TRANSPARENT; width * height];
+        for (image, left, top) in layers {
+            let offset_x = (left - bounds.0) as usize;
+            let offset_y = (top - bounds.1) as usize;
+            for source_y in 0..image.placement.height as usize {
+                for source_x in 0..image.placement.width as usize {
+                    let source_index = (source_y * image.placement.width as usize + source_x) * 4;
+                    let source = Color32::from_rgba_unmultiplied(
+                        image.data[source_index],
+                        image.data[source_index + 1],
+                        image.data[source_index + 2],
+                        image.data[source_index + 3],
+                    );
+                    let destination_index = (offset_y + source_y) * width + offset_x + source_x;
+                    pixels[destination_index] = pixels[destination_index].blend(source);
+                }
+            }
+        }
+        Some(ColorImage::new([width, height], pixels))
+    }
+}
+
+fn stable_text_hash(text: &str) -> u64 {
+    text.bytes().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -332,19 +577,22 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 // a flat sliver visible. The run-shaping path below already
                 // clips for the same reason.
                 let cell_painter = painter.with_clip_rect(rect);
-                let galley = glyphs.layout(
-                    &cell_painter,
-                    &cell.text,
-                    cell.attributes,
-                    foreground,
-                    paint.fonts,
-                    rect.width(),
-                );
-                let text_position = Pos2::new(
-                    rect.left(),
-                    rect.top() + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
-                );
-                cell_painter.galley(text_position, galley, foreground);
+                if !glyphs.paint_color_emoji(&cell_painter, &cell.text, rect, cell.attributes) {
+                    let galley = glyphs.layout(
+                        &cell_painter,
+                        &cell.text,
+                        cell.attributes,
+                        foreground,
+                        paint.fonts,
+                        rect.width(),
+                    );
+                    let text_position = Pos2::new(
+                        rect.left(),
+                        rect.top()
+                            + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                    );
+                    cell_painter.galley(text_position, galley, foreground);
+                }
             }
             let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
             if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
@@ -385,19 +633,22 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
                 let run_painter = painter.with_clip_rect(rect);
-                let galley = glyphs.layout(
-                    &run_painter,
-                    &run.text,
-                    run.attributes,
-                    run.foreground,
-                    paint.fonts,
-                    rect.width(),
-                );
-                let text_position = Pos2::new(
-                    rect.left(),
-                    rect.top() + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
-                );
-                run_painter.galley(text_position, galley, run.foreground);
+                if !glyphs.paint_color_emoji(&run_painter, &run.text, rect, run.attributes) {
+                    let galley = glyphs.layout(
+                        &run_painter,
+                        &run.text,
+                        run.attributes,
+                        run.foreground,
+                        paint.fonts,
+                        rect.width(),
+                    );
+                    let text_position = Pos2::new(
+                        rect.left(),
+                        rect.top()
+                            + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
+                    );
+                    run_painter.galley(text_position, galley, run.foreground);
+                }
             }
         }
     }
@@ -582,6 +833,10 @@ pub(crate) fn measure_input_to_paint_submission<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icu_properties::{
+        props::{Emoji, EmojiPresentation},
+        CodePointSetData,
+    };
 
     #[test]
     fn terminal_attributes_select_real_bundled_faces() {
@@ -597,6 +852,230 @@ mod tests {
         ] {
             assert_eq!(font.font_id(attributes).family.to_string(), expected);
         }
+    }
+
+    #[test]
+    fn agency_emoji_use_the_owned_family_and_rasterize_as_color() {
+        let font = FontSettings::default();
+        let mut cache = ColorEmojiCache::default();
+        for emoji in [
+            "🤖",
+            "🧹",
+            "🧠",
+            "🧩",
+            "🟢",
+            "🗑️",
+            "⚠️",
+            "ℹ️",
+            "👩‍🔬",
+            "1️⃣",
+            "🇺🇸",
+        ] {
+            assert_eq!(
+                font.font_id_for_text(Attributes::NONE, emoji)
+                    .family
+                    .to_string(),
+                EMOJI_FAMILY
+            );
+            let image = cache
+                .rasterize(emoji, 32)
+                .unwrap_or_else(|| panic!("failed to rasterize {emoji}"));
+            assert!(image.width() > 0);
+            assert!(image.height() > 0);
+            let visible_colors = image
+                .pixels
+                .iter()
+                .filter(|pixel| pixel.a() != 0)
+                .map(|pixel| (pixel.r(), pixel.g(), pixel.b()))
+                .collect::<std::collections::HashSet<_>>();
+            assert!(
+                visible_colors.len() > 1,
+                "{emoji} did not retain intrinsic color"
+            );
+        }
+        assert_ne!(
+            font.font_id_for_text(Attributes::NONE, "⚠︎")
+                .family
+                .to_string(),
+            EMOJI_FAMILY
+        );
+    }
+
+    #[test]
+    fn complex_emoji_sequences_rasterize_at_supported_sizes() {
+        let mut cache = ColorEmojiCache::default();
+        let keycaps = ['#', '*']
+            .into_iter()
+            .chain('0'..='9')
+            .map(|base| format!("{base}\u{fe0f}\u{20e3}"))
+            .collect::<Vec<_>>();
+        for emoji in crate::fonts::COMPLEX_COLOR_EMOJI_TEST_CASES
+            .iter()
+            .copied()
+            .map(str::to_owned)
+            .chain(keycaps)
+        {
+            for pixel_size in [8, 16, 32, 64, 128, 256] {
+                let image = cache.rasterize(&emoji, pixel_size).unwrap_or_else(|| {
+                    panic!("failed to rasterize {emoji} at {pixel_size} pixels")
+                });
+                assert!(image.width() > 0, "{emoji} at {pixel_size}");
+                assert!(image.height() > 0, "{emoji} at {pixel_size}");
+                assert!(
+                    image.width() <= usize::from(pixel_size) * 4,
+                    "{emoji} at {pixel_size}"
+                );
+                assert!(
+                    image.height() <= usize::from(pixel_size) * 4,
+                    "{emoji} at {pixel_size}"
+                );
+                assert!(
+                    image.pixels.iter().any(|pixel| pixel.a() != 0),
+                    "{emoji} at {pixel_size}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_default_color_emoji_scalar_rasterizes_from_the_pinned_font() {
+        let mut cache = ColorEmojiCache::default();
+        for range in CodePointSetData::new::<EmojiPresentation>().iter_ranges() {
+            for code_point in range {
+                let text = char::from_u32(code_point).unwrap().to_string();
+                let image = cache
+                    .rasterize(&text, 16)
+                    .unwrap_or_else(|| panic!("failed to rasterize U+{code_point:04X} {text}"));
+                assert!(
+                    image.pixels.iter().any(|pixel| pixel.a() != 0),
+                    "U+{code_point:04X} rendered transparently"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_emoji_property_scalar_rasterizes_with_explicit_emoji_presentation() {
+        let mut cache = ColorEmojiCache::default();
+        for range in CodePointSetData::new::<Emoji>().iter_ranges() {
+            for code_point in range {
+                let character = char::from_u32(code_point).unwrap();
+                let text = format!("{character}\u{fe0f}");
+                let image = cache
+                    .rasterize(&text, 16)
+                    .unwrap_or_else(|| panic!("failed to rasterize U+{code_point:04X} with VS16"));
+                assert!(
+                    image.pixels.iter().any(|pixel| pixel.a() != 0),
+                    "U+{code_point:04X} with VS16 rendered transparently"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn color_emoji_paint_reuses_textures_and_honors_concealment() {
+        let context = egui::Context::default();
+        let mut glyphs = GlyphCache::default();
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(32.0, 16.0));
+
+        let mut painted = true;
+        let mut output = context.run_ui(Default::default(), |context| {
+            let painter = context.layer_painter(egui::LayerId::background());
+            painted = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::CONCEALED);
+        });
+        output.textures_delta.clear();
+        assert!(!painted);
+        assert!(glyphs.color_emoji.textures.is_empty());
+
+        for attributes in [Attributes::NONE, Attributes::FAINT] {
+            let mut output = context.run_ui(Default::default(), |context| {
+                let painter = context.layer_painter(egui::LayerId::background());
+                painted = glyphs.paint_color_emoji(&painter, "🤖", rect, attributes);
+            });
+            output.textures_delta.clear();
+            assert!(painted);
+        }
+        assert_eq!(glyphs.color_emoji.textures.len(), 1);
+        assert!(glyphs.color_emoji.texture_bytes > 0);
+    }
+
+    #[test]
+    fn color_emoji_rasterizer_rejects_missing_and_excessive_inputs() {
+        let mut cache = ColorEmojiCache::default();
+        assert!(cache.rasterize("\u{e000}", 16).is_none());
+        assert!(cache
+            .rasterize(
+                &format!("1{}", "\u{20e3}".repeat(MAX_COLOR_EMOJI_LAYERS)),
+                16
+            )
+            .is_none());
+        assert!(cache
+            .rasterize(&"🤖".repeat(MAX_COLOR_EMOJI_INPUT_BYTES), 16)
+            .is_none());
+    }
+
+    #[test]
+    fn every_keycap_raster_has_distinct_visible_pixels() {
+        let mut cache = ColorEmojiCache::default();
+        let mut hashes = std::collections::HashSet::new();
+        for base in ['#', '*'].into_iter().chain('0'..='9') {
+            let emoji = format!("{base}\u{fe0f}\u{20e3}");
+            let image = cache
+                .rasterize(&emoji, 32)
+                .unwrap_or_else(|| panic!("failed to rasterize {emoji}"));
+            let hash = image.pixels.iter().fold(
+                (image.width() as u64) << 32 | image.height() as u64,
+                |hash, pixel| {
+                    pixel.to_array().into_iter().fold(hash, |hash, byte| {
+                        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+                    })
+                },
+            );
+            assert!(hashes.insert(hash), "duplicate keycap raster for {emoji}");
+        }
+    }
+
+    #[test]
+    fn color_emoji_texture_cache_stays_bounded() {
+        let context = egui::Context::default();
+        let image = ColorImage::new([1, 1], vec![Color32::WHITE]);
+        let texture = context.load_texture("emoji-cache-test", image, TextureOptions::LINEAR);
+        let mut cache = ColorEmojiCache::default();
+        for index in 0..COLOR_EMOJI_CACHE_CAPACITY {
+            let byte_size = 4;
+            cache.textures.insert(
+                ColorEmojiKey {
+                    text: index.to_string(),
+                    pixel_size: 16,
+                },
+                ColorEmojiTexture {
+                    texture: texture.clone(),
+                    aspect_ratio: 1.0,
+                },
+            );
+            cache.texture_bytes += byte_size;
+        }
+        cache.prepare_for_insert(4);
+        assert!(cache.textures.is_empty());
+        assert_eq!(cache.texture_bytes, 0);
+
+        cache.textures.insert(
+            ColorEmojiKey {
+                text: "🤖".to_owned(),
+                pixel_size: 16,
+            },
+            ColorEmojiTexture {
+                texture,
+                aspect_ratio: 1.0,
+            },
+        );
+        cache.texture_bytes = COLOR_EMOJI_CACHE_BYTE_CAPACITY;
+        cache.prepare_for_insert(1);
+        assert!(cache.textures.is_empty());
+        assert_eq!(cache.texture_bytes, 0);
+        assert!(cache
+            .rasterize(&"🤖".repeat(MAX_COLOR_EMOJI_INPUT_BYTES), 16)
+            .is_none());
     }
 
     #[test]

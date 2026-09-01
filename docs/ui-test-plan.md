@@ -251,8 +251,8 @@ and initial renderer styling are stable.
 - Empty grid and default background coverage.
 - ASCII, 16/256/RGB colors, inverse, conceal, underline, strikeout, cursor
   visibility, and selection.
-- Wide CJK cell plus continuation, combining mark, emoji fallback behavior,
-  and cursor/selection geometry.
+- Wide CJK cell plus continuation, combining mark, Agency-style color emoji,
+  trailing ASCII alignment, and cursor/selection geometry.
 - Small and large viewports, including every resize state from the issue #3
   replay.
 - Alternate screen, full-screen TUI frame, and high-output final frame.
@@ -293,9 +293,9 @@ P3 is complete only when all of the following are true:
 4. The Windows and Linux jobs reproduce their baselines across repeated clean
    CI runs without tolerance changes. A deliberate controlled pixel change
    produces reviewable baseline, actual, and diff artifacts.
-5. Emoji or fallback images assert cell and selection geometry, not the glyph
-   selected by an unbundled platform fallback font. Platform-specific glyph
-   appearance requires a bundled test font or its own reviewed baseline.
+5. Emoji or fallback images assert cell and selection geometry using the
+   repository-owned Noto Emoji assets. Platform-specific glyph appearance
+   requires a separate reviewed baseline.
 
 P3 does not validate DPI transitions, compositor behavior, native focus,
 clipboard integration, or real PTY timing; those remain Tier 6/P4 evidence.
@@ -449,9 +449,8 @@ overlapping checklist entry.
 
 - Maintain a versioned reference-application checklist.
 - Run `vttest` and terminfo validation before claiming terminal capability.
-- Add visual cases for font fallback and ligatures only after their
-  cell-to-glyph mapping is specified; exercise the opt-in run-shaping seam
-  separately until a supported production font policy is accepted.
+- Preserve the ADR 0026 emoji/fallback visual case and exercise the opt-in
+  ligature run-shaping seam separately.
 - Keep the daily controlled OpenSSH suite stable. It now covers password and
   in-memory key authentication, host-key variants, liveness, reconnect,
   tmux/Screen persistence, and recovery stopping on provider disappearance,

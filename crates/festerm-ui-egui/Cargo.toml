@@ -10,11 +10,14 @@ description = "egui terminal presentation for the GUI-independent fesTerm core."
 [dependencies]
 egui = "0"
 festerm-core = { path = "../festerm-core" }
+icu_properties = { version = "=2.2.0", default-features = false, features = ["compiled_data"] }
+swash = "=0.2.10"
 
 [dev-dependencies]
 festerm-test-support = { path = "../festerm-test-support" }
 egui_kittest = { version = "0", features = ["snapshot", "wgpu"] }
 criterion = { version = "0.7", default-features = false }
+ttf-parser = "0.25"
 
 [lints]
 workspace = true

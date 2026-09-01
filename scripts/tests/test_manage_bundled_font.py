@@ -56,6 +56,30 @@ class BundledFontTests(unittest.TestCase):
             with self.assertRaisesRegex(fonts.FontError, "schema_version"):
                 fonts.load_manifest(path)
 
+    def test_verify_accepts_commit_pinned_direct_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            asset = root / "assets/fonts/noto-emoji/font.ttf"
+            asset.parent.mkdir(parents=True)
+            asset.write_bytes(b"font bytes")
+            commit = "a" * 40
+            manifest = {
+                "schema_version": 1,
+                "source_kind": "direct",
+                "family": "Noto Emoji",
+                "upstream_repository": "google/fonts",
+                "pinned_version": "3.002",
+                "files": [
+                    {
+                        "source_url": f"https://example.test/{commit}/font.ttf",
+                        "source_commit": commit,
+                        "path": "assets/fonts/noto-emoji/font.ttf",
+                        "sha256": hashlib.sha256(b"font bytes").hexdigest(),
+                    }
+                ],
+            }
+            fonts.verify(root, manifest)
+
     @mock.patch("manage_bundled_font.request_json")
     def test_latest_release_is_generic_across_font_repositories(self, request_json):
         request_json.return_value = {

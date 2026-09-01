@@ -201,15 +201,12 @@ while enabled. Unknown DEC modes remain inert.
 
 The core pins [`unicode-width` 0.2.2](https://crates.io/crates/unicode-width/0.2.2),
 whose generated tables declare Unicode **15.1.0**, and
-[`icu_properties` 2.2.0](https://crates.io/crates/icu_properties) with
-compiled data for the `Grapheme_Extend` property. Both versions are explicit:
-updating either Unicode data source requires compatibility review and fixture
-coverage. It uses `UnicodeWidthChar::width`, so East Asian Ambiguous code
-points use the crate's non-CJK one-cell policy. A printable width-one
-character occupies one leading cell; a width-two character occupies a leading
-`Double` cell plus an empty `Continuation` cell. Width-two output at the right
-margin wraps before writing with DECAWM enabled; with DECAWM disabled it is
-conservatively replaced with U+FFFD.
+[`unicode-segmentation` 1.13.3](https://crates.io/crates/unicode-segmentation/1.13.3).
+Both versions are explicit: updating either Unicode data source requires
+compatibility review and fixture coverage. East Asian Ambiguous code points
+use the width crate's non-CJK policy. A grapheme of width one occupies one
+leading cell; width two occupies a leading `Double` cell plus an empty
+`Continuation` cell.
 
 UTF-8 decoding is strict and incremental across `ingest` calls. At most four
 bytes are retained; invalid starts, invalid continuations, overlong forms,
@@ -218,17 +215,18 @@ An incomplete final sequence remains pending for the next call. Raw C1 bytes
 are therefore invalid UTF-8 and become U+FFFD, rather than being interpreted
 as C1 controls.
 
-This is intentionally not a claim of full UAX #29 extended-grapheme
-segmentation. Every `Grapheme_Extend` character, including variation
-selectors and Bengali sign nukta (U+09BC), plus U+200D attaches to the most
-recently written leading cell in that buffer; orphan marks are ignored. Other
-zero-width controls do not attach. Simple Unicode-width-table emoji occupy
-their reported two cells, but a multi-code-point ZWJ emoji sequence is
-allocated by code point and may consume more than two cells. Complex-script
-shaping and font fallback belong to the renderer. Every M2 edit, erase,
-scroll, and resize operation repairs invalid leading/continuation
-relationships. A repair clears an orphan or clipped half to a blank cell
-rather than exposing an invalid grid.
+The core applies UAX #29 extended-grapheme boundaries incrementally to the
+most recently written leading cell and recomputes the whole sequence with
+`UnicodeWidthStr`. This covers variation selectors, ZWJ sequences, modifiers,
+keycaps, and regional-indicator flags even across `ingest` calls. A sequence
+may promote from one to two cells; at the right margin it wraps before
+promotion with DECAWM enabled or becomes U+FFFD when promotion cannot fit with
+DECAWM disabled. A grapheme is capped at 256 UTF-8 bytes; an extending scalar
+beyond the cap replaces it with U+FFFD and clears the extension anchor. Orphan
+zero-width text is ignored. Complex-script shaping and font fallback belong to
+the renderer. Every M2 edit, erase, scroll, and resize operation repairs
+invalid leading/continuation relationships. A repair clears an orphan or
+clipped half to a blank cell rather than exposing an invalid grid.
 
 ## Milestone 4 Implemented Behavior
 
@@ -250,6 +248,12 @@ default. The clipped cell-run shaping path is now an explicit, persisted,
 default-off preference. It groups only compatible ASCII cells and preserves
 immutable cursor, selection, hit-test, hyperlink, fallback, and wide-cell
 boundaries under ADR 0012.
+
+The renderer prepends pinned Noto Emoji monochrome fallback to each terminal
+font chain. Emoji-presentation graphemes use a bounded Swash path over pinned
+Noto Color Emoji bitmap glyphs; layered glyphs are composited, centered, and
+clipped inside the core-owned span. VS15 remains monochrome, and any failed or
+oversized color rasterization falls back to the ordinary layout path.
 
 Egui keyboard/text, paste, focus, pointer, wheel, selection, and copy events
 become M3 `InputEvent` values. The core alone selects mode-aware byte

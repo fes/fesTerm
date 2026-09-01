@@ -37,6 +37,9 @@ def digest(data: bytes) -> str:
 
 def verify(root: Path, manifest: dict[str, object]) -> None:
     errors: list[str] = []
+    source_kind = str(manifest.get("source_kind", "archive"))
+    if source_kind not in {"archive", "direct"}:
+        errors.append(f"unsupported source_kind: {source_kind!r}")
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
         raise FontError("font manifest files must be a non-empty list")
@@ -48,14 +51,20 @@ def verify(root: Path, manifest: dict[str, object]) -> None:
             continue
         relative = str(entry.get("path", ""))
         archive_path = str(entry.get("archive_path", ""))
+        source_url = str(entry.get("source_url", ""))
         expected = str(entry.get("sha256", ""))
         expected_size = entry.get("size_bytes")
         if relative in destinations:
             errors.append(f"duplicate destination: {relative}")
-        if archive_path in archive_paths:
-            errors.append(f"duplicate archive path: {archive_path}")
+        source_identity = archive_path if source_kind == "archive" else source_url
+        if source_identity in archive_paths:
+            errors.append(f"duplicate upstream source: {source_identity}")
         destinations.add(relative)
-        archive_paths.add(archive_path)
+        archive_paths.add(source_identity)
+        if source_kind == "archive" and not archive_path:
+            errors.append(f"missing archive_path for {relative}")
+        if source_kind == "direct" and not source_url.startswith("https://"):
+            errors.append(f"invalid source_url for {relative}")
         if not relative.startswith("assets/fonts/"):
             errors.append(f"font destination escapes owned directory: {relative}")
             continue
@@ -68,14 +77,28 @@ def verify(root: Path, manifest: dict[str, object]) -> None:
             errors.append(f"bundled font size differs: {relative}")
 
     version = str(manifest.get("pinned_version", ""))
-    release = str(manifest.get("pinned_release", ""))
-    archive_url = str(manifest.get("archive_url", ""))
     if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", version):
         errors.append(f"invalid pinned_version: {version!r}")
-    if release != f"v{version}":
-        errors.append("pinned_release must be 'v' plus pinned_version")
-    if release not in archive_url:
-        errors.append("archive_url does not match the pinned release/version")
+    if source_kind == "archive":
+        release = str(manifest.get("pinned_release", ""))
+        archive_url = str(manifest.get("archive_url", ""))
+        if release != f"v{version}":
+            errors.append("pinned_release must be 'v' plus pinned_version")
+        if release not in archive_url:
+            errors.append("archive_url does not match the pinned release/version")
+    else:
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            commit = str(entry.get("source_commit", ""))
+            if not re.fullmatch(r"[0-9a-f]{40}", commit):
+                errors.append(
+                    f"direct source requires a full source_commit: {entry.get('path', '')}"
+                )
+            elif commit not in str(entry.get("source_url", "")):
+                errors.append(
+                    f"direct source URL does not contain pinned commit: {entry.get('path', '')}"
+                )
     for marker in manifest.get("version_markers", []):
         path = root / str(marker)
         if not path.is_file():
@@ -168,6 +191,16 @@ def download(url: str) -> bytes:
 
 
 def verify_archive(manifest: dict[str, object]) -> None:
+    if manifest.get("source_kind") == "direct":
+        for entry in manifest["files"]:
+            expected = str(entry.get("sha256", ""))
+            actual = digest(download(str(entry["source_url"])))
+            if actual != expected:
+                raise FontError(
+                    f"{manifest.get('family')} upstream source checksum differs: "
+                    f"{entry.get('path')}"
+                )
+        return
     expected = str(manifest.get("archive_sha256", ""))
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise FontError(f"{manifest.get('family')} lacks a valid archive_sha256")

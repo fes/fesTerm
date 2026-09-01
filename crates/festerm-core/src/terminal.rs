@@ -14,7 +14,7 @@ use crate::{
     parser::{CsiParameters, OscAction, ParameterSeparator, Parser, TerminalOp},
     replies::{queue_transport_bytes, QueuePushResult},
     screen::Screen,
-    unicode::{is_combining_character, Utf8Advance, Utf8Decoder},
+    unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
 
@@ -52,7 +52,7 @@ struct BufferState {
     scroll_top: usize,
     scroll_bottom: usize,
     pending_wrap: bool,
-    combining_anchor: Option<Cursor>,
+    grapheme_anchor: Option<Cursor>,
     dec_saved: Option<SavedDecState>,
     ansi_saved: Option<SavedAnsiCursor>,
 }
@@ -65,7 +65,7 @@ impl BufferState {
             scroll_top: 0,
             scroll_bottom: dimensions.rows() - 1,
             pending_wrap: false,
-            combining_anchor: None,
+            grapheme_anchor: None,
             dec_saved: None,
             ansi_saved: None,
         })
@@ -89,9 +89,9 @@ impl BufferState {
             scroll_top: self.scroll_top.min(dimensions.rows() - 1),
             scroll_bottom: self.scroll_bottom.min(dimensions.rows() - 1),
             pending_wrap: self.pending_wrap,
-            combining_anchor: self
-                .combining_anchor
-                .filter(|anchor| self.combining_anchor_survives_resize(*anchor, dimensions)),
+            grapheme_anchor: self
+                .grapheme_anchor
+                .filter(|anchor| self.grapheme_anchor_survives_resize(*anchor, dimensions)),
             dec_saved: self.dec_saved,
             ansi_saved: self.ansi_saved,
         };
@@ -195,9 +195,9 @@ impl BufferState {
             scroll_bottom,
             pending_wrap: self.pending_wrap,
             // A reflow can move cell content arbitrarily relative to a
-            // combining anchor's original row/column, so (like the
+            // grapheme anchor's original row/column, so (like the
             // rectangular resize path) it is not carried forward.
-            combining_anchor: None,
+            grapheme_anchor: None,
             dec_saved: self.dec_saved,
             ansi_saved: self.ansi_saved,
         };
@@ -206,7 +206,7 @@ impl BufferState {
         Ok(resized)
     }
 
-    fn combining_anchor_survives_resize(&self, anchor: Cursor, dimensions: Dimensions) -> bool {
+    fn grapheme_anchor_survives_resize(&self, anchor: Cursor, dimensions: Dimensions) -> bool {
         if anchor.column >= dimensions.columns() || anchor.row >= dimensions.rows() {
             return false;
         }
@@ -229,7 +229,7 @@ impl BufferState {
         self.scroll_top = 0;
         self.scroll_bottom = self.screen.dimensions().rows() - 1;
         self.pending_wrap = false;
-        self.combining_anchor = None;
+        self.grapheme_anchor = None;
         self.dec_saved = None;
         self.ansi_saved = None;
     }
@@ -647,7 +647,7 @@ impl Terminal {
             operation,
             TerminalOp::Print(_) | TerminalOp::SetGraphicsRendition(_) | TerminalOp::Ignored
         ) {
-            self.clear_combining_anchor();
+            self.clear_grapheme_anchor();
         }
         match operation {
             TerminalOp::Print(character) => self.print(character),
@@ -766,13 +766,12 @@ impl Terminal {
     }
 
     fn print(&mut self, character: char) {
-        if is_combining_character(character) {
-            self.append_combining(character);
+        if self.try_extend_grapheme(character) {
             return;
         }
         let width = UnicodeWidthChar::width(character).unwrap_or(0);
         if width == 0 {
-            self.clear_combining_anchor();
+            self.clear_grapheme_anchor();
             return;
         }
         if self.active_buffer().pending_wrap && self.modes.auto_wrap {
@@ -825,32 +824,115 @@ impl Terminal {
                 hyperlink,
             },
         );
-        buffer.combining_anchor = Some(cursor);
-        if cursor.column + width == columns {
-            buffer.pending_wrap = auto_wrap;
-        } else {
-            buffer.cursor.column += width;
-        }
+        buffer.grapheme_anchor = Some(cursor);
+        Self::place_cursor_after_cluster(buffer, cursor, width, columns, auto_wrap);
     }
 
-    fn append_combining(&mut self, character: char) {
-        let Some(anchor) = self.active_buffer().combining_anchor else {
-            return;
+    fn try_extend_grapheme(&mut self, character: char) -> bool {
+        let Some(anchor) = self.active_buffer().grapheme_anchor else {
+            return false;
         };
         let Some(mut cell) = self.active_buffer().screen.cell(anchor.column, anchor.row) else {
-            return;
+            return false;
         };
-        if cell.is_continuation() {
-            return;
+        if cell.is_continuation() || !extends_grapheme(cell.text(), character) {
+            return false;
+        }
+        if cell.text().len().saturating_add(character.len_utf8()) > MAX_GRAPHEME_BYTES {
+            cell.text.clear();
+            cell.text.push(char::REPLACEMENT_CHARACTER);
+            cell.width = CellWidth::Single;
+            let columns = self.dimensions().columns();
+            let auto_wrap = self.modes.auto_wrap;
+            let buffer = self.active_buffer_mut();
+            buffer
+                .screen
+                .replace_cluster(anchor.column, anchor.row, cell);
+            buffer.grapheme_anchor = None;
+            buffer.pending_wrap = false;
+            Self::place_cursor_after_cluster(buffer, anchor, 1, columns, auto_wrap);
+            return true;
         }
         cell.text.push(character);
-        self.active_buffer_mut()
-            .screen
-            .replace_cell(anchor.column, anchor.row, cell);
+        let old_width = cell.width.columns();
+        let new_width = grapheme_width(cell.text());
+        if new_width == 0 {
+            return true;
+        }
+        cell.width = if new_width == 2 {
+            CellWidth::Double
+        } else {
+            CellWidth::Single
+        };
+
+        let columns = self.dimensions().columns();
+        let auto_wrap = self.modes.auto_wrap;
+        if old_width == 1 && new_width == 2 && anchor.column + 1 == columns {
+            if !auto_wrap {
+                cell.text.clear();
+                cell.text.push(char::REPLACEMENT_CHARACTER);
+                cell.width = CellWidth::Single;
+                let buffer = self.active_buffer_mut();
+                buffer
+                    .screen
+                    .replace_cluster(anchor.column, anchor.row, cell);
+                buffer.grapheme_anchor = Some(anchor);
+                buffer.pending_wrap = false;
+                return true;
+            }
+
+            let fill = self.erase_cell();
+            let linear = anchor.row * columns + anchor.column;
+            {
+                let buffer = self.active_buffer_mut();
+                buffer.screen.fill_linear(linear, linear + 1, fill);
+                buffer.screen.mark_soft_wrapped(anchor.row);
+                buffer.cursor.column = 0;
+                buffer.pending_wrap = false;
+            }
+            self.index();
+            let cursor = self.cursor();
+            let buffer = self.active_buffer_mut();
+            buffer
+                .screen
+                .replace_cluster(cursor.column, cursor.row, cell);
+            buffer.grapheme_anchor = Some(cursor);
+            Self::place_cursor_after_cluster(buffer, cursor, new_width, columns, auto_wrap);
+            return true;
+        }
+
+        let buffer = self.active_buffer_mut();
+        if old_width == new_width {
+            buffer.screen.replace_cell(anchor.column, anchor.row, cell);
+        } else {
+            buffer
+                .screen
+                .replace_cluster(anchor.column, anchor.row, cell);
+        }
+        buffer.grapheme_anchor = Some(anchor);
+        Self::place_cursor_after_cluster(buffer, anchor, new_width, columns, auto_wrap);
+        true
     }
 
-    fn clear_combining_anchor(&mut self) {
-        self.active_buffer_mut().combining_anchor = None;
+    fn place_cursor_after_cluster(
+        buffer: &mut BufferState,
+        anchor: Cursor,
+        width: usize,
+        columns: usize,
+        auto_wrap: bool,
+    ) {
+        buffer.cursor.row = anchor.row;
+        if anchor.column + width == columns {
+            buffer.cursor.column = anchor.column;
+            buffer.pending_wrap = auto_wrap;
+        } else {
+            buffer.cursor.column = anchor.column + width;
+            buffer.pending_wrap = false;
+        }
+    }
+
+    fn clear_grapheme_anchor(&mut self) {
+        self.active_buffer_mut().grapheme_anchor = None;
     }
 
     fn index(&mut self) {
@@ -1474,7 +1556,7 @@ impl Terminal {
             alternate.scroll_top = 0;
             alternate.scroll_bottom = rows - 1;
             alternate.pending_wrap = false;
-            alternate.combining_anchor = None;
+            alternate.grapheme_anchor = None;
         }
         self.active_screen = ActiveScreen::Alternate;
         self.modes.alternate_screen = true;

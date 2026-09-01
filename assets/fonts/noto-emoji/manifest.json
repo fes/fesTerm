@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "source_kind": "direct",
+  "family": "Noto Emoji",
+  "upstream_repository": "google/fonts",
+  "pinned_version": "3.002",
+  "color_release": "googlefonts/noto-emoji v2.051",
+  "license": "OFL-1.1",
+  "reserved_font_name": "Noto",
+  "files": [
+    {
+      "source_url": "https://raw.githubusercontent.com/google/fonts/b979dba422e445492b0eb9951ac52ee0b4d648c3/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf",
+      "source_commit": "b979dba422e445492b0eb9951ac52ee0b4d648c3",
+      "path": "assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf",
+      "sha256": "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551",
+      "size_bytes": 1982596
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/googlefonts/noto-emoji/8998f5dd683424a73e2314a8c1f1e359c19e8742/fonts/NotoColorEmoji.ttf",
+      "source_commit": "8998f5dd683424a73e2314a8c1f1e359c19e8742",
+      "path": "assets/fonts/noto-emoji/NotoColorEmoji.ttf",
+      "sha256": "72a635cb3d2f3524c51620cdde406b217204e8a6a06c6a096ff8ed4b5fd6e27b",
+      "size_bytes": 10673480
+    },
+    {
+      "source_url": "https://raw.githubusercontent.com/google/fonts/b979dba422e445492b0eb9951ac52ee0b4d648c3/ofl/notoemoji/OFL.txt",
+      "source_commit": "b979dba422e445492b0eb9951ac52ee0b4d648c3",
+      "path": "assets/fonts/noto-emoji/OFL.txt",
+      "sha256": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+      "size_bytes": 4330
+    }
+  ]
+}

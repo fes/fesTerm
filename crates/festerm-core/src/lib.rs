@@ -880,6 +880,182 @@ mod tests {
     }
 
     #[test]
+    fn emoji_sequences_use_grapheme_width_across_incremental_input() {
+        let mut agency = terminal(12, 1);
+        agency.ingest("🤖⚠".as_bytes());
+        agency.ingest("\u{fe0f}ℹ".as_bytes());
+        agency.ingest("\u{fe0f}🧹".as_bytes());
+
+        for column in [0, 2, 4, 6] {
+            assert_eq!(agency.cell(column, 0).unwrap().width(), CellWidth::Double);
+            assert!(agency.cell(column + 1, 0).unwrap().is_continuation());
+        }
+        assert_eq!(agency.cell(0, 0).unwrap().text(), "🤖");
+        assert_eq!(agency.cell(2, 0).unwrap().text(), "⚠️");
+        assert_eq!(agency.cell(4, 0).unwrap().text(), "ℹ️");
+        assert_eq!(agency.cell(6, 0).unwrap().text(), "🧹");
+        assert_eq!((agency.cursor().column(), agency.cursor().row()), (8, 0));
+
+        let mut joined = terminal(8, 1);
+        joined.ingest("👩".as_bytes());
+        joined.ingest("\u{200d}".as_bytes());
+        joined.ingest("🔬".as_bytes());
+        assert_eq!(joined.cell(0, 0).unwrap().text(), "👩‍🔬");
+        assert_eq!(joined.cell(0, 0).unwrap().width(), CellWidth::Double);
+        assert!(joined.cell(1, 0).unwrap().is_continuation());
+        assert_eq!((joined.cursor().column(), joined.cursor().row()), (2, 0));
+
+        let mut composed = terminal(8, 1);
+        composed.ingest("1".as_bytes());
+        composed.ingest("\u{fe0f}\u{20e3}".as_bytes());
+        composed.ingest("🇺".as_bytes());
+        composed.ingest("🇸".as_bytes());
+        assert_eq!(composed.cell(0, 0).unwrap().text(), "1️⃣");
+        assert_eq!(composed.cell(0, 0).unwrap().width(), CellWidth::Double);
+        assert_eq!(composed.cell(2, 0).unwrap().text(), "🇺🇸");
+        assert_eq!(composed.cell(2, 0).unwrap().width(), CellWidth::Double);
+        assert_eq!(
+            (composed.cursor().column(), composed.cursor().row()),
+            (4, 0)
+        );
+    }
+
+    #[test]
+    fn emoji_width_changes_preserve_right_margin_wrap_policy() {
+        let mut wrapped = terminal(3, 2);
+        wrapped.ingest("ab⚠".as_bytes());
+        wrapped.ingest("\u{fe0f}".as_bytes());
+        assert_eq!(wrapped.row_text(0).as_deref(), Some("ab "));
+        assert_eq!(wrapped.cell(0, 1).unwrap().text(), "⚠️");
+        assert_eq!(wrapped.cell(0, 1).unwrap().width(), CellWidth::Double);
+        assert!(wrapped.cell(1, 1).unwrap().is_continuation());
+        assert_eq!((wrapped.cursor().column(), wrapped.cursor().row()), (2, 1));
+
+        let mut no_wrap = terminal(3, 1);
+        no_wrap.ingest(b"\x1b[?7l");
+        no_wrap.ingest("ab⚠".as_bytes());
+        no_wrap.ingest("\u{fe0f}".as_bytes());
+        assert_eq!(no_wrap.row_text(0).as_deref(), Some("ab�"));
+        assert_eq!(no_wrap.cell(2, 0).unwrap().width(), CellWidth::Single);
+    }
+
+    #[test]
+    fn emoji_sequence_families_match_across_byte_chunk_boundaries() {
+        let mut cases = vec![
+            "🤖".to_owned(),
+            "⚠️".to_owned(),
+            "ℹ️".to_owned(),
+            "👋🏻".to_owned(),
+            "👍🏽".to_owned(),
+            "🧑🏿".to_owned(),
+            "👩‍🔬".to_owned(),
+            "👨‍💻".to_owned(),
+            "🧑🏽‍🚀".to_owned(),
+            "👨‍👩‍👧‍👦".to_owned(),
+            "🏃‍♀️".to_owned(),
+            "🏳️‍🌈".to_owned(),
+            "🏴‍☠️".to_owned(),
+            "❤️‍🔥".to_owned(),
+            "🇺🇸".to_owned(),
+            "🇨🇦".to_owned(),
+            "🇯🇵".to_owned(),
+            "🇧🇷".to_owned(),
+            "🇿🇦".to_owned(),
+            "🇪🇺".to_owned(),
+            "🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}".to_owned(),
+        ];
+        cases.extend(
+            ['#', '*']
+                .into_iter()
+                .chain('0'..='9')
+                .map(|base| format!("{base}\u{fe0f}\u{20e3}")),
+        );
+
+        for emoji in cases {
+            let input = format!("{emoji}X");
+            let mut contiguous = terminal(6, 1);
+            contiguous.ingest(input.as_bytes());
+
+            let mut fragmented = terminal(6, 1);
+            for byte in input.as_bytes() {
+                fragmented.ingest(std::slice::from_ref(byte));
+            }
+
+            for column in 0..6 {
+                let expected = contiguous.cell(column, 0).unwrap();
+                let actual = fragmented.cell(column, 0).unwrap();
+                assert_eq!(actual.text(), expected.text(), "{emoji} text at {column}");
+                assert_eq!(
+                    actual.width(),
+                    expected.width(),
+                    "{emoji} width at {column}"
+                );
+            }
+            assert_eq!(fragmented.cell(0, 0).unwrap().text(), emoji);
+            assert_eq!(
+                fragmented.cell(0, 0).unwrap().width(),
+                CellWidth::Double,
+                "{emoji}"
+            );
+            assert!(fragmented.cell(1, 0).unwrap().is_continuation(), "{emoji}");
+            assert_eq!(fragmented.cell(2, 0).unwrap().text(), "X", "{emoji}");
+            assert_eq!(
+                (fragmented.cursor().column(), fragmented.cursor().row()),
+                (3, 0),
+                "{emoji}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_presentation_sequences_remain_single_width() {
+        for text in ["⚠︎", "ℹ︎", "☀︎", "▶︎"] {
+            let mut terminal = terminal(4, 1);
+            for byte in format!("{text}X").as_bytes() {
+                terminal.ingest(std::slice::from_ref(byte));
+            }
+            assert_eq!(terminal.cell(0, 0).unwrap().text(), text);
+            assert_eq!(terminal.cell(0, 0).unwrap().width(), CellWidth::Single);
+            assert_eq!(terminal.cell(1, 0).unwrap().text(), "X");
+            assert_eq!(
+                (terminal.cursor().column(), terminal.cursor().row()),
+                (2, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn a_grapheme_at_the_storage_limit_remains_intact() {
+        let mut text = String::from("é");
+        text.extend(std::iter::repeat_n('\u{301}', 127));
+        assert_eq!(text.len(), crate::unicode::MAX_GRAPHEME_BYTES);
+
+        let mut terminal = terminal(4, 1);
+        terminal.ingest(text.as_bytes());
+        terminal.ingest(b"b");
+
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), text);
+        assert_eq!(terminal.cell(1, 0).unwrap().text(), "b");
+    }
+
+    #[test]
+    fn oversized_graphemes_are_replaced_and_stop_absorbing_input() {
+        let mut terminal = terminal(4, 1);
+        let mut input = String::from("a");
+        input.extend(std::iter::repeat_n('\u{301}', 300));
+        input.push('b');
+        terminal.ingest(input.as_bytes());
+
+        assert_eq!(terminal.cell(0, 0).unwrap().text(), "�");
+        assert_eq!(terminal.cell(0, 0).unwrap().width(), CellWidth::Single);
+        assert_eq!(terminal.cell(1, 0).unwrap().text(), "b");
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (2, 0)
+        );
+    }
+
+    #[test]
     fn rejects_invalid_utf8_second_byte_ranges_without_delaying_replacement() {
         for (leading, invalid_second) in [(0xe0, 0x80), (0xed, 0xa0), (0xf0, 0x80), (0xf4, 0x90)] {
             let mut terminal = terminal(3, 1);

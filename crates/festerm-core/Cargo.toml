@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # Pinned Unicode width and grapheme property data; see standards notes.
-icu_properties = { version = "=2.2.0", default-features = false, features = ["compiled_data"] }
+unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
 # Cell text is almost always 1-4 bytes (a single grapheme cluster);
 # `CompactString` inlines up to 24 bytes on the stack instead of allocating

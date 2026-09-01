@@ -1601,7 +1601,11 @@ Terminal typography may use separate font and shaping rules from application chr
 The terminal renderer defaults to bundled **JetBrains Mono NL 2.304** at `14`
 pt and lets Settings select JetBrains Mono, Iosevka Term, JuliaMono, or Maple
 Mono. Each family includes regular, bold, italic, and bold-italic static
-faces; missing glyphs continue through a separate monospace fallback chain.
+faces; missing glyphs continue through an owned Noto Emoji monochrome face and
+then the separate monospace fallback chain. Emoji-presentation graphemes use
+the pinned Noto Color Emoji renderer path, while VS15 requests monochrome text
+presentation. Both paths remain clipped to core-owned cell spans under ADRs
+0012 and 0026.
 Changing the primary family rebuilds egui's atlas, advances a font generation,
 invalidates terminal glyph caches, recalculates primary-face cell metrics, and
 coalesces the resulting PTY resize through the existing viewport path.
@@ -1636,7 +1640,8 @@ without changing the semantic typography roles or terminal-font contract.
 - High readability for long sessions.
 - Reliable cross-platform glyph coverage.
 - Correct width and continuation mapping.
-- Font fallback without breaking cell geometry.
+- Deterministic monochrome and color emoji fallback without breaking cell
+  geometry.
 - Ligature support after the shaping-to-cell mapping contract is validated.
 
 ### Ligatures
@@ -1655,7 +1660,7 @@ remain hard shaping boundaries.
 
 Users can configure the bundled terminal family and ligature preference
 through versioned configuration and GUI Settings. Font size remains
-per-session runtime zoom; configurable fallback behavior and line height are
+per-session runtime zoom; configurable fallback ordering and line height are
 future controls.
 
 Runtime zoom is per session. `Ctrl++`, `Ctrl+-`, and `Ctrl+0` on Windows/Linux

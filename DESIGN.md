@@ -171,7 +171,11 @@ The renderer must preserve mapping from shaped glyph runs back to terminal cells
 
 ### Unicode
 
-Common wide characters, combining marks, emoji, and font fallback are part of practical terminal correctness. Exact width-table source, grapheme policy, and complex-script scope remain design questions.
+Common wide characters, combining marks, emoji, and font fallback are part of
+practical terminal correctness. ADR 0026 defines incremental extended-grapheme
+allocation, pinned width data, and deterministic monochrome/color emoji
+fallback without weakening ADR 0012's cell-geometry authority. Complex-script
+shaping beyond grapheme allocation remains a design question.
 
 ### Performance
 
@@ -270,8 +274,7 @@ finished. Current work proceeds from that foundation:
 
 - Future parser extensions and supporting crates, if they become necessary.
 - Async runtime, cancellation, and bounded-channel choices.
-- Unicode width table source and update policy.
-- Grapheme, complex-script, and font-fallback scope.
+- Complex-script shaping scope beyond the accepted grapheme and emoji policy.
 - `TERM` value and terminfo distribution strategy.
 - Profile, workspace, and configuration migration policy before stability.
 - Account provider and synchronization protocol.
