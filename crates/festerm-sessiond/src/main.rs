@@ -31,6 +31,40 @@ use festerm_ssh::PersistentSessionName;
 use fs2::FileExt;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
+use std::sync::{Mutex, OnceLock};
+
+/// Opt-in diagnostic tracing for debugging the Windows native-smoke daemon
+/// path (see issue #71). Writes to the file named by
+/// `FESTERM_SESSIOND_TRACE_FILE` if set; otherwise a no-op. A file is used
+/// instead of stderr because the native-smoke test spawns the daemon with
+/// `Stdio::null()` for its own stdio, which would silently discard
+/// `eprintln!` output.
+fn trace_file() -> Option<&'static Mutex<fs::File>> {
+    static TRACE_FILE: OnceLock<Option<Mutex<fs::File>>> = OnceLock::new();
+    TRACE_FILE
+        .get_or_init(|| {
+            let path = env::var_os("FESTERM_SESSIOND_TRACE_FILE")?;
+            if path.is_empty() {
+                return None;
+            }
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok()
+                .map(Mutex::new)
+        })
+        .as_ref()
+}
+
+fn sessiond_trace(message: impl std::fmt::Display) {
+    if let Some(file) = trace_file() {
+        if let Ok(mut file) = file.lock() {
+            let _ = writeln!(file, "{message}");
+            let _ = file.flush();
+        }
+    }
+}
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 #[cfg(windows)]
@@ -887,12 +921,10 @@ fn accept_windows_clients(
 ) -> io::Result<()> {
     for stream in accept_rx.try_iter() {
         let mut stream = stream?;
-        if std::env::var_os("FESTERM_SESSIOND_TRACE").is_some() {
-            eprintln!(
-                "sessiond-trace accept_windows_clients: new client, replay_empty={}",
-                replay.is_empty()
-            );
-        }
+        sessiond_trace(format_args!(
+            "accept_windows_clients: new client, replay_empty={}",
+            replay.is_empty()
+        ));
         stream.set_read_timeout(Some(WINDOWS_CLIENT_READ_TIMEOUT));
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
         replace_active(
@@ -910,23 +942,18 @@ fn accept_windows_clients(
 fn spawn_pty_reader<R: Read + Send + 'static>(
     mut reader: R,
 ) -> (mpsc::Receiver<PtyEvent>, thread::JoinHandle<io::Result<()>>) {
-    let trace = std::env::var_os("FESTERM_SESSIOND_TRACE").is_some();
     let (sender, receiver) = mpsc::channel();
     let thread = thread::spawn(move || {
         let mut buffer = [0u8; 4096];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => {
-                    if trace {
-                        eprintln!("sessiond-trace pty-reader: eof");
-                    }
+                    sessiond_trace("pty-reader: eof");
                     let _ = sender.send(PtyEvent::Eof);
                     return Ok(());
                 }
                 Ok(count) => {
-                    if trace {
-                        eprintln!("sessiond-trace pty-reader: read {count} bytes");
-                    }
+                    sessiond_trace(format_args!("pty-reader: read {count} bytes"));
                     if sender
                         .send(PtyEvent::Data(buffer[..count].to_vec()))
                         .is_err()
@@ -936,9 +963,7 @@ fn spawn_pty_reader<R: Read + Send + 'static>(
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => {
-                    if trace {
-                        eprintln!("sessiond-trace pty-reader: error {error}");
-                    }
+                    sessiond_trace(format_args!("pty-reader: error {error}"));
                     let kind = error.kind();
                     let message = error.to_string();
                     let _ = sender.send(PtyEvent::Error(io::Error::new(kind, message)));
@@ -985,6 +1010,10 @@ fn replace_active<S: Read + Write + Send + 'static>(
 
     let generation = *next_generation;
     *next_generation = next_generation.wrapping_add(1);
+    sessiond_trace(format_args!(
+        "replace_active: generation={generation} replay_empty={}",
+        replay.is_empty()
+    ));
     let (output, output_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
     let stolen = Arc::new(AtomicBool::new(false));
     let worker_stolen = Arc::clone(&stolen);
@@ -1059,6 +1088,11 @@ fn send_to_active(
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     data: Vec<u8>,
 ) {
+    sessiond_trace(format_args!(
+        "send_to_active: {} bytes, active_present={}",
+        data.len(),
+        active.is_some()
+    ));
     let failed = active
         .as_ref()
         .is_some_and(|client| client.output.try_send(ClientOutput::Data(data)).is_err());
@@ -1089,7 +1123,6 @@ fn client_io_loop<S: Read + Write>(
 ) -> io::Result<()> {
     let mut parser = ClientFrameParser::default();
     let mut buffer = [0u8; 4096];
-    let trace = std::env::var_os("FESTERM_SESSIOND_TRACE").is_some();
     loop {
         if stolen.load(Ordering::Acquire) {
             stream.write_all(STOLEN_NOTICE_BYTES)?;
@@ -1099,12 +1132,10 @@ fn client_io_loop<S: Read + Write>(
         loop {
             match output.try_recv() {
                 Ok(ClientOutput::Data(data)) => {
-                    if trace {
-                        eprintln!(
-                            "sessiond-trace client_io_loop[{generation}]: writing {} bytes to client",
-                            data.len()
-                        );
-                    }
+                    sessiond_trace(format_args!(
+                        "client_io_loop[{generation}]: writing {} bytes to client",
+                        data.len()
+                    ));
                     stream.write_all(&data)?;
                     stream.flush()?;
                 }
@@ -1772,9 +1803,9 @@ fn spawn_shell(
     #[cfg(windows)]
     {
         let selection = festerm_pty::prepare_windows_conpty_runtime()?;
-        if std::env::var_os("FESTERM_SESSIOND_TRACE").is_some() {
-            eprintln!("sessiond-trace spawn_shell: conpty runtime selection = {selection:?}");
-        }
+        sessiond_trace(format_args!(
+            "spawn_shell: conpty runtime selection = {selection:?}"
+        ));
     }
 
     let system = native_pty_system();

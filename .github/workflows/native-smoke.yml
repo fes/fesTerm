@@ -59,10 +59,20 @@ jobs:
           cargo test -p festerm windows_conpty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
 
       - name: Run Windows session daemon smoke
+        shell: pwsh
         env:
-          FESTERM_SESSIOND_TRACE: ${{ inputs.verbose == 'true' && '1' || '' }}
+          FESTERM_SESSIOND_TRACE_FILE: ${{ inputs.verbose == 'true' && format('{0}\sessiond-trace.log', github.workspace) || '' }}
         run: |
+          $traceFile = "$env:GITHUB_WORKSPACE\sessiond-trace.log"
+          Remove-Item $traceFile -ErrorAction Ignore
           cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+          $exitCode = $LASTEXITCODE
+          if (Test-Path $traceFile) {
+            Write-Host "::group::festerm-sessiond trace"
+            Get-Content $traceFile
+            Write-Host "::endgroup::"
+          }
+          exit $exitCode
 
       - name: Run Windows Credential Manager lifecycle
         env:
