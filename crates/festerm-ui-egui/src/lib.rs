@@ -1188,6 +1188,31 @@ mod tests {
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn terminal_view_emoji_policy_switches_color_texture_submission() {
+        let mut emoji_terminal = terminal(20, 2);
+        emoji_terminal.ingest("🤖 aligned".as_bytes());
+        let mut harness = visual_harness(emoji_terminal);
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default().with_color_emoji(false));
+
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().view.diagnostics().color_emoji_paints, 0);
+        let terminal_text = harness.state().terminal.row_text(0);
+
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default());
+        harness.run();
+        assert_eq!(harness.state().view.diagnostics().color_emoji_paints, 1);
+        assert_eq!(harness.state().terminal.row_text(0), terminal_text);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn snapshot_after_structural_assertions(
         harness: &mut Harness<'_, HeadlessViewState>,
         name: &str,

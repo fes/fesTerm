@@ -321,3 +321,11 @@ color glyphs. Native macOS and Linux appearance review, and the broader
 NP-05 manual color/scale judgment pass, remain open — `docs/manual-validation.md`
 and the M6 acceptance record's P6 row now say so explicitly rather than
 implying the ADR's Windows-only reviewed evidence was cross-platform.
+
+Emoji P1 adds the first bounded user control over that renderer policy.
+Versioned interface configuration and Settings can select the bundled color
+path or the owned monochrome fallback, with color preserving existing default
+behavior. The setting is application-wide and applies live to every terminal
+view; tests verify serialization, centralized command dispatch, Settings
+interaction, color-texture suppression, and unchanged terminal cells. It does
+not accept arbitrary font paths or delegate fallback discovery to the host.

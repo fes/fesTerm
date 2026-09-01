@@ -1658,9 +1658,10 @@ remain hard shaping boundaries.
 
 ### User control
 
-Users can configure the bundled terminal family and ligature preference
-through versioned configuration and GUI Settings. Font size remains
-per-session runtime zoom; configurable fallback ordering and line height are
+Users can configure the bundled terminal family, ligature preference, and
+deterministic color-versus-monochrome emoji presentation through versioned
+configuration and GUI Settings. Font size remains per-session runtime zoom;
+configurable fallback ordering, arbitrary font paths, and line height are
 future controls.
 
 Runtime zoom is per session. `Ctrl++`, `Ctrl+-`, and `Ctrl+0` on Windows/Linux

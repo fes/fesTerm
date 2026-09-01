@@ -136,11 +136,23 @@ pub struct TerminalFontGeneration(u64);
 /// Fallback ordering belongs to the installed family definitions. Ligatures
 /// are kept separate from family choice so future OpenType controls do not
 /// require changing persisted font identities.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TerminalFontSet {
     family: TerminalFontFamily,
     ligatures: bool,
+    color_emoji: bool,
     generation: TerminalFontGeneration,
+}
+
+impl Default for TerminalFontSet {
+    fn default() -> Self {
+        Self {
+            family: TerminalFontFamily::default(),
+            ligatures: false,
+            color_emoji: true,
+            generation: TerminalFontGeneration::default(),
+        }
+    }
 }
 
 impl TerminalFontSet {
@@ -152,8 +164,14 @@ impl TerminalFontSet {
         Self {
             family,
             ligatures,
+            color_emoji: true,
             generation,
         }
+    }
+
+    pub const fn with_color_emoji(mut self, color_emoji: bool) -> Self {
+        self.color_emoji = color_emoji;
+        self
     }
 
     pub const fn family(self) -> TerminalFontFamily {
@@ -162,6 +180,10 @@ impl TerminalFontSet {
 
     pub const fn ligatures(self) -> bool {
         self.ligatures
+    }
+
+    pub const fn color_emoji(self) -> bool {
+        self.color_emoji
     }
 
     pub const fn generation(self) -> TerminalFontGeneration {
@@ -533,5 +555,13 @@ mod tests {
 
         assert_ne!(first, second);
         assert!(terminal_fonts_installed(&context));
+    }
+
+    #[test]
+    fn terminal_font_set_defaults_to_color_emoji_and_can_disable_it() {
+        let default = TerminalFontSet::default();
+        assert!(default.color_emoji());
+        assert!(!default.with_color_emoji(false).color_emoji());
+        assert!(default.color_emoji());
     }
 }

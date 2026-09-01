@@ -69,6 +69,10 @@ pub struct NativeWindowSmoke {
 }
 
 impl NativeWindowSmoke {
+    pub const fn requires_color_emoji(&self) -> bool {
+        matches!(self.kind, SmokeKind::Emoji)
+    }
+
     pub fn from_environment() -> Option<Self> {
         let kind = match (
             std::env::var_os(SMOKE_ENV).is_some(),

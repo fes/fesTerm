@@ -8,8 +8,8 @@
 
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
-    CredentialKind, PersistenceConfiguration, PersistenceProviderKind, Profile,
-    ScrollSpeedPreference, SshProfileConfiguration, TerminalFontPreference,
+    CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
+    Profile, ScrollSpeedPreference, SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -1821,6 +1821,7 @@ pub struct SettingsViewModel {
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
     pub terminal_ligatures: bool,
+    pub emoji_presentation: EmojiPresentationPreference,
     pub scroll_speed: ScrollSpeedPreference,
     pub quick_switch_overlay: bool,
     pub compact_launcher_grid: bool,
@@ -1842,6 +1843,7 @@ pub fn show_settings(
         restore_workspace,
         terminal_font,
         terminal_ligatures,
+        emoji_presentation,
         scroll_speed,
         quick_switch_overlay,
         compact_launcher_grid,
@@ -2093,6 +2095,33 @@ pub fn show_settings(
                                 terminal_ligatures,
                             ) {
                                 command = Some(AppCommand::ToggleTerminalLigatures);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if let Some(selected) = settings_segmented_row(
+                                ui,
+                                "Emoji presentation",
+                                "Use bundled color artwork or deterministic monochrome fallback. \
+                                 Terminal cell geometry is unchanged.",
+                                &[
+                                    (
+                                        "Color",
+                                        emoji_presentation == EmojiPresentationPreference::Color,
+                                    ),
+                                    (
+                                        "Monochrome",
+                                        emoji_presentation
+                                            == EmojiPresentationPreference::Monochrome,
+                                    ),
+                                ],
+                            ) {
+                                command =
+                                    Some(AppCommand::SetEmojiPresentation(if selected == 0 {
+                                        EmojiPresentationPreference::Color
+                                    } else {
+                                        EmojiPresentationPreference::Monochrome
+                                    }));
                             }
                         });
 
@@ -3598,6 +3627,7 @@ mod tests {
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
+                            emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
@@ -3857,7 +3887,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_exposes_terminal_font_and_ligature_controls() {
+    fn settings_exposes_terminal_font_ligature_and_emoji_controls() {
         let mut harness = settings_harness();
         harness.run();
 
@@ -3871,6 +3901,17 @@ mod tests {
         assert!(matches!(
             harness.state().command,
             Some(AppCommand::ToggleTerminalLigatures)
+        ));
+        assert!(harness.query_by_label("Emoji presentation").is_some());
+
+        harness.get_by_label("Monochrome").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SetEmojiPresentation(
+                EmojiPresentationPreference::Monochrome
+            ))
         ));
     }
 
@@ -3887,7 +3928,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1300.0))
+            .with_size(egui::vec2(520.0, 1420.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -3907,6 +3948,7 @@ mod tests {
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
+                            emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,

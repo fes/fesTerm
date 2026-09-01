@@ -53,6 +53,13 @@ and an approximate 32 MiB of RGBA texture data, clearing before exceeding
 either bound. Raster requests, sequence bytes, layer counts, and output
 dimensions are capped. Texture names contain only a stable text hash and size.
 
+The versioned interface configuration exposes `emoji_presentation = "color"`
+or `"monochrome"` and Settings applies the same policy live. Color remains the
+backward-compatible default. Monochrome bypasses color rasterization and uses
+the existing owned fallback chain; neither choice changes core cell state.
+Arbitrary user font paths and platform fallback discovery remain outside this
+decision.
+
 ## Consequences
 
 - VS16, ZWJ, modifier, keycap, and flag sequences preserve trailing-cell
@@ -62,6 +69,8 @@ dimensions are capped. Texture names contain only a stable text hash and size.
   updates because they can change grapheme boundaries or cell widths.
 - Color appearance can differ from Windows Terminal's Segoe UI Emoji artwork,
   but sequence behavior and terminal geometry remain deterministic.
+- Users can select monochrome presentation without losing owned glyph coverage
+  or changing terminal geometry.
 - Complex-script shaping beyond extended-grapheme allocation remains a
   renderer concern and is not claimed by this decision.
 - Compatibility claims are anchored to the vendored Unicode 15.1 corpus,
@@ -79,7 +88,7 @@ dimensions are capped. Texture names contain only a stable text hash and size.
   owned monochrome scalar coverage. Additional ICU scalar tests retain
   forward-looking coverage without changing the accepted Unicode version.
 - Renderer tests also cover supported sizes, VS15 exclusion, texture reuse,
-  concealment, and cache/input/layer bounds.
+  concealment, presentation-policy switching, and cache/input/layer bounds.
 - Core tests cover deterministic oversized-grapheme replacement.
 - Reviewed Windows and Linux snapshots cover emoji next to trailing ASCII with
   cursor and selection geometry. Scheduled native-window smoke verifies

@@ -311,6 +311,10 @@ impl TerminalView {
         self.glyphs.clear();
     }
 
+    pub const fn color_emoji_enabled(&self) -> bool {
+        self.fonts.font_set().color_emoji()
+    }
+
     #[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
     pub(crate) fn enable_cell_run_shaping_for_test(&mut self) {
         self.force_cell_run_shaping = true;
@@ -408,11 +412,14 @@ impl TerminalView {
         if !crate::fonts::terminal_font_family_installed(ui.ctx(), self.fonts.font_set().family()) {
             let generation =
                 crate::install_terminal_font_family(ui.ctx(), self.fonts.font_set().family());
-            self.set_font_set(crate::TerminalFontSet::new(
-                self.fonts.font_set().family(),
-                self.fonts.font_set().ligatures(),
-                generation,
-            ));
+            self.set_font_set(
+                crate::TerminalFontSet::new(
+                    self.fonts.font_set().family(),
+                    self.fonts.font_set().ligatures(),
+                    generation,
+                )
+                .with_color_emoji(self.fonts.font_set().color_emoji()),
+            );
             // The named families become available after egui rebuilds its
             // atlas at the pass boundary. Direct TerminalView users can
             // bypass the application composition root, so yield safely.

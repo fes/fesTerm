@@ -430,6 +430,9 @@ Emoji P0 hardening extends P6 with all fully-qualified Unicode 15.1 sequences,
 owned monochrome coverage, reviewed Windows/Linux baselines, and a scheduled
 native-window emoji smoke that verifies geometry and renderer-owned
 color-texture submission on Windows, Linux, and advisory macOS.
+Emoji P1 adds config, centralized command, Settings interaction, renderer, and
+production `TerminalView` tests for live color/monochrome policy switching
+without terminal-state mutation.
 
 ### Completed foundation
 

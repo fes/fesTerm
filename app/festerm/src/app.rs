@@ -9,8 +9,8 @@ use std::{
 
 use eframe::egui;
 use festerm_config::{
-    Configuration, InterfaceSettings, Profile, SerialDataBits, SerialFlowControl, SerialParity,
-    SerialStopBits, TerminalFontPreference,
+    Configuration, EmojiPresentationPreference, InterfaceSettings, Profile, SerialDataBits,
+    SerialFlowControl, SerialParity, SerialStopBits, TerminalFontPreference,
 };
 use festerm_pty::LocalProfile;
 #[cfg(test)]
@@ -1067,7 +1067,28 @@ impl FesTermApp {
             context,
             terminal_font_family(self.state.terminal_font()),
         );
+        self.apply_terminal_font_policy();
         context.request_repaint();
+    }
+
+    fn terminal_font_set(&self) -> TerminalFontSet {
+        TerminalFontSet::new(
+            terminal_font_family(self.state.terminal_font()),
+            self.state.terminal_ligatures(),
+            self.terminal_font_generation,
+        )
+        .with_color_emoji(
+            self.state.emoji_presentation() == EmojiPresentationPreference::Color
+                || self
+                    .native_smoke
+                    .as_ref()
+                    .is_some_and(NativeWindowSmoke::requires_color_emoji),
+        )
+    }
+
+    fn apply_terminal_font_policy(&mut self) {
+        let font_set = self.terminal_font_set();
+        self.state.apply_terminal_font_set(font_set);
     }
 
     fn show_settings_reset_confirmation(&mut self, context: &egui::Context, escape: bool) {
@@ -2899,11 +2920,7 @@ impl FesTermApp {
         let secure_storage_status = self.secure_storage_status_message();
         let active_tab_id = self.state.active();
         let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
-        let terminal_font_set = TerminalFontSet::new(
-            terminal_font_family(self.state.terminal_font()),
-            self.state.terminal_ligatures(),
-            self.terminal_font_generation,
-        );
+        let terminal_font_set = self.terminal_font_set();
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -2934,6 +2951,7 @@ impl FesTermApp {
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
                             terminal_ligatures: self.state.terminal_ligatures(),
+                            emoji_presentation: self.state.emoji_presentation(),
                             scroll_speed: self.state.scroll_speed(),
                             quick_switch_overlay: self.state.quick_switch_overlay(),
                             compact_launcher_grid: self.state.compact_launcher_grid(),
@@ -3093,10 +3111,16 @@ impl FesTermApp {
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
-                | AppCommand::ToggleTerminalLigatures
                 | AppCommand::SetScrollSpeed(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
+                    self.persist_interface_settings();
+                }
+                command @ (AppCommand::ToggleTerminalLigatures
+                | AppCommand::SetEmojiPresentation(_)) => {
+                    let context = ui.ctx().clone();
+                    self.state.dispatch(command, &context);
+                    self.apply_terminal_font_policy();
                     self.persist_interface_settings();
                 }
                 AppCommand::SetTerminalFont(font) => {

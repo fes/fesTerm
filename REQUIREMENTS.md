@@ -98,8 +98,8 @@ The terminal shall support practical Unicode terminal behavior, including common
 
 Implemented: streamed text uses pinned extended-grapheme boundaries and
 sequence widths; the renderer supplies owned monochrome and color emoji
-fallback while keeping cursor, selection, hit testing, and resize geometry
-cell-authoritative.
+fallback with a persisted user-selectable presentation policy while keeping
+cursor, selection, hit testing, and resize geometry cell-authoritative.
 
 ### REQ-TERM-012 — Terminal replies
 
