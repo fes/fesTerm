@@ -62,6 +62,10 @@ fn main() -> eframe::Result<()> {
         .with_min_inner_size([360.0, 240.0]);
     let options = eframe::NativeOptions {
         viewport,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            surface: windows_drag_friendly_surface_config(),
+            ..Default::default()
+        },
         ..Default::default()
     };
     eframe::run_native(
@@ -78,6 +82,42 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// Chooses the wgpu surface present mode, avoiding vsync-locked presentation
+/// on Windows.
+///
+/// Windows' native window-drag interaction runs its own modal message loop
+/// (entered on `WM_ENTERSIZEMOVE`) that pumps a `WM_MOVING` message, and
+/// expects the application to present a repainted frame synchronously for
+/// each one to keep the window's content tracking the mouse. eframe's
+/// default surface configuration
+/// (`egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT`) uses
+/// `wgpu::PresentMode::AutoVsync`, which on Windows' common DX12/Vulkan
+/// backends resolves to `Fifo`: each present call blocks until the
+/// display's next vsync interval. Inside that per-message modal loop, that
+/// wait makes the window's redrawn content visibly lag behind the actual
+/// window frame the OS is already moving, which is what shows up as jank
+/// or jitter while dragging.
+///
+/// `AutoNoVsync` (falling back to `Fifo` only if a backend truly has no
+/// alternative) removes that wait, at the cost of allowing tearing when
+/// the frame rate exceeds the display's refresh rate — an acceptable
+/// trade for a GUI that is idle almost all the time between user input.
+/// macOS is left on the default: its Metal/`CAMetalLayer` presentation
+/// path does not couple window-drag responsiveness to the app's own
+/// present timing the way Windows' DX12/Vulkan swapchain does, so it does
+/// not show the same symptom and keeps the smoother default vsync
+/// behavior.
+fn windows_drag_friendly_surface_config() -> eframe::egui_wgpu::SurfaceConfig {
+    if cfg!(target_os = "windows") {
+        eframe::egui_wgpu::SurfaceConfig {
+            present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
+            ..eframe::egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT
+        }
+    } else {
+        eframe::egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT
+    }
 }
 
 /// Logs the GPU adapter `wgpu` actually selected for rendering (name,
