@@ -9,7 +9,8 @@
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, ScrollSpeedPreference, SshProfileConfiguration, TerminalFontPreference,
+    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SshProfileConfiguration,
+    TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -1823,6 +1824,7 @@ pub struct SettingsViewModel {
     pub terminal_ligatures: bool,
     pub emoji_presentation: EmojiPresentationPreference,
     pub scroll_speed: ScrollSpeedPreference,
+    pub scrollback_limit: ScrollbackLimitPreference,
     pub quick_switch_overlay: bool,
     pub compact_launcher_grid: bool,
     pub pulse_new_output_dot: bool,
@@ -1845,6 +1847,7 @@ pub fn show_settings(
         terminal_ligatures,
         emoji_presentation,
         scroll_speed,
+        scrollback_limit,
         quick_switch_overlay,
         compact_launcher_grid,
         pulse_new_output_dot,
@@ -2025,6 +2028,21 @@ pub fn show_settings(
                         ui.add_space(12.0);
 
                         settings_card(ui, "Scrolling", |ui| {
+                            if let Some(selected) = settings_segmented_row(
+                                ui,
+                                "Scrollback limit",
+                                "Maximum retained history for newly created sessions. \
+                                 Existing sessions keep their current limit.",
+                                &ScrollbackLimitPreference::ALL
+                                    .map(|limit| (limit.label(), limit == scrollback_limit)),
+                            ) {
+                                command = Some(AppCommand::SetScrollbackLimit(
+                                    ScrollbackLimitPreference::ALL[selected],
+                                ));
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
                             let mut selected_speed = scroll_speed;
                             if let Some(new_speed) = settings_clickstop_row(
                                 ui,
@@ -3614,7 +3632,7 @@ mod tests {
 
     fn settings_harness_with_width(width: f32) -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(width, 1300.0))
+            .with_size(egui::vec2(width, 2000.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
@@ -3629,6 +3647,7 @@ mod tests {
                             terminal_ligatures: false,
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
+                            scrollback_limit: ScrollbackLimitPreference::MiB64,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
@@ -3916,6 +3935,23 @@ mod tests {
     }
 
     #[test]
+    fn settings_exposes_scrollback_limit_for_future_sessions() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        assert!(harness.query_by_label("Scrollback limit").is_some());
+        harness.get_by_label("16 MiB").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SetScrollbackLimit(
+                ScrollbackLimitPreference::MiB16
+            ))
+        ));
+    }
+
+    #[test]
     fn settings_panel_does_not_overlap_a_visible_bottom_status_bar() {
         // Regression test: the card-based Settings redesign is taller than
         // the old flat button list, so without a status-bar-aware height
@@ -3950,6 +3986,7 @@ mod tests {
                             terminal_ligatures: false,
                             emoji_presentation: EmojiPresentationPreference::Color,
                             scroll_speed: ScrollSpeedPreference::Normal,
+                            scrollback_limit: ScrollbackLimitPreference::MiB64,
                             quick_switch_overlay: false,
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,

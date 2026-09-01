@@ -171,6 +171,11 @@ impl Scrollback {
         }
     }
 
+    pub(crate) fn set_limit_bytes(&mut self, limit_bytes: usize) {
+        self.limit_bytes = limit_bytes;
+        self.enforce_limit();
+    }
+
     pub(crate) fn push_rows(&mut self, rows: Vec<ScreenRow>) {
         for row in rows {
             self.push_row(row);

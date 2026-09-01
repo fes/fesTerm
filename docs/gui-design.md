@@ -1124,8 +1124,11 @@ quiet rows with subtle dividers:
   switch that surfaces locally running, unattached `festerm-sessiond`
   sessions as one-click Resume entries in the Launcher.
 
-The separate **Scrolling** card currently exposes a five-step **Scroll
-speed** clickstop (`Very slow` through `Very fast`) that scales wheel/trackpad
+The separate **Scrolling** card exposes a four-choice **Scrollback limit**
+control (`Disabled`, `16 MiB`, `64 MiB`, or `256 MiB`) and a five-step
+**Scroll speed** clickstop (`Very slow` through `Very fast`). The limit is a
+retained-history payload budget for sessions created after the setting changes;
+existing sessions keep their current budget. Scroll speed scales wheel/trackpad
 history motion relative to the original fixed mapping.
 
 The **Terminal typography** card exposes the bundled terminal-family selector

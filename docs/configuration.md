@@ -102,6 +102,7 @@ restore_workspace = false
 terminal_font = "jetbrains-mono"
 terminal_ligatures = false
 emoji_presentation = "color"
+scrollback_limit = "64-mib"
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
@@ -163,7 +164,7 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table currently holds thirteen interface preferences:
+The optional `[settings]` table currently holds fourteen interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `true`), `confirm_session_close` (default
@@ -171,6 +172,8 @@ The optional `[settings]` table currently holds thirteen interface preferences:
 (`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
 default `"jetbrains-mono"`), `terminal_ligatures` (default `false`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
+`scrollback_limit` (`"disabled"`, `"16-mib"`, `"64-mib"`, or `"256-mib"`;
+default `"64-mib"`),
 `scroll_speed` (`"very-slow"`, `"slow"`, `"normal"`, `"fast"`, or
 `"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `false`),
 `compact_launcher_grid` (default `false`), `pulse_new_output_dot`
@@ -180,6 +183,9 @@ status bar, live-session close confirmation, workspace restoration, compact
 Launcher layout, background-output chip pulsing, resumable local-session
 surfacing, terminal-only typography, keyboard quick-switch overlays, and
 scrollback scroll speed. Font choice never changes application chrome.
+The scrollback limit is a binary-byte payload budget applied when a session is
+created; changing it does not silently evict history from sessions that are
+already open. `disabled` gives subsequent sessions no retained history.
 Enabling ligatures shapes only eligible adjacent ASCII cells; the terminal
 grid remains authoritative for cursor, selection, mouse, and resize geometry.
 Emoji presentation switches only between the bundled color renderer and owned
