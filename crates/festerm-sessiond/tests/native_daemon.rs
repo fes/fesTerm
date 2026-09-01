@@ -242,9 +242,17 @@ fn connect(endpoint: &str) -> Box<dyn ClientStream> {
 
 #[cfg(windows)]
 fn connect(endpoint: &str) -> Box<dyn ClientStream> {
-    let mut stream = named_pipe::PipeClient::connect_ms(endpoint, 2_000).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(2)));
-    stream.set_write_timeout(Some(Duration::from_secs(2)));
+    // Bundled ConPTY spawns a separate OpenConsole.exe host process for the
+    // child shell. On a cold GitHub Actions Windows runner, that host's own
+    // startup (plus first-write scheduling for the test child's `READY`
+    // marker) can comfortably exceed 2s, even though the daemon's own
+    // accept/replay/forwarding path (verified via FESTERM_SESSIOND_TRACE_FILE
+    // tracing) completes well within that window. Use a longer timeout here
+    // so the test tolerates legitimate ConPTY/process startup latency instead
+    // of racing it.
+    let mut stream = named_pipe::PipeClient::connect_ms(endpoint, 10_000).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(10)));
+    stream.set_write_timeout(Some(Duration::from_secs(10)));
     Box::new(stream)
 }
 
