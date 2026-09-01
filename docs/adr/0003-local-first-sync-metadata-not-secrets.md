@@ -34,6 +34,16 @@ Terminal scrollback will not be persisted to disk by default. Any future persist
 - Cross-device profile synchronization may produce incomplete profiles until local secrets are associated.
 - Platform key-store implementations require operating-system-specific integration.
 
+## Status update (2026-09-01)
+
+The local-first and "do not sync secrets" parts of this ADR remain current.
+However, the earlier optional account/cloud metadata-sync direction is no
+longer active product scope. Current portability work is centered on explicit
+password-encrypted profile export/import rather than background sign-in-based
+profile synchronization. Any future cross-device portability ADR should build
+from that explicit export/import model instead of reviving cloud metadata sync
+by default.
+
 ## Follow-up
 
 - Define stable identifiers that associate synchronized profiles with local secret records.

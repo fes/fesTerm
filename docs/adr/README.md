@@ -6,7 +6,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0001: Terminal Compatibility Baseline](0001-terminal-compatibility-baseline.md)
 - [ADR 0002: Separate Profiles and Workspaces](0002-separate-profiles-and-workspaces.md)
-- [ADR 0003: Local-First Operation and Metadata-Only Sync](0003-local-first-sync-metadata-not-secrets.md)
+- [ADR 0003: Local-First Operation and Metadata-Only Sync](0003-local-first-sync-metadata-not-secrets.md) — local-first/no-secret-sync remains accepted; see the 2026-09-01 status update on cloud metadata sync scope
 - [ADR 0004: Componentized, Testable Terminal Core](0004-componentized-testable-terminal-core.md)
 - [ADR 0005: Foundation-First Delivery with Capability Milestones](0005-foundation-first-capability-milestones.md)
 - [ADR 0006: Native SSH Backend with OpenSSH Interoperability](0006-native-ssh-with-openssh-interoperability.md)
