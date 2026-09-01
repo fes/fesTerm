@@ -82,7 +82,7 @@ jobs:
           }
           $installedBinary = Join-Path $installDirectory 'festerm.exe'
           $installedSessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
-          $installedConpty = Join-Path $installDirectory 'runtime/conpty/conpty.dll'
+          $installedConpty = Join-Path $installDirectory 'runtime/conpty/win-x64/conpty.dll'
           $uninstaller = Join-Path $installDirectory 'uninstall.exe'
           if (-not (Test-Path $installedBinary -PathType Leaf)) {
             throw 'NSIS install did not place festerm.exe'
@@ -136,8 +136,8 @@ jobs:
           deb="$(find target/release -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$deb"
           dpkg-deb --info "$deb" >/dev/null
-          dpkg-deb --contents "$deb" | grep -q '/usr/bin/festerm$'
-          dpkg-deb --contents "$deb" | grep -q '/usr/bin/festerm-sessiond$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/bin/festerm-sessiond$'
           sudo dpkg --install "$deb"
           test -x /usr/bin/festerm
           test -x /usr/bin/festerm-sessiond
