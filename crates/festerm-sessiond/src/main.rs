@@ -2084,6 +2084,7 @@ mod tests {
     /// `retire_active_if_finished` was added the daemon would keep
     /// reporting `attached: true` forever in this scenario, hiding an
     /// otherwise-resumable session from `list_unattached_local_sessions`.
+    #[cfg(unix)]
     #[test]
     fn idle_client_disconnect_is_detected_without_pty_output() {
         use std::{
@@ -2358,6 +2359,7 @@ mod tests {
         fs::remove_dir(directory).unwrap();
     }
 
+    #[cfg(unix)]
     fn unique_test_directory(label: &str) -> PathBuf {
         env::temp_dir().join(format!("fsd-{label}-{}-{}", process::id(), now_ms()))
     }
