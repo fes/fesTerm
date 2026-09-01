@@ -13,7 +13,10 @@ Rust.
 
 Milestones 0 through 5, M7, and M8 are implemented. M6 remains the open
 compatibility acceptance gate because fresh native-window and
-reference-application evidence is still incomplete. M9 has bounded logical
+reference-application evidence is still incomplete; this is a formal
+compatibility certification and is tracked independently of whether 0.1.x
+development builds are packaged and released (see
+[#50](https://github.com/fes/fesTerm/issues/50)). M9 has bounded logical
 scrollback, anchored viewport navigation, primary-screen resize reflow,
 read-only disconnected history, clear/reset commands, and eviction feedback;
 configurable limits and selection remapping across reflow remain open.
@@ -42,10 +45,23 @@ Native packaging and signed updates are implemented under
 [ADR 0021](docs/adr/0021-cargo-packager-github-releases-distribution.md):
 signed/notarized macOS DMG, Authenticode-signed Windows NSIS, Linux AppImage
 and Debian packages, updater signatures, a protected tag-driven GitHub release
-workflow, and an explicit check/download/install UI. The first production
-release and end-to-end upgrade evidence remain tracked in
-[#62](https://github.com/fes/fesTerm/issues/62); custom terminfo remains
-[#27](https://github.com/fes/fesTerm/issues/27).
+workflow, and an explicit check/download/install UI. Signed production
+releases (most recently v0.1.7) are published with macOS/Windows/Linux
+artifacts; end-to-end install/upgrade/uninstall and failure-path evidence
+(clean install, verified update, signature-rejection, and interrupted-download
+handling across all supported targets) remains tracked in
+[#62](https://github.com/fes/fesTerm/issues/62), now scoped to that remaining
+evidence rather than to producing the first release itself. Custom terminfo
+remains [#27](https://github.com/fes/fesTerm/issues/27).
+
+An optional, fesTerm-owned local session-persistence daemon
+(`festerm-sessiond`, [ADR 0025](docs/adr/0025-native-local-session-persistence-daemon.md))
+ships alongside the packaged builds but is **experimental**: its ADR remains
+`Proposed` pending cross-platform native evidence and a local-IPC security
+review, and its Windows native-smoke coverage is currently failing
+([#71](https://github.com/fes/fesTerm/issues/71)). Treat native local session
+persistence as unvalidated on Windows until that issue closes and the ADR is
+formally accepted.
 
 ## Documentation
 

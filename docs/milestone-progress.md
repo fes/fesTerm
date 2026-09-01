@@ -165,10 +165,24 @@ and close its native evidence loops while finishing the remaining M9
 selection/configuration work. M10 packaging and updater infrastructure is now
 implemented rather than merely reserved: native manifests, platform signing,
 notarization, updater signatures, and the protected tag-driven GitHub release
-workflow landed in `89a59ae`. The first signed production release and
-end-to-end upgrade/failure evidence remain under
-[#62](https://github.com/fes/fesTerm/issues/62); fesTerm-owned terminfo remains
-under [#27](https://github.com/fes/fesTerm/issues/27).
+workflow landed in `89a59ae`, and signed production releases (most recently
+v0.1.7) are published with macOS/Windows/Linux artifacts. That release
+infrastructure being real does not close M6: M6 is a formal cross-platform
+compatibility certification, tracked separately from whether 0.1.x builds are
+distributed. End-to-end install/upgrade/uninstall and failure-path evidence
+remain under [#62](https://github.com/fes/fesTerm/issues/62), now scoped to
+that remaining evidence rather than to producing a first signed release
+(which is already accomplished); fesTerm-owned terminfo remains under
+[#27](https://github.com/fes/fesTerm/issues/27).
+
+An optional, fesTerm-owned local session-persistence daemon
+(`festerm-sessiond`, [ADR 0025](adr/0025-native-local-session-persistence-daemon.md))
+ships alongside the packaged builds as an explicitly experimental capability:
+the ADR remains Proposed pending cross-platform native evidence and a
+local-IPC security review, and its Windows native-smoke coverage is currently
+failing, tracked in [#71](https://github.com/fes/fesTerm/issues/71). Treat
+native local session persistence as unvalidated on Windows until that issue
+closes and the ADR is formally accepted or the shipped scope is narrowed.
 
 ## August 2026 Windows rendering slowness: from suspicion to the real bottleneck
 

@@ -458,10 +458,12 @@ clear and fallback behavior.
 **Status:** In progress — ADR 0021, native package manifests, package/update
 validation, protected platform-signing configuration, the tag-driven
 draft-first GitHub release workflow, and the explicit signed-update state
-machine are implemented. A first production release plus end-to-end
-install/upgrade/uninstall and failure-path evidence remain under
-[#62](https://github.com/fes/fesTerm/issues/62). fesTerm-owned terminfo remains
-under [#27](https://github.com/fes/fesTerm/issues/27).
+machine are implemented. Signed production releases (most recently v0.1.7)
+are published; end-to-end install/upgrade/uninstall and failure-path evidence
+remain under [#62](https://github.com/fes/fesTerm/issues/62), now scoped to
+that remaining evidence rather than to producing the first release itself.
+fesTerm-owned terminfo remains under
+[#27](https://github.com/fes/fesTerm/issues/27).
 
 ### Outcome
 

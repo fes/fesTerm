@@ -8,6 +8,18 @@ candidate after bounded logical scrollback, resize reflow, disconnected-history
 read-only behavior, and the subsequent integrated-chrome geometry changes.
 See "Refreshed candidate — pending native re-run" below.)
 
+> **Staleness note (2026-08-31):** `main` is now 67 commits ahead of
+> `a113f0f`, including further `festerm-core` changes (parser/input/history),
+> the Windows rendering-performance ring-buffer rewrite, SSH interoperability
+> work, and the entire `festerm-sessiond` local-persistence daemon. `a113f0f`
+> should be treated as a **historical** M6 terminal-compatibility candidate,
+> not as current-release certification: it can still ground the deterministic
+> evidence discussed below, but it cannot certify current `main` as a whole.
+> [#50](https://github.com/fes/fesTerm/issues/50) should nominate one fresh
+> post-v0.1.6/v0.1.7 SHA and run the real P3/P4/P5 native evidence against
+> that exact commit before M6 is reconsidered for acceptance, rather than
+> continuing to advance `a113f0f`'s status rhetorically.
+
 ## Status vocabulary
 
 - **Implemented:** capability exists in code with focused automated tests.

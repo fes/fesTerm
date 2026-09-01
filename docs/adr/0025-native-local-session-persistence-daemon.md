@@ -180,6 +180,36 @@ evaluated. Implementation was explicitly authorized locally without changing
 that status; moving the ADR to Accepted remains a separate decision after
 cross-platform evidence and review.
 
+## Status update (2026-08-31)
+
+`festerm-sessiond` is now a workspace member built and shipped alongside the
+main executable in packaged releases (v0.1.6, v0.1.7), which is ahead of this
+ADR's own governance intent: the ADR explicitly requires cross-platform
+native evidence (`CP-11`) and a local-IPC security review before Accepted
+status, and the "Consequences" section above already flags this daemon as a
+first-class new attack surface needing that review. Shipping the executable
+while its own required evidence is incomplete is not itself a violation of
+that intent — the ADR was written knowing implementation would proceed in
+parallel — but the current concrete blocker is:
+
+- The Windows native-smoke test
+  (`native_daemon_survives_launcher_and_supports_input_replay_and_takeover`,
+  `crates/festerm-sessiond/tests/native_daemon.rs`) currently fails on CI's
+  scheduled Native Smoke workflow (Windows job only; Linux and macOS
+  advisory smoke pass). Tracked in
+  [#71](https://github.com/fes/fesTerm/issues/71).
+
+Until #71 is resolved and the security review is complete, native local
+session persistence on Windows must be treated as **experimental and
+unvalidated**, not as a supported capability, regardless of whether the
+executable is present in the packaged build. This ADR stays Proposed; it
+will move to Accepted only after (a) #71's root cause is fixed and the
+Windows native-smoke test passes reliably, (b) `CP-11` evidence exists for
+all three platforms, and (c) the local-IPC security review called for above
+is complete. User-facing documentation (`README.md`,
+`docs/milestone-progress.md`) has been updated to describe this capability as
+experimental rather than as a validated feature.
+
 ## Alternatives considered
 
 - **Do nothing; local persistence remains Unix-only via `tmux`/`screen`.**
