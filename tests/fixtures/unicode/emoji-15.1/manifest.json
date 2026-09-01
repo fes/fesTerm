@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "unicode_version": "15.1",
+  "license": "Unicode-3.0",
+  "files": [
+    {
+      "source_url": "https://www.unicode.org/Public/emoji/15.1/emoji-test.txt",
+      "path": "tests/fixtures/unicode/emoji-15.1/emoji-test.txt",
+      "size_bytes": 639405,
+      "sha256": "d876ee249aa28eaa76cfa6dfaa702847a8d13b062aa488d465d0395ee8137ed9",
+      "package_mirrors": [
+        "crates/festerm-core/tests/fixtures/unicode/emoji-15.1/emoji-test.txt",
+        "crates/festerm-ui-egui/tests/fixtures/unicode/emoji-15.1/emoji-test.txt"
+      ]
+    },
+    {
+      "source_url": "https://www.unicode.org/Public/emoji/15.1/emoji-sequences.txt",
+      "path": "tests/fixtures/unicode/emoji-15.1/emoji-sequences.txt",
+      "size_bytes": 191562,
+      "sha256": "eb72c9115e3504fbbe1c8621b619f879471a46ccc56e2f445417b7c1cad050d1"
+    },
+    {
+      "source_url": "https://www.unicode.org/Public/emoji/15.1/emoji-zwj-sequences.txt",
+      "path": "tests/fixtures/unicode/emoji-15.1/emoji-zwj-sequences.txt",
+      "size_bytes": 251595,
+      "sha256": "9a76a03dcacfcd8f9bfe08c49c8d90b55182b977cbcc87a694e8a8193efb0e57"
+    },
+    {
+      "source_url": "https://www.unicode.org/license.txt",
+      "path": "tests/fixtures/unicode/emoji-15.1/LICENSE.txt",
+      "size_bytes": 1995,
+      "sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96"
+    }
+  ]
+}

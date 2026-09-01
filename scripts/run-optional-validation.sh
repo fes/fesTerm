@@ -17,6 +17,7 @@ p5_result_path=${FESTERM_P5_REFERENCE_RESULT_PATH:-p5-reference-result.txt}
 p6_result_path=${FESTERM_P6_RENDER_RESULT_PATH:-p6-render-result.txt}
 openssh_result_path=${FESTERM_OPENSSH_INTEROP_RESULT_PATH:-openssh-interop-result.txt}
 native_result_path=native-smoke-window-result.txt
+emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
@@ -67,6 +68,19 @@ else
     status=fail
 fi
 rm -f "$native_result_path"
+
+rm -f "$emoji_result_path"
+if FESTERM_NATIVE_EMOJI_SMOKE=1 \
+    FESTERM_NATIVE_SMOKE_RESULT_PATH="$emoji_result_path" \
+    ./target/debug/festerm &&
+    test -f "$emoji_result_path" &&
+    grep -qx 'status=pass' "$emoji_result_path"; then
+    printf 'suite=native-emoji status=pass\n' >>"$result_path"
+else
+    printf 'suite=native-emoji status=fail\n' >>"$result_path"
+    status=fail
+fi
+rm -f "$emoji_result_path"
 
 printf 'status=%s\n' "$status" >>"$result_path"
 [ "$status" = pass ]

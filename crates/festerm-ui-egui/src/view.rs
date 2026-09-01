@@ -81,6 +81,9 @@ pub struct FrameDiagnostics {
     pub calculated_dimensions: Option<festerm_core::Dimensions>,
     pub grid_rect: Option<egui::Rect>,
     pub dirty_rows: usize,
+    /// Color emoji glyphs successfully submitted through the renderer-owned
+    /// texture path during the latest frame.
+    pub color_emoji_paints: usize,
     pub last_input_outcome: Option<InputEventOutcome>,
     pub input_queue_depth: usize,
     pub input_sink: Option<InputSinkDiagnostics>,
@@ -832,7 +835,7 @@ impl TerminalView {
         let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
         let update = self.cache.update(snapshot, &dirty_rows);
         self.diagnostics.dirty_rows = update.updated_rows.len();
-        let (_, input_to_paint_submission) =
+        let (color_emoji_paints, input_to_paint_submission) =
             measure_input_to_paint_submission(reports.input_observed, || {
                 paint_grid(
                     ui.painter().with_clip_rect(vp_layout.viewport),
@@ -847,8 +850,9 @@ impl TerminalView {
                         focused: response.has_focus(),
                     },
                     &mut self.glyphs,
-                );
+                )
             });
+        self.diagnostics.color_emoji_paints = color_emoji_paints;
         if let Some(geometry) = scrollbar {
             let visible = self.history.offset_rows > 0
                 || scrollbar_hovered

@@ -98,6 +98,20 @@ jobs:
             throw "native-window smoke failed"
           }
 
+      - name: Run Windows native emoji smoke
+        shell: pwsh
+        env:
+          FESTERM_NATIVE_EMOJI_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
+        run: |
+          Remove-Item native-emoji-smoke-result.txt -ErrorAction Ignore
+          & .\target\debug\festerm.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-Content native-emoji-smoke-result.txt -TotalCount 1) -ne 'status=pass') {
+            Get-Content native-emoji-smoke-result.txt
+            throw "native emoji smoke failed"
+          }
+
       - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -172,6 +186,17 @@ jobs:
           test -f native-smoke-window-result.txt
           grep -qx 'status=pass' native-smoke-window-result.txt
 
+      - name: Run Linux native emoji smoke
+        env:
+          FESTERM_NATIVE_EMOJI_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
+        run: |
+          rm -f native-emoji-smoke-result.txt
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" ./target/debug/festerm
+          test -f native-emoji-smoke-result.txt
+          grep -qx 'status=pass' native-emoji-smoke-result.txt
+
       - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -219,6 +244,16 @@ jobs:
           ./target/debug/festerm
           test -f native-smoke-window-result.txt
           grep -qx 'status=pass' native-smoke-window-result.txt
+
+      - name: Run macOS native emoji smoke (advisory)
+        env:
+          FESTERM_NATIVE_EMOJI_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
+        run: |
+          rm -f native-emoji-smoke-result.txt
+          ./target/debug/festerm
+          test -f native-emoji-smoke-result.txt
+          grep -qx 'status=pass' native-emoji-smoke-result.txt
 
       - name: Upload failure artifacts
         if: failure()

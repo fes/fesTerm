@@ -208,6 +208,13 @@ use the width crate's non-CJK policy. A grapheme of width one occupies one
 leading cell; width two occupies a leading `Double` cell plus an empty
 `Continuation` cell.
 
+The compatibility oracle vendors Unicode Emoji 15.1's `emoji-test.txt`,
+`emoji-sequences.txt`, and `emoji-zwj-sequences.txt` with checksummed
+provenance. All fully-qualified entries are exercised against fragmented core
+input and renderer fallback. ICU may contain newer property data; support is
+not claimed beyond 15.1 until width tables, corpus, fonts, and snapshots are
+advanced together.
+
 UTF-8 decoding is strict and incremental across `ingest` calls. At most four
 bytes are retained; invalid starts, invalid continuations, overlong forms,
 surrogates, and values above U+10FFFF emit U+FFFD without becoming controls.

@@ -479,7 +479,11 @@ The application is installable, configurable, observable, and suitable for broad
 
 The deterministic terminal fallback slice is implemented: ADR 0026 pins
 extended-grapheme width behavior plus owned monochrome and color emoji assets.
-Broader fallback controls and native typography evidence remain in M10.
+P0 hardening vendors the complete Unicode 15.1 emoji corpus, verifies every
+fully-qualified sequence, carries reviewed Windows/Linux snapshots, and runs a
+native-window emoji smoke that verifies core geometry and renderer-owned color
+texture submission on every scheduled platform. Broader fallback controls and
+native pixel-level typography judgment remain in M10.
 - Documentation for configuration, profiles, SSH, troubleshooting, and compatibility.
 
 ### Completion criteria

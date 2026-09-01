@@ -426,6 +426,11 @@ overlapping checklist entry.
 | P5 | Reference applications and advertised terminal capability need release evidence | Record content-free runs of the M6 checklist. Turn every reproducible failure into a fixture, replay, or controlled-PTY test. [#26](https://github.com/fes/fesTerm/issues/26) tracks native-desktop and `vttest` evidence; [#27](https://github.com/fes/fesTerm/issues/27) tracks `tack` after terminfo packaging. | Platform-specific; release candidate | Manual gate |
 | P6 | Ligature/fallback-safe renderer and font policy | ADR 0012 defines cell geometry as the authority for glyph spans, cursor, selection, and hit testing. The default-off production path shapes only compatible ASCII cell runs, with deterministic boundaries for empty/wide/non-ASCII/fallback cells, selections, styles, and hyperlinks. Automated tests verify all four face sets, monotonic atlas generations, run boundaries, and representative operator shaping; the reviewed snapshot remains in the global optional suite. | Windows, Linux, macOS | Implemented; ligatures opt-in |
 
+Emoji P0 hardening extends P6 with all fully-qualified Unicode 15.1 sequences,
+owned monochrome coverage, reviewed Windows/Linux baselines, and a scheduled
+native-window emoji smoke that verifies geometry and renderer-owned
+color-texture submission on Windows, Linux, and advisory macOS.
+
 ### Completed foundation
 
 - P0, P1, and P2 are implemented; preserve their originating issue records as
