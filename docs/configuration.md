@@ -5,10 +5,8 @@ in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
 configuration file during startup, then supplies its immutable profile metadata
 to the Launcher. Workspace state (the open tab list, its order, and the active
-tab), the seven Settings interface preferences (chip layout, status bar
-visibility, session details in chips, live-session close confirmation, and
-workspace restoration), known-host trust decisions, and profile CRUD all save
-automatically the moment they change - there is no
+tab), the current Settings interface preferences, known-host trust decisions,
+and profile CRUD all save automatically the moment they change - there is no
 manual save/reload action anywhere in Settings. File watching (reacting to
 edits made outside the running app) is intentionally not part of this slice.
 
@@ -108,13 +106,17 @@ terminal_ligatures = false
 Local profiles pass `executable`, `arguments`, and the optional
 `working_directory` directly to `festerm_pty::LocalProfile`; they do not
 contain environment overrides. A saved Local profile may add the same optional
-`persistence` table shown above to select a local `tmux` or `screen` session.
-When present, the provider command replaces the profile executable for that
-launch. tmux attaches or creates the named session, hides its status bar, and
-uses the latest attached client for window sizing; GNU Screen starts with
-`-c /dev/null` so user screenrc captions/hardstatus do not wrap the shell. The
-working directory still applies. The built-in **Local Shell** is not a profile
-and never enables persistence.
+`persistence` table shown above to select one of three local durable-session
+providers: `festerm-sessiond`, `tmux`, or `screen`. For
+`festerm-sessiond`, the saved executable/arguments/working directory remain
+the launched shell inside the detached daemon and the session later
+reattaches by name. For `tmux` and `screen`, the provider command replaces
+the profile executable for that launch: tmux attaches or creates the named
+session, hides its status bar, and uses the latest attached client for window
+sizing; GNU Screen starts with `-c /dev/null` so user screenrc
+captions/hardstatus do not wrap the shell. The working directory still
+applies in every case. The built-in **Local Shell** is not a profile and
+never enables persistence by itself.
 
 SSH profiles convert host, port, username, terminal type, and initial
 dimensions to `festerm_ssh::SshConnectionProfile`. Their optional
@@ -140,7 +142,7 @@ one of these exact strict shapes:
 | --- | --- | --- |
 | `launcher` | `id` | The Launcher application surface; no session. |
 | `settings` | `id` | The Settings application surface; no session. |
-| `local_session` | `id`, `profile_id` | A fresh local session from an existing `local` profile. |
+| `local_session` | `id`, `profile_id` | A session launched from an existing `local` profile; ordinary profiles start fresh while durable providers may attach or create by name. |
 | `ssh_session` | `id`, `profile_id` | An authentication-required surface for an existing `ssh` profile. |
 
 `profile_id` must name an existing profile, and the tab kind must match that
@@ -160,19 +162,24 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table holds seven interface preferences:
+The optional `[settings]` table currently holds twelve interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `true`), `confirm_session_close` (default
 `true`), `restore_workspace` (default `false`), `terminal_font`
 (`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
-default `"jetbrains-mono"`), and `terminal_ligatures` (default `false`). They mirror the current
-Settings controls for chip layout, the bottom status bar, session-detail
-visibility, live-session close confirmation, and explicit workspace
-restoration, plus terminal-only typography. Font choice never changes
-application chrome. Enabling ligatures shapes only eligible adjacent ASCII
-cells; the terminal grid remains authoritative for cursor, selection, mouse,
-and resize geometry.
+default `"jetbrains-mono"`), `terminal_ligatures` (default `false`),
+`scroll_speed` (`"very-slow"`, `"slow"`, `"normal"`, `"fast"`, or
+`"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `false`),
+`compact_launcher_grid` (default `false`), `pulse_new_output_dot`
+(default `false`), and `show_resumable_sessions` (default `false`). They
+mirror the current Settings controls for chip layout, chip details, the
+status bar, live-session close confirmation, workspace restoration, compact
+Launcher layout, background-output chip pulsing, resumable local-session
+surfacing, terminal-only typography, keyboard quick-switch overlays, and
+scrollback scroll speed. Font choice never changes application chrome.
+Enabling ligatures shapes only eligible adjacent ASCII cells; the terminal
+grid remains authoritative for cursor, selection, mouse, and resize geometry.
 
 fesTerm writes the whole configuration document through immediately whenever
 one of these controls changes (or after an explicit Settings **Reset interface
@@ -199,10 +206,13 @@ metadata used only to preserve order and select focus. The saved
 when focus is omitted.
 
 Launcher and Settings entries restore as application surfaces. A local-session
-entry starts a fresh local PTY from its referenced profile, preserving that
-profile identifier as the stable label and using the ordinary visible
-no-session startup-failure handling if creation fails. It never restores the
-old shell process or terminal output.
+entry launches from its referenced profile, preserving that profile identifier
+as the stable label and using the ordinary visible no-session
+startup-failure handling if creation fails. Ordinary local profiles start a
+fresh PTY. A saved Local profile using `festerm-sessiond`, `tmux`, or
+`screen` follows that provider's usual attach-or-create semantics instead, so
+the restored tab may reattach to an existing durable session rather than
+always creating a new shell.
 
 An SSH-session entry restores as an **SSH authentication required** surface
 at its saved position. It retains non-secret destination metadata and

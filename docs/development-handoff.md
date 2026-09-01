@@ -37,7 +37,7 @@ never connect without fresh transient authentication. Runtime tab IDs are new
 for each launch, and no terminal output, process, credential/key, channel, or
 host-trust state is restored. No configuration is watched or edited by
 fesTerm from outside the app. Workspace metadata, profiles (create, update,
-delete, reorder), and all seven Settings interface preferences save
+delete, reorder), and all current Settings interface preferences save
 automatically to the same selected source the moment they change - there is
 no manual reload/save action anywhere in Settings. Workspace restoration
 remains an explicit off-by-default preference; live-session close confirmation
@@ -68,6 +68,12 @@ fesTerm viewport size; bounded automatic recovery is available only as a
 separate per-launch opt-in. Plain SSH remains manual reconnect and always
 creates a fresh shell. Real-provider create/detach/reattach evidence remains
 tracked by [#49](https://github.com/fes/fesTerm/issues/49).
+
+Saved Local profiles may also select the native `festerm-sessiond` durable
+provider. Closing that tab detaches instead of terminating the shell, and the
+Launcher can optionally surface unattached daemon sessions as one-click
+Resume entries; the capability remains experimental pending ADR-0025's
+remaining validation/security work.
 
 Not implemented: OpenSSH configuration import, real keyboard-interactive/2FA
 authentication ([#60](https://github.com/fes/fesTerm/issues/60)),

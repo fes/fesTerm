@@ -57,11 +57,12 @@ remains [#27](https://github.com/fes/fesTerm/issues/27).
 An optional, fesTerm-owned local session-persistence daemon
 (`festerm-sessiond`, [ADR 0025](docs/adr/0025-native-local-session-persistence-daemon.md))
 ships alongside the packaged builds but is **experimental**: its ADR remains
-`Proposed` pending cross-platform native evidence and a local-IPC security
-review, and its Windows native-smoke coverage is currently failing
-([#71](https://github.com/fes/fesTerm/issues/71)). Treat native local session
-persistence as unvalidated on Windows until that issue closes and the ADR is
-formally accepted.
+`Proposed` pending the remaining cross-platform `CP-11` package/manual
+evidence and a local-IPC security review. The earlier Windows native-smoke
+failure tracked in [#71](https://github.com/fes/fesTerm/issues/71) is fixed,
+but native local session persistence is still not a validated supported
+capability until those broader checks complete and the ADR is formally
+accepted.
 
 ## Documentation
 
@@ -129,7 +130,9 @@ formally accepted.
   changes; external file edits are intentionally picked up only after restart.
 - Fast interactive behavior, ligature-capable rendering, and privacy-aware
   diagnostics.
-- Local-first operation with optional future metadata synchronization.
+- Local-first operation; any future cross-machine portability should remain
+  explicit (for example, export/import) rather than requiring an account or
+  cloud synchronization service.
 
 ## Building
 

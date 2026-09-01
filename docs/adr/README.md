@@ -11,7 +11,6 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0005: Foundation-First Delivery with Capability Milestones](0005-foundation-first-capability-milestones.md)
 - [ADR 0006: Native SSH Backend with OpenSSH Interoperability](0006-native-ssh-with-openssh-interoperability.md)
 - [ADR 0007: `egui` Front End with a Pragmatic Renderer Boundary](0007-egui-front-end-pragmatic-renderer-boundary.md)
-- [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md) — superseded by ADR 0015
 - [ADR 0009: Mutable Core State with Early Observability](0009-mutable-core-and-early-observability.md)
 - [ADR 0010: Preserve Future Extension Seams without Early Scope Expansion](0010-preserve-future-extension-seams.md)
 - [ADR 0011: Trusted Windows ConPTY Runtime Selection](0011-trusted-windows-conpty-runtime-selection.md)
@@ -28,6 +27,10 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0022: Focused-Chip-First Single-Row Chrome Allocation](0022-focused-chip-first-single-row-chrome.md)
 - [ADR 0023: `serialport` Crate and Worker-Thread Model for the Serial Session Backend](0023-serialport-worker-thread-serial-backend.md)
 - [ADR 0024: Native Secret Store Extended to Stored Private Keys](0024-native-secret-store-stored-private-keys.md)
+
+## Superseded Decisions
+
+- [ADR 0008: Versioned TOML Configuration with Safe Hot Reload](0008-versioned-toml-configuration.md) — superseded by ADR 0015
 
 ## Proposed Decisions
 

@@ -179,10 +179,11 @@ An optional, fesTerm-owned local session-persistence daemon
 (`festerm-sessiond`, [ADR 0025](adr/0025-native-local-session-persistence-daemon.md))
 ships alongside the packaged builds as an explicitly experimental capability:
 the ADR remains Proposed pending cross-platform native evidence and a
-local-IPC security review, and its Windows native-smoke coverage is currently
-failing, tracked in [#71](https://github.com/fes/fesTerm/issues/71). Treat
-native local session persistence as unvalidated on Windows until that issue
-closes and the ADR is formally accepted or the shipped scope is narrowed.
+local-IPC security review. The earlier Windows native-smoke failure tracked
+in [#71](https://github.com/fes/fesTerm/issues/71) is resolved, but native
+local session persistence remains experimental and unvalidated as a supported
+capability until `CP-11` and that security review are complete and the ADR is
+formally accepted or the shipped scope is narrowed.
 
 ## August 2026 Windows rendering slowness: from suspicion to the real bottleneck
 

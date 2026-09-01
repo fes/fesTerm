@@ -502,7 +502,7 @@ The following tracks remain intentionally outside the initial critical path. Arc
   visually faithful renderer and explicitly bounds syntax, resources,
   security, accessibility, local/remote ownership, and update behavior. It is
   not currently a committed renderer, editor, IDE, or milestone.
-- Optional metadata synchronization and account identity.
+- Password-encrypted profile export/import.
 - Advanced graphics protocols.
 - Persistent, explicitly enabled terminal history.
 

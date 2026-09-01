@@ -7,10 +7,12 @@ runtime data flow, and Rust workspace structure for fesTerm. The repository
 contains `festerm-core`, `festerm-session`, `festerm-pty`, `festerm-sessiond`,
 `festerm-test-support`, the `festerm-ui-egui` presentation crate, and the
 application composition shell. Native SSH, strict `festerm-config` loading,
-profile-backed local launch, opaque native-secret-store SSH password
-references, and metadata-only workspace save/restore are integrated; profile
-editing, additional credential types (e.g. key-file references), trust
-persistence, and the complete M8 user experience remain target architecture.
+local/SSH/serial profile launch, profile CRUD, persistent host trust, opaque
+native-secret-store SSH password/private-key references, metadata-only
+workspace save/restore, and the opt-in `festerm-sessiond` local-persistence
+path are integrated. OpenSSH-config import UI, SSH-agent adapters, key-file
+references, and the remaining M6/M9/M10 validation work remain target
+architecture rather than finished acceptance.
 
 ## Architectural Goals
 
@@ -21,7 +23,7 @@ The architecture should make it possible to:
 - Prioritize terminal correctness and interactive performance.
 - Use `egui` initially without making the terminal engine dependent on it.
 - Replace or specialize rendering later without rewriting protocol behavior.
-- Keep configuration, persistence, synchronization, and secrets behind explicit boundaries.
+- Keep configuration, persistence, portability, and secrets behind explicit boundaries.
 - Add future scripting, plugins, or multiplexing without designing those systems prematurely.
 
 ## Dependency Direction
@@ -440,7 +442,7 @@ Performance benchmarks should initially report trends rather than block every co
 
 1. Terminal protocol semantics do not live in GUI widgets.
 2. Session backends do not mutate terminal state directly.
-3. Secrets do not appear in normal configuration, workspace, or synchronized metadata.
+3. Secrets do not appear in normal configuration, workspace, or exported/shared metadata.
 4. Test fixtures are deterministic and repository-owned.
 5. A failed configuration reload does not destroy the last valid configuration.
 6. One terminal state has one logical writer.

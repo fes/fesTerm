@@ -100,7 +100,9 @@ All primary workflows should be efficient from the keyboard while remaining disc
 
 ### Local-first
 
-The launcher, profiles, sessions, workspace restore, and settings must work without sign-in. Optional synchronization must not change the primary interaction model.
+The launcher, profiles, sessions, workspace restore, and settings must work
+without sign-in. Any future cross-machine portability should be explicit
+export/import, not a required account or cloud-sync prerequisite.
 
 ## Root Application States
 
@@ -170,15 +172,17 @@ The launcher may contain:
 
 Unavailable categories may be omitted until implemented rather than shown as disabled clutter.
 
-The launcher's options form a compact, single-column keyboard-navigable list
+The launcher's fixed action rows form a compact keyboard-navigable list
 (`app/festerm/src/screens.rs`'s `show_launcher`): Up/Down moves a highlighted
 selection and Enter launches whichever option is currently highlighted,
 without requiring the mouse. Local Shell has initial focus. Each row uses its
 semantic icon, a short primary label, and one factual secondary line: **Local
 Shell** / “Default shell on this computer,” **SSH** / “Connect to a remote
-host,” and **Serial** / “Open a local serial device.” When the selected local
-shell or profile is reliably known, that identity may replace the generic
-Local Shell secondary line.
+host,” and **Serial** / “Open a local serial device.” Saved profiles remain in
+list order by default, but the Settings toggle may render them in a responsive
+multi-column grid when width allows. When the selected local shell or profile
+is reliably known, that identity may replace the generic Local Shell
+secondary line.
 
 The initial target launcher shows the usable choices Local Shell, SSH, and
 Serial. A choice whose transport is not yet implemented remains absent from a
@@ -413,12 +417,11 @@ capability-truthful:
 - **Help** remains absent until fesTerm has real help content rather than an
   empty or placeholder destination.
 
-About, Find in Terminal, Focus Mode, and application zoom commands remain
-target behavior, not inert menu placeholders. Add each only with its owned
-application capability. Native-platform validation must confirm menu keyboard
-equivalents, dynamic Close/Inspector state, and that responder-chain Copy and
-Paste preserve the same terminal selection and paste-safety policy as the
-in-window routes.
+Find in Terminal remains target behavior, not an inert menu placeholder. The
+implemented About, Focus Mode, and zoom commands must still pass native menu
+validation: confirm keyboard equivalents, dynamic Close/Inspector state, and
+that responder-chain Copy and Paste preserve the same terminal selection and
+paste-safety policy as the in-window routes.
 
 Fixed native menu entries may remain visible but disabled when their context
 does not apply, following platform menu stability conventions; their labels and
@@ -1037,11 +1040,14 @@ profile does not mutate existing sessions. Launching uses a validated snapshot
 of the current definition.
 
 Local profiles contain name, executable, arguments, initial directory, and an
-initially-off durable local-session option. Enabling it selects local
-`tmux`/GNU screen plus a validated session name; it affects only future
-launches of that saved profile. The built-in **Local Shell** has no persistence
-control and always starts a fresh plain shell. SSH profiles contain name, host,
-port, username, and an authentication preference. Serial profiles contain name, exact device
+initially-off durable local-session option. Enabling it selects the local
+`festerm-sessiond`, `tmux`, or GNU Screen provider plus a validated session
+name; it affects only future launches of that saved profile. The built-in
+**Local Shell** has no persistence control and always starts a fresh plain
+shell unless the user later resumes an already-running `festerm-sessiond`
+session from the Launcher. SSH profiles contain name, host, port, username,
+stored-password/private-key reference state, and an authentication
+preference. Serial profiles contain name, exact device
 identifier, baud rate, data bits, parity, stop bits, and flow control. Profiles
 never contain passwords, private-key contents, terminal output, scrollback, or
 diagnostics. Authentication may
@@ -1060,12 +1066,13 @@ A standalone **Profiles** surface (a singleton chip, opened from the chip-row
 overflow menu's "Open Profiles" button or the command palette's "Open
 Profiles" entry, mirroring Settings) lists every saved profile with its kind
 and a short description, plus "New Local Profile" and "New SSH Profile"
-buttons. Each row offers Edit, Duplicate, and Delete. Local editing currently
-covers name/executable/arguments/working directory and explicit local
-tmux/screen persistence; SSH editing currently
-covers name/host/port/username (agent, key-file, and stored-password
-authentication references remain scoped to the existing one-off SSH form and
-are not yet editable from a saved profile). A profile's name is also its
+buttons, plus "New Serial Profile" when serial support is available. Each row
+offers Edit, Duplicate, and Delete. Local editing currently covers
+name/executable/arguments/working directory and explicit local
+`festerm-sessiond`/tmux/screen persistence; SSH editing currently covers
+name/host/port/username, stored password/private-key replacement and removal,
+and tmux/screen durable-session settings. SSH-agent, key-file-path, and
+OpenSSH-import UI remain future work. A profile's name is also its
 identifier, so it is validated as kebab-case (lowercase letters, digits,
 hyphens); an invalid or empty name/executable surfaces a single inline
 validation message rather than field-specific errors. Delete asks for
@@ -1081,15 +1088,12 @@ profiles follow the same order.
 ![Settings surface target](images/gui-mockups/settings.png)
 
 Settings is a singleton application surface represented by its own chip;
-invoking Settings again focuses it. With only a few implemented preferences,
-it uses simple sections rather than a mostly empty category sidebar. Category
-navigation appears only once several real categories exist, and categories,
-controls, and one-option selectors with no implemented choice remain absent.
+invoking Settings again focuses it. It currently uses compact cards rather
+than a category sidebar: **Interface**, **Scrolling**, **Terminal
+typography**, and **Keyboard**. Only implemented controls appear.
 
-The truthful initial preference surface contains one compact **Interface**
-section with five controls. Related controls are grouped as quiet rows inside
-one section surface, with subtle dividers; separate oversized cards would make
-this small settings surface feel heavier than the terminal chrome it controls.
+The current **Interface** card groups the persistent chrome/session toggles as
+quiet rows with subtle dividers:
 
 - **Session chip layout** is an exposed two-choice control: **Single scrolling
   row** (the default, with the explanation that it keeps terminal height
@@ -1111,40 +1115,53 @@ this small settings surface feel heavier than the terminal chrome it controls.
   "Configuration" below): unlike the four controls above, which always apply
   and save immediately, resurrecting a previous run's open tabs is an
   explicit opt-in.
+- **Compact multi-column New Session list** is an off-by-default switch that
+  lets saved profiles render in a responsive grid when width allows, while the
+  original single-column list remains the baseline.
+- **Pulse status dot on new background output** is an off-by-default switch
+  that animates only background-session chip dots when unseen output arrives.
+- **Resume unattached local sessions from New Session** is an off-by-default
+  switch that surfaces locally running, unattached `festerm-sessiond`
+  sessions as one-click Resume entries in the Launcher.
+
+The separate **Scrolling** card currently exposes a five-step **Scroll
+speed** clickstop (`Very slow` through `Very fast`) that scales wheel/trackpad
+history motion relative to the original fixed mapping.
+
+The **Terminal typography** card exposes the bundled terminal-family selector
+plus the default-off ligature toggle. The **Keyboard** card currently exposes
+the off-by-default quick-switch-number overlay preference.
 
 The two layout choices remain visible rather than hiding a binary decision in a
 selector. Reversible settings apply immediately and save automatically as they
 change; Reset appears beside a changed setting at the narrowest useful scope.
 
-The current configuration implementation also earns a compact
-**Configuration** section. It identifies whether defaults or a valid selected
-source are active without exposing a sensitive path, and shows a content-free
-diagnostic when loading failed. Workspace persistence itself is an explicit,
-off-by-default Settings toggle ("Workspace restore"): unlike chip layout,
-status bar, and session-detail visibility (all of which apply and save
-immediately with no opt-in), resurrecting a previous run's open tabs is a
-bigger behavioral change than a cosmetic preference, so it stays off until the
-user turns it on. While off, fesTerm always starts at the Launcher and neither
-reads nor writes the open tab list, its order, or the active tab - any
-workspace snapshot left over from an earlier run (or an older fesTerm build
-that always persisted it) is dropped rather than silently resurfacing.
-Turning the toggle off also scrubs any already-saved workspace from disk
-immediately, so re-enabling it later starts clean instead of resurrecting a
-forgotten snapshot. Once turned on, workspace state (the open tab list, its
-order, and the active tab) saves and restores automatically: every tab-list
-mutation (opening, closing, reordering, or activating a tab) triggers a
-write-through save on the next frame, mirroring how interface settings and
-profile CRUD already save immediately on every change. There is no manual
-**Reload configuration** or **Save workspace** action for the user to
-remember to invoke, and Settings does not describe persistence with
-reload/save language; ADR 0015 owns the startup/reload contract that this
-automatic behavior relies on. No file watching, configuration editor, or
+There is no separate **Configuration** card in Settings. Workspace
+persistence itself remains the explicit off-by-default **Workspace restore**
+toggle: unlike chip layout, status bar, and session-detail visibility (all of
+which apply and save immediately with no opt-in), resurrecting a previous
+run's open tabs is a bigger behavioral change than a cosmetic preference, so
+it stays off until the user turns it on. While off, fesTerm always starts at
+the Launcher and neither reads nor writes the open tab list, its order, or
+the active tab - any workspace snapshot left over from an earlier run (or an
+older fesTerm build that always persisted it) is dropped rather than silently
+resurfacing. Turning the toggle off also scrubs any already-saved workspace
+from disk immediately, so re-enabling it later starts clean instead of
+resurrecting a forgotten snapshot. Once turned on, workspace state (the open
+tab list, its order, and the active tab) saves and restores automatically:
+every tab-list mutation (opening, closing, reordering, or activating a tab)
+triggers a write-through save on the next frame, mirroring how interface
+settings and profile CRUD already save immediately on every change. There is
+no manual **Reload configuration** or **Save workspace** action for the user
+to remember to invoke, and Settings does not describe persistence with
+reload/save language; ADR 0015 owns the startup contract that this automatic
+behavior relies on. No file watching, configuration editor, or
 credential-storage control is implied.
 
-There is initially no sidebar, settings search, theme selector, font selector,
-empty category, or general Reset control. Keyboard Shortcuts does not masquerade
-as a setting while bindings are fixed; a static reference may gain its own
-appropriate help surface later.
+There is still no sidebar, settings search, theme selector, empty category,
+or general Reset-all control. Keyboard shortcuts remain mostly fixed; the
+single quick-switch overlay preference earns a small dedicated card without
+pretending the whole keyboard model is fully user-configurable.
 
 Category icons support scanning but never replace labels. Reset appears only
 for a non-default value and at appropriate setting/category scope. Terminal
@@ -1185,9 +1202,9 @@ When schema boundaries permit it safely, unsupported fields generate bounded
 warnings while valid settings load, and invalid profiles or workspace entries
 are quarantined individually with their exact reason rather than invalidating
 unrelated configuration. fesTerm never guesses how to reinterpret an invalid
-security-, transport-, or identity-relevant value. A reload follows the same
-complete-candidate validation and replaces active configuration atomically only
-on success.
+security-, transport-, or identity-relevant value. The next startup and any
+explicit save/retry follow the same complete-candidate validation and update
+disk state atomically only on success.
 
 A save failure leaves the user's in-memory reversible change visible but marks
 it clearly **Not saved**, retains the last successfully persisted configuration

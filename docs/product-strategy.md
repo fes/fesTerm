@@ -8,7 +8,13 @@ This document records product-level conclusions that cut across individual miles
 
 fesTerm should be designed as a **session-management platform with an excellent terminal engine**, rather than only as a terminal emulator that happens to support SSH.
 
-The terminal engine remains foundational: correctness, compatibility, latency, Unicode behavior, rendering, and PTY integration are non-negotiable. The product differentiation, however, comes from making long-lived local and remote sessions easy to create, identify, organize, reconnect, restore, diagnose, and eventually synchronize across environments.
+The terminal engine remains foundational: correctness, compatibility,
+latency, Unicode behavior, rendering, and PTY integration are
+non-negotiable. The product differentiation, however, comes from making
+long-lived local and remote sessions easy to create, identify, organize,
+reconnect, restore, diagnose, and eventually move across environments
+through explicit user-controlled portability rather than required account
+sync.
 
 A useful product flow is:
 
@@ -108,7 +114,11 @@ Interactive performance is a product requirement. Establish repeatable measureme
 
 Measurements should report trends before arbitrary blocking budgets are adopted.
 
-Tracked by GitHub issue #19.
+This foundation is now in place through repository-owned `criterion`
+benchmarks in `crates/festerm-core/benches/` and
+`crates/festerm-ui-egui/benches/`, plus content-free frame diagnostics in
+`festerm-ui-egui::TerminalView`. Future budget-setting belongs to Milestone
+10 rather than a separate bootstrap issue.
 
 ## Scope-Control Rule
 
@@ -120,7 +130,10 @@ Classify each new idea as one of:
 2. **Preserve the seam** — not implemented now, but current design must avoid precluding it or creating obviously expensive migration work.
 3. **Future enhancement** — record it and defer implementation.
 
-Examples such as scripting, plugins, built-in multiplexing, detachable sessions, advanced synchronization, rich graphics, and highly customizable chrome should normally remain in categories 2 or 3 until a concrete use case changes their priority.
+Examples such as scripting, plugins, built-in multiplexing, detachable
+sessions, advanced export/import or sharing features, rich graphics, and
+highly customizable chrome should normally remain in categories 2 or 3 until
+a concrete use case changes their priority.
 
 This rule is intended to prevent useful product discovery from silently expanding M6 or any later milestone indefinitely.
 
