@@ -344,3 +344,21 @@ runs can compare history before a portable timing threshold is accepted.
 Failed bounded rasterizations are also retained in the same 512-key budget:
 the first frame records one failure and later frames take a content-free
 negative-cache hit before using monochrome fallback.
+
+### M6 acceptance now separates compatibility from hardware breadth
+
+The native evidence inventory had gradually made M6 depend on more than its
+original compatibility outcome. Representative terminal semantics, exhaustive
+hardware matrices, hypervisor provisioning, physical display combinations,
+performance qualification, and subjective usability were all described near
+the same gate even though they answer different questions.
+
+The gate now requires deterministic cross-platform evidence, one qualifying
+logged-in native desktop path per supported OS, and semantic runs of the
+reference applications against one current candidate SHA. A real-compositor VM
+may satisfy a platform row; an environment that cannot exercise the production
+path needs replacement evidence elsewhere. Exhaustive GPU and architecture
+coverage, physical multi-monitor and mixed-DPI behavior, hardware performance,
+peripherals, broad accessibility comprehension, and visual/usability polish
+remain visible rolling release evidence instead of holding M6 open
+indefinitely. `tack` remains with fesTerm-owned terminfo in M10.

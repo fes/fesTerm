@@ -255,7 +255,11 @@ issue, [#7](https://github.com/fes/fesTerm/issues/7), is closed; #50 tracks
 refreshing that acceptance candidate after subsequent terminal reflow changes.
 Packaging/terminfo work is deferred to M10 under
 [#27](https://github.com/fes/fesTerm/issues/27) and is not part of the M6
-gate.)
+gate. M6 requires deterministic cross-platform evidence, one qualifying
+native desktop path per supported OS, and the reference-application semantics
+below. It does not wait for an exhaustive GPU, CPU architecture, physical
+multi-monitor, peripheral, performance, or subjective-usability matrix; those
+remain rolling platform/release qualification.)
 
 ### Outcome
 

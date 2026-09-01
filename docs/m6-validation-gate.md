@@ -45,6 +45,45 @@ workspace, and GUI-conformance work may continue when it preserves
 terminal/session boundaries and does not consume the platform or validation
 work required here; it does not constitute M6 acceptance.
 
+## Acceptance Boundary
+
+M6 answers whether fesTerm is functionally compatible with its motivating
+terminal applications, not whether every hardware and desktop combination has
+been qualified. Environment is an evidence mechanism rather than a capability
+category: a logged-in VM desktop with a real compositor, native focus, and
+independently driven input may satisfy a platform row. An environment that
+cannot exercise the production path must use replacement evidence from a
+qualifying environment; the environment limitation itself does not keep M6
+open.
+
+The remaining blocking evidence is:
+
+- one candidate SHA with passing deterministic CI and controlled snapshot
+  evidence on Windows, Linux, and macOS;
+- one qualifying native desktop path per supported OS proving window startup,
+  focus, input, resize, compositor presentation, and PTY continuity;
+- the P5 reference-application scenarios, including Copilot CLI and the
+  supported `vttest` subset, with semantic observations rather than launch-only
+  probes; and
+- default-cell and opt-in ligature/fallback rendering that preserves cursor,
+  selection, hyperlink, wide-cell, emoji, and resize geometry.
+
+The following are rolling platform, release, or usability qualification and do
+not block M6 once the representative paths above pass:
+
+- exhaustive GPU vendor/backend and CPU architecture matrices;
+- physical multi-monitor, mixed-DPI, HDR, refresh-rate, and color-profile
+  combinations;
+- hardware performance, power, trackpad, uncommon input-device, and serial
+  adapter matrices;
+- broad screen-reader comprehension and subjective visual/usability judgment;
+- portability of VM images or enablement of a particular hypervisor's virtual
+  GPU; and
+- `tack`/fesTerm-owned terminfo, which remains M10 work under #27.
+
+These rows remain valuable evidence. A failure that reproduces on a supported
+qualifying path is still a product defect and must be triaged normally.
+
 ## Status Vocabulary
 
 Use these terms consistently in milestone and agent reports:
@@ -179,7 +218,7 @@ Add visual evidence only after structural frame assertions are stable.
 
 ### Scope
 
-Establish fixed rendering inputs for Windows and Linux covering:
+Establish fixed rendering inputs for Windows, Linux, and macOS covering:
 
 - empty/default background coverage;
 - cursor styles;
@@ -197,11 +236,11 @@ Establish fixed rendering inputs for Windows and Linux covering:
 - Keep separate platform baselines or documented tolerances where rasterization differs.
 - Snapshot updates must present baseline, actual, and diff artifacts for review.
 - Failure artifacts must contain only repository-owned test content.
-- macOS may remain advisory until baseline reliability is measured.
 
 ### Acceptance evidence
 
-- Linux and Windows snapshot jobs produce stable results across repeated runs.
+- Linux, Windows, and macOS snapshot jobs produce stable results across
+  repeated runs for the nominated candidate.
 - A controlled pixel change produces a useful diff artifact.
 - No snapshot can pass while structural viewport assertions fail.
 
@@ -242,8 +281,12 @@ it is not a new package.
 ### Platform expectations
 
 - **Windows:** prioritize first because issue #3 is a Windows native rendering failure. Exercise ConPTY and the real egui/winit window.
-- **Linux:** use a controlled Xvfb/software-renderer job where practical, with optional scheduled Wayland coverage.
-- **macOS:** run noninteractive coverage on hosted runners; native accessibility/screen-capture automation may require a controlled self-hosted machine and should initially be advisory.
+- **Linux:** retain controlled Xvfb/software-renderer jobs as supporting
+  automation, but run the required path in a logged-in X11 or Wayland desktop
+  with a real compositor and native focus.
+- **macOS:** run the required path in a logged-in WindowServer session.
+  Hosted noninteractive runs remain supporting automation where they cannot
+  create a qualifying native window.
 
 ### CI policy
 
@@ -254,7 +297,10 @@ it is not a new package.
 ### Acceptance evidence
 
 - The Windows issue #3 sequence completes without blank frames, fragmentation, stale rows, or content jumps.
-- Each supported platform has one reproducible bounded smoke flow.
+- Each supported platform has one reproducible bounded smoke flow in a
+  qualifying logged-in native desktop environment. The current Parallels
+  Windows-on-ARM graphics limitation requires replacement Windows evidence; it
+  is not itself an M6 product blocker.
 - Flaky failures are tracked quantitatively rather than silently retried into apparent success.
 
 ## Work Package F — Repository-Owned PTY Test Child ([#9](https://github.com/fes/fesTerm/issues/9))
@@ -352,7 +398,8 @@ For every milestone acceptance decision, record:
 - headless-frame and snapshot evidence where required;
 - native/manual scenarios run;
 - open defects affecting completion criteria; and
-- explicit deferrals with replacement evidence.
+- explicit deferrals with replacement evidence; and
+- nonblocking rolling-qualification gaps, recorded separately from M6 blockers.
 
 This may be a GitHub issue checklist, release note, or committed document, provided it is linked from the milestone.
 
@@ -385,11 +432,19 @@ The M6 validation gate is complete when:
 - the headless egui harness has an explicit adopted or rejected decision;
 - issue #3 has a deterministic rendered-frame regression;
 - structural viewport assertions pass on the normal CI matrix;
-- stable Windows and Linux snapshots exist or are explicitly deferred with evidence;
-- a native Windows smoke flow passes the recorded resize scenario;
-- platform smoke strategy exists for Linux and macOS;
+- stable Windows, Linux, and macOS snapshots exist for the nominated candidate;
+- one qualifying native desktop flow per supported OS passes window startup,
+  focus, input, resize, compositor, and PTY-continuity checks;
+- P5 reference-application semantics pass on representative supported
+  environments, including Copilot CLI and the supported `vttest` subset;
+- default-cell and opt-in ligature/fallback rendering preserve cursor,
+  selection, hyperlink, wide-cell, emoji, and resize geometry;
 - controlled PTY tests use a repository-owned test child for principal scenarios;
 - M4 and M5 have evidence-based acceptance status; and
 - M6 has a visible candidate-SHA acceptance record before being declared complete.
 
-Once these conditions are met, feature work can resume with substantially higher confidence that core, renderer, session, and native-window behavior agree.
+Exhaustive hardware, architecture, display, performance, peripheral, and
+subjective-usability coverage continues after M6 as rolling qualification.
+Once the blocking conditions are met, feature work can resume with
+substantially higher confidence that core, renderer, session, and native-window
+behavior agree.
