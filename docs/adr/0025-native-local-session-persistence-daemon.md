@@ -194,21 +194,30 @@ parallel — but the current concrete blocker is:
 
 - The Windows native-smoke test
   (`native_daemon_survives_launcher_and_supports_input_replay_and_takeover`,
-  `crates/festerm-sessiond/tests/native_daemon.rs`) currently fails on CI's
-  scheduled Native Smoke workflow (Windows job only; Linux and macOS
-  advisory smoke pass). Tracked in
-  [#71](https://github.com/fes/fesTerm/issues/71).
+  `crates/festerm-sessiond/tests/native_daemon.rs`) failed on CI's scheduled
+  Native Smoke workflow (Windows job only; Linux and macOS advisory smoke
+  passed). Tracked and **resolved** in
+  [#71](https://github.com/fes/fesTerm/issues/71): file-based daemon tracing
+  (gated behind `FESTERM_SESSIOND_TRACE_FILE`, see
+  `crates/festerm-sessiond/src/main.rs`) proved the daemon's own
+  accept/replay/forward path was correct; the test's Windows client used a
+  fixed 2s connect/read timeout that could legitimately be exceeded by
+  bundled-ConPTY-host cold-start latency on a GitHub Actions runner. Fixed by
+  raising that test timeout to 10s (`crates/festerm-sessiond/tests/native_daemon.rs`,
+  commit `60693cf`); confirmed passing on all three platforms in
+  [run 33477397740](https://github.com/fes/fesTerm/actions/runs/33477397740)
+  and locally.
 
-Until #71 is resolved and the security review is complete, native local
-session persistence on Windows must be treated as **experimental and
-unvalidated**, not as a supported capability, regardless of whether the
-executable is present in the packaged build. This ADR stays Proposed; it
-will move to Accepted only after (a) #71's root cause is fixed and the
-Windows native-smoke test passes reliably, (b) `CP-11` evidence exists for
-all three platforms, and (c) the local-IPC security review called for above
-is complete. User-facing documentation (`README.md`,
-`docs/milestone-progress.md`) has been updated to describe this capability as
-experimental rather than as a validated feature.
+Precondition (a) below is now satisfied: the Windows native-smoke test passes
+reliably. `CP-11` evidence for all three platforms and the local-IPC security
+review remain outstanding, so this ADR stays **Proposed** and native local
+session persistence remains **experimental and unvalidated** as a supported
+capability until both are complete. It will move to Accepted only after
+(a) the Windows native-smoke test passes reliably — **done** — (b) `CP-11`
+evidence exists for all three platforms, and (c) the local-IPC security
+review called for above is complete. User-facing documentation (`README.md`,
+`docs/milestone-progress.md`) continues to describe this capability as
+experimental rather than as a validated feature until (b) and (c) close.
 
 ## Alternatives considered
 
