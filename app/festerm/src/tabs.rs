@@ -19,9 +19,9 @@ use std::sync::{
 
 use eframe::egui;
 use festerm_config::{
-    ChipLayoutPreference, ConfigError, Configuration, InterfaceSettings, PersistenceConfiguration,
-    PersistenceProviderKind, ScrollSpeedPreference, SshProfileConfiguration,
-    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    ChipLayoutPreference, ConfigError, Configuration, EmojiPresentationPreference,
+    InterfaceSettings, PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
+    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtySession};
@@ -1105,6 +1105,9 @@ pub enum AppCommand {
     /// Enables or disables eligible multi-cell shaping runs. Cell ownership
     /// remains authoritative regardless of the selected font.
     ToggleTerminalLigatures,
+    /// Selects the deterministic color or monochrome emoji presentation path
+    /// without changing core-owned cell geometry.
+    SetEmojiPresentation(EmojiPresentationPreference),
     /// Selects a clickstop scaling how far one trackpad/wheel scroll step
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
@@ -1248,6 +1251,7 @@ pub struct AppState {
     restore_workspace: bool,
     terminal_font: TerminalFontPreference,
     terminal_ligatures: bool,
+    emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
     quick_switch_overlay: bool,
     compact_launcher_grid: bool,
@@ -1294,6 +1298,7 @@ impl AppState {
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
+            emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
@@ -1333,6 +1338,7 @@ impl AppState {
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
+            emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
@@ -1419,6 +1425,7 @@ impl AppState {
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
+            emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
@@ -1535,6 +1542,10 @@ impl AppState {
         self.terminal_ligatures
     }
 
+    pub const fn emoji_presentation(&self) -> EmojiPresentationPreference {
+        self.emoji_presentation
+    }
+
     pub const fn scroll_speed(&self) -> ScrollSpeedPreference {
         self.scroll_speed
     }
@@ -1567,6 +1578,7 @@ impl AppState {
             self.restore_workspace,
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
+        .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
@@ -1601,6 +1613,14 @@ impl AppState {
                 | TabContent::Profiles
                 | TabContent::SshAuthenticationRequired(_) => None,
             })
+    }
+
+    pub fn apply_terminal_font_set(&mut self, font_set: festerm_ui_egui::TerminalFontSet) {
+        for tab in &mut self.tabs {
+            if let TabContent::Session(session) = &mut tab.content {
+                session.view.set_font_set(font_set);
+            }
+        }
     }
 
     /// The terminal grid size a brand-new tab should start at, so opening a
@@ -1729,6 +1749,9 @@ impl AppState {
             AppCommand::ToggleTerminalLigatures => {
                 self.terminal_ligatures = !self.terminal_ligatures;
             }
+            AppCommand::SetEmojiPresentation(presentation) => {
+                self.emoji_presentation = presentation;
+            }
             AppCommand::SetScrollSpeed(speed) => {
                 self.scroll_speed = speed;
             }
@@ -1756,6 +1779,7 @@ impl AppState {
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
+                self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
@@ -3019,12 +3043,20 @@ mod tests {
         let mut state = AppState::for_test();
         assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
         assert!(!state.terminal_ligatures());
+        assert_eq!(
+            state.emoji_presentation(),
+            EmojiPresentationPreference::Color
+        );
 
         state.dispatch(
             AppCommand::SetTerminalFont(TerminalFontPreference::JuliaMono),
             &context,
         );
         state.dispatch(AppCommand::ToggleTerminalLigatures, &context);
+        state.dispatch(
+            AppCommand::SetEmojiPresentation(EmojiPresentationPreference::Monochrome),
+            &context,
+        );
 
         assert_eq!(state.terminal_font(), TerminalFontPreference::JuliaMono);
         assert!(state.terminal_ligatures());
@@ -3033,10 +3065,38 @@ mod tests {
             TerminalFontPreference::JuliaMono
         );
         assert!(state.interface_settings().terminal_ligatures());
+        assert_eq!(
+            state.interface_settings().emoji_presentation(),
+            EmojiPresentationPreference::Monochrome
+        );
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert_eq!(state.terminal_font(), TerminalFontPreference::JetBrainsMono);
         assert!(!state.terminal_ligatures());
+        assert_eq!(
+            state.emoji_presentation(),
+            EmojiPresentationPreference::Color
+        );
+    }
+
+    #[test]
+    fn terminal_font_policy_applies_to_every_existing_session_view() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        assert_eq!(state.tabs().len(), 2);
+
+        state.apply_terminal_font_set(
+            festerm_ui_egui::TerminalFontSet::default().with_color_emoji(false),
+        );
+
+        for tab in state.tabs() {
+            let TabContent::Session(session) = &tab.content else {
+                panic!("expected only session tabs");
+            };
+            assert!(!session.view.color_emoji_enabled());
+        }
     }
 
     #[test]

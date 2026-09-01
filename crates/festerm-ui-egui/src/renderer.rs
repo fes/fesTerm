@@ -165,8 +165,9 @@ impl GlyphCache {
         text: &str,
         rect: Rect,
         attributes: Attributes,
+        color_emoji: bool,
     ) -> bool {
-        if attributes.contains(Attributes::CONCEALED) || !is_color_emoji(text) {
+        if !color_emoji || attributes.contains(Attributes::CONCEALED) || !is_color_emoji(text) {
             return false;
         }
         self.color_emoji
@@ -582,7 +583,13 @@ pub(crate) fn paint_grid(
                 // a flat sliver visible. The run-shaping path below already
                 // clips for the same reason.
                 let cell_painter = painter.with_clip_rect(rect);
-                if glyphs.paint_color_emoji(&cell_painter, &cell.text, rect, cell.attributes) {
+                if glyphs.paint_color_emoji(
+                    &cell_painter,
+                    &cell.text,
+                    rect,
+                    cell.attributes,
+                    paint.fonts.font_set().color_emoji(),
+                ) {
                     color_emoji_paints += 1;
                 } else {
                     let galley = glyphs.layout(
@@ -640,7 +647,13 @@ pub(crate) fn paint_grid(
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
                 let run_painter = painter.with_clip_rect(rect);
-                if glyphs.paint_color_emoji(&run_painter, &run.text, rect, run.attributes) {
+                if glyphs.paint_color_emoji(
+                    &run_painter,
+                    &run.text,
+                    rect,
+                    run.attributes,
+                    paint.fonts.font_set().color_emoji(),
+                ) {
                     color_emoji_paints += 1;
                 } else {
                     let galley = glyphs.layout(
@@ -1009,7 +1022,7 @@ mod tests {
         let mut painted = true;
         let mut output = context.run_ui(Default::default(), |context| {
             let painter = context.layer_painter(egui::LayerId::background());
-            painted = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::CONCEALED);
+            painted = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::CONCEALED, true);
         });
         output.textures_delta.clear();
         assert!(!painted);
@@ -1018,13 +1031,31 @@ mod tests {
         for attributes in [Attributes::NONE, Attributes::FAINT] {
             let mut output = context.run_ui(Default::default(), |context| {
                 let painter = context.layer_painter(egui::LayerId::background());
-                painted = glyphs.paint_color_emoji(&painter, "🤖", rect, attributes);
+                painted = glyphs.paint_color_emoji(&painter, "🤖", rect, attributes, true);
             });
             output.textures_delta.clear();
             assert!(painted);
         }
         assert_eq!(glyphs.color_emoji.textures.len(), 1);
         assert!(glyphs.color_emoji.texture_bytes > 0);
+    }
+
+    #[test]
+    fn monochrome_policy_skips_color_emoji_textures() {
+        let context = egui::Context::default();
+        let mut glyphs = GlyphCache::default();
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(32.0, 16.0));
+
+        let mut painted = true;
+        let mut output = context.run_ui(Default::default(), |context| {
+            let painter = context.layer_painter(egui::LayerId::background());
+            painted = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::NONE, false);
+        });
+        output.textures_delta.clear();
+
+        assert!(!painted);
+        assert!(glyphs.color_emoji.textures.is_empty());
+        assert_eq!(glyphs.color_emoji.texture_bytes, 0);
     }
 
     #[test]

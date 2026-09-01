@@ -261,6 +261,9 @@ font chain. Emoji-presentation graphemes use a bounded Swash path over pinned
 Noto Color Emoji bitmap glyphs; layered glyphs are composited, centered, and
 clipped inside the core-owned span. VS15 remains monochrome, and any failed or
 oversized color rasterization falls back to the ordinary layout path.
+Versioned interface settings select color (the compatibility-preserving
+default) or monochrome presentation. Monochrome bypasses the color texture
+path while retaining the same core cells and owned Noto Emoji fallback.
 
 Egui keyboard/text, paste, focus, pointer, wheel, selection, and copy events
 become M3 `InputEvent` values. The core alone selects mode-aware byte

@@ -482,8 +482,11 @@ extended-grapheme width behavior plus owned monochrome and color emoji assets.
 P0 hardening vendors the complete Unicode 15.1 emoji corpus, verifies every
 fully-qualified sequence, carries reviewed Windows/Linux snapshots, and runs a
 native-window emoji smoke that verifies core geometry and renderer-owned color
-texture submission on every scheduled platform. Broader fallback controls and
-native pixel-level typography judgment remain in M10.
+texture submission on every scheduled platform. Arbitrary fallback ordering,
+custom font paths, and native pixel-level typography judgment remain in M10.
+Emoji P1 adds a persisted Settings control for deterministic color or
+monochrome presentation. It deliberately does not accept arbitrary font paths:
+both modes remain repository-owned, bounded, and geometry-independent.
 - Documentation for configuration, profiles, SSH, troubleshooting, and compatibility.
 
 ### Completion criteria

@@ -521,6 +521,13 @@ pub struct InterfaceSettings {
     /// across every supported face.
     #[serde(default, skip_serializing_if = "is_false")]
     terminal_ligatures: bool,
+    /// Whether eligible emoji use the bundled color raster path or the
+    /// deterministic monochrome fallback chain.
+    #[serde(
+        default,
+        skip_serializing_if = "EmojiPresentationPreference::is_default"
+    )]
+    emoji_presentation: EmojiPresentationPreference,
     /// How many scrollback rows a single trackpad/wheel scroll step moves,
     /// relative to fesTerm's original fixed pixel-to-row mapping.
     #[serde(default, skip_serializing_if = "ScrollSpeedPreference::is_default")]
@@ -564,6 +571,7 @@ impl InterfaceSettings {
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,
         terminal_ligatures: false,
+        emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
         quick_switch_overlay: false,
         compact_launcher_grid: false,
@@ -586,6 +594,7 @@ impl InterfaceSettings {
             restore_workspace,
             terminal_font: TerminalFontPreference::JetBrainsMono,
             terminal_ligatures: false,
+            emoji_presentation: EmojiPresentationPreference::Color,
             scroll_speed: ScrollSpeedPreference::Normal,
             quick_switch_overlay: false,
             compact_launcher_grid: false,
@@ -601,6 +610,14 @@ impl InterfaceSettings {
     ) -> Self {
         self.terminal_font = terminal_font;
         self.terminal_ligatures = terminal_ligatures;
+        self
+    }
+
+    pub const fn with_emoji_presentation(
+        mut self,
+        emoji_presentation: EmojiPresentationPreference,
+    ) -> Self {
+        self.emoji_presentation = emoji_presentation;
         self
     }
 
@@ -667,6 +684,10 @@ impl InterfaceSettings {
         self.terminal_ligatures
     }
 
+    pub const fn emoji_presentation(self) -> EmojiPresentationPreference {
+        self.emoji_presentation
+    }
+
     pub const fn scroll_speed(self) -> ScrollSpeedPreference {
         self.scroll_speed
     }
@@ -707,6 +728,23 @@ pub enum TerminalFontPreference {
 impl TerminalFontPreference {
     const fn is_default(&self) -> bool {
         matches!(self, Self::JetBrainsMono)
+    }
+}
+
+/// Selects which repository-owned emoji presentation path terminal cells use.
+///
+/// Both choices preserve the same core-owned grapheme and cell geometry.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EmojiPresentationPreference {
+    #[default]
+    Color,
+    Monochrome,
+}
+
+impl EmojiPresentationPreference {
+    const fn is_default(&self) -> bool {
+        matches!(self, Self::Color)
     }
 }
 
@@ -4193,6 +4231,10 @@ schema_version = 99
             TerminalFontPreference::JetBrainsMono
         );
         assert!(!configuration.interface_settings().terminal_ligatures());
+        assert_eq!(
+            configuration.interface_settings().emoji_presentation(),
+            EmojiPresentationPreference::Color
+        );
     }
 
     #[test]
@@ -4215,6 +4257,29 @@ schema_version = 99
         );
         assert!(Configuration::parse(
             "schema_version = 1\n\n[settings]\nterminal_font = \"system\"\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn emoji_presentation_round_trips_and_rejects_unknown_policies() {
+        let settings = InterfaceSettings::DEFAULT
+            .with_emoji_presentation(EmojiPresentationPreference::Monochrome);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("emoji_presentation = \"monochrome\""));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+        assert!(Configuration::parse(
+            "schema_version = 1\n\n[settings]\nemoji_presentation = \"system\"\n"
         )
         .is_err());
     }

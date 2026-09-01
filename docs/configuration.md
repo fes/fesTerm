@@ -101,6 +101,7 @@ confirm_session_close = true
 restore_workspace = false
 terminal_font = "jetbrains-mono"
 terminal_ligatures = false
+emoji_presentation = "color"
 ```
 
 Local profiles pass `executable`, `arguments`, and the optional
@@ -162,13 +163,14 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table currently holds twelve interface preferences:
+The optional `[settings]` table currently holds thirteen interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `true`), `confirm_session_close` (default
 `true`), `restore_workspace` (default `false`), `terminal_font`
 (`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
 default `"jetbrains-mono"`), `terminal_ligatures` (default `false`),
+`emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
 `scroll_speed` (`"very-slow"`, `"slow"`, `"normal"`, `"fast"`, or
 `"very-fast"`; default `"normal"`), `quick_switch_overlay` (default `false`),
 `compact_launcher_grid` (default `false`), `pulse_new_output_dot`
@@ -180,6 +182,9 @@ surfacing, terminal-only typography, keyboard quick-switch overlays, and
 scrollback scroll speed. Font choice never changes application chrome.
 Enabling ligatures shapes only eligible adjacent ASCII cells; the terminal
 grid remains authoritative for cursor, selection, mouse, and resize geometry.
+Emoji presentation switches only between the bundled color renderer and owned
+monochrome fallback; it never changes cell allocation or discovers arbitrary
+system/user font files.
 
 fesTerm writes the whole configuration document through immediately whenever
 one of these controls changes (or after an explicit Settings **Reset interface

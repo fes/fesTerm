@@ -757,7 +757,14 @@
         "every_default_color_emoji_scalar_rasterizes_from_the_pinned_font",
         "every_emoji_property_scalar_rasterizes_with_explicit_emoji_presentation",
         "color_emoji_paint_reuses_textures_and_honors_concealment",
-        "color_emoji_texture_cache_stays_bounded"
+        "color_emoji_texture_cache_stays_bounded",
+        "emoji_presentation_round_trips_and_rejects_unknown_policies",
+        "terminal_font_set_defaults_to_color_emoji_and_can_disable_it",
+        "monochrome_policy_skips_color_emoji_textures",
+        "terminal_view_emoji_policy_switches_color_texture_submission",
+        "terminal_typography_changes_and_resets_independently",
+        "terminal_font_policy_applies_to_every_existing_session_view",
+        "settings_exposes_terminal_font_ligature_and_emoji_controls"
       ],
       "manual_scenarios": [
         "NP-05"
