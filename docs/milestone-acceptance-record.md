@@ -114,9 +114,9 @@ debounce fix and confirmed-clean manual retest that corroborate this
 acceptance.
 
 This acceptance is intentionally limited to the reported corruption/output-loss
-failure class. It does **not** replace the manual macOS compositor judgment
-for visible tearing, flashing, stalls, or DPI-boundary rendering described in
-[`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md).
+failure class. Broader subjective compositor smoothness and physical
+DPI-boundary judgment continue as rolling release qualification rather than M6
+blocking evidence.
 
 | Backlog item | Status | Evidence and remaining condition |
 | --- | --- | --- |
@@ -125,8 +125,8 @@ for visible tearing, flashing, stalls, or DPI-boundary rendering described in
 | P2 — headless UI event/layout coverage | Implemented | Test-only `egui_kittest` 0.36 drives production `TerminalView` input, diagnostics, and resize. |
 | P3 — visual snapshots | Implemented; deterministic evidence accepted, [#7](https://github.com/fes/fesTerm/issues/7) closed | `rendered_terminal_frames_match_reviewed_snapshots` now covers every planned scenario (background, attributes/colors, cursor styles, Unicode + selection, cell-run shaping, alternate screen, and the full P0 resize sequence) with committed per-platform baselines. CI now runs and **passes** this suite on all three platforms as of `b8a242a` (2026-08-21), including Linux via Lavapipe software rendering plus a `kittest.toml` pixel-tolerance allowance (see "Platform and CI conditions" below). This is code/CI-matrix evidence, not a fresh native-window run; see the "Refreshed candidate" note above for why real per-platform native confirmation against `a113f0f` is still open. |
 | P4 — native platform smoke | In progress | Merged #15 supplies Windows-executed real PTY/ConPTY timing and shutdown coverage. On 2026-08-07, the clean `scripts/stage-conpty.ps1 -RunSmoke` path and the production eframe/winit self-smoke passed locally with the hash-verified pinned runtime: four resize generations, retained visible cells, output continuity, and one CSI `6n` query. Linux PTY and Xvfb native-window evidence is recorded in `5e97f5d`; Xvfb was explicitly unfocused. WSLg retest at `d4079ac` was not accepted: Wayland lost its presentation surface and forced X11 observed focus but timed out awaiting initial PTY output during repeated DPI-scale changes; both Unix PTY smokes passed. On 2026-08-10, a manually operated Parallels VM lab (see `docs/vm-evidence-framework.md`) collected the first evidence across all three real platforms at `bcfd7a7`: macOS native-window smoke **passed with real focus** on a logged-in console session; Linux native-window smoke **failed** both under Xvfb (extra resize generation, [#33](https://github.com/fes/fesTerm/issues/33)) and on a real GNOME/Wayland desktop (real focus achieved but timed out awaiting PTY output, [#35](https://github.com/fes/fesTerm/issues/35), updates [#21](https://github.com/fes/fesTerm/issues/21)); Windows ConPTY retention smoke **failed** a visible-cell assertion likely tied to nested-virtualization timing ([#34](https://github.com/fes/fesTerm/issues/34)); Windows native-window smoke **could not execute** because the lab VM has no working GPU surface under Vulkan, DX12, or GL ([#32](https://github.com/fes/fesTerm/issues/32)). On 2026-08-12, the automated controller reran at `e08197d5a8cedfaacdb6b13eb70e15ac30795009`: Linux qualifying Xorg OS-input and macOS qualifying console-session native evidence passed; Windows completed its diagnostic lifecycle but native smoke remained non-acceptance output. The direct, unlocked Windows host run at `99d028d` then passed the staged ConPTY resize-retention smoke, production native-window self-smoke, and independently driven OS-input smoke. A subsequent WSLg Wayland run at `8a3d331` again reached focus but timed out in `AwaitInitialOutput` with llvmpipe/EGL warnings, reproducing [#35](https://github.com/fes/fesTerm/issues/35). This validates the documented Windows replacement path but does not close P4 while Linux evidence and cross-platform CI/focus coverage remain incomplete. A related lab-isolation gap (host Desktop/Documents and clipboard/cloud sharing left enabled by VM templates) was found and manually hardened; making that fix durable and repeatable is tracked in [#36](https://github.com/fes/fesTerm/issues/36). None of these VM findings are confirmed product regressions; they still require correlation against real CI/hardware evidence. macOS advisory CI execution and independently driven platform-native focus/accessibility evidence in CI remain. |
-| P5 — reference apps, `vttest`, `tack` | In progress ([#26](https://github.com/fes/fesTerm/issues/26), [#27](https://github.com/fes/fesTerm/issues/27)) | First Windows shell line-editor run found egui focus traversal consuming Tab and vertical arrows. `853534c` locks focused-terminal navigation keys and the same native session then confirmed both keys reach the shell. The observer confirmed that the resized grid did not reflow or redraw existing shell text; this is the documented no-scrollback/no-reflow model, not a failed PTY resize. The optional P5 PTY probe passed `less` and `nvim` on Windows and, on 2026-08-12, `less`, `nvim`, `htop`, and `tmux` in WSL: real program start, two PTY resizes, fixed quit input, and bounded exit, without retaining terminal output. The Windows OS-input smoke added after `9ba8aa8` also passed: foreground, click, native resize, Tab, Up Arrow, text, and Enter reached the controlled PTY. These are not acceptance evidence for application screen semantics, Copilot CLI, or desktop `vttest`; those remain tracked in #26. `tack` is deferred to #27 because M6 has no fesTerm-owned terminfo entry. |
-| P6 — ligature/fallback contract | Implemented; user-visible policy defaults off | ADR 0012 establishes cell geometry as the authority for glyph spans, cursor, selection, and hit testing. Settings persists one of four bundled primary families and a default-off ligature toggle. Enabled shaping groups only compatible ASCII cells; empty, width-two, combining/non-ASCII, fallback, selection, style, and hyperlink boundaries remain deterministic. Exact font assets and the reproducible Iosevka `calt` build make the supported feature policy stable without claiming arbitrary per-feature controls. ADR 0026 (Accepted) extends this contract with incremental UAX #29 grapheme-width allocation for VS16/ZWJ/modifier/keycap/flag sequences and a bounded, capped renderer cache for pinned monochrome/color Noto Emoji fallback, without changing core-owned cursor, selection, hit-test, or resize geometry; reviewed snapshots so far cover Windows only, see the Application typography and NP-05 rows in `manual-validation.md` for the remaining native macOS/Linux appearance review. |
+| P5 — reference apps and `vttest` | In progress ([#26](https://github.com/fes/fesTerm/issues/26)) | First Windows shell line-editor run found egui focus traversal consuming Tab and vertical arrows. `853534c` locks focused-terminal navigation keys and the same native session then confirmed both keys reach the shell. The observer confirmed that the resized grid did not reflow or redraw existing shell text; this is the documented no-scrollback/no-reflow model, not a failed PTY resize. The optional P5 PTY probe passed `less` and `nvim` on Windows and, on 2026-08-12, `less`, `nvim`, `htop`, and `tmux` in WSL: real program start, two PTY resizes, fixed quit input, and bounded exit, without retaining terminal output. The Windows OS-input smoke added after `9ba8aa8` also passed: foreground, click, native resize, Tab, Up Arrow, text, and Enter reached the controlled PTY. These are not acceptance evidence for application screen semantics, Copilot CLI, or desktop `vttest`; those remain tracked in #26. `tack` is separate M10 evidence under #27. |
+| P6 — ligature/fallback contract | Implemented; user-visible policy defaults off | ADR 0012 establishes cell geometry as the authority for glyph spans, cursor, selection, and hit testing. Settings persists one of four bundled primary families and a default-off ligature toggle. Enabled shaping groups only compatible ASCII cells; empty, width-two, combining/non-ASCII, fallback, selection, style, and hyperlink boundaries remain deterministic. Exact font assets and the reproducible Iosevka `calt` build make the supported feature policy stable without claiming arbitrary per-feature controls. ADR 0026 (Accepted) extends this contract with incremental UAX #29 grapheme-width allocation for VS16/ZWJ/modifier/keycap/flag sequences and a bounded, capped renderer cache for pinned monochrome/color Noto Emoji fallback, without changing core-owned cursor, selection, hit-test, or resize geometry. M6 requires the representative geometry/fallback scenario; broader native typography appearance review remains rolling qualification under Application typography and NP-05 in `manual-validation.md`. |
 
 ### Work package status
 
@@ -165,7 +165,7 @@ not replace validation. Known repository follow-up items are:
 
 ### Manual reference scenarios
 
-GitHub Copilot CLI, `less`, `vim`/`nvim`, `htop`, `tmux`, `vttest`, and `tack`
+GitHub Copilot CLI, `less`, `vim`/`nvim`, `htop`, `tmux`, and `vttest`
 have not completed the current candidate's manual acceptance run. The initial
 Windows shell line-editor attempt on 2026-08-07
 failed because Tab and vertical arrows transferred focus from the terminal;
@@ -187,13 +187,30 @@ a minimal deterministic regression for every reproducible failure in
 - [x] Issue #3 has a deterministic headless rendered-frame regression (C).
 - [x] Controlled principal PTY scenarios use a repository-owned test child (F).
 - [x] M4 and M5 have evidence-based implemented-with-validation-pending status.
-- [ ] Stable Windows, macOS, and Linux snapshot results and controlled diff artifacts (D/P3). Both platform baselines and the full scenario suite are committed and CI-wired, and CI now passes on all three platforms as of `b8a242a` ([#7](https://github.com/fes/fesTerm/issues/7) closed); a fresh **native-window** confirmation against the `a113f0f` candidate (real hardware/VM run, not CI) is still needed before this can be checked off.
-- [ ] Cross-platform CI evidence for the native-window self-smoke and independently driven platform focus/accessibility proof (E/P4). A direct hardware-backed Windows run passed the staged ConPTY, native-window, and OS-input checks at `99d028d`; the VM lab findings and remaining Linux/CI conditions still prevent acceptance.
-- [ ] Manual reference-application, `vttest`, and `tack` evidence (P5).
+- [ ] Stable Windows, macOS, and Linux snapshot results and controlled diff
+  artifacts (D/P3) against one current candidate SHA.
+- [ ] One qualifying native desktop path per supported OS for window startup,
+  real focus, independently driven input, resize, compositor presentation, and
+  PTY continuity (E/P4). A logged-in VM with a real compositor may qualify;
+  Xvfb does not qualify for focus, and the current Parallels Windows graphics
+  limitation requires replacement evidence from another qualifying Windows
+  environment; direct hardware is the currently proven path, not the only
+  permitted one.
+- [ ] Manual reference-application and supported-`vttest` semantic evidence
+  (P5). Launch/resize/quit-only PTY probes remain supporting evidence rather
+  than acceptance. `tack` is M10 work under #27 and does not block M6.
 - [x] P6 cell-geometry contract, selectable bundled fonts, and default-off user-visible ligature shaping.
 
-M6 must not be marked **Accepted** until every remaining gate condition is
-completed or explicitly deferred with replacement evidence.
+M6 must not be marked **Accepted** until every remaining blocking gate
+condition is completed. Explicit deferrals apply only to nonblocking rolling
+qualification, not to the candidate-SHA, P3, P4, or P5 evidence above.
+
+Exhaustive GPU/backend and CPU-architecture matrices, physical multi-monitor
+and mixed-DPI combinations, HDR/refresh/color-profile coverage, hardware
+performance and peripheral matrices, broad screen-reader comprehension, and
+subjective visual/usability polish remain rolling platform/release
+qualification. Their absence does not keep M6 open after the representative
+compatibility paths above pass.
 
 ## Parallel progress after the M6 foundation
 

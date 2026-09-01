@@ -135,6 +135,26 @@ CI with a persistent real desktop and externally driven window/input evidence.
 For macOS it upgrades the current advisory native-window path into a controlled,
 logged-in desktop run with explicit focus and native-input evidence.
 
+## M6 Acceptance Role
+
+The VM lab can satisfy an M6 platform row when the guest uses a logged-in
+desktop, a real compositor/window manager, the production fesTerm window,
+native focus, and independently driven input. M6 requires one such qualifying
+path per supported OS; it does not require every row to use Parallels.
+
+Failure to provision a particular virtual GPU, migrate a VM image, or reproduce
+physical hardware timing is an infrastructure or rolling-qualification gap,
+not automatically an M6 blocker. Use replacement evidence from a direct host
+or another qualifying environment. In particular, the current Parallels
+Windows-on-ARM guest cannot supply the required Windows native-window path,
+but a different logged-in VM with a working production graphics surface may.
+
+After representative M6 compatibility passes, the lab continues to collect
+nonblocking release evidence for additional architectures, graphics backends,
+display configurations, performance, peripherals, accessibility, and
+usability. Reproducible failures on supported qualifying paths remain product
+defects regardless of which environment found them.
+
 ## Non-Goals
 
 The VM lab is not intended to:
@@ -536,12 +556,12 @@ the same candidate SHA.
 - current fesTerm Windows build prerequisites; and
 - interactive desktop relay running as the test user.
 
-For qualifying Windows native-window evidence, run this workflow directly on
-an interactive, hardware-backed Windows host. The Parallels Windows-on-ARM
-guest is retained for repeatable diagnostic coverage only: it can automate
-reset, source staging, build, launch, focus, resize, PTY, screenshot, and
-artifact collection, but it cannot provide an authoritative accelerated wgpu
-surface.
+For qualifying Windows native-window evidence, run this workflow in a
+logged-in Windows desktop with a working production wgpu surface and
+independently driven input. The current Parallels Windows-on-ARM guest is
+retained for repeatable diagnostic coverage only: it can automate reset,
+source staging, build, launch, focus, resize, PTY, screenshot, and artifact
+collection, but it cannot currently provide that graphics surface.
 
 ### Required execution
 
@@ -596,8 +616,11 @@ On a physical Windows host, run the same reviewed PowerShell entry point from
 an unlocked interactive desktop session. The host must expose a supported
 hardware graphics backend and must not be at a UAC, lock-screen, or other
 secure-desktop prompt. Retain the native-smoke result, OS-input result, and
-sanitized screenshots in the evidence bundle. This is the Windows acceptance
-path; do not classify Parallels Windows-on-ARM output as a replacement.
+sanitized screenshots in the evidence bundle. This is the currently proven
+Windows acceptance path. Another VM may qualify if it meets the same desktop,
+graphics, input, and result-contract requirements; do not classify output from
+the current graphics-incapable Parallels Windows-on-ARM guest as replacement
+evidence.
 
 ## Linux VM Evidence
 
@@ -1135,7 +1158,7 @@ Linux qualifying Xorg OS-input evidence and macOS qualifying console-session
 native evidence passed. Windows completed reset, readiness, exact source
 checkout, build, launch, screenshots, and shutdown, then reported the
 expected diagnostic native-smoke failure; it remains ineligible for
-acceptance until reproduced on hardware-backed Windows.
+acceptance until reproduced in another qualifying Windows environment.
 
 Install the shared relay and configure the shared controller as described in
 [`vm-evidence-lab`'s Mac handoff](https://github.com/fes/vm-evidence-lab/blob/main/docs/MAC_HANDOFF.md).

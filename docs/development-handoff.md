@@ -133,7 +133,7 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential pkg-config libxkbcommon-dev libwayland-dev libx11-dev \
   libvulkan-dev mesa-vulkan-drivers xvfb \
-  vttest tack less vim-nox neovim tmux htop gh
+  vttest less vim-nox neovim tmux htop gh
 ```
 
 Install Rust for the WSL user, then clone and build:
@@ -151,7 +151,7 @@ cargo build --workspace
 Run the GUI through WSLg with `cargo run -p festerm`. For Linux PTY P4 smoke
 coverage, use the ignored tests in
 [`native-smoke-policy.md`](native-smoke-policy.md); use `Xvfb` only for the
-explicitly unfocused CI smoke. Run `vttest`, `tack`, and the reference
+explicitly unfocused CI smoke. Run `vttest` and the reference
 applications from the P5 checklist in this Linux checkout, recording
 content-free evidence for each scenario. To run the optional scriptable P5
 PTY probes for installed `less`, `nvim`, `htop`, and `tmux`, use
@@ -270,11 +270,12 @@ loopback-only and is the evidence for the scenarios below.
 | OpenSSH user/host certificates | Deferred until certificate selection and host-trust policy are exposed by fesTerm and covered by a dedicated fixture. |
 
 The suite does not replace manual P5 observations that require screen
-semantics or user intent: GitHub Copilot CLI, `vttest`, `tack`, native
+semantics or user intent: GitHub Copilot CLI, `vttest`, native
 selection/focus, paste behavior, and application-specific visual inspection.
-On Windows, it additionally invokes `run-windows-os-input-smoke.ps1`, which
-uses real OS focus, click, resize, and key events to prove the event-to-PTY
-path without recording terminal content.
+`tack` remains separate M10 evidence under #27. On Windows, the suite
+additionally invokes `run-windows-os-input-smoke.ps1`, which uses real OS
+focus, click, resize, and key events to prove the event-to-PTY path without
+recording terminal content.
 
 ## Diagnostics and Safety
 

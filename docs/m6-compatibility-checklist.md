@@ -46,8 +46,8 @@ Wayland, or independently driven desktop scenarios.
 
 Before considering this milestone complete:
 
-1. Complete P0 through P4, or explicitly defer an item in `ROADMAP.md` with a
-   reason and replacement validation.
+1. Complete P0 through P4. Required P3 snapshots and P4 qualifying native
+   paths cannot be deferred into rolling qualification.
 2. Run the reference scenarios below, recording each as pass, fail, or not
    run with the reason.
 3. Convert every reproducible failure into the smallest deterministic
@@ -57,6 +57,14 @@ Before considering this milestone complete:
    selected bundled family; verify cursor, selection, hyperlinks, wide cells,
    fallback glyphs, and resize geometry remain cell-authoritative. Include the
    Agency-style emoji fixture with VS16, ZWJ, keycap, and flag sequences.
+
+A logged-in VM desktop with a real compositor, native focus, and independently
+driven input may satisfy a platform scenario. The gate requires one qualifying
+native path per supported OS, not every GPU, CPU architecture, display,
+peripheral, or hypervisor combination. Xvfb cannot satisfy native focus; an
+environment unable to create the production window needs replacement evidence
+from another environment. `tack` and custom terminfo remain M10 work rather
+than M6 blockers.
 
 ## Reference Scenarios
 
@@ -97,9 +105,9 @@ Each application is reported as `pass`, `fail`, or `not-run` with
 
 These probes complement, but do not replace, the scenarios above: they do not
 inspect application screen semantics, drive OS input, prove native focus or
-selection, or validate Copilot CLI, `vttest`, or `tack`. Keep those runs as
-manual P5 evidence until an independently driven desktop automation layer is
-designed.
+selection, or validate Copilot CLI or `vttest`. Keep those runs as manual P5
+evidence until an independently driven desktop automation layer is designed.
+`tack` remains separate M10 evidence under #27.
 
 ### Optional P6 renderer validation
 
@@ -126,8 +134,8 @@ It launches a real fesTerm window, brings it forward, clicks the grid, resizes
 the native window, and injects Tab, Up Arrow, text, and Enter through Windows.
 A controlled PTY child releases a content-free result only after the injected
 line arrives. This proves the Windows event path from OS input through egui,
-the terminal encoder, and the PTY. It does not inspect `vttest`/`tack` menus
-or establish application screen semantics; those remain manual until their
+the terminal encoder, and the PTY. It does not inspect `vttest` menus or
+establish application screen semantics; those remain manual until their
 automation has a stable, reviewable oracle.
 
 ## Regression Triage

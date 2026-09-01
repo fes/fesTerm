@@ -23,13 +23,12 @@ display scale/DPI, exact scenario ID, pass/fail/not-run, and a concise
 content-free observation. Never record terminal content, clipboard values,
 credentials, hostnames, or filesystem paths.
 
-## Blocked (do not attempt)
+## Outside M6 (do not attempt as part of this protocol)
 
 - **`tack`** — fesTerm ships no `festerm` terminfo entry yet (deferred until
   packaging can install one reliably; see
-  [#27](https://github.com/fes/fesTerm/issues/27)). Record this scenario as
-  `not run reason=blocked-no-terminfo-entry`, not as a manual failure, and do
-  not spend time attempting it until #27 lands.
+  [#27](https://github.com/fes/fesTerm/issues/27)). It is M10 evidence and
+  should not be recorded as an M6 `not run` or failure.
 
 ## Prerequisites
 
@@ -105,9 +104,9 @@ quit leaves no artifacts.
 Start `htop`, resize the window repeatedly while it's running, and quit with
 `q`.
 
-**Observe:** high-frequency redraw stays responsive without visible tearing
-or stale rows; mouse clicks used to sort/select columns do not create a
-local fesTerm text selection; resize is reflected promptly.
+**Observe:** high-frequency updates do not leave stale or incorrect rows;
+mouse clicks used to sort/select columns do not create a local fesTerm text
+selection; resize is reflected in the application's layout.
 
 ### 5. `tmux`
 
@@ -144,23 +143,26 @@ does not claim full VT100/xterm compatibility — see the baseline note in
 sub-tests are out of scope for fesTerm's currently supported subset rather
 than marking them a failure.
 
-## Native compositor/DPI/focus judgment (P4 complement)
+## Native focus and compositor presentation (M6 P4)
 
 While running `scripts/collect-m6-evidence.{sh,ps1}`'s native-window and
-OS-input smoke on this machine, additionally observe by eye — these are
-exactly the things the automated smoke cannot self-certify:
+OS-input smoke on this machine, confirm the objective conditions the automated
+smoke cannot fully self-certify:
 
 - The window genuinely has OS focus (not just process-level activity) before
   and after each resize.
-- Resizing across a display's DPI/scale boundary (e.g., dragging between two
-  monitors with different scale factors, or toggling a display's scale in
-  System Settings) does not leave stale or blurry glyph rendering.
-- The compositor presents frames smoothly during a rapid resize drag (no
-  visible tearing, flashing, or multi-second stalls).
+- The production window remains visibly presented with nonblank controlled
+  content before and after the bounded resize sequence.
 
 If you don't have real hardware for a given platform, use the manually
 operated VM lab in [`vm-evidence-framework.md`](vm-evidence-framework.md)
 instead of skipping the platform.
+
+Physical mixed-DPI/multi-monitor transitions, blur, tearing, flashing,
+subjective smoothness, and broader visual judgment remain rolling
+platform/release qualification in `manual-validation.md`; record them when the
+environment permits, but do not fail or delay M6 solely because that hardware
+matrix is unavailable.
 
 ## Recording results
 

@@ -48,10 +48,18 @@ session secrets in validation artifacts.
 
 ## Active registry
 
+The first two rows below are M6 blocking evidence under
+[`m6-validation-gate.md`](m6-validation-gate.md): deterministic platform
+evidence, one qualifying native desktop path per supported OS, and
+representative application semantics. Hardware/architecture breadth,
+multi-monitor and mixed-DPI matrices, performance and peripheral coverage,
+broad accessibility comprehension, and subjective visual/usability judgment
+remain active rolling qualification but do not independently keep M6 open.
+
 | Area | Required environments | Manual or usability evidence | Status / tracking |
 | --- | --- | --- | --- |
 | M6 native-window foundation | Windows, macOS, Linux desktop environments named by the M6 gate | Real focus, renderer/window startup, resize continuity, PTY input/output, compositor behavior | Manual pending; umbrella implementation [#8](https://github.com/fes/fesTerm/issues/8), Linux focus [#21](https://github.com/fes/fesTerm/issues/21), environment findings #32–#36 |
-| Reference terminal applications | Representative supported desktops; tool-specific platforms where applicable | Shell editing, `less`, Vim/Neovim, Emacs, tmux, htop, GitHub Copilot CLI, `vttest`, selection and input semantics | Manual pending; [#26](https://github.com/fes/fesTerm/issues/26), checklist in `m6-compatibility-checklist.md`; `tack` remains [#27](https://github.com/fes/fesTerm/issues/27) |
+| Reference terminal applications | Representative supported desktops; tool-specific platforms where applicable | Shell editing, `less`, Vim/Neovim, tmux, htop, GitHub Copilot CLI, `vttest`, selection and input semantics | M6 blocking evidence pending; [#26](https://github.com/fes/fesTerm/issues/26), checklist in `m6-compatibility-checklist.md`; Emacs remains useful rolling compatibility evidence and `tack` remains M10 work under [#27](https://github.com/fes/fesTerm/issues/27) |
 | Custom title bar and window chrome | Windows, macOS, Linux/X11 and Linux/Wayland; multiple scale factors | Drag/double-click, minimize/maximize/restore/close, snap/system menu behavior, multi-monitor DPI, narrow layout, chip drag interaction, accessibility | Manual pending; [#29](https://github.com/fes/fesTerm/issues/29) |
 | Native macOS application menu | Logged-in macOS desktop | Menu installation and conventions; shortcuts; dynamic Close and Inspector state; focus-aware Copy/Paste without PTY leakage; native Services/Hide/Quit/window actions | Manual pending; [#44](https://github.com/fes/fesTerm/issues/44) |
 | Launcher and integrated chrome | Windows, macOS, Linux; narrow and scaled viewports | Visual comparison to approved mockups; keyboard-only launch flow; focused-chip-first compaction before overflow; fixed New Session placement; first/middle/last focus reveal; chip overflow/reorder/rename; stable vertical geometry and compactness | Usability pending; deterministic allocation/geometry regressions are automated, while native visual and interaction judgment remains in the umbrella |
