@@ -764,7 +764,11 @@
         "terminal_view_emoji_policy_switches_color_texture_submission",
         "terminal_typography_changes_and_resets_independently",
         "terminal_font_policy_applies_to_every_existing_session_view",
-        "settings_exposes_terminal_font_ligature_and_emoji_controls"
+        "settings_exposes_terminal_font_ligature_and_emoji_controls",
+        "repeated_emoji_frame_rasterizes_once_then_uses_only_cache_hits",
+        "diagnostics_summary_reports_content_free_emoji_cache_work",
+        "failed_color_emoji_rasterization_is_negative_cached",
+        "failed_emoji_rasterization_attempts_once_then_uses_negative_cache"
       ],
       "manual_scenarios": [
         "NP-05"

@@ -1201,6 +1201,10 @@ mod tests {
         harness.run();
         harness.run();
         assert_eq!(harness.state().view.diagnostics().color_emoji_paints, 0);
+        assert_eq!(
+            harness.state().view.diagnostics().color_emoji_cache_misses,
+            0
+        );
         let terminal_text = harness.state().terminal.row_text(0);
 
         harness
@@ -1209,7 +1213,100 @@ mod tests {
             .set_font_set(TerminalFontSet::default());
         harness.run();
         assert_eq!(harness.state().view.diagnostics().color_emoji_paints, 1);
+        assert_eq!(
+            harness.state().view.diagnostics().color_emoji_cache_misses,
+            1
+        );
         assert_eq!(harness.state().terminal.row_text(0), terminal_text);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn repeated_emoji_frame_rasterizes_once_then_uses_only_cache_hits() {
+        let mut emoji_terminal = terminal(20, 2);
+        emoji_terminal.ingest("🤖 🤖 🤖".as_bytes());
+        let mut harness = visual_harness(emoji_terminal);
+
+        harness.run();
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default().with_color_emoji(false));
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default());
+        harness.run();
+        let cold = harness.state().view.diagnostics();
+        assert_eq!(cold.color_emoji_paints, 3);
+        assert_eq!(cold.color_emoji_cache_misses, 1);
+        assert_eq!(cold.color_emoji_cache_hits, 2);
+        assert_eq!(cold.color_emoji_rasterization_attempts, 1);
+        assert_eq!(cold.color_emoji_rasterization_failures, 0);
+        assert_eq!(cold.color_emoji_negative_cache_hits, 0);
+
+        harness.run();
+        let warm = harness.state().view.diagnostics();
+        assert_eq!(warm.color_emoji_paints, 3);
+        assert_eq!(warm.color_emoji_cache_misses, 0);
+        assert_eq!(warm.color_emoji_cache_hits, 3);
+        assert_eq!(warm.color_emoji_rasterization_attempts, 0);
+        assert_eq!(warm.color_emoji_rasterization_failures, 0);
+        assert_eq!(warm.color_emoji_negative_cache_hits, 0);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn failed_emoji_rasterization_attempts_once_then_uses_negative_cache() {
+        let mut emoji_terminal = terminal(10, 2);
+        let excessive_keycap = format!("1{}", "\u{20e3}".repeat(64));
+        emoji_terminal.ingest(excessive_keycap.as_bytes());
+        let mut harness = visual_harness(emoji_terminal);
+
+        harness.run();
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default().with_color_emoji(false));
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default());
+        harness.run();
+        let failed = harness.state().view.diagnostics();
+        assert_eq!(failed.color_emoji_paints, 0);
+        assert_eq!(failed.color_emoji_rasterization_attempts, 1);
+        assert_eq!(failed.color_emoji_rasterization_failures, 1);
+        assert_eq!(failed.color_emoji_negative_cache_hits, 0);
+
+        harness.run();
+        let cached = harness.state().view.diagnostics();
+        assert_eq!(cached.color_emoji_paints, 0);
+        assert_eq!(cached.color_emoji_rasterization_attempts, 0);
+        assert_eq!(cached.color_emoji_rasterization_failures, 0);
+        assert_eq!(cached.color_emoji_negative_cache_hits, 1);
+    }
+
+    #[test]
+    fn diagnostics_summary_reports_content_free_emoji_cache_work() {
+        let mut view = TerminalView::default();
+        view.diagnostics.color_emoji_paints = 7;
+        view.diagnostics.color_emoji_cache_hits = 6;
+        view.diagnostics.color_emoji_cache_misses = 1;
+        view.diagnostics.color_emoji_rasterization_attempts = 2;
+        view.diagnostics.color_emoji_rasterization_failures = 1;
+        view.diagnostics.color_emoji_negative_cache_hits = 3;
+
+        let summary = view.diagnostics_summary("session running");
+
+        assert!(summary.contains(
+            "emoji paints 7; cache hits 6; misses 1; raster attempts 2; failures 1; negative hits 3"
+        ));
+        assert!(!summary.contains('🤖'));
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]

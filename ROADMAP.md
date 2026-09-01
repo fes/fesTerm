@@ -487,6 +487,13 @@ custom font paths, and native pixel-level typography judgment remain in M10.
 Emoji P1 adds a persisted Settings control for deterministic color or
 monochrome presentation. It deliberately does not accept arbitrary font paths:
 both modes remain repository-owned, bounded, and geometry-independent.
+Emoji P2 adds deterministic cache-work budgets plus Criterion cold/warm
+rendering workloads. While the visible working set fits the documented
+512-key and approximately 32 MiB cache bounds, repeated visible emoji must
+rasterize at most once per text-and-size key, and a fully warm frame must
+perform zero rasterizations. Failed bounded rasterizations are negative-cached
+instead of retried per frame; platform timing thresholds remain evidence on
+representative hardware rather than noisy cross-runner correctness gates.
 - Documentation for configuration, profiles, SSH, troubleshooting, and compatibility.
 
 ### Completion criteria

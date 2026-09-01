@@ -48,10 +48,17 @@ monochrome fallback rather than changing terminal state.
 
 Color glyph images are centered and clipped inside the leading-cell span
 already allocated by the core. Concealed cells paint nothing and faint cells
-reduce image opacity. The renderer cache is capped at 512 emoji/size entries
-and an approximate 32 MiB of RGBA texture data, clearing before exceeding
-either bound. Raster requests, sequence bytes, layer counts, and output
-dimensions are capped. Texture names contain only a stable text hash and size.
+reduce image opacity. The renderer cache is capped at 512 successful or failed
+emoji/size keys and an approximate 32 MiB of successful RGBA texture data,
+evicting least-recently-used keys before exceeding either bound. Failed bounded
+rasterizations are negative-cached so deterministic monochrome fallback does
+not repeat the same work every frame. Raster requests, sequence bytes, layer
+counts, and output dimensions are capped. Texture names contain only a stable
+text hash and size. Each frame records content-free color-paint, cache-hit, and
+cache-miss counts. While the visible working set fits both cache bounds, the
+deterministic work budget permits at most one miss for each newly visible
+text-and-size key, requires zero raster attempts once all visible keys are
+warm, and requires failed keys to use the negative cache on later frames.
 
 The versioned interface configuration exposes `emoji_presentation = "color"`
 or `"monochrome"` and Settings applies the same policy live. Color remains the
@@ -88,7 +95,11 @@ decision.
   owned monochrome scalar coverage. Additional ICU scalar tests retain
   forward-looking coverage without changing the accepted Unicode version.
 - Renderer tests also cover supported sizes, VS15 exclusion, texture reuse,
-  concealment, presentation-policy switching, and cache/input/layer bounds.
+  concealment, presentation-policy switching, deterministic cache-hit/miss
+  and negative-cache budgets, and cache/input/layer bounds.
+- Criterion workloads measure cold texture population and warm texture reuse
+  separately; timing remains representative-hardware evidence rather than a
+  correctness assertion on shared CI runners.
 - Core tests cover deterministic oversized-grapheme replacement.
 - Reviewed Windows and Linux snapshots cover emoji next to trailing ASCII with
   cursor and selection geometry. Scheduled native-window smoke verifies

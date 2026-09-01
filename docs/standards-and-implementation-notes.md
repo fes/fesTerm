@@ -264,6 +264,12 @@ oversized color rasterization falls back to the ordinary layout path.
 Versioned interface settings select color (the compatibility-preserving
 default) or monochrome presentation. Monochrome bypasses the color texture
 path while retaining the same core cells and owned Noto Emoji fallback.
+Per-frame diagnostics expose only aggregate emoji paint/cache hit/cache miss
+and raster attempt/failure/negative-hit counts. While the visible working set
+fits the documented cache bounds, tests enforce one cold attempt per unique
+text-and-size key, zero warm attempts, and one failed attempt before
+negative-cache reuse; Criterion tracks cold population and warm reuse timing
+independently.
 
 Egui keyboard/text, paste, focus, pointer, wheel, selection, and copy events
 become M3 `InputEvent` values. The core alone selects mode-aware byte
@@ -274,10 +280,10 @@ uses OSC 52. Before M5, the app observes content-free metadata for drained
 input rather than using a session transport.
 
 M4 reports frame time, calculated dimensions, changed rows, latest input
-outcome and input queue depth, content-free no-session input counters, and
-input-to-paint-submission time. This ends after grid paint shapes are submitted
-to egui, not when pixels are presented. It does not retain terminal content in
-diagnostics. The core still has no scrollback, so M4
+outcome and input queue depth, content-free no-session input counters,
+aggregate emoji cache work, and input-to-paint-submission time. This ends
+after grid paint shapes are submitted to egui, not when pixels are presented.
+It does not retain terminal content in diagnostics. The core still has no scrollback, so M4
 supports output-driven terminal scrolling and mode-aware wheel reporting but
 does not claim local history scrolling.
 
