@@ -19,11 +19,14 @@ use crate::session_controller::SessionController;
 const SMOKE_ENV: &str = "FESTERM_NATIVE_WINDOW_SMOKE";
 const OS_INPUT_SMOKE_ENV: &str = "FESTERM_NATIVE_OS_INPUT_SMOKE";
 const LIVE_RESIZE_SMOKE_ENV: &str = "FESTERM_NATIVE_LIVE_RESIZE_SMOKE";
+const EMOJI_SMOKE_ENV: &str = "FESTERM_NATIVE_EMOJI_SMOKE";
 const RESULT_PATH_ENV: &str = "FESTERM_NATIVE_SMOKE_RESULT_PATH";
 const LIVE_RESIZE_DRIVER_RESULT_PATH_ENV: &str = "FESTERM_NATIVE_LIVE_RESIZE_DRIVER_RESULT_PATH";
 const ALLOW_UNFOCUSED_ENV: &str = "FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED";
 const TIMEOUT: Duration = Duration::from_secs(20);
 const LIVE_RESIZE_FRAME_COUNT: usize = 120;
+const EMOJI_FIXTURE_COMMAND: &str =
+    "emit:🤖 bot  🗑️ clean  ⚠️ warn  ℹ️ info  👩‍🔬 lab  1️⃣ key  🇺🇸 flag  aligned";
 const RESIZE_SEQUENCE: [(f32, f32); 4] = [
     (420.0, 260.0),
     (860.0, 540.0),
@@ -46,6 +49,7 @@ enum SmokeKind {
     NativeWindow,
     OsInput,
     LiveResize,
+    Emoji,
 }
 
 pub struct NativeWindowSmoke {
@@ -70,14 +74,16 @@ impl NativeWindowSmoke {
             std::env::var_os(SMOKE_ENV).is_some(),
             std::env::var_os(OS_INPUT_SMOKE_ENV).is_some(),
             std::env::var_os(LIVE_RESIZE_SMOKE_ENV).is_some(),
+            std::env::var_os(EMOJI_SMOKE_ENV).is_some(),
         ) {
-            (false, false, false) => return None,
-            (true, false, false) => SmokeKind::NativeWindow,
-            (false, true, false) => SmokeKind::OsInput,
-            (false, false, true) => SmokeKind::LiveResize,
+            (false, false, false, false) => return None,
+            (true, false, false, false) => SmokeKind::NativeWindow,
+            (false, true, false, false) => SmokeKind::OsInput,
+            (false, false, true, false) => SmokeKind::LiveResize,
+            (false, false, false, true) => SmokeKind::Emoji,
             _ => {
                 panic!(
-                    "only one of {SMOKE_ENV}, {OS_INPUT_SMOKE_ENV}, and {LIVE_RESIZE_SMOKE_ENV} may be enabled"
+                    "only one of {SMOKE_ENV}, {OS_INPUT_SMOKE_ENV}, {LIVE_RESIZE_SMOKE_ENV}, and {EMOJI_SMOKE_ENV} may be enabled"
                 )
             }
         };
@@ -99,7 +105,7 @@ impl NativeWindowSmoke {
                         "FESTERM_NATIVE_LIVE_RESIZE_DRIVER_RESULT_PATH is required in live resize smoke mode",
                     ),
             ),
-            SmokeKind::NativeWindow | SmokeKind::OsInput => None,
+            SmokeKind::NativeWindow | SmokeKind::OsInput | SmokeKind::Emoji => None,
         };
 
         Some(Self {
@@ -145,6 +151,7 @@ impl NativeWindowSmoke {
             // from the UI driver makes any lost frame observable in terminal
             // history instead of relying on a timing-sensitive visual check.
             SmokeKind::LiveResize => &["emit-frames:120:25", "spin"],
+            SmokeKind::Emoji => &[EMOJI_FIXTURE_COMMAND, "spin"],
         }
     }
 
@@ -153,6 +160,7 @@ impl NativeWindowSmoke {
         context: &eframe::egui::Context,
         terminal: &mut Terminal,
         controller: &mut SessionController<S>,
+        color_emoji_paints: usize,
     ) {
         if self.phase == Phase::Finished {
             return;
@@ -247,6 +255,25 @@ impl NativeWindowSmoke {
                             controller.resize_probe().observed_output_bytes(),
                         ),
                     );
+                }
+            }
+            (SmokeKind::Emoji, Phase::AwaitInitialOutput)
+                if controller.resize_probe().observed_output_bytes() > 0 =>
+            {
+                self.phase = Phase::AwaitPostOutput;
+                context.request_repaint_after(Duration::from_millis(10));
+            }
+            (SmokeKind::Emoji, Phase::AwaitPostOutput) => {
+                if (self.focus_observed || self.allow_unfocused)
+                    && emoji_smoke_matches(terminal, color_emoji_paints)
+                {
+                    self.finish(
+                        context,
+                        "pass",
+                        "native emoji fixture retained seven double-width clusters, used seven color textures, and preserved trailing ASCII",
+                    );
+                } else {
+                    context.request_repaint_after(Duration::from_millis(50));
                 }
             }
             (SmokeKind::NativeWindow, Phase::AwaitInitialOutput)
@@ -393,7 +420,8 @@ impl NativeWindowSmoke {
             | (_, Phase::AwaitInput)
             | (_, Phase::AwaitPostOutput)
             | (SmokeKind::OsInput, Phase::AwaitResize(_))
-            | (SmokeKind::LiveResize, Phase::AwaitResize(_)) => {}
+            | (SmokeKind::LiveResize, Phase::AwaitResize(_))
+            | (SmokeKind::Emoji, Phase::AwaitResize(_)) => {}
         }
     }
 
@@ -446,6 +474,29 @@ fn terminal_text_including_scrollback(terminal: &Terminal) -> String {
     format!("{history}{visible}")
 }
 
+fn emoji_fixture_matches(terminal: &Terminal) -> bool {
+    let clusters_match = ["🤖", "🗑️", "⚠️", "ℹ️", "👩‍🔬", "1️⃣", "🇺🇸"]
+        .into_iter()
+        .all(|expected| {
+            (0..terminal.dimensions().rows()).any(|row| {
+                (0..terminal.dimensions().columns().saturating_sub(1)).any(|column| {
+                    terminal.cell(column, row).is_some_and(|cell| {
+                        cell.text() == expected
+                            && cell.width() == festerm_core::CellWidth::Double
+                            && terminal
+                                .cell(column + 1, row)
+                                .is_some_and(|cell| cell.is_continuation())
+                    })
+                })
+            })
+        });
+    clusters_match && terminal_text_including_scrollback(terminal).contains("aligned")
+}
+
+fn emoji_smoke_matches(terminal: &Terminal, color_emoji_paints: usize) -> bool {
+    emoji_fixture_matches(terminal) && color_emoji_paints >= 7
+}
+
 fn test_child_path() -> PathBuf {
     let mut path = std::env::current_exe().expect("application executable path is known");
     path.pop();
@@ -466,6 +517,21 @@ mod tests {
         assert_eq!(SMOKE_ENV, "FESTERM_NATIVE_WINDOW_SMOKE");
         assert_eq!(OS_INPUT_SMOKE_ENV, "FESTERM_NATIVE_OS_INPUT_SMOKE");
         assert_eq!(LIVE_RESIZE_SMOKE_ENV, "FESTERM_NATIVE_LIVE_RESIZE_SMOKE");
+        assert_eq!(EMOJI_SMOKE_ENV, "FESTERM_NATIVE_EMOJI_SMOKE");
         assert_eq!(RESULT_PATH_ENV, "FESTERM_NATIVE_SMOKE_RESULT_PATH");
+    }
+
+    #[test]
+    fn native_emoji_fixture_requires_double_width_clusters_and_trailing_ascii() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(100, 2).unwrap()).unwrap();
+        terminal.ingest(
+            EMOJI_FIXTURE_COMMAND
+                .strip_prefix("emit:")
+                .unwrap()
+                .as_bytes(),
+        );
+        assert!(emoji_fixture_matches(&terminal));
+        assert!(!emoji_smoke_matches(&terminal, 6));
+        assert!(emoji_smoke_matches(&terminal, 7));
     }
 }

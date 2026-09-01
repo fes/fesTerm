@@ -2749,7 +2749,13 @@ impl eframe::App for FesTermApp {
         if let Some(smoke) = self.native_smoke.as_mut() {
             if let Some(primary_tab) = self.primary_tab {
                 if let Some(primary) = self.state.session_tab_mut(primary_tab) {
-                    smoke.drive(context, &mut primary.terminal, &mut primary.controller);
+                    let color_emoji_paints = primary.view.diagnostics().color_emoji_paints;
+                    smoke.drive(
+                        context,
+                        &mut primary.terminal,
+                        &mut primary.controller,
+                        color_emoji_paints,
+                    );
                 }
             }
         }

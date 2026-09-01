@@ -538,10 +538,15 @@ pub(crate) fn glyph_runs(
     runs
 }
 
-pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &mut GlyphCache) {
+pub(crate) fn paint_grid(
+    painter: egui::Painter,
+    paint: GridPaint<'_>,
+    glyphs: &mut GlyphCache,
+) -> usize {
     let Some(dimensions) = paint.cache.dimensions() else {
-        return;
+        return 0;
     };
+    let mut color_emoji_paints = 0;
     let selection_range = paint.selection.range();
     painter.rect_filled(paint.layout.rect, 0.0, DEFAULT_BACKGROUND);
     for row in 0..dimensions.rows() {
@@ -577,7 +582,9 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 // a flat sliver visible. The run-shaping path below already
                 // clips for the same reason.
                 let cell_painter = painter.with_clip_rect(rect);
-                if !glyphs.paint_color_emoji(&cell_painter, &cell.text, rect, cell.attributes) {
+                if glyphs.paint_color_emoji(&cell_painter, &cell.text, rect, cell.attributes) {
+                    color_emoji_paints += 1;
+                } else {
                     let galley = glyphs.layout(
                         &cell_painter,
                         &cell.text,
@@ -633,7 +640,9 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
                 let run_painter = painter.with_clip_rect(rect);
-                if !glyphs.paint_color_emoji(&run_painter, &run.text, rect, run.attributes) {
+                if glyphs.paint_color_emoji(&run_painter, &run.text, rect, run.attributes) {
+                    color_emoji_paints += 1;
+                } else {
                     let galley = glyphs.layout(
                         &run_painter,
                         &run.text,
@@ -713,6 +722,7 @@ pub(crate) fn paint_grid(painter: egui::Painter, paint: GridPaint<'_>, glyphs: &
             }
         }
     }
+    color_emoji_paints
 }
 
 fn paint_cursor(
@@ -934,6 +944,24 @@ mod tests {
                     "{emoji} at {pixel_size}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_unicode_15_1_rgi_emoji_classifies_and_rasterizes() {
+        let mut cache = ColorEmojiCache::default();
+        for emoji in crate::fonts::unicode_emoji_15_1_fully_qualified() {
+            assert!(
+                is_color_emoji(&emoji),
+                "{emoji} was not classified for color"
+            );
+            let image = cache
+                .rasterize(&emoji, 16)
+                .unwrap_or_else(|| panic!("failed to rasterize Unicode 15.1 RGI emoji {emoji}"));
+            assert!(
+                image.pixels.iter().any(|pixel| pixel.a() != 0),
+                "{emoji} rendered transparently"
+            );
         }
     }
 

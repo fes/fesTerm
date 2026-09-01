@@ -60,6 +60,31 @@ pub(crate) const COMPLEX_COLOR_EMOJI_TEST_CASES: &[&str] = &[
     "🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
 ];
 
+#[cfg(test)]
+pub(crate) fn unicode_emoji_15_1_fully_qualified() -> Vec<String> {
+    include_str!("../tests/fixtures/unicode/emoji-15.1/emoji-test.txt")
+        .lines()
+        .filter_map(|line| {
+            let (code_points, remainder) = line.split_once(';')?;
+            remainder
+                .trim_start()
+                .starts_with("fully-qualified")
+                .then(|| {
+                    code_points
+                        .split_whitespace()
+                        .map(|code_point| {
+                            char::from_u32(
+                                u32::from_str_radix(code_point, 16)
+                                    .expect("Unicode emoji data uses hexadecimal code points"),
+                            )
+                            .expect("Unicode emoji data contains valid scalar values")
+                        })
+                        .collect()
+                })
+        })
+        .collect()
+}
+
 pub(crate) fn is_color_emoji(text: &str) -> bool {
     if text.contains('\u{fe0e}') {
         return false;
@@ -385,6 +410,11 @@ mod tests {
     }
 
     #[test]
+    fn unicode_15_1_corpus_has_expected_fully_qualified_count() {
+        assert_eq!(unicode_emoji_15_1_fully_qualified().len(), 3_773);
+    }
+
+    #[test]
     fn owned_emoji_fallback_covers_agency_status_glyphs() {
         let face = ttf_parser::Face::parse(
             include_bytes!("../../../assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf"),
@@ -419,6 +449,29 @@ mod tests {
                 assert!(
                     face.glyph_index(character).is_some(),
                     "Noto Emoji lacks U+{:04X} {character} from {text}",
+                    character as u32
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn owned_monochrome_chain_covers_unicode_15_1_rgi_scalars() {
+        let emoji = ttf_parser::Face::parse(
+            include_bytes!("../../../assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf"),
+            0,
+        )
+        .unwrap();
+        for sequence in unicode_emoji_15_1_fully_qualified() {
+            for character in sequence.chars().filter(|character| {
+                !matches!(
+                    *character as u32,
+                    0x200d | 0xfe0e | 0xfe0f | 0xe0020..=0xe007f
+                )
+            }) {
+                assert!(
+                    emoji.glyph_index(character).is_some(),
+                    "owned monochrome fallback lacks U+{:04X} {character} from {sequence}",
                     character as u32
                 );
             }

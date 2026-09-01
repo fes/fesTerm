@@ -64,16 +64,24 @@ dimensions are capped. Texture names contain only a stable text hash and size.
   but sequence behavior and terminal geometry remain deterministic.
 - Complex-script shaping beyond extended-grapheme allocation remains a
   renderer concern and is not claimed by this decision.
+- Compatibility claims are anchored to the vendored Unicode 15.1 corpus,
+  matching the pinned width tables. Newer ICU property data may classify
+  additional scalars, but those are not promoted into the contract until the
+  width and corpus versions advance together.
 
 ## Validation impact
 
 - `GUI:TYPE-01`
 - Automated core tests cover split input, VS16 promotion, ZWJ sequences,
   keycaps, flags, margin wrapping, and no-wrap replacement.
-- Renderer tests cover owned Agency glyphs, every ICU emoji-presentation
-  scalar, every ICU emoji-property scalar with VS16, representative modifier,
-  ZWJ, flag, tag-flag, and keycap sequences at supported sizes, VS15
-  exclusion, texture reuse, concealment, and cache/input/layer bounds.
+- Corpus tests cover all 3,773 fully-qualified Unicode 15.1 emoji for
+  byte-fragmented two-cell geometry, color classification/rasterization, and
+  owned monochrome scalar coverage. Additional ICU scalar tests retain
+  forward-looking coverage without changing the accepted Unicode version.
+- Renderer tests also cover supported sizes, VS15 exclusion, texture reuse,
+  concealment, and cache/input/layer bounds.
 - Core tests cover deterministic oversized-grapheme replacement.
-- Reviewed snapshots cover emoji next to trailing ASCII with cursor and
-  selection geometry; `NP-05` retains native scale and appearance review.
+- Reviewed Windows and Linux snapshots cover emoji next to trailing ASCII with
+  cursor and selection geometry. Scheduled native-window smoke verifies
+  geometry and successful renderer-owned color-texture submission on Windows,
+  Linux, and macOS; `NP-05` retains human pixel-level color/scale judgment.

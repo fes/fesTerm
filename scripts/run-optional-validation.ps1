@@ -65,6 +65,7 @@ $opensshResultPath = if ($env:FESTERM_OPENSSH_INTEROP_RESULT_PATH) {
     'openssh-interop-result.txt'
 }
 $nativeResultPath = 'native-smoke-window-result.txt'
+$emojiResultPath = 'native-emoji-smoke-result.txt'
 $status = 'pass'
 Set-Content -Path $ResultPath -Value 'status=running' -NoNewline
 
@@ -179,6 +180,23 @@ if ($nativePassed) {
     Add-Content -Path $ResultPath -Value "`nsuite=p4-native-window status=pass"
 } else {
     Add-Content -Path $ResultPath -Value "`nsuite=p4-native-window status=fail"
+    $status = 'fail'
+}
+
+Remove-Item $emojiResultPath -ErrorAction Ignore
+$env:FESTERM_NATIVE_EMOJI_SMOKE = '1'
+$env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $emojiResultPath
+& '.\target\debug\festerm.exe'
+$emojiPassed = $LASTEXITCODE -eq 0 -and
+    (Test-Path $emojiResultPath) -and
+    ((Get-Content $emojiResultPath -TotalCount 1) -eq 'status=pass')
+Remove-Item Env:FESTERM_NATIVE_EMOJI_SMOKE -ErrorAction Ignore
+Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
+Remove-Item $emojiResultPath -ErrorAction Ignore
+if ($emojiPassed) {
+    Add-Content -Path $ResultPath -Value "`nsuite=native-emoji status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=native-emoji status=fail"
     $status = 'fail'
 }
 

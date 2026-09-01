@@ -157,6 +157,30 @@ mod tests {
         Terminal::new(Dimensions::new(columns, rows).unwrap()).unwrap()
     }
 
+    fn unicode_emoji_15_1_fully_qualified() -> Vec<String> {
+        include_str!("../tests/fixtures/unicode/emoji-15.1/emoji-test.txt")
+            .lines()
+            .filter_map(|line| {
+                let (code_points, remainder) = line.split_once(';')?;
+                remainder
+                    .trim_start()
+                    .starts_with("fully-qualified")
+                    .then(|| {
+                        code_points
+                            .split_whitespace()
+                            .map(|code_point| {
+                                char::from_u32(
+                                    u32::from_str_radix(code_point, 16)
+                                        .expect("emoji data uses hexadecimal code points"),
+                                )
+                                .expect("emoji data contains valid scalar values")
+                            })
+                            .collect()
+                    })
+            })
+            .collect()
+    }
+
     #[test]
     #[ignore = "manual throughput probe, not a regression test"]
     fn manual_ingest_throughput_probe() {
@@ -1004,6 +1028,25 @@ mod tests {
                 (3, 0),
                 "{emoji}"
             );
+        }
+    }
+
+    #[test]
+    fn every_unicode_15_1_rgi_emoji_is_an_atomic_double_width_grapheme() {
+        for emoji in unicode_emoji_15_1_fully_qualified() {
+            let input = format!("{emoji}X");
+            let mut terminal = terminal(5, 1);
+            for byte in input.as_bytes() {
+                terminal.ingest(std::slice::from_ref(byte));
+            }
+            assert_eq!(terminal.cell(0, 0).unwrap().text(), emoji);
+            assert_eq!(
+                terminal.cell(0, 0).unwrap().width(),
+                CellWidth::Double,
+                "{emoji}"
+            );
+            assert!(terminal.cell(1, 0).unwrap().is_continuation(), "{emoji}");
+            assert_eq!(terminal.cell(2, 0).unwrap().text(), "X", "{emoji}");
         }
     }
 
