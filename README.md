@@ -24,10 +24,11 @@ configurable limits and selection remapping across reflow remain open.
 The application now provides local PTY, native SSH, and serial sessions;
 independent session chips; Launcher, Profiles, and Settings surfaces; command
 palette and native macOS menus; focus mode; selectable bundled terminal fonts
-and opt-in ligatures; autosaved versioned TOML profiles/interface settings;
-metadata-only workspace restoration; and native secret-store references for
-saved SSH passwords and private keys. Persistent host-key trust is explicit
-and non-secret.
+and opt-in ligatures; deterministic UAX #29 grapheme-width allocation with
+pinned monochrome/color emoji fallback ([ADR 0026](/fes/fesTerm/blob/main/docs/adr/0026-grapheme-width-and-color-emoji-fallback.md));
+autosaved versioned TOML profiles/interface settings; metadata-only workspace
+restoration; and native secret-store references for saved SSH passwords and
+private keys. Persistent host-key trust is explicit and non-secret.
 
 SSH uses an in-process `russh` transport with fingerprint-first host
 verification, password and in-memory OpenSSH-key authentication, remote PTY

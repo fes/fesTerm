@@ -271,3 +271,53 @@ remains broken in this specific environment; if it becomes usable again, its
 `sustained_output`/`resize_reflow` benchmarks are the natural home for a
 proper statistically rigorous regression guard, in place of the temporary
 manual probe test.
+
+## September 2026: grapheme-width allocation and color emoji fallback (ADR 0026)
+
+Issue #22 deliberately separated two problems when it closed: the bundled
+terminal-font and ligature policy it owned, and "the later deterministic
+script/color-emoji fallback policy," which it explicitly left for future work
+rather than claiming complete. ADR 0026 and PR #72 (merged as `942137f`)
+close that remaining gap without reopening #22 or weakening ADR 0012's
+cell-geometry authority.
+
+The core problem was allocation timing, not rendering. Emoji rarely arrive as
+a single scalar: a variation selector, zero-width joiner, skin-tone modifier,
+keycap mark, or regional-indicator pair can each land in a separate PTY read.
+Allocating cell width per scalar as it arrives misaligns trailing text the
+moment a later scalar changes an already-placed grapheme's width retroactively
+wrong; letting font shaping choose width instead would violate ADR 0012's rule
+that cell geometry is authoritative independent of fonts and pixels. The
+accepted design keeps the core answerable to Unicode alone: it incrementally
+extends the most recently written grapheme whenever UAX #29 says an appended
+scalar belongs to it, using pinned `unicode-segmentation`/`unicode-width`
+versions so the boundary and width answers cannot silently drift with an
+unrelated dependency bump. A grapheme is capped at 256 UTF-8 bytes; an
+extension that would exceed the cap becomes U+FFFD instead of growing
+unbounded, and a width promotion that cannot fit at the right margin either
+wraps (DECAWM enabled) or becomes U+FFFD (disabled) — always a deterministic
+core decision, never a renderer or font one.
+
+Color emoji needed a similar discipline on the rendering side. fesTerm bundles
+pinned Noto Emoji (monochrome, for egui's font-fallback chain) and Noto Color
+Emoji (bitmap, for composited color glyphs) with recorded provenance, rather
+than depending on inconsistent per-platform system emoji fonts. The renderer
+composites color glyph layers only inside the leading cell span the core
+already allocated — so a glyph can look like color emoji without ever being
+able to move the cursor, change a selection range, or alter hit-testing or
+resize geometry, which is the same invariant P6/ADR 0012 established for
+ligatures. To keep arbitrary remote output from turning emoji rendering into
+a memory-growth or CPU vector, the raster cache is capped at both an entry
+count (512 emoji/size pairs) and an approximate byte budget (32 MiB of RGBA
+texture data), clearing before either bound is exceeded, with raster request
+size, sequence length, layer count, and output dimensions all bounded too.
+
+Validation followed the same automation-first pattern as the other stories in
+this document: exhaustive core tests for every ICU emoji-presentation and
+emoji-property scalar, representative modifier/ZWJ/flag/keycap sequences,
+split-PTY-write boundaries, and margin-wrapping behavior, plus reviewed
+Windows rendered-frame snapshots proving cursor/selection geometry next to
+color glyphs. Native macOS and Linux appearance review, and the broader
+NP-05 manual color/scale judgment pass, remain open — `docs/manual-validation.md`
+and the M6 acceptance record's P6 row now say so explicitly rather than
+implying the ADR's Windows-only reviewed evidence was cross-platform.
