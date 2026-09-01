@@ -55,13 +55,14 @@ Before considering this milestone complete:
 4. Complete P5 evidence before making broader terminal or terminfo claims.
 5. Exercise both default one-cell rendering and opt-in ligatures with the
    selected bundled family; verify cursor, selection, hyperlinks, wide cells,
-   fallback glyphs, and resize geometry remain cell-authoritative.
+   fallback glyphs, and resize geometry remain cell-authoritative. Include the
+   Agency-style emoji fixture with VS16, ZWJ, keycap, and flag sequences.
 
 ## Reference Scenarios
 
 | Application | Scenario | Required observations |
 | --- | --- | --- |
-| GitHub Copilot CLI | Start an interactive session, type and paste text, resize, and exit | Alternate screen, focus, bracketed paste, cursor keys, resize, and restoration work together |
+| GitHub Copilot CLI | Start an interactive session, type and paste text, inspect status emoji, resize, and exit | Alternate screen, focus, bracketed paste, cursor keys, emoji/trailing-text alignment, resize, and restoration work together |
 | `less` | Open a local text file, navigate, resize, then quit | Alternate screen, scrolling, cursor movement, and primary-screen restoration work |
 | `vim` or `nvim` | Edit a scratch file, move with arrows, paste, resize, and quit | Cursor style, title updates, mouse/selection policy, colors, and alternate-screen restoration work |
 | `htop` or platform equivalent | Start, resize repeatedly, inspect updates, and quit | High-frequency redraw remains responsive; mouse reporting does not create local selection |

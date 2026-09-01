@@ -1278,6 +1278,25 @@ mod tests {
             &mut snapshots,
         );
 
+        let mut emoji_terminal = terminal(80, 24);
+        emoji_terminal.ingest(
+            "🤖 bot  🗑️ clean  ⚠️ warn  ℹ️ info  👩‍🔬 lab  1️⃣ key  🇺🇸 flag  aligned".as_bytes(),
+        );
+        let mut emoji = visual_harness(emoji_terminal);
+        emoji
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        emoji
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 5, row: 0 });
+        emoji.state_mut().view.selection.finish();
+        focus_terminal_grid(&mut emoji);
+        snapshot_after_structural_assertions(&mut emoji, "terminal-agency-emoji", &mut snapshots);
+
         let mut shaping_terminal = terminal(80, 24);
         shaping_terminal.ingest("== != -> wide \u{754c} combining e\u{301}".as_bytes());
         let mut shaping = visual_harness(shaping_terminal);

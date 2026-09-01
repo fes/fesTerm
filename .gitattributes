@@ -8,3 +8,4 @@ assets/fonts/**/*.md text eol=lf
 assets/fonts/**/*.toml text eol=lf
 assets/fonts/*/LICENSE text eol=lf
 assets/fonts/**/*.ttf binary
+assets/fonts/noto-emoji/OFL.txt whitespace=-blank-at-eol

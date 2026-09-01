@@ -476,6 +476,10 @@ The application is installable, configurable, observable, and suitable for broad
 - Accessibility and input-method review.
 - Performance budgets based on benchmark history.
 - Privacy-aware diagnostics bundle.
+
+The deterministic terminal fallback slice is implemented: ADR 0026 pins
+extended-grapheme width behavior plus owned monochrome and color emoji assets.
+Broader fallback controls and native typography evidence remain in M10.
 - Documentation for configuration, profiles, SSH, troubleshooting, and compatibility.
 
 ### Completion criteria

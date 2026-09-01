@@ -1,4 +1,7 @@
-use icu_properties::{props::GraphemeExtend, CodePointSetData};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+pub(crate) const MAX_GRAPHEME_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Utf8Advance {
@@ -76,6 +79,16 @@ impl Utf8Decoder {
     }
 }
 
-pub(crate) fn is_combining_character(character: char) -> bool {
-    character == '\u{200d}' || CodePointSetData::new::<GraphemeExtend>().contains(character)
+pub(crate) fn extends_grapheme(cluster: &str, character: char) -> bool {
+    if character.is_ascii() {
+        return false;
+    }
+    let mut candidate = String::with_capacity(cluster.len() + character.len_utf8());
+    candidate.push_str(cluster);
+    candidate.push(character);
+    candidate.graphemes(true).count() == 1
+}
+
+pub(crate) fn grapheme_width(cluster: &str) -> usize {
+    UnicodeWidthStr::width(cluster).min(2)
 }

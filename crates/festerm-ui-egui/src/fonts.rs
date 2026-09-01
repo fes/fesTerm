@@ -7,6 +7,10 @@
 use std::sync::Arc;
 
 use egui::{FontData, FontDefinitions, FontFamily};
+use icu_properties::{
+    props::{BasicEmoji, Emoji, EmojiPresentation},
+    CodePointSetData, EmojiSetData,
+};
 
 const INSTALLATION_MARKER: &str = "fesTerm bundled terminal font installation";
 const GENERATION_MARKER: &str = "fesTerm bundled terminal font generation";
@@ -19,6 +23,7 @@ const LIGATURE_REGULAR_DATA: &str = "fesTerm Selected Ligature Terminal Regular"
 const LIGATURE_BOLD_DATA: &str = "fesTerm Selected Ligature Terminal Bold";
 const LIGATURE_ITALIC_DATA: &str = "fesTerm Selected Ligature Terminal Italic";
 const LIGATURE_BOLD_ITALIC_DATA: &str = "fesTerm Selected Ligature Terminal Bold Italic";
+const EMOJI_DATA: &str = "fesTerm Noto Emoji";
 
 pub(crate) const REGULAR_FAMILY: &str = "fesTerm Terminal Regular";
 pub(crate) const BOLD_FAMILY: &str = "fesTerm Terminal Bold";
@@ -28,6 +33,59 @@ pub(crate) const LIGATURE_REGULAR_FAMILY: &str = "fesTerm Ligature Terminal Regu
 pub(crate) const LIGATURE_BOLD_FAMILY: &str = "fesTerm Ligature Terminal Bold";
 pub(crate) const LIGATURE_ITALIC_FAMILY: &str = "fesTerm Ligature Terminal Italic";
 pub(crate) const LIGATURE_BOLD_ITALIC_FAMILY: &str = "fesTerm Ligature Terminal Bold Italic";
+pub(crate) const EMOJI_FAMILY: &str = "fesTerm Emoji";
+
+pub(crate) const COLOR_EMOJI_BYTES: &[u8] =
+    include_bytes!("../../../assets/fonts/noto-emoji/NotoColorEmoji.ttf");
+
+#[cfg(test)]
+pub(crate) const COMPLEX_COLOR_EMOJI_TEST_CASES: &[&str] = &[
+    "👋🏻",
+    "👍🏽",
+    "🧑🏿",
+    "👩‍🔬",
+    "👨‍💻",
+    "🧑🏽‍🚀",
+    "👨‍👩‍👧‍👦",
+    "🏃‍♀️",
+    "🏳️‍🌈",
+    "🏴‍☠️",
+    "❤️‍🔥",
+    "🇺🇸",
+    "🇨🇦",
+    "🇯🇵",
+    "🇧🇷",
+    "🇿🇦",
+    "🇪🇺",
+    "🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+];
+
+pub(crate) fn is_color_emoji(text: &str) -> bool {
+    if text.contains('\u{fe0e}') {
+        return false;
+    }
+    if let Some(character) = text.strip_suffix('\u{fe0f}').and_then(single_character) {
+        return CodePointSetData::new::<Emoji>().contains(character);
+    }
+    if let Some(character) = single_character(text) {
+        return CodePointSetData::new::<EmojiPresentation>().contains(character);
+    }
+    if EmojiSetData::new::<BasicEmoji>().contains_str(text) {
+        return true;
+    }
+    let has_sequence_marker =
+        text.contains(['\u{fe0f}', '\u{200d}', '\u{20e3}']) || text.chars().count() > 1;
+    has_sequence_marker
+        && text
+            .chars()
+            .any(|character| CodePointSetData::new::<Emoji>().contains(character))
+}
+
+fn single_character(text: &str) -> Option<char> {
+    let mut characters = text.chars();
+    let character = characters.next()?;
+    characters.next().is_none().then_some(character)
+}
 
 /// A bundled primary terminal family. These identifiers are independent of
 /// platform font discovery and remain stable across operating systems.
@@ -169,6 +227,12 @@ fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
         .cloned()
         .expect("egui provides a default monospace fallback family");
     let assets = font_assets(family);
+    definitions.font_data.insert(
+        EMOJI_DATA.to_owned(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf"
+        ))),
+    );
 
     for (name, bytes) in [
         (REGULAR_DATA, assets.regular),
@@ -202,6 +266,7 @@ fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
     ] {
         let mut chain = Vec::with_capacity(fallback.len() + 1);
         chain.push(primary.to_owned());
+        chain.push(EMOJI_DATA.to_owned());
         chain.extend(fallback.iter().cloned());
         definitions
             .families
@@ -226,11 +291,18 @@ fn terminal_font_definitions(family: TerminalFontFamily) -> FontDefinitions {
     ] {
         let mut chain = Vec::with_capacity(fallback.len() + 1);
         chain.push(primary.to_owned());
+        chain.push(EMOJI_DATA.to_owned());
         chain.extend(fallback.iter().cloned());
         definitions
             .families
             .insert(FontFamily::Name(font_family.into()), chain);
     }
+    definitions.families.insert(
+        FontFamily::Name(EMOJI_FAMILY.into()),
+        std::iter::once(EMOJI_DATA.to_owned())
+            .chain(fallback)
+            .collect(),
+    );
 
     definitions
 }
@@ -306,7 +378,96 @@ mod tests {
                     .expect("terminal face has a named family");
                 assert_eq!(chain.first().map(String::as_str), Some(primary));
                 assert!(definitions.font_data.contains_key(primary));
-                assert!(chain.len() > 1, "missing glyphs must retain fallback");
+                assert_eq!(chain.get(1).map(String::as_str), Some(EMOJI_DATA));
+                assert!(chain.len() > 2, "missing glyphs must retain fallback");
+            }
+        }
+    }
+
+    #[test]
+    fn owned_emoji_fallback_covers_agency_status_glyphs() {
+        let face = ttf_parser::Face::parse(
+            include_bytes!("../../../assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf"),
+            0,
+        )
+        .unwrap();
+        for character in "🤖📁📂🧹🔗📊📥🧠📦🗑🔑🚀💡🔧🔄🔌🔐🧩🔀🔒🔷🟢📌📣⚠ℹ▶".chars()
+        {
+            assert!(
+                face.glyph_index(character).is_some(),
+                "Noto Emoji lacks {character}"
+            );
+        }
+    }
+
+    #[test]
+    fn owned_monochrome_fallback_covers_the_complex_test_corpus() {
+        let face = ttf_parser::Face::parse(
+            include_bytes!("../../../assets/fonts/noto-emoji/NotoEmoji-VariableFont_wght.ttf"),
+            0,
+        )
+        .unwrap();
+        for text in COMPLEX_COLOR_EMOJI_TEST_CASES
+            .iter()
+            .copied()
+            .chain(["#️⃣", "*️⃣", "0️⃣", "1️⃣", "9️⃣"])
+        {
+            for character in text
+                .chars()
+                .filter(|character| CodePointSetData::new::<Emoji>().contains(*character))
+            {
+                assert!(
+                    face.glyph_index(character).is_some(),
+                    "Noto Emoji lacks U+{:04X} {character} from {text}",
+                    character as u32
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn emoji_presentation_detection_respects_variation_selectors_and_sequences() {
+        for emoji in ["🤖", "⚠️", "ℹ️", "🗑️", "1️⃣", "#️⃣", "*️⃣"]
+            .into_iter()
+            .chain(COMPLEX_COLOR_EMOJI_TEST_CASES.iter().copied())
+        {
+            assert!(
+                is_color_emoji(emoji),
+                "{emoji} should use emoji presentation"
+            );
+        }
+        for text in ["A", "界", "e\u{301}", "क\u{94d}", "✓", "▶", "⚠︎", "ℹ︎", "☀︎"]
+        {
+            assert!(
+                !is_color_emoji(text),
+                "{text} should remain text presentation"
+            );
+        }
+    }
+
+    #[test]
+    fn every_default_emoji_presentation_scalar_is_classified_for_color() {
+        let emoji = CodePointSetData::new::<Emoji>();
+        for range in CodePointSetData::new::<EmojiPresentation>().iter_ranges() {
+            for code_point in range {
+                let text = char::from_u32(code_point).unwrap().to_string();
+                assert!(
+                    is_color_emoji(&text),
+                    "U+{code_point:04X} should use color presentation"
+                );
+            }
+        }
+        for range in emoji.iter_ranges() {
+            for code_point in range {
+                let character = char::from_u32(code_point).unwrap();
+                assert!(
+                    is_color_emoji(&format!("{character}\u{fe0f}")),
+                    "U+{code_point:04X} with VS16 should use color presentation"
+                );
+                assert!(
+                    !is_color_emoji(&format!("{character}\u{fe0e}")),
+                    "U+{code_point:04X} with VS15 should use text presentation"
+                );
             }
         }
     }

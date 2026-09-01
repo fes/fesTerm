@@ -122,7 +122,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Hyperlinks | Preserve safe OSC 8 metadata without automatic activation | partial | Core and renderer metadata tests |
 | Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
-| Emoji and fallback | Preserve cell layout across fallback fonts | partial | Core simple-emoji test plus a production hard boundary around non-ASCII/fallback cells; deterministic script and color-emoji policy remains future work |
+| Emoji and fallback | Preserve cell layout across fallback fonts | passing | Incremental extended-grapheme tests for VS16, ZWJ, keycap, flag, split-write, and margin behavior; owned monochrome Noto Emoji fallback; bounded color rasterization tests for Agency status glyphs; reviewed geometry snapshot |
 | Ligatures | Shape supported runs without moving cursor or selection boundaries | implemented; default off | Four selectable bundled families, immutable P6 cell geometry, generation-safe caches, bounded ASCII runs, representative operator tests, and reviewed snapshots |
 | High output | Remain interactive under sustained output | passing | Core benchmark; M4 dirty-cache, input, and resize workload test |
 | Scrollback | Scroll and select smoothly near configured limits | passing | M9 bounded-memory core fixtures and GUI viewport integration; eviction fallback and disconnected read-only history remain #43 |
@@ -222,8 +222,8 @@ The test environment must own its configuration and credentials and must not con
 - Exact xterm feature or version references used for ambiguous behavior.
 - `TERM=xterm-256color` is the M6 local interoperability baseline; a custom
   `festerm` entry awaits M10 packaging so it can be installed reliably.
-- Unicode width table source and update policy.
-- Grapheme and complex-script policy.
+- Complex-script shaping policy beyond the accepted ADR 0026 grapheme and
+  emoji scope.
 - Reflow semantics when the terminal width changes.
 - Clipboard escape-sequence policy.
 - Support level for OSC 8 hyperlinks.
