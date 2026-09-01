@@ -1,3 +1,9 @@
+// Hide the console window a Windows binary otherwise defaults to (the
+// "parent shell" behind the GUI window on launch). Kept for debug builds so
+// `tracing`/`println!` diagnostics stay visible on the console while
+// iterating locally.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod configuration_startup;
 mod diagnostics;

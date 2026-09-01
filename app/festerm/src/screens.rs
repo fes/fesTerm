@@ -2749,6 +2749,7 @@ const EXECUTABLE_SUGGESTION_LIMIT: usize = 6;
 /// a bare name is equally valid — it is resolved against `PATH` normally
 /// when the profile launches.
 fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut String) {
+    let dropdown_rect_id = autocomplete_id.with("suggestions-rect");
     ui.vertical(|ui| {
         let field = ui
             .horizontal(|ui| {
@@ -2768,12 +2769,32 @@ fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut St
             suppress = false;
         }
 
-        if field.has_focus() && !suppress && !value.trim().is_empty() {
+        // A real mouse click on a suggestion first lands here as a click
+        // "elsewhere" as far as the text field is concerned, so egui drops
+        // the field's focus *before* this function runs again this frame.
+        // Without this fallback, `field.has_focus()` would already be false
+        // by the time we decide whether to show the dropdown, so the
+        // suggestion would vanish out from under the click and never
+        // receive it. Keep the dropdown alive for this frame if the click
+        // that just happened started inside last frame's dropdown rect.
+        let last_dropdown_rect: Option<egui::Rect> =
+            ui.data(|data| data.get_temp(dropdown_rect_id));
+        let click_started_in_dropdown = ui.input(|input| {
+            input.pointer.primary_clicked()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .zip(last_dropdown_rect)
+                    .is_some_and(|(pos, rect)| rect.contains(pos))
+        });
+
+        if (field.has_focus() || click_started_in_dropdown) && !suppress && !value.trim().is_empty()
+        {
             let suggestions =
                 festerm_pty::search_path_executables(value.trim(), EXECUTABLE_SUGGESTION_LIMIT);
             if !suggestions.is_empty() {
                 ui.add_space(4.0);
-                egui::Frame::new()
+                let dropdown = egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE)
                     .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
                     .corner_radius(6.0)
@@ -2781,13 +2802,28 @@ fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut St
                     .show(ui, |ui| {
                         for candidate in &suggestions {
                             let text = candidate.display().to_string();
-                            if ui.selectable_label(false, &text).clicked() {
+                            // Force a single line and an explicit bright color:
+                            // the default inactive-widget text style is dim
+                            // (hard to read against the suggestion frame), and
+                            // wrapping onto a second line makes long absolute
+                            // paths harder to scan at a glance.
+                            let response = ui.add(
+                                egui::Button::selectable(
+                                    false,
+                                    egui::RichText::new(&text).color(theme::TEXT_PRIMARY),
+                                )
+                                .wrap_mode(egui::TextWrapMode::Extend),
+                            );
+                            if response.clicked() {
                                 *value = text;
                                 suppress = true;
                             }
                         }
                     });
+                ui.data_mut(|data| data.insert_temp(dropdown_rect_id, dropdown.response.rect));
             }
+        } else {
+            ui.data_mut(|data| data.remove::<egui::Rect>(dropdown_rect_id));
         }
         ui.data_mut(|data| data.insert_temp(autocomplete_id, suppress));
     });
@@ -5267,6 +5303,43 @@ mod tests {
         assert!(harness
             .query_by_label("Enter a name and a non-empty executable.")
             .is_some());
+    }
+
+    #[test]
+    fn local_profile_executable_field_survives_a_real_pointer_click_on_a_suggestion() {
+        // Unlike the sibling test above, this uses a raw `.click()` (a
+        // synthetic pointer press/release), matching what a real mouse click
+        // does: it first defocuses the text field as a "click elsewhere",
+        // which used to hide the dropdown out from under the click before
+        // the suggestion ever received it.
+        let Some(expected_path) = festerm_pty::search_path_executables("cargo", 1)
+            .into_iter()
+            .next()
+        else {
+            panic!("`cargo` must be discoverable on PATH while running under `cargo test`");
+        };
+
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+        harness.get_by_label("Executable").focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Executable").type_text("cargo");
+        harness.run();
+
+        let expected_label = expected_path.display().to_string();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, &expected_label)
+            .click();
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Executable").value().as_deref(),
+            Some(expected_label.as_str()),
+            "a raw pointer click on a PATH suggestion must fill the field with its absolute path"
+        );
     }
 
     #[test]

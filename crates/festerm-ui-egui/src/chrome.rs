@@ -12,9 +12,11 @@
 //! returned [`ChromeAction`] values into application commands per
 //! `docs/application-command-model.md`.
 
+use egui::viewport::ResizeDirection;
 use egui::{
-    emath::TSTransform, vec2, Align, Align2, Color32, DragAndDrop, Id, Key, LayerId, Layout, Order,
-    Popup, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, WidgetInfo, WidgetType,
+    emath::TSTransform, vec2, Align, Align2, Color32, CursorIcon, DragAndDrop, Id, Key, LayerId,
+    Layout, Order, PointerButton, Popup, Rect, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui,
+    UiBuilder, WidgetInfo, WidgetType,
 };
 
 use crate::{icon, icon::Icon, theme};
@@ -514,27 +516,46 @@ pub fn show(
         if matches!(layout, ChipLayout::SingleRowScroll) && allocation.scrolling {
             paint_new_chip_button(ui, chip_row_height, &mut actions);
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add_space(CHROME_SIDE_INSET);
-            if !cfg!(target_os = "macos") {
-                paint_close_icon(ui);
-                let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
-                paint_maximize_icon(ui, maximized);
-                paint_minimize_icon(ui);
-            }
-            paint_overflow_menu(
-                ui,
-                !show_search,
-                inspector_available && !show_inspector,
-                &mut actions,
-            );
-            if show_inspector && paint_panel_icon(ui, inspector_open) {
-                actions.push(ChromeAction::ToggleInspector);
-            }
-            if show_search && paint_search_icon(ui) {
-                actions.push(ChromeAction::TogglePalette);
-            }
-        });
+        // Anchor this block to the same fixed rect used to paint `band_rect`
+        // (rather than inheriting whatever height this outer `ui` happens to
+        // report at this point) so its `Align::Center` vertical center lands
+        // on exactly the chips' own center line regardless of anything the
+        // chip row/scroll area above did to this `ui`'s reported cursor or
+        // remaining height while painting - the earlier
+        // `set_min_height`/`set_max_height` calls constrain layout of the
+        // *chip row*, but this statement runs after that content and a
+        // platform's text/scroll-area metrics could otherwise leave this
+        // `ui`'s own remaining rect subtly taller than `chip_row_height`.
+        let trailing_controls_rect = egui::Rect::from_min_size(
+            band_rect.min + vec2(0.0, CHROME_TOP_INSET),
+            vec2(band_rect.width(), chip_row_height),
+        );
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(trailing_controls_rect)
+                .layout(Layout::right_to_left(Align::Center)),
+            |ui| {
+                ui.add_space(CHROME_SIDE_INSET);
+                if !cfg!(target_os = "macos") {
+                    paint_close_icon(ui);
+                    let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                    paint_maximize_icon(ui, maximized);
+                    paint_minimize_icon(ui);
+                }
+                paint_overflow_menu(
+                    ui,
+                    !show_search,
+                    inspector_available && !show_inspector,
+                    &mut actions,
+                );
+                if show_inspector && paint_panel_icon(ui, inspector_open) {
+                    actions.push(ChromeAction::ToggleInspector);
+                }
+                if show_search && paint_search_icon(ui) {
+                    actions.push(ChromeAction::TogglePalette);
+                }
+            },
+        );
     });
     // Egui input events are global to the frame. The terminal view is painted
     // after this band and must not encode mouse gestures already claimed by
@@ -549,6 +570,122 @@ pub fn show(
         });
     });
     actions
+}
+
+/// Thin, invisible hit zones along the window's edges/corners that forward
+/// drag starts to the platform window via [`egui::ViewportCommand::BeginResize`].
+///
+/// Disabling native OS decorations (`with_decorations(false)` on non-macOS
+/// platforms, `app/festerm/src/main.rs`) removes the OS-provided resize
+/// borders along with the native title bar; this restores that interaction.
+/// The actual resizing is still performed by the windowing system - this
+/// only detects the pointer gesture and forwards it, the same way
+/// `ViewportCommand::Minimized`/`Maximized`/`Close` are sent directly for
+/// the painter-drawn window controls above rather than routed through
+/// `ChromeAction`/the application command model (an OS-window-level action
+/// with no application-state implications).
+///
+/// No-op while the window is fullscreen or maximized (there is no edge to
+/// grab), and only meaningful where native decorations are off, so callers
+/// should skip it on macOS.
+pub fn handle_resize_border(ui: &Ui) {
+    let fullscreen = ui.ctx().input(|i| i.viewport().fullscreen).unwrap_or(false);
+    let maximized = ui.ctx().input(|i| i.viewport().maximized).unwrap_or(false);
+    if fullscreen || maximized {
+        return;
+    }
+
+    let rect = ui.max_rect();
+    const RESIZE_MARGIN: f32 = 6.0;
+    const CORNER_SIZE: f32 = 16.0;
+
+    // Corners get larger square hit zones so diagonal resizing is easy to
+    // grab; edges get thin strips spanning between the corners.
+    let regions = [
+        (
+            Rect::from_min_max(
+                rect.left_top(),
+                rect.left_top() + vec2(CORNER_SIZE, CORNER_SIZE),
+            ),
+            ResizeDirection::NorthWest,
+            CursorIcon::ResizeNorthWest,
+            "chrome_resize_nw",
+        ),
+        (
+            Rect::from_min_max(
+                rect.right_top() - vec2(CORNER_SIZE, 0.0),
+                rect.right_top() + vec2(0.0, CORNER_SIZE),
+            ),
+            ResizeDirection::NorthEast,
+            CursorIcon::ResizeNorthEast,
+            "chrome_resize_ne",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_bottom() - vec2(0.0, CORNER_SIZE),
+                rect.left_bottom() + vec2(CORNER_SIZE, 0.0),
+            ),
+            ResizeDirection::SouthWest,
+            CursorIcon::ResizeSouthWest,
+            "chrome_resize_sw",
+        ),
+        (
+            Rect::from_min_max(
+                rect.right_bottom() - vec2(CORNER_SIZE, CORNER_SIZE),
+                rect.right_bottom(),
+            ),
+            ResizeDirection::SouthEast,
+            CursorIcon::ResizeSouthEast,
+            "chrome_resize_se",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_top() + vec2(CORNER_SIZE, 0.0),
+                rect.right_top() + vec2(-CORNER_SIZE, RESIZE_MARGIN),
+            ),
+            ResizeDirection::North,
+            CursorIcon::ResizeNorth,
+            "chrome_resize_n",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_bottom() + vec2(CORNER_SIZE, -RESIZE_MARGIN),
+                rect.right_bottom() + vec2(-CORNER_SIZE, 0.0),
+            ),
+            ResizeDirection::South,
+            CursorIcon::ResizeSouth,
+            "chrome_resize_s",
+        ),
+        (
+            Rect::from_min_max(
+                rect.left_top() + vec2(0.0, CORNER_SIZE),
+                rect.left_bottom() + vec2(RESIZE_MARGIN, -CORNER_SIZE),
+            ),
+            ResizeDirection::West,
+            CursorIcon::ResizeWest,
+            "chrome_resize_w",
+        ),
+        (
+            Rect::from_min_max(
+                rect.right_top() + vec2(-RESIZE_MARGIN, CORNER_SIZE),
+                rect.right_bottom() + vec2(0.0, -CORNER_SIZE),
+            ),
+            ResizeDirection::East,
+            CursorIcon::ResizeEast,
+            "chrome_resize_e",
+        ),
+    ];
+
+    for (region_rect, direction, cursor_icon, id) in regions {
+        let response = ui.interact(region_rect, ui.id().with(id), Sense::click_and_drag());
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(cursor_icon);
+        }
+        if response.drag_started_by(PointerButton::Primary) {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+        }
+    }
 }
 
 /// Compact "add chip" control placed right after the last chip, painted

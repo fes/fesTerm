@@ -327,6 +327,11 @@ fn create_native_configuration_directory(directory: &std::path::Path) -> std::io
 
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
+    // `recursive` also creates any missing parent components (e.g. the
+    // organization directory), matching the Windows/other-platform path
+    // below; a plain non-recursive `create` would fail here on a fresh
+    // install where no ancestor of the config directory exists yet.
+    builder.recursive(true);
     match builder.create(directory) {
         Ok(()) => Ok(()),
         Err(_error) if directory.is_dir() => Ok(()),
@@ -336,7 +341,14 @@ fn create_native_configuration_directory(directory: &std::path::Path) -> std::io
 
 #[cfg(not(unix))]
 fn create_native_configuration_directory(directory: &std::path::Path) -> std::io::Result<()> {
-    match fs::create_dir(directory) {
+    // `create_dir_all` (not `create_dir`) because on a fresh install no
+    // ancestor of the config directory exists yet either (e.g. on Windows
+    // this is `%APPDATA%\fes\fesTerm\config`, and neither `fes` nor
+    // `fes\fesTerm` exist beforehand) — a single-level `create_dir` fails
+    // with a not-found error whenever any parent is missing, which
+    // previously made every automatic save (including the very first
+    // profile) fail silently.
+    match fs::create_dir_all(directory) {
         Ok(()) => Ok(()),
         Err(_error) if directory.is_dir() => Ok(()),
         Err(error) => Err(error),
@@ -596,6 +608,33 @@ mod tests {
                 0
             );
         }
+        let loaded =
+            Configuration::load_from_path(native_directory.join(CONFIG_FILE_NAME)).unwrap();
+        assert_eq!(loaded, configuration);
+    }
+
+    #[test]
+    fn explicit_profile_save_creates_missing_ancestor_directories_and_loads() {
+        // On a fresh install, `native_config_directory()`'s Windows path is
+        // `%APPDATA%\fes\fesTerm\config`, where *no* ancestor exists yet
+        // (not even the top-level organization directory), unlike the
+        // single-missing-level case above. A non-recursive directory
+        // creation call previously failed here, so saving even the very
+        // first profile silently did nothing.
+        let directory = TestDirectory::new();
+        let native_directory = directory.path().join("org").join("app").join("config");
+        let source = select_configuration_source(None, Some(native_directory.clone())).unwrap();
+        let reloader = ConfigurationReloader::from_source_selection(Ok(source));
+        let profile =
+            festerm_config::Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap();
+        let configuration = Configuration::empty().with_profile(profile).unwrap();
+
+        assert!(!native_directory.parent().unwrap().exists());
+        assert_eq!(
+            reloader.save_profile(&configuration),
+            ConfigurationStartupStatus::ProfileSaved
+        );
+        assert!(native_directory.is_dir());
         let loaded =
             Configuration::load_from_path(native_directory.join(CONFIG_FILE_NAME)).unwrap();
         assert_eq!(loaded, configuration);

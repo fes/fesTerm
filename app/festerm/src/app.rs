@@ -465,6 +465,13 @@ impl FesTermApp {
         } else {
             configuration.without_workspace()
         };
+        // fesTerm only ships a single dark theme. Pin egui's active theme
+        // explicitly rather than trusting `ThemePreference::System`: on
+        // Windows the OS frequently reports a light system theme, which
+        // would otherwise make `set_visuals` below write into the *inactive*
+        // dark style slot while egui keeps rendering with the untouched
+        // (light-on-light-background text) default light style.
+        context.set_theme(egui::ThemePreference::Dark);
         // One semantic blue-graphite default for application surfaces and
         // widgets. Terminal ANSI and explicit RGB colors remain independent.
         context.set_visuals(theme::default_visuals());
@@ -2769,6 +2776,13 @@ impl FesTermApp {
         self.updates.poll();
         if self.updates.status().is_busy() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
+        // Native decorations (and the OS resize border they carry) are only
+        // enabled on macOS (`main.rs`); every other platform needs this
+        // painter-drawn substitute. Runs first, over the full window rect,
+        // before any nested layout below narrows `ui`'s `max_rect`.
+        if !cfg!(target_os = "macos") {
+            chrome::handle_resize_border(ui);
         }
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
