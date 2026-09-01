@@ -7,13 +7,21 @@ mod imp {
     use std::{io, mem, ptr};
 
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, GetLastError, GENERIC_ALL, HANDLE},
+        Foundation::{
+            CloseHandle, GetLastError, SetHandleInformation, GENERIC_ALL, HANDLE,
+            HANDLE_FLAG_INHERIT,
+        },
         Security::{
             AddAccessAllowedAceEx, GetLengthSid, GetTokenInformation, InitializeAcl,
             SetTokenInformation, TokenDefaultDacl, TokenUser, ACL, ACL_REVISION,
             TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL, TOKEN_QUERY, TOKEN_USER,
         },
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
+        System::{
+            Console::{
+                GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+            },
+            Threading::{GetCurrentProcess, OpenProcessToken},
+        },
     };
 
     /// Restores the process token's original default DACL and closes the token.
@@ -157,7 +165,36 @@ mod imp {
             Ok(())
         }
     }
+
+    /// Clears `HANDLE_FLAG_INHERIT` on this process's own stdin/stdout/stderr
+    /// handles, if any are set.
+    ///
+    /// Spawning a child process that redirects its own stdio (even to NUL)
+    /// forces Windows to create it with `bInheritHandles = TRUE`, which
+    /// duplicates *every* inheritable handle in this process into the
+    /// child — not just the three explicitly redirected ones. If this
+    /// process's own stdout or stderr was itself piped by its caller (as
+    /// `festerm-sessiond start`'s is by fesTerm, which reads the pipe via
+    /// `Command::output()`), that pipe's write end is inheritable by
+    /// default. A long-lived, deliberately detached grandchild (fesTerm's
+    /// persistence daemon) would otherwise inherit a duplicate write
+    /// handle to it; since the daemon never exits, that duplicate handle
+    /// would keep the pipe open forever and hang the caller's blocking
+    /// read. Call this immediately before spawning such a child.
+    pub fn disable_std_handle_inheritance() {
+        const STD_HANDLES: [STD_HANDLE; 3] =
+            [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE];
+        for which in STD_HANDLES {
+            let handle = unsafe { GetStdHandle(which) };
+            if handle.is_null() || handle as isize == -1 {
+                continue;
+            }
+            let _ = unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+        }
+    }
 }
 
 #[cfg(windows)]
-pub use imp::{restrict_default_dacl_to_current_user, DefaultDaclGuard};
+pub use imp::{
+    disable_std_handle_inheritance, restrict_default_dacl_to_current_user, DefaultDaclGuard,
+};

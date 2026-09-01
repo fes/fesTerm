@@ -379,6 +379,21 @@ fn run_start(
         command.spawn()?
     };
 
+    // Redirecting the daemon's own stdio (even to NUL) forces Windows to
+    // create it with bInheritHandles = TRUE, which duplicates *every*
+    // inheritable handle in this process into the daemon — not just the
+    // three we explicitly redirect. When this "start" helper's own stdout
+    // or stderr was piped by its caller (see `connect_or_start`, which
+    // reads `Command::output()` on this very process), that pipe's write
+    // end is inheritable, so the long-lived, deliberately detached daemon
+    // grandchild would otherwise inherit a duplicate write handle to it.
+    // Since the daemon never exits, that duplicate handle never closes,
+    // so the caller's blocking read of the pipe (waiting for EOF) hangs
+    // forever. Clearing the inherit flag on our own std handles before
+    // spawning the daemon prevents that leak.
+    #[cfg(windows)]
+    festerm_windows_security::disable_std_handle_inheritance();
+
     #[cfg(windows)]
     let mut daemon = {
         let mut command = Command::new(&exe);
