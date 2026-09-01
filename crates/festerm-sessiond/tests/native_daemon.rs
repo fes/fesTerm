@@ -103,6 +103,82 @@ fn native_daemon_survives_launcher_and_supports_input_replay_and_takeover() {
     let _terminated_status = daemon.wait().unwrap();
 }
 
+/// Regression test for the Windows handle-inheritance leak fixed alongside
+/// this test: `connect_or_start` (crates/festerm-sessiond/src/lib.rs) spawns
+/// `festerm-sessiond start` with a piped stderr and reads it via
+/// `Command::output()`, which blocks until that pipe reaches EOF. Before the
+/// fix, `run_start`'s own spawn of the detached "daemon" grandchild (which
+/// redirects its own stdio to NUL) forced `bInheritHandles = TRUE`, which
+/// duplicated the caller's inherited stderr-pipe write handle into that
+/// long-lived, never-exiting daemon -- so the pipe never reached EOF and
+/// `output()` hung forever.
+///
+/// The other test above deliberately manages the Windows daemon process
+/// itself (spawning the "daemon" subcommand directly with all-NUL stdio) and
+/// so never exercises this "start" + piped-stderr path at all. This test
+/// exercises exactly that path, bounded by an explicit watchdog timeout so a
+/// regression fails the test instead of hanging the test binary (and CI)
+/// indefinitely the way it hung fesTerm's own UI thread.
+#[cfg(windows)]
+#[test]
+#[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
+fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_alive() {
+    use std::{process::Stdio, thread};
+
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let name = format!("native-start-{suffix}");
+    let runtime_root = short_runtime_root(&suffix);
+    fs::create_dir_all(&runtime_root).unwrap();
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime_root.clone(),
+        name: name.clone(),
+    };
+
+    // Mirrors `connect_or_start`'s exact stdio configuration: stdin
+    // discarded, stdout discarded, stderr piped and read to completion via
+    // `output()` (which also waits for the child to exit).
+    let mut command = daemon_command(&executable, &runtime_root);
+    command
+        .args(["start", "--name", &name, "--shell"])
+        .arg(test_shell(&executable));
+    for argument in test_shell_arguments() {
+        command.arg("--arg").arg(argument);
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let handle = thread::spawn(move || {
+        let result = command.output();
+        let _ = result_tx.send(());
+        result
+    });
+
+    const HANG_TIMEOUT: Duration = Duration::from_secs(15);
+    if result_rx.recv_timeout(HANG_TIMEOUT).is_err() {
+        panic!(
+            "festerm-sessiond start with piped stderr did not complete within {HANG_TIMEOUT:?}; \
+             this is the leaked-handle hang this test guards against"
+        );
+    }
+    let output = handle
+        .join()
+        .expect("the start command's watcher thread must not panic")
+        .expect("spawning festerm-sessiond start must succeed");
+    assert_success("start", &output);
+}
+
 #[cfg(unix)]
 fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
     let mut command = daemon_command(executable, runtime_root);

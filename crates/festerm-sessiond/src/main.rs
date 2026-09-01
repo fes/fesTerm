@@ -22,6 +22,8 @@ use std::os::unix::{
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
+use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
 };
@@ -396,32 +398,58 @@ fn run_start(
 
     #[cfg(windows)]
     let mut daemon = {
-        let mut command = Command::new(&exe);
-        command
-            .arg("daemon")
-            .arg("--name")
-            .arg(&name)
-            .arg("--shell")
-            .arg(&shell.executable)
-            .arg("--cols")
-            .arg(cols.to_string())
-            .arg("--rows")
-            .arg(rows.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            // Failing to break away is preferable to starting a "persistent"
-            // daemon that dies when the caller's KILL_ON_JOB_CLOSE job closes.
-            .creation_flags(
-                CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB,
-            );
-        for argument in &shell.arguments {
-            command.arg("--arg").arg(argument);
+        // `CREATE_BREAKAWAY_FROM_JOB` fails with `ERROR_ACCESS_DENIED` (os
+        // error 5) whenever our own process is already a member of a job
+        // object that does not grant `JOB_OBJECT_LIMIT_BREAKAWAY_OK`. That is
+        // not a hypothetical: Cargo places `cargo run`/`cargo test` child
+        // processes in exactly such a job on Windows, and other launchers
+        // (sandboxes, some IDEs/service managers) do the same. Without a
+        // fallback, starting a persistent session from any of those contexts
+        // would fail outright instead of degrading gracefully. So: try to
+        // break away first (the common case, e.g. launched from the fesTerm
+        // GUI or an ordinary shell), and if that specific error occurs,
+        // retry without the flag — the daemon will then share our job and
+        // may die when it closes, but that is strictly better than refusing
+        // to start at all.
+        let build_command = |creation_flags: u32| {
+            let mut command = Command::new(&exe);
+            command
+                .arg("daemon")
+                .arg("--name")
+                .arg(&name)
+                .arg("--shell")
+                .arg(&shell.executable)
+                .arg("--cols")
+                .arg(cols.to_string())
+                .arg("--rows")
+                .arg(rows.to_string())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(creation_flags);
+            for argument in &shell.arguments {
+                command.arg("--arg").arg(argument);
+            }
+            if let Some(working_directory) = &shell.working_directory {
+                command.arg("--cwd").arg(working_directory);
+            }
+            command
+        };
+
+        match build_command(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
+                eprintln!(
+                    "festerm-sessiond: could not break away from the current job object \
+                     (it likely disallows JOB_OBJECT_LIMIT_BREAKAWAY_OK); starting session \
+                     '{name}' without breakaway, so it may not outlive this process's job"
+                );
+                build_command(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS).spawn()?
+            }
+            Err(error) => return Err(error.into()),
         }
-        if let Some(working_directory) = &shell.working_directory {
-            command.arg("--cwd").arg(working_directory);
-        }
-        command.spawn()?
     };
     let daemon_pid = daemon.id();
 
