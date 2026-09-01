@@ -263,7 +263,33 @@ impl Screen {
         let fill = blank_cell();
         self.repair_neighborhood(row, column, &fill);
         self.repair_neighborhood(row, column + cluster_columns, &fill);
-        self.recompute_occupied(row);
+        self.extend_occupied_or_recompute(row, column, cluster_columns);
+    }
+
+    /// Updates `occupied_columns` after writing an occupied cluster at
+    /// `[column, column + width)`. Printing strictly at or beyond the row's
+    /// previously known occupied extent - the overwhelmingly common case
+    /// for left-to-right terminal output - can extend the tracked extent
+    /// in `O(1)` instead of [`Self::recompute_occupied`]'s full-row scan,
+    /// because nothing occupied exists past the old extent for
+    /// [`Self::repair_neighborhood`] to have invalidated (a `Single` cell,
+    /// which is what every ordinary printed character is, is also never a
+    /// `repair_neighborhood` target: see [`Self::repair_cell`]'s
+    /// `CellWidth::Single => false`). Any other write - overwriting
+    /// mid-row via cursor movement, for example - falls back to the
+    /// authoritative full-row scan, since a wide-character pair broken by
+    /// the overwrite could shrink the true occupied extent in a way this
+    /// shortcut can't detect. This was the dominant per-character cost
+    /// behind fesTerm's raw ingest throughput: profiling a `dir /s`-style
+    /// workload showed most ingest time went into rescanning an entire
+    /// (already fully occupied) row on every single printed character.
+    fn extend_occupied_or_recompute(&mut self, row: usize, column: usize, width: usize) {
+        let physical_row = self.physical_row(row);
+        if column >= self.occupied_columns[physical_row] {
+            self.occupied_columns[physical_row] = column + width;
+        } else {
+            self.recompute_occupied(row);
+        }
     }
 
     pub(crate) fn fill_linear(&mut self, start: usize, end: usize, cell: Cell) {

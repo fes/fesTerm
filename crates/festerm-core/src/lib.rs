@@ -1024,6 +1024,41 @@ mod tests {
     }
 
     #[test]
+    fn overwriting_a_wide_cell_mid_row_shrinks_the_occupied_extent_for_reflow() {
+        // Regression test for Screen::extend_occupied_or_recompute's
+        // fast/slow path split: printing at or beyond a row's known
+        // occupied extent may take an O(1) shortcut, but overwriting mid-
+        // row (column < the row's occupied extent) must still fall back to
+        // a full rescan, since breaking a wide character's continuation
+        // pair can shrink - not just extend - what's actually occupied.
+        let mut terminal = terminal(6, 2);
+        // Print 'A' + wide '界' (row 0 occupies columns 0..3), then move the
+        // cursor back to column 1 (1-based column 2) and overwrite the wide
+        // character's leading cell with a single-width 'X'. This orphans
+        // the old continuation cell at column 2, which
+        // `repair_neighborhood` blanks out, so the row's true occupied
+        // extent shrinks from 3 to 2 ('A', 'X'). The remaining printed
+        // lines push this row deep into scrollback history so it stays
+        // retained (rather than folded back onto the visible screen) after
+        // the reflow below.
+        terminal.ingest("A界\x1b[1;2HX\r\nz\r\n1\r\n2\r\n3\r\n4\r\n5\r\n".as_bytes());
+
+        // Reflowing to width 2 forces every logical line to wrap two
+        // characters per physical row. If the occupied extent had wrongly
+        // stayed at 3 (i.e. the shrink was missed), this logical line
+        // would fold in a phantom trailing blank cell, splitting it across
+        // two physical rows instead of fitting on one.
+        terminal.resize(Dimensions::new(2, 2).unwrap()).unwrap();
+        let lines = terminal.scrollback_lines().collect::<Vec<_>>();
+        let line = &lines[0];
+        assert_eq!(line.physical_rows(), 1, "'A','X' should fit on one row");
+        let row0 = line.physical_row(0).unwrap();
+        assert_eq!(row0.len(), 2);
+        assert_eq!(row0[0].character(), 'A');
+        assert_eq!(row0[1].character(), 'X');
+    }
+
+    #[test]
     fn reflow_keeps_a_double_width_cell_and_its_continuation_together() {
         let mut terminal = terminal(6, 2);
         // "A" + wide "界" + "B" + wide "界" -> 6 columns at width 6, one row.
