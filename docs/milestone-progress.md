@@ -309,8 +309,9 @@ resize geometry, which is the same invariant P6/ADR 0012 established for
 ligatures. To keep arbitrary remote output from turning emoji rendering into
 a memory-growth or CPU vector, the raster cache is capped at both an entry
 count (512 emoji/size pairs) and an approximate byte budget (32 MiB of RGBA
-texture data), clearing before either bound is exceeded, with raster request
-size, sequence length, layer count, and output dimensions all bounded too.
+texture data), evicting least-recently-used keys before either bound is
+exceeded, with raster request size, sequence length, layer count, and output
+dimensions all bounded too.
 
 Validation followed the same automation-first pattern as the other stories in
 this document: exhaustive core tests for every ICU emoji-presentation and
@@ -329,3 +330,17 @@ behavior. The setting is application-wide and applies live to every terminal
 view; tests verify serialization, centralized command dispatch, Settings
 interaction, color-texture suppression, and unchanged terminal cells. It does
 not accept arbitrary font paths or delegate fallback discovery to the host.
+
+Emoji P2 makes renderer cost observable without turning shared-runner timing
+noise into a correctness failure. The frame diagnostics now report aggregate
+color paints, cache hits, and cache misses without retaining terminal text.
+Tests require three repeated emoji to produce one cold rasterization and two
+same-frame hits, followed by an all-hit, zero-miss warm frame while the visible
+working set fits both cache bounds. The UI Criterion suite separately measures
+a 280-emoji cold texture-population frame and its warm reuse counterpart. On
+the September 1 Windows ARM64 development laptop, a Criterion `--quick` run
+measured about 3.1 ms cold and 0.93 ms warm; future representative-hardware
+runs can compare history before a portable timing threshold is accepted.
+Failed bounded rasterizations are also retained in the same 512-key budget:
+the first frame records one failure and later frames take a content-free
+negative-cache hit before using monochrome fallback.

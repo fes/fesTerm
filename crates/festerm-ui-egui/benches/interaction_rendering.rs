@@ -92,6 +92,26 @@ fn rendering(c: &mut Criterion) {
     });
 }
 
+fn emoji_rendering(c: &mut Criterion) {
+    const EMOJI_PER_FRAME: u64 = 7 * ROWS as u64;
+    let mut group = c.benchmark_group("emoji_rendering");
+    group.throughput(Throughput::Elements(EMOJI_PER_FRAME));
+    group.sample_size(20);
+    group.bench_function("cold_texture_population", |bencher| {
+        bencher.iter_batched(
+            EmojiRenderState::cold,
+            |mut state| black_box(state.frame()),
+            BatchSize::SmallInput,
+        );
+    });
+
+    let mut warm = EmojiRenderState::warm();
+    group.bench_function("warm_texture_reuse", |bencher| {
+        bencher.iter(|| black_box(warm.frame()));
+    });
+    group.finish();
+}
+
 fn seeded_terminal() -> Terminal {
     let mut terminal = Terminal::new(Dimensions::new(COLUMNS, ROWS).unwrap()).unwrap();
     let payload = "x".repeat(108);
@@ -101,11 +121,83 @@ fn seeded_terminal() -> Terminal {
     terminal
 }
 
+fn emoji_terminal() -> Terminal {
+    let mut terminal = Terminal::new(Dimensions::new(COLUMNS, ROWS).unwrap()).unwrap();
+    let row = "🤖 🗑️ ⚠️ ℹ️ 👩‍🔬 1️⃣ 🇺🇸";
+    for index in 0..ROWS {
+        terminal.ingest(row.as_bytes());
+        if index + 1 < ROWS {
+            terminal.ingest(b"\r\n");
+        }
+    }
+    terminal
+}
+
 struct RenderState {
     context: Context,
     view: TerminalView,
     terminal: Terminal,
     sink: Sink,
+}
+
+#[derive(Clone, Copy)]
+struct EmojiFrameSample {
+    shapes: usize,
+    paints: usize,
+    cache_hits: usize,
+    cache_misses: usize,
+    rasterization_attempts: usize,
+}
+
+struct EmojiRenderState {
+    render: RenderState,
+}
+
+impl EmojiRenderState {
+    fn cold() -> Self {
+        let context = Context::default();
+        install_terminal_fonts(&context);
+        let mut render = RenderState {
+            context,
+            view: TerminalView::default(),
+            terminal: Terminal::new(Dimensions::new(COLUMNS, ROWS).unwrap()).unwrap(),
+            sink: Sink,
+        };
+        black_box(render.frame());
+        black_box(render.frame());
+        render.view = TerminalView::default();
+        render.terminal = emoji_terminal();
+        Self { render }
+    }
+
+    fn warm() -> Self {
+        let mut state = Self::cold();
+        let cold = state.frame();
+        assert!(cold.shapes > 0);
+        assert_eq!(cold.paints, 7 * ROWS);
+        assert_eq!(cold.cache_misses, 7);
+        assert_eq!(cold.rasterization_attempts, 7);
+        assert_eq!(cold.cache_hits, cold.paints - cold.cache_misses);
+        let warm = state.frame();
+        assert!(warm.shapes > 0);
+        assert_eq!(warm.paints, 7 * ROWS);
+        assert_eq!(warm.cache_misses, 0);
+        assert_eq!(warm.rasterization_attempts, 0);
+        assert_eq!(warm.cache_hits, warm.paints);
+        state
+    }
+
+    fn frame(&mut self) -> EmojiFrameSample {
+        let shapes = self.render.frame();
+        let diagnostics = self.render.view.diagnostics();
+        EmojiFrameSample {
+            shapes,
+            paints: diagnostics.color_emoji_paints,
+            cache_hits: diagnostics.color_emoji_cache_hits,
+            cache_misses: diagnostics.color_emoji_cache_misses,
+            rasterization_attempts: diagnostics.color_emoji_rasterization_attempts,
+        }
+    }
 }
 
 impl RenderState {
@@ -128,7 +220,7 @@ impl RenderState {
 
     fn frame(&mut self) -> usize {
         let context = self.context.clone();
-        let output = context.run_ui(
+        let mut output = context.run_ui(
             RawInput {
                 screen_rect: Some(Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -140,7 +232,9 @@ impl RenderState {
                 self.view.show_in_ui(ui, &mut self.terminal, &mut self.sink);
             },
         );
-        output.shapes.len()
+        let shape_count = output.shapes.len();
+        output.textures_delta.clear();
+        shape_count
     }
 }
 
@@ -150,5 +244,5 @@ impl EncodedInputSink for Sink {
     fn record_encoded_input(&mut self, _bytes: &[u8]) {}
 }
 
-criterion_group!(ui_benches, scrolling, selection, rendering);
+criterion_group!(ui_benches, scrolling, selection, rendering, emoji_rendering);
 criterion_main!(ui_benches);
