@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -166,12 +166,27 @@ impl GlyphCache {
         rect: Rect,
         attributes: Attributes,
         color_emoji: bool,
-    ) -> bool {
+    ) -> ColorEmojiPaintOutcome {
         if !color_emoji || attributes.contains(Attributes::CONCEALED) || !is_color_emoji(text) {
-            return false;
+            return ColorEmojiPaintOutcome::NotPainted;
         }
         self.color_emoji
             .paint(painter, text, rect, attributes.contains(Attributes::FAINT))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ColorEmojiPaintOutcome {
+    NotPainted,
+    TextureCacheHit,
+    TextureCacheMiss,
+    NegativeCacheHit,
+    RasterizationFailed,
+}
+
+impl ColorEmojiPaintOutcome {
+    const fn painted(self) -> bool {
+        matches!(self, Self::TextureCacheHit | Self::TextureCacheMiss)
     }
 }
 
@@ -190,10 +205,13 @@ struct ColorEmojiKey {
 struct ColorEmojiTexture {
     texture: TextureHandle,
     aspect_ratio: f32,
+    byte_size: usize,
 }
 
 struct ColorEmojiCache {
     textures: HashMap<ColorEmojiKey, ColorEmojiTexture>,
+    failed: HashSet<ColorEmojiKey>,
+    recency: VecDeque<ColorEmojiKey>,
     texture_bytes: usize,
     shape_context: ShapeContext,
     scale_context: ScaleContext,
@@ -203,6 +221,8 @@ impl Default for ColorEmojiCache {
     fn default() -> Self {
         Self {
             textures: HashMap::new(),
+            failed: HashSet::new(),
+            recency: VecDeque::new(),
             texture_bytes: 0,
             shape_context: ShapeContext::new(),
             scale_context: ScaleContext::new(),
@@ -213,10 +233,18 @@ impl Default for ColorEmojiCache {
 impl ColorEmojiCache {
     fn clear(&mut self) {
         self.textures.clear();
+        self.failed.clear();
+        self.recency.clear();
         self.texture_bytes = 0;
     }
 
-    fn paint(&mut self, painter: &egui::Painter, text: &str, rect: Rect, faint: bool) -> bool {
+    fn paint(
+        &mut self,
+        painter: &egui::Painter,
+        text: &str,
+        rect: Rect,
+        faint: bool,
+    ) -> ColorEmojiPaintOutcome {
         let pixels_per_point = painter.ctx().pixels_per_point();
         let pixel_size = (rect.height() * pixels_per_point)
             .round()
@@ -225,9 +253,18 @@ impl ColorEmojiCache {
             text: text.to_owned(),
             pixel_size,
         };
-        if !self.textures.contains_key(&key) {
+        let outcome = if self.textures.contains_key(&key) {
+            self.touch(&key);
+            ColorEmojiPaintOutcome::TextureCacheHit
+        } else if self.failed.contains(&key) {
+            self.touch(&key);
+            return ColorEmojiPaintOutcome::NegativeCacheHit;
+        } else {
             let Some(image) = self.rasterize(text, pixel_size) else {
-                return false;
+                self.prepare_for_insert(0);
+                self.failed.insert(key.clone());
+                self.touch(&key);
+                return ColorEmojiPaintOutcome::RasterizationFailed;
             };
             let byte_size = image.width() * image.height() * 4;
             self.prepare_for_insert(byte_size);
@@ -245,12 +282,15 @@ impl ColorEmojiCache {
                 ColorEmojiTexture {
                     texture,
                     aspect_ratio,
+                    byte_size,
                 },
             );
             self.texture_bytes += byte_size;
-        }
+            self.touch(&key);
+            ColorEmojiPaintOutcome::TextureCacheMiss
+        };
         let Some(entry) = self.textures.get(&key) else {
-            return false;
+            return ColorEmojiPaintOutcome::RasterizationFailed;
         };
         let max_size = rect.size() * 0.92;
         let size = if max_size.x / max_size.y > entry.aspect_ratio {
@@ -269,16 +309,30 @@ impl ColorEmojiCache {
                 Color32::WHITE
             },
         );
-        true
+        outcome
     }
 
     fn prepare_for_insert(&mut self, byte_size: usize) {
-        if self.textures.len() >= COLOR_EMOJI_CACHE_CAPACITY
+        while self.textures.len().saturating_add(self.failed.len()) >= COLOR_EMOJI_CACHE_CAPACITY
             || self.texture_bytes.saturating_add(byte_size) > COLOR_EMOJI_CACHE_BYTE_CAPACITY
         {
-            self.textures.clear();
-            self.texture_bytes = 0;
+            let Some(oldest) = self.recency.pop_front() else {
+                self.clear();
+                break;
+            };
+            if let Some(texture) = self.textures.remove(&oldest) {
+                self.texture_bytes = self.texture_bytes.saturating_sub(texture.byte_size);
+            } else {
+                self.failed.remove(&oldest);
+            }
         }
+    }
+
+    fn touch(&mut self, key: &ColorEmojiKey) {
+        if let Some(position) = self.recency.iter().position(|candidate| candidate == key) {
+            self.recency.remove(position);
+        }
+        self.recency.push_back(key.clone());
     }
 
     fn rasterize(&mut self, text: &str, pixel_size: u16) -> Option<ColorImage> {
@@ -412,6 +466,40 @@ pub(crate) struct GridPaint<'a> {
     pub(crate) focused: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct GridPaintStats {
+    pub(crate) color_emoji_paints: usize,
+    pub(crate) color_emoji_cache_hits: usize,
+    pub(crate) color_emoji_cache_misses: usize,
+    pub(crate) color_emoji_rasterization_attempts: usize,
+    pub(crate) color_emoji_rasterization_failures: usize,
+    pub(crate) color_emoji_negative_cache_hits: usize,
+}
+
+impl GridPaintStats {
+    fn record_color_emoji(&mut self, outcome: ColorEmojiPaintOutcome) {
+        match outcome {
+            ColorEmojiPaintOutcome::NotPainted => {}
+            ColorEmojiPaintOutcome::TextureCacheHit => {
+                self.color_emoji_paints += 1;
+                self.color_emoji_cache_hits += 1;
+            }
+            ColorEmojiPaintOutcome::TextureCacheMiss => {
+                self.color_emoji_paints += 1;
+                self.color_emoji_cache_misses += 1;
+                self.color_emoji_rasterization_attempts += 1;
+            }
+            ColorEmojiPaintOutcome::NegativeCacheHit => {
+                self.color_emoji_negative_cache_hits += 1;
+            }
+            ColorEmojiPaintOutcome::RasterizationFailed => {
+                self.color_emoji_rasterization_attempts += 1;
+                self.color_emoji_rasterization_failures += 1;
+            }
+        }
+    }
+}
+
 pub(crate) fn grid_cell_rect(layout: GridLayout, position: CellPosition, columns: usize) -> Rect {
     layout
         .cell_geometry()
@@ -543,11 +631,11 @@ pub(crate) fn paint_grid(
     painter: egui::Painter,
     paint: GridPaint<'_>,
     glyphs: &mut GlyphCache,
-) -> usize {
+) -> GridPaintStats {
     let Some(dimensions) = paint.cache.dimensions() else {
-        return 0;
+        return GridPaintStats::default();
     };
-    let mut color_emoji_paints = 0;
+    let mut stats = GridPaintStats::default();
     let selection_range = paint.selection.range();
     painter.rect_filled(paint.layout.rect, 0.0, DEFAULT_BACKGROUND);
     for row in 0..dimensions.rows() {
@@ -583,15 +671,15 @@ pub(crate) fn paint_grid(
                 // a flat sliver visible. The run-shaping path below already
                 // clips for the same reason.
                 let cell_painter = painter.with_clip_rect(rect);
-                if glyphs.paint_color_emoji(
+                let outcome = glyphs.paint_color_emoji(
                     &cell_painter,
                     &cell.text,
                     rect,
                     cell.attributes,
                     paint.fonts.font_set().color_emoji(),
-                ) {
-                    color_emoji_paints += 1;
-                } else {
+                );
+                stats.record_color_emoji(outcome);
+                if !outcome.painted() {
                     let galley = glyphs.layout(
                         &cell_painter,
                         &cell.text,
@@ -647,15 +735,15 @@ pub(crate) fn paint_grid(
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
                 let run_painter = painter.with_clip_rect(rect);
-                if glyphs.paint_color_emoji(
+                let outcome = glyphs.paint_color_emoji(
                     &run_painter,
                     &run.text,
                     rect,
                     run.attributes,
                     paint.fonts.font_set().color_emoji(),
-                ) {
-                    color_emoji_paints += 1;
-                } else {
+                );
+                stats.record_color_emoji(outcome);
+                if !outcome.painted() {
                     let galley = glyphs.layout(
                         &run_painter,
                         &run.text,
@@ -735,7 +823,7 @@ pub(crate) fn paint_grid(
             }
         }
     }
-    color_emoji_paints
+    stats
 }
 
 fn paint_cursor(
@@ -1019,22 +1107,25 @@ mod tests {
         let mut glyphs = GlyphCache::default();
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(32.0, 16.0));
 
-        let mut painted = true;
+        let mut outcome = ColorEmojiPaintOutcome::TextureCacheHit;
         let mut output = context.run_ui(Default::default(), |context| {
             let painter = context.layer_painter(egui::LayerId::background());
-            painted = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::CONCEALED, true);
+            outcome = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::CONCEALED, true);
         });
         output.textures_delta.clear();
-        assert!(!painted);
+        assert_eq!(outcome, ColorEmojiPaintOutcome::NotPainted);
         assert!(glyphs.color_emoji.textures.is_empty());
 
-        for attributes in [Attributes::NONE, Attributes::FAINT] {
+        for (attributes, expected) in [
+            (Attributes::NONE, ColorEmojiPaintOutcome::TextureCacheMiss),
+            (Attributes::FAINT, ColorEmojiPaintOutcome::TextureCacheHit),
+        ] {
             let mut output = context.run_ui(Default::default(), |context| {
                 let painter = context.layer_painter(egui::LayerId::background());
-                painted = glyphs.paint_color_emoji(&painter, "🤖", rect, attributes, true);
+                outcome = glyphs.paint_color_emoji(&painter, "🤖", rect, attributes, true);
             });
             output.textures_delta.clear();
-            assert!(painted);
+            assert_eq!(outcome, expected);
         }
         assert_eq!(glyphs.color_emoji.textures.len(), 1);
         assert!(glyphs.color_emoji.texture_bytes > 0);
@@ -1046,16 +1137,39 @@ mod tests {
         let mut glyphs = GlyphCache::default();
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(32.0, 16.0));
 
-        let mut painted = true;
+        let mut outcome = ColorEmojiPaintOutcome::TextureCacheHit;
         let mut output = context.run_ui(Default::default(), |context| {
             let painter = context.layer_painter(egui::LayerId::background());
-            painted = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::NONE, false);
+            outcome = glyphs.paint_color_emoji(&painter, "🤖", rect, Attributes::NONE, false);
         });
         output.textures_delta.clear();
 
-        assert!(!painted);
+        assert_eq!(outcome, ColorEmojiPaintOutcome::NotPainted);
         assert!(glyphs.color_emoji.textures.is_empty());
         assert_eq!(glyphs.color_emoji.texture_bytes, 0);
+    }
+
+    #[test]
+    fn failed_color_emoji_rasterization_is_negative_cached() {
+        let context = egui::Context::default();
+        let mut glyphs = GlyphCache::default();
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(32.0, 16.0));
+        let text = format!("1{}", "\u{20e3}".repeat(MAX_COLOR_EMOJI_LAYERS));
+
+        let mut outcome = ColorEmojiPaintOutcome::NotPainted;
+        for expected in [
+            ColorEmojiPaintOutcome::RasterizationFailed,
+            ColorEmojiPaintOutcome::NegativeCacheHit,
+        ] {
+            let mut output = context.run_ui(Default::default(), |context| {
+                let painter = context.layer_painter(egui::LayerId::background());
+                outcome = glyphs.paint_color_emoji(&painter, &text, rect, Attributes::NONE, true);
+            });
+            output.textures_delta.clear();
+            assert_eq!(outcome, expected);
+        }
+        assert_eq!(glyphs.color_emoji.failed.len(), 1);
+        assert!(glyphs.color_emoji.textures.is_empty());
     }
 
     #[test]
@@ -1110,14 +1224,24 @@ mod tests {
                 ColorEmojiTexture {
                     texture: texture.clone(),
                     aspect_ratio: 1.0,
+                    byte_size,
                 },
             );
             cache.texture_bytes += byte_size;
+            cache.touch(&ColorEmojiKey {
+                text: index.to_string(),
+                pixel_size: 16,
+            });
         }
         cache.prepare_for_insert(4);
-        assert!(cache.textures.is_empty());
-        assert_eq!(cache.texture_bytes, 0);
+        assert_eq!(cache.textures.len(), COLOR_EMOJI_CACHE_CAPACITY - 1);
+        assert_eq!(cache.texture_bytes, (COLOR_EMOJI_CACHE_CAPACITY - 1) * 4);
+        assert!(!cache.textures.contains_key(&ColorEmojiKey {
+            text: "0".to_owned(),
+            pixel_size: 16,
+        }));
 
+        cache.clear();
         cache.textures.insert(
             ColorEmojiKey {
                 text: "🤖".to_owned(),
@@ -1126,15 +1250,88 @@ mod tests {
             ColorEmojiTexture {
                 texture,
                 aspect_ratio: 1.0,
+                byte_size: COLOR_EMOJI_CACHE_BYTE_CAPACITY,
             },
         );
         cache.texture_bytes = COLOR_EMOJI_CACHE_BYTE_CAPACITY;
+        cache.touch(&ColorEmojiKey {
+            text: "🤖".to_owned(),
+            pixel_size: 16,
+        });
         cache.prepare_for_insert(1);
         assert!(cache.textures.is_empty());
         assert_eq!(cache.texture_bytes, 0);
+
+        for index in 0..COLOR_EMOJI_CACHE_CAPACITY {
+            let key = ColorEmojiKey {
+                text: index.to_string(),
+                pixel_size: 16,
+            };
+            cache.failed.insert(key.clone());
+            cache.touch(&key);
+        }
+        cache.prepare_for_insert(0);
+        assert_eq!(cache.failed.len(), COLOR_EMOJI_CACHE_CAPACITY - 1);
+        assert!(!cache.failed.contains(&ColorEmojiKey {
+            text: "0".to_owned(),
+            pixel_size: 16,
+        }));
+
         assert!(cache
             .rasterize(&"🤖".repeat(MAX_COLOR_EMOJI_INPUT_BYTES), 16)
             .is_none());
+    }
+
+    #[test]
+    fn capacity_eviction_preserves_newly_visible_emoji_reuse() {
+        let context = egui::Context::default();
+        let image = ColorImage::new([1, 1], vec![Color32::WHITE]);
+        let texture = context.load_texture("emoji-capacity-test", image, TextureOptions::LINEAR);
+        let mut glyphs = GlyphCache::default();
+        for index in 0..COLOR_EMOJI_CACHE_CAPACITY - 1 {
+            let key = ColorEmojiKey {
+                text: index.to_string(),
+                pixel_size: 16,
+            };
+            glyphs.color_emoji.textures.insert(
+                key.clone(),
+                ColorEmojiTexture {
+                    texture: texture.clone(),
+                    aspect_ratio: 1.0,
+                    byte_size: 4,
+                },
+            );
+            glyphs.color_emoji.texture_bytes += 4;
+            glyphs.color_emoji.touch(&key);
+        }
+
+        let mut outcomes = Vec::new();
+        let mut output = context.run_ui(Default::default(), |context| {
+            let painter = context.layer_painter(egui::LayerId::background());
+            for height in [16.0, 17.0, 16.0] {
+                outcomes.push(glyphs.paint_color_emoji(
+                    &painter,
+                    "🤖",
+                    Rect::from_min_size(Pos2::ZERO, Vec2::new(32.0, height)),
+                    Attributes::NONE,
+                    true,
+                ));
+            }
+        });
+        output.textures_delta.clear();
+
+        assert_eq!(
+            outcomes,
+            [
+                ColorEmojiPaintOutcome::TextureCacheMiss,
+                ColorEmojiPaintOutcome::TextureCacheMiss,
+                ColorEmojiPaintOutcome::TextureCacheHit,
+            ]
+        );
+        assert_eq!(
+            glyphs.color_emoji.textures.len() + glyphs.color_emoji.failed.len(),
+            COLOR_EMOJI_CACHE_CAPACITY
+        );
     }
 
     #[test]

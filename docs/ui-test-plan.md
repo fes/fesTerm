@@ -408,6 +408,17 @@ submission. Run it with `cargo bench -p festerm-core` and
 `cargo bench -p festerm-ui-egui`; native GPU/compositor presentation latency
 remains platform evidence rather than a headless UI benchmark.
 
+Emoji P2 adds `emoji_rendering/cold_texture_population` and
+`emoji_rendering/warm_texture_reuse` to the UI Criterion suite. Correctness
+tests enforce the hardware-independent work budget while the visible working
+set fits the 512-key and approximately 32 MiB cache bounds: one miss per unique
+visible text-and-size key on a cold cache, then zero misses and all hits on a
+warm frame. Failed bounded rasterizations must attempt once and then use the
+negative cache. `FrameDiagnostics` and Inspector expose only aggregate paint,
+hit, miss, attempt, failure, and negative-hit counts. The initial Windows
+ARM64 `--quick` reference measured a 280-emoji frame at about 3.1 ms cold and
+0.93 ms warm; these values are history, not cross-machine pass/fail thresholds.
+
 ## M6 Automation Backlog
 
 This is the implementation order for the remaining M6 verification work. Its
@@ -433,6 +444,9 @@ color-texture submission on Windows, Linux, and advisory macOS.
 Emoji P1 adds config, centralized command, Settings interaction, renderer, and
 production `TerminalView` tests for live color/monochrome policy switching
 without terminal-state mutation.
+Emoji P2 adds deterministic cache-work assertions, content-free cache
+diagnostics, bounded negative caching, and separate cold/warm Criterion
+workloads.
 
 ### Completed foundation
 

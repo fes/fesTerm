@@ -84,6 +84,17 @@ pub struct FrameDiagnostics {
     /// Color emoji glyphs successfully submitted through the renderer-owned
     /// texture path during the latest frame.
     pub color_emoji_paints: usize,
+    /// Color emoji paints that reused an existing text-and-size texture.
+    pub color_emoji_cache_hits: usize,
+    /// Color emoji paints that populated a new text-and-size texture.
+    pub color_emoji_cache_misses: usize,
+    /// Color rasterization attempts made after both positive and negative
+    /// cache lookup missed.
+    pub color_emoji_rasterization_attempts: usize,
+    /// Rasterization attempts that fell back to monochrome text.
+    pub color_emoji_rasterization_failures: usize,
+    /// Failed text-and-size keys reused from the bounded negative cache.
+    pub color_emoji_negative_cache_hits: usize,
     pub last_input_outcome: Option<InputEventOutcome>,
     pub input_queue_depth: usize,
     pub input_sink: Option<InputSinkDiagnostics>,
@@ -842,7 +853,7 @@ impl TerminalView {
         let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
         let update = self.cache.update(snapshot, &dirty_rows);
         self.diagnostics.dirty_rows = update.updated_rows.len();
-        let (color_emoji_paints, input_to_paint_submission) =
+        let (paint_stats, input_to_paint_submission) =
             measure_input_to_paint_submission(reports.input_observed, || {
                 paint_grid(
                     ui.painter().with_clip_rect(vp_layout.viewport),
@@ -859,7 +870,15 @@ impl TerminalView {
                     &mut self.glyphs,
                 )
             });
-        self.diagnostics.color_emoji_paints = color_emoji_paints;
+        self.diagnostics.color_emoji_paints = paint_stats.color_emoji_paints;
+        self.diagnostics.color_emoji_cache_hits = paint_stats.color_emoji_cache_hits;
+        self.diagnostics.color_emoji_cache_misses = paint_stats.color_emoji_cache_misses;
+        self.diagnostics.color_emoji_rasterization_attempts =
+            paint_stats.color_emoji_rasterization_attempts;
+        self.diagnostics.color_emoji_rasterization_failures =
+            paint_stats.color_emoji_rasterization_failures;
+        self.diagnostics.color_emoji_negative_cache_hits =
+            paint_stats.color_emoji_negative_cache_hits;
         if let Some(geometry) = scrollbar {
             let visible = self.history.offset_rows > 0
                 || scrollbar_hovered
@@ -927,9 +946,9 @@ impl TerminalView {
             .map(|size| format!("{}×{}", size.columns(), size.rows()))
     }
 
-    /// Formats detailed per-frame diagnostics (frame time, dirty rows, input
-    /// queue depth, input-sink counters) as a single line, for optional
-    /// display in the application status bar. `session_diagnostics` is a
+    /// Formats detailed per-frame diagnostics (frame time, dirty rows, emoji
+    /// cache work, input queue depth, input-sink counters) as a single line,
+    /// for optional display in the application status bar. `session_diagnostics` is a
     /// caller-supplied prefix describing session-level state (e.g. shell
     /// process status) that isn't tracked by this view.
     pub fn diagnostics_summary(&self, session_diagnostics: &str) -> String {
@@ -962,9 +981,16 @@ impl TerminalView {
         );
         format!(
             "{session_diagnostics}; frame {frame}; size {dimensions}; dirty rows {}; \
+             emoji paints {}; cache hits {}; misses {}; raster attempts {}; failures {}; negative hits {}; \
              input {:?}; queue {}; input→paint submission \
              {input_to_paint_submission} (not presentation); {sink}",
             self.diagnostics.dirty_rows,
+            self.diagnostics.color_emoji_paints,
+            self.diagnostics.color_emoji_cache_hits,
+            self.diagnostics.color_emoji_cache_misses,
+            self.diagnostics.color_emoji_rasterization_attempts,
+            self.diagnostics.color_emoji_rasterization_failures,
+            self.diagnostics.color_emoji_negative_cache_hits,
             self.diagnostics.last_input_outcome,
             self.diagnostics.input_queue_depth,
         )
