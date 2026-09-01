@@ -6,8 +6,8 @@
 //! renders the file itself, which requires an icon resource compiled
 //! into the binary.
 fn main() {
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os == "windows" {
+    #[cfg(windows)]
+    {
         let mut resource = winresource::WindowsResource::new();
         resource.set_icon("../../assets/app-icon/festerm.ico");
         if let Err(err) = resource.compile() {
