@@ -105,7 +105,14 @@ DECSCUSR cursor styles, sanitized OSC titles, conservative device-attribute
 replies, resize without reflow, typed mode-aware keyboard/paste/focus/mouse
 input, and dirty-row inspection. Cells retain leading text with attached
 common combining code points and a width role with explicit width-two
-continuation cells. The application-level `SessionController` is the
+continuation cells, and cell text is stored as a `CompactString` rather than
+`std::String` so printing does not heap-allocate for the common single-byte
+or single-codepoint case. `Screen`'s row storage is a ring buffer (a rotating
+logical-to-physical row offset) rather than a flat, physically ordered grid,
+so a full-screen scroll is an O(rows-scrolled) rotation instead of an
+O(rows x columns) copy of every cell on every line feed; this is entirely an
+internal `screen.rs` implementation detail behind an unchanged row/cell API.
+The application-level `SessionController` is the
 production and controlled-test seam while remaining the single logical
 terminal writer. The first M9 slice now retains bounded logical primary-screen
 history with content-free accounting and explicit alternate-screen isolation,

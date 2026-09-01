@@ -169,3 +169,90 @@ workflow landed in `89a59ae`. The first signed production release and
 end-to-end upgrade/failure evidence remain under
 [#62](https://github.com/fes/fesTerm/issues/62); fesTerm-owned terminfo remains
 under [#27](https://github.com/fes/fesTerm/issues/27).
+
+## August 2026 Windows rendering slowness: from suspicion to the real bottleneck
+
+A user report — "fesTerm on Windows is pretty slow to render compared to
+Windows Terminal," reproduced most clearly by `dir /s` scrolling sluggishly
+and an unresponsive Ctrl-C during that output — is a useful case study because
+every early, plausible hypothesis turned out to be wrong, and the diagnostic
+path that replaced guessing with measurement is the reusable lesson.
+
+The investigation started at the obvious suspects and eliminated them in
+order. First, GPU selection: `eframe`/`wgpu` defaults were confirmed correct
+by logging the selected adapter at startup (a real AMD Radeon integrated GPU
+over Vulkan, not a software/WARP fallback). Second, paint cost: the renderer
+already had an unwired `FrameDiagnostics`/`diagnostics_summary()` seam in
+`festerm-ui-egui`'s `view.rs` that had been built but never surfaced anywhere.
+Wiring it into the existing Inspector "Diagnostics" panel
+(`app/festerm/src/app.rs`, alongside the pre-existing session/PTY diagnostics
+line) turned an invisible internal counter into something the user could read
+directly, and it reported `frame 0.81 ms` — ruling out per-frame paint time as
+the bottleneck within a single exchange.
+
+With the renderer cleared, the remaining suspect was the terminal core's
+ingest path, not presentation. The project's `criterion` benchmark suite
+(`crates/festerm-core/benches/`) was unusable in this environment (a
+`yoke_derive`/`icu_properties` proc-macro build-cache corruption, unrelated to
+any product code), so a temporary `#[ignore]`d throughput probe was added
+directly to `festerm-core`'s test module instead: ingest several megabytes of
+realistic line-oriented output into a terminal-sized grid and time it. That
+one probe, run first in debug and then in release, was decisive: roughly
+0.1–1.4 MB/s depending on build profile — far below what any real terminal
+needs for `dir /s`-scale output, and consistent with the user's "2x to 10x
+slower than Windows Terminal" estimate.
+
+Profiling the ingest path by hand (rather than assuming) surfaced two
+distinct costs stacked on top of each other. The smaller one: `Cell.text` was
+a heap-allocated `std::String`, and printing a character called
+`character.to_string()` — one heap allocation per glyph. Replacing it with
+`compact_str::CompactString`, which inlines short strings (terminal cells are
+almost always 1–4 bytes) on the stack, improved throughput by roughly 1.7x —
+real, but not close to explaining the gap.
+
+The dominant cost was architectural, not incidental: `Screen::scroll_up` and
+`scroll_down` in `crates/festerm-core/src/screen.rs` cloned every cell across
+the *entire* visible grid on every single line feed, not just on explicit
+scroll-region operations. For a typical 120x40 window, that is roughly 4,800
+`Cell` clones per line of scrolled output — an O(rows × columns) cost paid
+once per line, where a correctly designed terminal (including Windows
+Terminal) pays O(1) by treating scrolling as an index rotation over a ring
+buffer rather than a data movement. High-volume commands generate scroll
+events at a rate proportional to their output, so the real-world cost scales
+with total lines produced, not just the visible window size — which is
+exactly the `dir /s` symptom the user reported, and why Ctrl-C felt
+unresponsive: the terminal was still working through a backlog of expensive
+scrolls rather than idling and free to notice new input.
+
+The fix converted `Screen`'s row storage into an actual ring buffer: a
+rotating `top` offset maps each logical row to a physical storage row, so a
+whole-screen scroll becomes an O(rows-scrolled) rotation (normally O(1) for a
+single line) plus clearing only the newly revealed rows, instead of an
+O(rows × columns) copy of the whole grid. Because every access to `Screen`'s
+internal arrays was already private to `screen.rs` — a small dividend from
+[ADR 0004](adr/0004-componentized-testable-terminal-core.md)'s componentized
+core — the rewrite stayed contained to that one file with no public API
+change, and `terminal.rs`, the renderer, and the rest of the workspace needed
+no changes at all. The one subtlety the rewrite had to resolve deliberately:
+`Screen` had derived structural `PartialEq`, which an existing model test
+relies on to compare a mutated screen against a freshly built reference one;
+a naive ring buffer would make two logically identical screens compare
+unequal whenever their internal rotation offsets differed. `Screen` now
+implements `PartialEq` explicitly by comparing content through the logical
+(rotation-aware) row accessor, so equality still means "the same visible
+terminal," not "the same raw storage layout."
+
+The rewrite reintroduced a few off-by-one row-shift bugs in `insert_lines`,
+`delete_lines`, and the partial-scroll-region path — caught immediately by
+the existing `festerm-core` test suite (`model_tests.rs`'s property-style
+resize model in particular), not by manual inspection. That is the same
+process lesson as the GUI convergence work above: prefer a stable oracle
+(existing tests, a measured probe) over another round of source reading, and
+let it catch what source reading misses. After the fix, the same throughput
+probe measured roughly 7.3 MB/s in release — about 5x faster than after the
+`CompactString` change alone, and consistent with the reported slowdown being
+resolved rather than merely reduced. The `festerm-core` benchmark suite
+remains broken in this specific environment; if it becomes usable again, its
+`sustained_output`/`resize_reflow` benchmarks are the natural home for a
+proper statistically rigorous regression guard, in place of the temporary
+manual probe test.

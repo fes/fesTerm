@@ -282,8 +282,10 @@ path without recording terminal content.
   TOML.
 - The normal status line is compact; use the **Diagnostics** control to reveal
   lifecycle, queue pressure, bytes, errors, resize, and input-to-paint-
-  submission details. Backend event delivery requests an egui repaint, so an
-  idle window does not need a polling timer to show output.
+  submission details, plus per-frame render diagnostics (frame time, dirty
+  row count) appended from `festerm-ui-egui`'s `TerminalView`. Backend event
+  delivery requests an egui repaint, so an idle window does not need a
+  polling timer to show output.
 - Terminal content, clipboard values, and credentials are sensitive. Do not add
   them to fixtures, logs, or diagnostics by default.
 
