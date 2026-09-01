@@ -286,6 +286,11 @@ struct DurableSessionDraft {
     enabled: bool,
     provider: PersistenceProviderKind,
     session_name: String,
+    /// Set once the user manually edits the session name field directly.
+    /// Until then, the session name auto-fills from the profile name as
+    /// the user types it, so most profiles never need a separate manual
+    /// entry.
+    session_name_touched: bool,
     automatic_recovery: bool,
 }
 
@@ -295,6 +300,7 @@ impl Default for DurableSessionDraft {
             enabled: false,
             provider: PersistenceProviderKind::Tmux,
             session_name: "main".to_owned(),
+            session_name_touched: false,
             automatic_recovery: false,
         }
     }
@@ -307,10 +313,27 @@ impl DurableSessionDraft {
                 enabled: true,
                 provider: persistence.provider(),
                 session_name: persistence.session_name().to_owned(),
+                // An existing profile's session name was explicitly chosen
+                // (by the user or a prior save), so don't let subsequent
+                // profile-name edits silently overwrite it.
+                session_name_touched: true,
                 automatic_recovery: false,
             },
             None => Self::default(),
         }
+    }
+
+    /// Auto-fills the session name from the profile name as the user types
+    /// it, unless the session name has already been manually edited.
+    ///
+    /// Called whenever the profile-name field changes; sanitizes the
+    /// profile name to the character set [`PersistentSessionName`] accepts
+    /// (lowercase ASCII alphanumerics, `-`, `_`, `.`).
+    fn sync_session_name_from_profile_name(&mut self, profile_name: &str) {
+        if self.session_name_touched {
+            return;
+        }
+        self.session_name = sanitize_session_name_from_profile_name(profile_name);
     }
 
     fn persistence(&self) -> Result<Option<PersistenceConfiguration>, String> {
@@ -339,6 +362,35 @@ impl DurableSessionDraft {
         }
         Ok(SshSessionOptions::manual_recovery(strategy))
     }
+}
+
+/// Sanitizes a profile name into a candidate durable-session name:
+/// lowercased, with any character outside
+/// [`PersistentSessionName`]'s accepted set (ASCII alphanumerics, `-`,
+/// `_`, `.`) collapsed to a single `-`, leading/trailing `-` trimmed, and
+/// truncated to the name's maximum length.
+fn sanitize_session_name_from_profile_name(profile_name: &str) -> String {
+    const MAXIMUM_BYTES: usize = 64;
+    let mut sanitized = String::with_capacity(profile_name.len());
+    let mut last_was_separator = false;
+    for character in profile_name.trim().chars() {
+        let lowered = character.to_ascii_lowercase();
+        if lowered.is_ascii_alphanumeric() || matches!(lowered, '-' | '_' | '.') {
+            sanitized.push(lowered);
+            last_was_separator = false;
+        } else if !last_was_separator && !sanitized.is_empty() {
+            sanitized.push('-');
+            last_was_separator = true;
+        }
+    }
+    while sanitized.ends_with('-') {
+        sanitized.pop();
+    }
+    sanitized.truncate(MAXIMUM_BYTES);
+    while !sanitized.is_char_boundary(sanitized.len()) {
+        sanitized.pop();
+    }
+    sanitized
 }
 
 /// Per-launcher, transient SSH authentication form state.
@@ -907,7 +959,7 @@ fn show_durable_session_controls(
             "GNU screen",
         );
     });
-    ssh_text_edit(
+    if ssh_text_edit(
         ui,
         tab_id,
         "durable_session_name",
@@ -915,7 +967,11 @@ fn show_durable_session_controls(
         &mut draft.session_name,
         false,
         false,
-    );
+    )
+    .changed()
+    {
+        draft.session_name_touched = true;
+    }
     ssh_paragraph(
         ui,
         "Use only letters, digits, hyphens, underscores, or periods.",
@@ -3042,7 +3098,12 @@ pub fn show_profiles(
                         .show(ui, |ui| {
                         ui.set_width(340.0);
                         ssh_section_heading(ui, "Profile");
-                        profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name);
+                        if profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name).changed()
+                        {
+                            draft
+                                .durable_session
+                                .sync_session_name_from_profile_name(&draft.name);
+                        }
                         local_executable_field(
                             ui,
                             profiles_state_id(tab_id).with("executable_autocomplete"),
@@ -3182,7 +3243,13 @@ pub fn show_profiles(
                                     (ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0),
                                 );
                                 ssh_section_heading(ui, "Connection");
-                                profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name);
+                                if profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name)
+                                    .changed()
+                                {
+                                    draft
+                                        .durable_session
+                                        .sync_session_name_from_profile_name(&draft.name);
+                                }
                                 profile_text_edit(
                                     ui,
                                     tab_id,
@@ -5285,7 +5352,61 @@ mod tests {
             persistence.provider(),
             PersistenceProviderKind::FestermSessiond
         );
-        assert_eq!(persistence.session_name(), "main");
+        assert_eq!(persistence.session_name(), "durable-local");
+    }
+
+    #[test]
+    fn sanitize_session_name_from_profile_name_normalizes_case_and_separators() {
+        assert_eq!(
+            sanitize_session_name_from_profile_name("My Prod Server!!"),
+            "my-prod-server"
+        );
+        assert_eq!(
+            sanitize_session_name_from_profile_name("  leading and trailing  "),
+            "leading-and-trailing"
+        );
+        assert_eq!(
+            sanitize_session_name_from_profile_name("already-valid_name.1"),
+            "already-valid_name.1"
+        );
+        assert_eq!(sanitize_session_name_from_profile_name("***"), "");
+        assert_eq!(
+            sanitize_session_name_from_profile_name(&"x".repeat(100)),
+            "x".repeat(64)
+        );
+    }
+
+    #[test]
+    fn new_local_profile_session_name_tracks_the_profile_name_until_manually_edited() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+        harness.get_by_label("Use a durable local session").click();
+        harness.run();
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text("Build Box");
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Session name").value().as_deref(),
+            Some("build-box")
+        );
+
+        // Once the user edits the session name directly, further profile
+        // name edits must not clobber their choice.
+        harness.get_by_label("Session name").focus();
+        harness.get_by_label("Session name").type_text("-pinned");
+        harness.run();
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text(" Two");
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Session name").value().as_deref(),
+            Some("build-box-pinned")
+        );
     }
 
     #[test]
@@ -5648,7 +5769,7 @@ mod tests {
             .persistence()
             .expect("the profile must retain durable-session settings");
         assert_eq!(persistence.provider(), PersistenceProviderKind::Tmux);
-        assert_eq!(persistence.session_name(), "main");
+        assert_eq!(persistence.session_name(), "build-host");
     }
 
     #[test]
