@@ -68,6 +68,7 @@ fn main() -> eframe::Result<()> {
         APPLICATION_TITLE,
         options,
         Box::new(|creation_context| {
+            log_wgpu_adapter(creation_context);
             let mut app = FesTermApp::with_startup_configuration(
                 &creation_context.egui_ctx,
                 startup_configuration,
@@ -77,6 +78,34 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// Logs the GPU adapter `wgpu` actually selected for rendering (name,
+/// backend, device type) so a slow-rendering report can be diagnosed
+/// without guessing whether the OS handed us an integrated GPU, a software
+/// (WARP/CPU) adapter, or fell back to the GL translation backend instead
+/// of a native accelerated one.
+fn log_wgpu_adapter(creation_context: &eframe::CreationContext<'_>) {
+    match creation_context.wgpu_render_state.as_ref() {
+        Some(render_state) => {
+            let info = render_state.adapter.get_info();
+            tracing::info!(
+                target: "festerm::app",
+                adapter_name = %info.name,
+                backend = ?info.backend,
+                device_type = ?info.device_type,
+                driver = %info.driver,
+                driver_info = %info.driver_info,
+                "wgpu selected a rendering adapter"
+            );
+        }
+        None => {
+            tracing::warn!(
+                target: "festerm::app",
+                "no wgpu render state available (a non-wgpu backend is active)"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+use compact_str::CompactString;
+
 use crate::{
     cell::{blank_cell, Cell, CellWidth},
     terminal::TerminalError,
@@ -5,14 +7,49 @@ use crate::{
 };
 
 /// A visible grid and its redraw state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// Rows are stored in a ring buffer: `top` is the physical row index that
+/// currently holds logical row 0. Scrolling the whole screen up or down by
+/// `n` rows (by far the hottest path under sustained output - every
+/// newline scrolls by one row once the cursor reaches the last row) is
+/// therefore an O(n) rotation of `top` plus clearing the rows it reveals,
+/// instead of an O(rows*columns) clone of the entire grid on every line.
+#[derive(Clone, Debug)]
 pub struct Screen {
     dimensions: Dimensions,
+    /// Physical row index holding logical row 0.
+    top: usize,
     cells: Vec<Cell>,
     occupied_cells: Vec<bool>,
     dirty_rows: Vec<bool>,
     soft_wrapped_rows: Vec<bool>,
     occupied_columns: Vec<usize>,
+}
+
+impl Eq for Screen {}
+
+impl PartialEq for Screen {
+    /// Compares logical content (as seen through row 0..rows), independent
+    /// of the ring buffer's internal `top` rotation.
+    fn eq(&self, other: &Self) -> bool {
+        if self.dimensions != other.dimensions {
+            return false;
+        }
+        (0..self.dimensions.rows()).all(|row| {
+            let columns = self.dimensions.columns();
+            let self_start = self.physical_row_start(row);
+            let other_start = other.physical_row_start(row);
+            self.cells[self_start..self_start + columns]
+                == other.cells[other_start..other_start + columns]
+                && self.occupied_cells[self_start..self_start + columns]
+                    == other.occupied_cells[other_start..other_start + columns]
+                && self.dirty_rows[row] == other.dirty_rows[row]
+                && self.soft_wrapped_rows[self.physical_row(row)]
+                    == other.soft_wrapped_rows[other.physical_row(row)]
+                && self.occupied_columns[self.physical_row(row)]
+                    == other.occupied_columns[other.physical_row(row)]
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,6 +82,7 @@ impl Screen {
 
         Ok(Self {
             dimensions,
+            top: 0,
             cells,
             occupied_cells,
             dirty_rows,
@@ -55,6 +93,18 @@ impl Screen {
 
     pub const fn dimensions(&self) -> Dimensions {
         self.dimensions
+    }
+
+    /// Maps a logical row (0 = the top visible row) to its physical row
+    /// index in the ring buffer.
+    fn physical_row(&self, logical_row: usize) -> usize {
+        let rows = self.dimensions.rows();
+        (self.top + logical_row) % rows
+    }
+
+    /// The physical cell-array start offset for a logical row.
+    fn physical_row_start(&self, logical_row: usize) -> usize {
+        self.physical_row(logical_row) * self.dimensions.columns()
     }
 
     pub fn cell(&self, column: usize, row: usize) -> Option<Cell> {
@@ -74,7 +124,7 @@ impl Screen {
             return None;
         }
 
-        let start = row * self.dimensions.columns();
+        let start = self.physical_row_start(row);
         let end = start + self.dimensions.columns();
         Some(self.cells[start..end].iter().map(Cell::character).collect())
     }
@@ -103,9 +153,8 @@ impl Screen {
     /// before folding the screen into a [`Scrollback`](crate::history) for
     /// reflow, so they don't become phantom empty logical lines.
     pub(crate) fn occupied_row_count(&self) -> usize {
-        self.occupied_columns
-            .iter()
-            .rposition(|&count| count > 0)
+        (0..self.dimensions.rows())
+            .rposition(|row| self.occupied_columns[self.physical_row(row)] > 0)
             .map_or(0, |row| row + 1)
     }
 
@@ -116,13 +165,13 @@ impl Screen {
     /// can be folded into a [`Scrollback`](crate::history) for a unified
     /// reflow across resize.
     pub(crate) fn to_rows(&self) -> Vec<ScreenRow> {
-        let columns = self.dimensions.columns();
         (0..self.dimensions.rows())
             .map(|row| {
-                let start = row * columns;
+                let start = self.physical_row_start(row);
+                let physical_row = self.physical_row(row);
                 ScreenRow {
-                    cells: self.cells[start..start + self.occupied_columns[row]].to_vec(),
-                    soft_wrapped: self.soft_wrapped_rows[row],
+                    cells: self.cells[start..start + self.occupied_columns[physical_row]].to_vec(),
+                    soft_wrapped: self.soft_wrapped_rows[physical_row],
                 }
             })
             .collect()
@@ -158,15 +207,17 @@ impl Screen {
         let preserved_rows = self.dimensions.rows().min(dimensions.rows());
         let preserved_columns = self.dimensions.columns().min(dimensions.columns());
         for row in 0..preserved_rows {
-            let old_start = row * self.dimensions.columns();
+            let old_start = self.physical_row_start(row);
             let new_start = row * dimensions.columns();
+            let old_physical_row = self.physical_row(row);
             resized.cells[new_start..new_start + preserved_columns]
                 .clone_from_slice(&self.cells[old_start..old_start + preserved_columns]);
             resized.occupied_cells[new_start..new_start + preserved_columns]
                 .copy_from_slice(&self.occupied_cells[old_start..old_start + preserved_columns]);
-            resized.soft_wrapped_rows[row] =
-                self.soft_wrapped_rows[row] && preserved_columns == self.dimensions.columns();
-            resized.occupied_columns[row] = self.occupied_columns[row].min(preserved_columns);
+            resized.soft_wrapped_rows[row] = self.soft_wrapped_rows[old_physical_row]
+                && preserved_columns == self.dimensions.columns();
+            resized.occupied_columns[row] =
+                self.occupied_columns[old_physical_row].min(preserved_columns);
         }
         resized.repair_wide_cells();
         Ok(resized)
@@ -199,7 +250,7 @@ impl Screen {
                 .cell_index(column + 1, row)
                 .expect("wide terminal character must fit in the screen");
             self.cells[continuation] = Cell {
-                text: String::new(),
+                text: CompactString::const_new(""),
                 width: CellWidth::Continuation,
                 foreground,
                 background,
@@ -224,8 +275,10 @@ impl Screen {
         let last_row = (end - 1) / columns;
         let first_column = start % columns;
         let last_column = end - last_row * columns;
-        self.cells[start..end].fill(cell.clone());
-        self.occupied_cells[start..end].fill(!is_structural_blank(&cell));
+        let physical_start = self.logical_linear_to_physical(start);
+        let physical_end = physical_start + (end - start);
+        self.cells[physical_start..physical_end].fill(cell.clone());
+        self.occupied_cells[physical_start..physical_end].fill(!is_structural_blank(&cell));
         self.mark_dirty_range(first_row, last_row);
         // A contiguous fill can split a pair only at either range boundary.
         self.repair_neighborhood(first_row, first_column, &cell);
@@ -233,6 +286,18 @@ impl Screen {
         for row in first_row..=last_row {
             self.recompute_occupied(row);
         }
+    }
+
+    /// Translates a linear index expressed in logical (row 0 = top visible
+    /// row) coordinates into the ring buffer's physical cell-array offset.
+    /// Only valid for offsets that stay within a single logical row's span,
+    /// since a physical row is always contiguous but successive logical
+    /// rows may not be (the ring can wrap between them).
+    fn logical_linear_to_physical(&self, linear: usize) -> usize {
+        let columns = self.dimensions.columns();
+        let row = linear / columns;
+        let column = linear % columns;
+        self.physical_row_start(row) + column
     }
 
     pub(crate) fn clear_all(&mut self, cell: Cell) {
@@ -246,6 +311,10 @@ impl Screen {
         self.soft_wrapped_rows.fill(false);
         self.occupied_columns.fill(occupied);
         self.mark_all_dirty();
+        // Clearing collapses any pending rotation: logical row 0 is once
+        // again physical row 0, keeping the ring buffer's invariant simple
+        // for the very common "clear the whole screen" case.
+        self.top = 0;
     }
 
     pub(crate) fn insert_characters(
@@ -257,10 +326,10 @@ impl Screen {
     ) {
         let columns = self.dimensions.columns();
         let count = count.min(columns - column);
-        let row_start = row * columns;
+        let row_start = self.physical_row_start(row);
         let row_end = row_start + columns;
         let start = row_start + column;
-        self.move_cells(start..row_end - count, start + count);
+        self.move_cells_within_row(start..row_end - count, start + count);
         self.cells[start..start + count].fill(cell.clone());
         self.occupied_cells[start..start + count].fill(!is_structural_blank(&cell));
         self.mark_dirty(row);
@@ -279,10 +348,10 @@ impl Screen {
     ) {
         let columns = self.dimensions.columns();
         let count = count.min(columns - column);
-        let row_start = row * columns;
+        let row_start = self.physical_row_start(row);
         let row_end = row_start + columns;
         let start = row_start + column;
-        self.move_cells(start + count..row_end, start);
+        self.move_cells_within_row(start + count..row_end, start);
         self.cells[row_end - count..row_end].fill(cell.clone());
         self.occupied_cells[row_end - count..row_end].fill(!is_structural_blank(&cell));
         self.mark_dirty(row);
@@ -292,32 +361,24 @@ impl Screen {
     }
 
     pub(crate) fn insert_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
-        let columns = self.dimensions.columns();
         let count = count.min(bottom - row + 1);
-        let source_end = (bottom + 1 - count) * columns;
-        self.move_cells(row * columns..source_end, (row + count) * columns);
-        let occupied = !is_structural_blank(&cell);
-        self.cells[row * columns..(row + count) * columns].fill(cell);
-        self.occupied_cells[row * columns..(row + count) * columns].fill(occupied);
-        self.move_row_metadata(row..bottom + 1 - count, row + count);
-        self.soft_wrapped_rows[row..row + count].fill(false);
-        self.occupied_columns[row..row + count].fill(row_extent(occupied, columns));
+        for logical in (row..=bottom - count).rev() {
+            self.copy_row(logical, logical + count);
+        }
+        for logical in row..row + count {
+            self.fill_row(logical, cell.clone());
+        }
         self.mark_dirty_range(row, bottom);
     }
 
     pub(crate) fn delete_lines(&mut self, row: usize, bottom: usize, count: usize, cell: Cell) {
-        let columns = self.dimensions.columns();
         let count = count.min(bottom - row + 1);
-        self.move_cells(
-            (row + count) * columns..(bottom + 1) * columns,
-            row * columns,
-        );
-        let occupied = !is_structural_blank(&cell);
-        self.cells[(bottom + 1 - count) * columns..(bottom + 1) * columns].fill(cell);
-        self.occupied_cells[(bottom + 1 - count) * columns..(bottom + 1) * columns].fill(occupied);
-        self.move_row_metadata(row + count..bottom + 1, row);
-        self.soft_wrapped_rows[bottom + 1 - count..bottom + 1].fill(false);
-        self.occupied_columns[bottom + 1 - count..bottom + 1].fill(row_extent(occupied, columns));
+        for logical in row + count..=bottom {
+            self.copy_row(logical, logical - count);
+        }
+        for logical in bottom + 1 - count..=bottom {
+            self.fill_row(logical, cell.clone());
+        }
         self.mark_dirty_range(row, bottom);
     }
 
@@ -328,93 +389,134 @@ impl Screen {
         count: usize,
         cell: Cell,
     ) -> Vec<ScreenRow> {
-        let columns = self.dimensions.columns();
         let count = count.min(bottom - top + 1);
         let removed = (top..top + count)
             .map(|row| {
-                let start = row * columns;
+                let start = self.physical_row_start(row);
                 ScreenRow {
-                    cells: self.cells[start..start + self.occupied_columns[row]].to_vec(),
-                    soft_wrapped: self.soft_wrapped_rows[row],
+                    cells: self.cells[start..start + self.occupied_columns[self.physical_row(row)]]
+                        .to_vec(),
+                    soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
                 }
             })
             .collect();
-        let region_start = top * columns;
-        let region_end = (bottom + 1) * columns;
-        let shifted_cells = count * columns;
-        self.move_cells(region_start + shifted_cells..region_end, region_start);
-        let occupied = !is_structural_blank(&cell);
-        self.cells[region_end - shifted_cells..region_end].fill(cell);
-        self.occupied_cells[region_end - shifted_cells..region_end].fill(occupied);
-        self.move_row_metadata(top + count..bottom + 1, top);
-        self.soft_wrapped_rows[bottom + 1 - count..bottom + 1].fill(false);
-        self.occupied_columns[bottom + 1 - count..bottom + 1].fill(row_extent(occupied, columns));
+        if top == 0 && bottom + 1 == self.dimensions.rows() {
+            // The common case: the whole screen scrolls. Rotating the ring
+            // by `count` avoids moving any surviving row's cells at all -
+            // only the `count` newly revealed rows at the bottom need to be
+            // cleared, an O(count) operation instead of O(rows*columns).
+            let rows = self.dimensions.rows();
+            for offset in 0..count {
+                self.fill_row(offset, cell.clone());
+            }
+            self.top = (self.top + count) % rows;
+        } else {
+            // A partial scroll region still requires shifting the affected
+            // rows physically, since the ring rotation only ever applies to
+            // the whole screen. Rows move toward lower indices, so copy
+            // forward (destination is never re-read as a source before it's
+            // written, since its source index is always still ahead).
+            for logical in top + count..=bottom {
+                self.copy_row(logical, logical - count);
+            }
+            for logical in bottom + 1 - count..=bottom {
+                self.fill_row(logical, cell.clone());
+            }
+        }
         self.mark_dirty_range(top, bottom);
         removed
     }
 
     pub(crate) fn scroll_down(&mut self, top: usize, bottom: usize, count: usize, cell: Cell) {
-        let columns = self.dimensions.columns();
         let count = count.min(bottom - top + 1);
-        let region_start = top * columns;
-        let region_end = (bottom + 1) * columns;
-        let shifted_cells = count * columns;
-        self.move_cells(
-            region_start..region_end - shifted_cells,
-            region_start + shifted_cells,
-        );
-        let occupied = !is_structural_blank(&cell);
-        self.cells[region_start..region_start + shifted_cells].fill(cell);
-        self.occupied_cells[region_start..region_start + shifted_cells].fill(occupied);
-        self.move_row_metadata(top..bottom + 1 - count, top + count);
-        self.soft_wrapped_rows[top..top + count].fill(false);
-        self.occupied_columns[top..top + count].fill(row_extent(occupied, columns));
+        for logical in (top..=bottom - count).rev() {
+            self.copy_row(logical, logical + count);
+        }
+        for logical in top..top + count {
+            self.fill_row(logical, cell.clone());
+        }
         self.mark_dirty_range(top, bottom);
     }
 
     pub(crate) fn mark_soft_wrapped(&mut self, row: usize) {
         // A width-two glyph can pre-wrap before the final column, so the
         // logical continuation flag and occupied extent are independent.
-        self.soft_wrapped_rows[row] = true;
+        let physical_row = self.physical_row(row);
+        self.soft_wrapped_rows[physical_row] = true;
     }
 
     fn cell_index(&self, column: usize, row: usize) -> Option<usize> {
         (column < self.dimensions.columns() && row < self.dimensions.rows())
-            .then_some(row * self.dimensions.columns() + column)
+            .then_some(self.physical_row_start(row) + column)
     }
 
-    fn move_cells(&mut self, source: std::ops::Range<usize>, destination: usize) {
-        let length = source.end - source.start;
-        if destination > source.start {
-            for offset in (0..length).rev() {
-                self.cells[destination + offset] = self.cells[source.start + offset].clone();
-                self.occupied_cells[destination + offset] =
-                    self.occupied_cells[source.start + offset];
-            }
-        } else {
-            for offset in 0..length {
-                self.cells[destination + offset] = self.cells[source.start + offset].clone();
-                self.occupied_cells[destination + offset] =
-                    self.occupied_cells[source.start + offset];
-            }
+    /// Copies one logical row's cells and metadata onto another logical
+    /// row. Used by the line/region-shifting operations that can't be
+    /// expressed as a whole-screen ring rotation (insert/delete lines,
+    /// scroll within a bounded region, `scroll_down`).
+    fn copy_row(&mut self, source_row: usize, destination_row: usize) {
+        let columns = self.dimensions.columns();
+        let source_start = self.physical_row_start(source_row);
+        let destination_start = self.physical_row_start(destination_row);
+        if source_start == destination_start {
+            return;
         }
+        // A physical row is always contiguous in memory even though logical
+        // rows can straddle the ring's wrap point, so a plain slice copy
+        // (rather than `move_cells`'s cross-region element loop) suffices.
+        let (left, right) = if source_start < destination_start {
+            let (left, right) = self.cells.split_at_mut(destination_start);
+            (
+                &mut left[source_start..source_start + columns],
+                &mut right[..columns],
+            )
+        } else {
+            let (left, right) = self.cells.split_at_mut(source_start);
+            (
+                &mut left[destination_start..destination_start + columns],
+                &mut right[..columns],
+            )
+        };
+        let (destination_cells, source_cells) = if source_start < destination_start {
+            (right, &*left)
+        } else {
+            (left, &*right)
+        };
+        destination_cells.clone_from_slice(source_cells);
+        self.occupied_cells
+            .copy_within(source_start..source_start + columns, destination_start);
+        let source_physical = self.physical_row(source_row);
+        let destination_physical = self.physical_row(destination_row);
+        self.soft_wrapped_rows[destination_physical] = self.soft_wrapped_rows[source_physical];
+        self.occupied_columns[destination_physical] = self.occupied_columns[source_physical];
     }
 
-    fn move_row_metadata(&mut self, source: std::ops::Range<usize>, destination: usize) {
+    /// Overwrites an entire logical row with `cell`, matching the fill
+    /// behavior of a full-width `fill_linear` call for that row.
+    fn fill_row(&mut self, row: usize, cell: Cell) {
+        let columns = self.dimensions.columns();
+        let start = self.physical_row_start(row);
+        let occupied = !is_structural_blank(&cell);
+        self.cells[start..start + columns].fill(cell);
+        self.occupied_cells[start..start + columns].fill(occupied);
+        let physical_row = self.physical_row(row);
+        self.soft_wrapped_rows[physical_row] = false;
+        self.occupied_columns[physical_row] = row_extent(occupied, columns);
+    }
+
+    fn move_cells_within_row(&mut self, source: std::ops::Range<usize>, destination: usize) {
         let length = source.end - source.start;
         if destination > source.start {
             for offset in (0..length).rev() {
-                self.soft_wrapped_rows[destination + offset] =
-                    self.soft_wrapped_rows[source.start + offset];
-                self.occupied_columns[destination + offset] =
-                    self.occupied_columns[source.start + offset];
+                self.cells[destination + offset] = self.cells[source.start + offset].clone();
+                self.occupied_cells[destination + offset] =
+                    self.occupied_cells[source.start + offset];
             }
         } else {
             for offset in 0..length {
-                self.soft_wrapped_rows[destination + offset] =
-                    self.soft_wrapped_rows[source.start + offset];
-                self.occupied_columns[destination + offset] =
-                    self.occupied_columns[source.start + offset];
+                self.cells[destination + offset] = self.cells[source.start + offset].clone();
+                self.occupied_cells[destination + offset] =
+                    self.occupied_cells[source.start + offset];
             }
         }
     }
@@ -459,7 +561,7 @@ impl Screen {
 
     fn repair_cell(&mut self, row: usize, column: usize, fill: &Cell) {
         let columns = self.dimensions.columns();
-        let index = row * columns + column;
+        let index = self.physical_row_start(row) + column;
         let invalid = match self.cells[index].width {
             CellWidth::Double => {
                 column + 1 == columns || self.cells[index + 1].width != CellWidth::Continuation
@@ -476,8 +578,10 @@ impl Screen {
     }
 
     fn recompute_occupied(&mut self, row: usize) {
-        let start = row * self.dimensions.columns();
-        self.occupied_columns[row] = self.occupied_cells[start..start + self.dimensions.columns()]
+        let start = self.physical_row_start(row);
+        let physical_row = self.physical_row(row);
+        self.occupied_columns[physical_row] = self.occupied_cells
+            [start..start + self.dimensions.columns()]
             .iter()
             .rposition(|occupied| *occupied)
             .map_or(0, |column| column + 1);

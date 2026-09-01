@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use compact_str::CompactString;
+
 /// A color value used by a cell.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Color {
@@ -82,7 +84,7 @@ impl CellWidth {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Cell {
-    pub(crate) text: String,
+    pub(crate) text: CompactString,
     pub(crate) width: CellWidth,
     pub(crate) foreground: Color,
     pub(crate) background: Color,
@@ -137,7 +139,7 @@ impl Cell {
 
 pub(crate) fn blank_cell() -> Cell {
     Cell {
-        text: " ".to_owned(),
+        text: CompactString::const_new(" "),
         width: CellWidth::Single,
         foreground: Color::Default,
         background: Color::Default,

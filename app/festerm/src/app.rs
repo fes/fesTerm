@@ -2345,7 +2345,14 @@ impl FesTermApp {
             return None;
         };
         let tab = self.state.active();
-        let diagnostics = session.controller.diagnostics_line();
+        // Append the terminal view's own per-frame render diagnostics
+        // (frame time, input->paint submission latency, dirty rows) after
+        // the session/PTY line, so a slow-rendering report can be
+        // diagnosed from the Inspector alone rather than needing extra
+        // instrumentation.
+        let diagnostics = session
+            .view
+            .diagnostics_summary(&session.controller.diagnostics_line());
         let grid = session.view.dimensions_label();
         let terminal_title =
             (!session.terminal.title().is_empty()).then(|| session.terminal.title());

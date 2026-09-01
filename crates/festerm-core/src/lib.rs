@@ -158,6 +158,26 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual throughput probe, not a regression test"]
+    fn manual_ingest_throughput_probe() {
+        let mut term = terminal(120, 40);
+        let pattern = b"C:\\Windows\\System32\\some\\deep\\path\\to\\a\\file.txt\r\n";
+        let mut workload = Vec::new();
+        while workload.len() < 4 * 1024 * 1024 {
+            workload.extend_from_slice(pattern);
+        }
+        let start = std::time::Instant::now();
+        term.ingest(&workload);
+        let elapsed = start.elapsed();
+        eprintln!(
+            "ingest {} bytes took {:?} ({:.2} MB/s)",
+            workload.len(),
+            elapsed,
+            workload.len() as f64 / elapsed.as_secs_f64() / 1_048_576.0
+        );
+    }
+
+    #[test]
     fn validates_dimensions_before_allocating() {
         assert!(Dimensions::new(0, 1).is_err());
         assert!(Dimensions::new(1, 1).is_err());

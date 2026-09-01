@@ -1,5 +1,6 @@
 use std::{fmt, sync::Arc};
 
+use compact_str::CompactString;
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
@@ -755,7 +756,7 @@ impl Terminal {
 
     fn erase_cell(&self) -> Cell {
         Cell {
-            text: " ".to_owned(),
+            text: CompactString::const_new(" "),
             width: CellWidth::Single,
             foreground: self.current_foreground,
             background: self.current_background,
@@ -808,7 +809,11 @@ impl Terminal {
             cursor.column,
             cursor.row,
             Cell {
-                text: character.to_string(),
+                text: {
+                    let mut text = CompactString::const_new("");
+                    text.push(character);
+                    text
+                },
                 width: if width == 2 {
                     CellWidth::Double
                 } else {
