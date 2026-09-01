@@ -887,6 +887,12 @@ fn accept_windows_clients(
 ) -> io::Result<()> {
     for stream in accept_rx.try_iter() {
         let mut stream = stream?;
+        if std::env::var_os("FESTERM_SESSIOND_TRACE").is_some() {
+            eprintln!(
+                "sessiond-trace accept_windows_clients: new client, replay_empty={}",
+                replay.is_empty()
+            );
+        }
         stream.set_read_timeout(Some(WINDOWS_CLIENT_READ_TIMEOUT));
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
         replace_active(
@@ -904,16 +910,23 @@ fn accept_windows_clients(
 fn spawn_pty_reader<R: Read + Send + 'static>(
     mut reader: R,
 ) -> (mpsc::Receiver<PtyEvent>, thread::JoinHandle<io::Result<()>>) {
+    let trace = std::env::var_os("FESTERM_SESSIOND_TRACE").is_some();
     let (sender, receiver) = mpsc::channel();
     let thread = thread::spawn(move || {
         let mut buffer = [0u8; 4096];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => {
+                    if trace {
+                        eprintln!("sessiond-trace pty-reader: eof");
+                    }
                     let _ = sender.send(PtyEvent::Eof);
                     return Ok(());
                 }
                 Ok(count) => {
+                    if trace {
+                        eprintln!("sessiond-trace pty-reader: read {count} bytes");
+                    }
                     if sender
                         .send(PtyEvent::Data(buffer[..count].to_vec()))
                         .is_err()
@@ -923,6 +936,9 @@ fn spawn_pty_reader<R: Read + Send + 'static>(
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => {
+                    if trace {
+                        eprintln!("sessiond-trace pty-reader: error {error}");
+                    }
                     let kind = error.kind();
                     let message = error.to_string();
                     let _ = sender.send(PtyEvent::Error(io::Error::new(kind, message)));
@@ -1073,6 +1089,7 @@ fn client_io_loop<S: Read + Write>(
 ) -> io::Result<()> {
     let mut parser = ClientFrameParser::default();
     let mut buffer = [0u8; 4096];
+    let trace = std::env::var_os("FESTERM_SESSIOND_TRACE").is_some();
     loop {
         if stolen.load(Ordering::Acquire) {
             stream.write_all(STOLEN_NOTICE_BYTES)?;
@@ -1082,6 +1099,12 @@ fn client_io_loop<S: Read + Write>(
         loop {
             match output.try_recv() {
                 Ok(ClientOutput::Data(data)) => {
+                    if trace {
+                        eprintln!(
+                            "sessiond-trace client_io_loop[{generation}]: writing {} bytes to client",
+                            data.len()
+                        );
+                    }
                     stream.write_all(&data)?;
                     stream.flush()?;
                 }
@@ -1747,7 +1770,12 @@ fn spawn_shell(
     rows: u16,
 ) -> Result<SpawnedShell, Box<dyn std::error::Error>> {
     #[cfg(windows)]
-    festerm_pty::prepare_windows_conpty_runtime()?;
+    {
+        let selection = festerm_pty::prepare_windows_conpty_runtime()?;
+        if std::env::var_os("FESTERM_SESSIOND_TRACE").is_some() {
+            eprintln!("sessiond-trace spawn_shell: conpty runtime selection = {selection:?}");
+        }
+    }
 
     let system = native_pty_system();
     let size = PtySize {

@@ -59,6 +59,8 @@ jobs:
           cargo test -p festerm windows_conpty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
 
       - name: Run Windows session daemon smoke
+        env:
+          FESTERM_SESSIOND_TRACE: ${{ inputs.verbose == 'true' && '1' || '' }}
         run: |
           cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
 
