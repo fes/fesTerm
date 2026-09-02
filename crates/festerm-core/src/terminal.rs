@@ -492,14 +492,14 @@ impl Terminal {
     }
 
     /// Borrows one retained physical row by its oldest-first history index.
-    pub fn scrollback_physical_row(&self, mut row: usize) -> Option<&[Cell]> {
-        for line in self.scrollback.lines() {
-            if row < line.physical_rows() {
-                return line.physical_row(row);
-            }
-            row -= line.physical_rows();
-        }
-        None
+    pub fn scrollback_physical_row(&self, row: usize) -> Option<&[Cell]> {
+        self.scrollback.physical_row(row)
+    }
+
+    /// Reports whether one retained physical row, by its oldest-first
+    /// history index, is soft-wrapped into the next row.
+    pub fn scrollback_physical_row_soft_wrapped(&self, row: usize) -> Option<bool> {
+        self.scrollback.physical_row_soft_wrapped(row)
     }
 
     /// Clears retained primary-screen history without changing the visible grid.

@@ -251,14 +251,7 @@ impl<'a> TerminalSnapshot<'a> {
             if relative_row >= history_rows {
                 return None;
             }
-            let mut remaining = relative_row;
-            for line in self.terminal.scrollback_lines() {
-                if remaining < line.physical_rows() {
-                    return line.physical_row_soft_wrapped(remaining);
-                }
-                remaining -= line.physical_rows();
-            }
-            return None;
+            return self.terminal.scrollback_physical_row_soft_wrapped(relative_row);
         }
         self.terminal
             .screen()

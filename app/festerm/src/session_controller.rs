@@ -19,6 +19,20 @@ use festerm_session::SessionMetrics;
 /// Maximum session events drained per frame before yielding for repaint.
 pub const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
 
+/// Maximum cumulative bytes synchronously handed to
+/// [`Terminal::ingest`](festerm_core::Terminal::ingest) in a single
+/// [`pump_session_events`] call, even if [`MAX_SESSION_EVENTS_PER_FRAME`]
+/// hasn't been reached yet. `Terminal::ingest` has no internal per-call
+/// budget of its own - it's a tight byte-parsing loop - so without this,
+/// draining up to 64 output events at [`MAX_IO_CHUNK_BYTES`] each could
+/// synchronously parse several megabytes in one frame (e.g. right after a
+/// `dir /s` on a large tree), blocking `update()` long enough that new
+/// keyboard input (including Ctrl+C) couldn't register until it finished.
+/// Bounding by bytes forces a large backlog to drain incrementally across
+/// many frames instead, keeping each frame's parse work - and thus input
+/// latency - low regardless of the size of the retained backlog.
+pub const MAX_INGEST_BYTES_PER_FRAME: usize = MAX_IO_CHUNK_BYTES * 4;
+
 /// Maximum bytes retained in the ordered pending-write buffer.
 pub const MAX_PENDING_COMMAND_BYTES: usize = DEFAULT_COMMAND_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
 
@@ -905,6 +919,7 @@ pub fn pump_session_events(
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
     let mut output_received = false;
+    let mut ingested_bytes = 0usize;
     for _ in 0..maximum {
         match session.try_recv_event() {
             Ok(event) => match &event {
@@ -912,6 +927,13 @@ pub fn pump_session_events(
                     output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
                     terminal.ingest(bytes);
+                    ingested_bytes = ingested_bytes.saturating_add(bytes.len());
+                    if ingested_bytes >= MAX_INGEST_BYTES_PER_FRAME {
+                        return PumpResult {
+                            hit_limit: true,
+                            output_received,
+                        };
+                    }
                 }
                 _ => observe(PumpedSessionEvent::Event(&event)),
             },
@@ -1391,6 +1413,39 @@ mod tests {
         assert!(terminal
             .row_text(0)
             .is_some_and(|row| row.starts_with("first")));
+    }
+
+    #[test]
+    fn ingest_byte_budget_bounds_a_single_pump_even_under_the_event_count_cap() {
+        // A large heavy-output backlog (e.g. a `dir /s` on a big tree) can
+        // arrive as far fewer than `MAX_SESSION_EVENTS_PER_FRAME` chunks
+        // once each chunk is close to `MAX_IO_CHUNK_BYTES`. Without a byte
+        // budget, a single `pump_session_events` call would synchronously
+        // `Terminal::ingest` all of it - this proves the byte budget kicks
+        // in and reports `hit_limit` (so callers keep requesting repaints
+        // and draining incrementally) well before the event-count cap.
+        let chunk = vec![b'x'; MAX_INGEST_BYTES_PER_FRAME];
+        let session = FakeSession::new([
+            SessionEvent::Output(chunk.clone()),
+            SessionEvent::Output(chunk),
+        ]);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        let mut observed_events = 0usize;
+        let result = pump_session_events(
+            &session,
+            &mut terminal,
+            MAX_SESSION_EVENTS_PER_FRAME,
+            |_| observed_events += 1,
+        );
+
+        assert!(result.hit_limit, "byte budget must report backpressure");
+        assert!(result.output_received);
+        assert_eq!(
+            observed_events, 1,
+            "only the first chunk should be ingested before the byte budget stops the drain"
+        );
     }
 
     #[test]
