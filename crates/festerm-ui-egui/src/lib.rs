@@ -1819,6 +1819,27 @@ mod tests {
             &mut snapshots,
         );
 
+        // Regression coverage for a bug where merged ASCII glyph runs
+        // containing digits (dates, byte counts, hex-looking names) were
+        // misrouted to the emoji font and rendered with visible spacing
+        // gaps against the fixed monospace cell width, because digits carry
+        // Unicode's loose `Emoji` property. This mirrors a real `dir /s`
+        // directory listing, the original repro.
+        let mut digits_terminal = terminal(80, 24);
+        digits_terminal.ingest(
+            b"08/13/2026  12:03 PM    <DIR>          fbad1\r\n\
+              08/13/2026  12:03 PM       2,275,096,628 eaa2e0c142ea2bd7\r\n\
+              #1 file*2.txt 0123456789",
+        );
+        let mut digits = visual_harness(digits_terminal);
+        digits.state_mut().view.enable_cell_run_shaping_for_test();
+        focus_terminal_grid(&mut digits);
+        snapshot_after_structural_assertions(
+            &mut digits,
+            "terminal-cell-run-shaping-digits",
+            &mut snapshots,
+        );
+
         let mut alternate_terminal = terminal(80, 24);
         alternate_terminal.ingest(b"primary\x1b[?1049h\x1b[6 qalternate screen");
         let mut alternate = visual_harness(alternate_terminal);
