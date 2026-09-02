@@ -2645,7 +2645,7 @@ mod tests {
 
         assert_eq!(
             cache.row(0).unwrap()[0].hyperlink(),
-            Some("https://example.com")
+            Some("https://example.com/")
         );
         assert_eq!(cache.row(0).unwrap()[2].hyperlink(), None);
     }
