@@ -81,6 +81,43 @@ build's fingerprints, so that run recompiles from scratch once (comparable
 to the pre-caching baseline) before the cache re-settles under the new
 profile on the next run. The table above compares warm-cache runs only.
 
+### 5. Native Windows ARM64 linker benchmark
+
+Measured on commit `c137f4f` with `rustc 1.98.0`
+(`aarch64-pc-windows-msvc`) on a 12-core Snapdragon X Elite X1E80100.
+Each cold variant used a separate empty `CARGO_TARGET_DIR`; its warm build
+and test immediately reused that same directory.
+
+| Variant | Cold workspace build | Additional cold workspace test | Combined cold | Warm build | Warm test |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Default MSVC linker, local debug info | 730.308s | 226.159s | 956.467s | 3.366s | 45.601s |
+| `rust-lld`, local debug info | 1342.201s | 188.066s | 1530.267s | 3.035s | 25.602s |
+| Default MSVC linker, CI `debug=0` overrides | 660.724s | 352.068s | 1012.792s | 28.256s | 28.977s |
+
+Cold end-to-end `rust-lld` time was about **60% slower**, not 30% faster.
+The CI debug-info override made the initial workspace build about **9.5%
+faster**, but high variance in the subsequent test build left this single
+combined local run about **5.9% slower**. That does not contradict the
+repeatable hosted x64 CI improvement above, but it does not establish a
+native ARM64 local-build benefit.
+
+To isolate application relinking from dependency compilation, five additional
+alternating dependency-warm `cargo clean -p festerm` / `cargo build -p
+festerm` rounds produced a median of **9.896s with MSVC** and **9.971s with
+`rust-lld`**. The `rust-lld` median was about 0.8% slower and included two
+16-second outliers; it therefore provides no material linker advantage on
+this machine.
+
+The `rust-lld` application passed the native viewport/focus/resize and native
+emoji smokes. The first run exposed an unrelated regression where the
+automation-owned close request was intercepted by live-session quit
+confirmation; the regression and its coverage were fixed in the same
+follow-up that recorded these results. Packaging was not repeated because
+the performance threshold failed and `rust-lld` is not being proposed as a
+default.
+
+**Conclusion:** retain the default MSVC linker for native Windows ARM64.
+
 ## Guidance added for local development (not required)
 
 See [`README.md`](../README.md#speeding-up-local-builds) for optional,
@@ -106,33 +143,6 @@ opt-in local techniques:
 
 ## Open / not addressed here
 
-- **Native Windows ARM64 `lld-link`/`rust-lld` benchmark.** The issue asks
-  for a benchmark of an alternate linker specifically on native Windows
-  ARM64 (`aarch64-pc-windows-msvc`), targeting a 30%+ improvement on a full
-  local validation run, including application resources, tests, native-window
-  smoke, and packaging. This requires physical (or otherwise native, non-
-  emulated) Windows ARM64 hardware, which was not available when this
-  document was written. To run it yourself:
-  1. Confirm `rustc --print target-list | findstr aarch64-pc-windows-msvc`
-     and that your toolchain has the `aarch64-pc-windows-msvc` target
-     installed.
-  2. Record a baseline: `cargo build --workspace` and
-     `cargo test --workspace` from a clean `target` directory (and again
-     warm), noting wall-clock time.
-  3. Configure `rust-lld` (bundled with the Rust toolchain) via
-     `.cargo/config.toml`:
-     ```toml
-     [target.aarch64-pc-windows-msvc]
-     linker-flavor = "lld-link"
-     ```
-     or set `RUSTFLAGS="-C linker-flavor=lld-link"` for a one-off comparison.
-  4. Repeat the same clean/warm timings, plus the app's native-window smoke
-     run (`native-smoke.yml`'s Windows job) and a packaging build
-     (`package-smoke.yml`'s Windows job), to confirm no functional
-     regression before considering `lld-link` a default.
-  5. Record before/after timings here (with commit SHA, `rustc -vV` output,
-     and machine description) so this document stays the source of truth for
-     issue #83's acceptance criteria.
 - **Formal cold-cache timing baseline.** The before/after table above is
   warm-cache only (the steady-state CI condition after
   `Swatinem/rust-cache` is in place). A dedicated cold-cache (cache evicted
