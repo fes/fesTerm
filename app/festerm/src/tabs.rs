@@ -344,6 +344,9 @@ pub struct SessionTab {
     /// becomes active. Purely a presentation cue for the chip's slow-pulse
     /// animation — it never changes `ChipStatus`/connection-state semantics.
     pub has_new_output_since_active: bool,
+    /// Terminal-content find-bar state (`docs/gui-design.md`
+    /// "Terminal-content search"). Never logged or persisted.
+    pub search: crate::search::TerminalSearchState,
 }
 
 /// Exact per-transport counts of sessions that would lose something by
@@ -761,6 +764,7 @@ impl SessionTab {
             eviction_notice_shown: false,
             ssh_password_retry,
             has_new_output_since_active: false,
+            search: crate::search::TerminalSearchState::default(),
         }
     }
 

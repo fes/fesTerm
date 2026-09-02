@@ -12,6 +12,7 @@ mod inspector;
 mod native_smoke;
 mod overlay_state;
 mod screens;
+mod search;
 pub mod session_controller;
 mod tabs;
 mod updates;

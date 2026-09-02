@@ -72,6 +72,10 @@ enum ApplicationShortcut {
     ClearTerminal,
     ResetTerminal,
     ToggleFocusMode,
+    /// Terminal-content search (`docs/gui-design.md` "Terminal-content
+    /// search"). `Ctrl+Shift+F` on Windows/Linux; macOS uses plain `Cmd+F`
+    /// since `Cmd+Shift+F` is already `ToggleFocusMode` there.
+    Find,
 }
 
 #[derive(Clone, Copy)]
@@ -157,6 +161,14 @@ impl ApplicationShortcut {
                     egui::Key::F11
                 },
             )),
+            Self::Find => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND
+                } else {
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+                },
+                egui::Key::F,
+            )),
         }
     }
 
@@ -186,6 +198,8 @@ impl ApplicationShortcut {
             Self::ResetTerminal => Some("Ctrl+Shift+R"),
             Self::ToggleFocusMode if cfg!(target_os = "macos") => Some("\u{2318}+Shift+F"),
             Self::ToggleFocusMode => Some("Ctrl+Shift+F11"),
+            Self::Find if cfg!(target_os = "macos") => Some("\u{2318}+F"),
+            Self::Find => Some("Ctrl+Shift+F"),
         }
     }
 
@@ -1861,6 +1875,7 @@ impl FesTermApp {
         const CLEAR_TERMINAL_HISTORY: u64 = 12;
         const COPY: u64 = 13;
         const PASTE: u64 = 14;
+        const FIND_IN_TERMINAL: u64 = 15;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -1958,6 +1973,13 @@ impl FesTermApp {
                     } else {
                         "Ctrl+V".to_owned()
                     }),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: FIND_IN_TERMINAL,
+                    label: "Find in Terminal…".to_owned(),
+                    hint: ApplicationShortcut::Find.label().map(str::to_owned),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2070,6 +2092,7 @@ impl FesTermApp {
             12 => self.clear_active_terminal(context),
             13 => self.copy_active_selection(context),
             14 => self.paste_into_active_session(context),
+            15 => self.open_terminal_search(context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -2147,6 +2170,8 @@ impl FesTermApp {
             && ApplicationShortcut::ResetTerminal.consume(ctx);
         let toggle_focus_mode = matches!(self.state.active_tab().content, TabContent::Session(_))
             && ApplicationShortcut::ToggleFocusMode.consume(ctx);
+        let open_find = matches!(self.state.active_tab().content, TabContent::Session(_))
+            && ApplicationShortcut::Find.consume(ctx);
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
@@ -2184,6 +2209,9 @@ impl FesTermApp {
         }
         if toggle_focus_mode {
             self.toggle_focus_mode(ctx);
+        }
+        if open_find {
+            self.open_terminal_search(ctx);
         }
     }
 
@@ -2543,6 +2571,126 @@ impl FesTermApp {
         let active = self.state.active();
         if let Some(session) = self.state.session_tab_mut(active) {
             session.view.request_focus_on_next_frame();
+        }
+    }
+
+    /// Opens (or refocuses) the terminal-content find bar for the active
+    /// session (`docs/gui-design.md` "Terminal-content search"). The palette
+    /// entry shares this same entry point.
+    fn open_terminal_search(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        session.search.open();
+        session.search.rescan(&session.terminal);
+        if let Some(row) = session.search.current_match_row() {
+            session.view.reveal_document_row(&session.terminal, row);
+        }
+        context.request_repaint();
+    }
+
+    /// Escape/close-button path: clears the transient query/highlights and
+    /// restores terminal focus, matching Copy/Paste's ordinary focus
+    /// restoration behavior after an overlay-ish surface dismisses.
+    fn close_terminal_search(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        if let Some(session) = self.state.session_tab_mut(active) {
+            session.search.close();
+        }
+        self.restore_active_terminal_focus();
+        context.request_repaint();
+    }
+
+    /// Renders the find bar as a foreground overlay above the terminal
+    /// viewport (`content_rect`) without altering `CentralPanel` layout or
+    /// grid dimensions.
+    fn show_terminal_find_bar(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        if !session.search.is_open() {
+            return;
+        }
+        session.search.refresh_if_stale(&session.terminal);
+        let area_id = egui::Id::new(("terminal_find_bar", active));
+        let query_id = egui::Id::new(("terminal_find_query", active));
+        let mut close_requested = false;
+        egui::Area::new(area_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(
+                content_rect.right() - 320.0,
+                content_rect.top() + 8.0,
+            ))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(300.0);
+                    ui.horizontal(|ui| {
+                        let label = ui.add(egui::Label::new("Find:").selectable(false));
+                        let mut query = session.search.query().to_owned();
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut query)
+                                .id(query_id)
+                                .hint_text("Search terminal…")
+                                .desired_width(140.0),
+                        );
+                        let response = response.labelled_by(label.id);
+                        if session.search.take_focus_request() {
+                            response.request_focus();
+                        }
+                        let mut jump_to: Option<usize> = None;
+                        if response.changed() {
+                            session.search.set_query(&session.terminal, query);
+                            jump_to = session.search.current_match_row();
+                        }
+                        let enter_pressed = response.has_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        if enter_pressed {
+                            if ui.input(|input| input.modifiers.shift) {
+                                session.search.retreat();
+                            } else {
+                                session.search.advance();
+                            }
+                            jump_to = session.search.current_match_row();
+                        }
+                        if let Some(row) = jump_to {
+                            session.view.reveal_document_row(&session.terminal, row);
+                        }
+                        if response.has_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Escape))
+                        {
+                            close_requested = true;
+                        }
+                        ui.label(if session.search.has_query() {
+                            match session.search.current_position() {
+                                Some(position) => {
+                                    format!("{position} of {}", session.search.match_count())
+                                }
+                                None => "No matches".to_owned(),
+                            }
+                        } else {
+                            String::new()
+                        });
+                        if ui.add(egui::Button::new("\u{2191}")).clicked() {
+                            session.search.retreat();
+                            jump_to = session.search.current_match_row();
+                        }
+                        if ui.add(egui::Button::new("\u{2193}")).clicked() {
+                            session.search.advance();
+                            jump_to = session.search.current_match_row();
+                        }
+                        if let Some(row) = jump_to {
+                            session.view.reveal_document_row(&session.terminal, row);
+                        }
+                        if ui.button("\u{2715}").clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+            });
+        if close_requested {
+            self.close_terminal_search(ctx);
         }
     }
 
@@ -3140,6 +3288,14 @@ impl FesTermApp {
             && ui
                 .ctx()
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        // Search's own `TextEdit` consumes Escape itself while focused; this
+        // covers Escape pressed after the user clicked back into the
+        // terminal without closing the find bar first.
+        let search_escape = !inspector_escape
+            && matches!(&self.state.active_tab().content, TabContent::Session(session) if session.search.is_open())
+            && ui
+                .ctx()
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
         if self.state.status_bar_visible() && !self.focus_mode {
             self.show_status_bar(ui);
@@ -3157,6 +3313,13 @@ impl FesTermApp {
         }
 
         let content_rect = ui.available_rect_before_wrap();
+        // Rendered before `TerminalView::show_with_options` below: while the
+        // find bar is open that call marks `terminal_input_enabled = false`
+        // and strips this frame's keyboard/text events from the shared
+        // input queue for a full modal-style blackout. The find bar's own
+        // `TextEdit` must see its `Text`/`Key` events before that happens,
+        // so it renders first even though it paints above the terminal.
+        self.show_terminal_find_bar(&ui.ctx().clone(), content_rect);
         // Intercept outside pointer-button events before TerminalView reads
         // them. A foreground Area can paint above the terminal, but it cannot
         // retroactively undo input already routed earlier in the frame.
@@ -3269,7 +3432,8 @@ impl FesTermApp {
                         let options = festerm_ui_egui::TerminalViewOptions {
                             paste_available: session.accepts_input(),
                             terminal_input_enabled: !self.overlays.blocks_terminal_input()
-                                && !self.palette.is_open(),
+                                && !self.palette.is_open()
+                                && !session.search.is_open(),
                             keyboard_input_enabled: session.accepts_typed_input(),
                             defer_paste_to_application: true,
                             scroll_speed_multiplier,
@@ -3296,6 +3460,9 @@ impl FesTermApp {
                     overlay_action = overlay::show(ui.ctx(), session.chip_status());
                 }
             }
+        }
+        if search_escape {
+            self.close_terminal_search(&ui.ctx().clone());
         }
         if paste_was_pending && !deferred_pastes.is_empty() {
             // A later clipboard-delivery event invalidates the captured
@@ -3923,6 +4090,98 @@ mod tests {
         harness.key_press(egui::Key::Escape);
         harness.step();
         assert!(harness.state().overlays.pending_file_drop.is_none());
+    }
+
+    #[test]
+    fn open_terminal_search_opens_find_bar_and_focuses_query() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.open_terminal_search(&context);
+        assert!(app.state.session_tab_mut(tab).unwrap().search.is_open());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Find:").is_focused());
+    }
+
+    #[test]
+    fn terminal_search_finds_and_navigates_matches() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        {
+            let session = app.state.session_tab_mut(tab).unwrap();
+            session
+                .terminal
+                .ingest(b"alpha line\r\nbeta line\r\nalpha again\r\n");
+        }
+        app.open_terminal_search(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness.get_by_label("Find:").type_text("alpha");
+        harness.run();
+
+        {
+            let search = &harness
+                .state_mut()
+                .state
+                .session_tab_mut(tab)
+                .unwrap()
+                .search;
+            assert_eq!(search.match_count(), 2);
+            assert_eq!(search.current_position(), Some(1));
+        }
+
+        harness.get_by_label("\u{2193}").click();
+        harness.step();
+        assert_eq!(
+            harness
+                .state_mut()
+                .state
+                .session_tab_mut(tab)
+                .unwrap()
+                .search
+                .current_position(),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn escape_closes_terminal_search_and_restores_terminal_focus() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        app.open_terminal_search(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(!harness
+            .state_mut()
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .search
+            .is_open());
+    }
+
+    #[test]
+    fn find_in_terminal_palette_command_opens_the_find_bar() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        const FIND_IN_TERMINAL: u64 = 15;
+        app.dispatch_palette_selection(FIND_IN_TERMINAL, &context);
+        assert!(app.state.session_tab_mut(tab).unwrap().search.is_open());
     }
 
     #[test]

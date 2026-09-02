@@ -135,6 +135,18 @@ possible.
 | FD-03 | Drop a path containing control characters; the bounded preview escapes them for display (matching the large-paste preview's escaping) rather than silently rewriting or truncating the path that would actually be inserted. | Functional + usability | Yes: fixture path with embedded control bytes |
 | FD-04 | With the confirmation open, initial Enter activates Cancel and inserts nothing; Escape and outside-click behave the same as the paste/close confirmations. | Native functional | Yes |
 
+### Terminal-content search
+
+| ID | Workflow and oracle | Evidence class | VM automation candidate |
+| --- | --- | --- | --- |
+| SRCH-01 | Open find via `Ctrl+Shift+F`/`Cmd+F` and via the command palette ("Find in Terminal…") on an active session with scrollback and live-screen text; query focus is granted immediately and typed input reaches the query field rather than the PTY. | Native functional | Yes |
+| SRCH-02 | Search a term present in retained scrollback and a term present only on the live screen; both are found without spanning a row boundary; case is ignored; navigate forward/back with Enter/Down and Shift+Enter/Up, including wraparound past the last/first match. | Functional | Yes |
+| SRCH-03 | Search a term with no matches; the bar shows `No matches` rather than a fabricated `0 of 0`, and Copy while a match is current still requires an explicit terminal selection (no implicit copy of the match). | Functional + privacy | Yes |
+| SRCH-04 | While in alternate-screen mode (e.g. a full-screen pager), confirm search only covers the visible alternate-screen content and does not surface primary-buffer text. | Functional | Yes: fixture with alt-screen program active |
+| SRCH-05 | With a match selected, produce new output that grows scrollback; confirm the current match selection is preserved by content/row rather than jumping arbitrarily, and that navigating scrolls the terminal to bring the match into view without sending mouse/keyboard reporting to the PTY. | Functional | Yes |
+| SRCH-06 | Press Escape while the find bar has focus; query and result state clear, terminal keyboard focus is restored, and no Escape byte reaches the PTY. | Native functional | Yes |
+| SRCH-07 | Confirm there is no in-grid highlight of matches (disclosed scope reduction); the only indicators of match location are the `N of M` counter and auto-scroll-to-match. | Visual + usability | Human judgment of documented gap |
+
 ### Native platform, appearance, and accessibility
 
 | ID | Workflow and oracle | Evidence class | VM automation candidate |

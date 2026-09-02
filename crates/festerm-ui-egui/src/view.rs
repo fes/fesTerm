@@ -366,6 +366,30 @@ impl TerminalView {
         self.pending_paste_requests.drain(..).collect()
     }
 
+    /// Scrolls history so a terminal-search match becomes visible, used by
+    /// the application-owned find bar (`docs/gui-design.md`
+    /// "Terminal-content search"). `row` is a "document row": a retained
+    /// scrollback row (oldest-first, `row < terminal.scrollback_stats()
+    /// .physical_rows()`) or, past that, a live visible-screen row. A live
+    /// row simply returns the viewport to the latest position; while the
+    /// alternate screen is active, `row`'s scrollback component is ignored,
+    /// matching `TerminalSnapshot`'s own forced-zero scrollback offset in
+    /// that mode.
+    pub fn reveal_document_row(&mut self, terminal: &Terminal, row: usize) {
+        self.history.sync(terminal);
+        let history_rows = if terminal.modes().alternate_screen() {
+            0
+        } else {
+            terminal.scrollback_stats().physical_rows()
+        };
+        if row < history_rows {
+            self.history.offset_rows = history_rows - row;
+            self.history.unseen_output = false;
+        } else {
+            self.history.latest();
+        }
+    }
+
     /// Shows the terminal, filling all available space in `ui`. Detailed
     /// per-frame diagnostics are not rendered inline (`docs/gui-design.md`
     /// "Bottom status bar"); callers that want to surface them can read

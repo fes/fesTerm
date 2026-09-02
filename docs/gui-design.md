@@ -1833,7 +1833,7 @@ input. The current platform defaults are:
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` (pending native-convention review) |
 | Command palette / session switcher | `Ctrl+Shift+P` | `Cmd+Shift+P` |
 | Open Settings | `Ctrl+Shift+S` | `Cmd+Shift+S` (also `Cmd+,`, the macOS "Preferences" convention, via the native app menu) |
-| Find in terminal | `Ctrl+Shift+F` | `Cmd+F` target; current implementation remains `Cmd+Shift+F` until search lands |
+| Find in terminal | `Ctrl+Shift+F` | `Cmd+F` |
 | Copy / Paste | `Ctrl+Shift+C` / `Ctrl+Shift+V` | `Cmd+C` / `Cmd+V` |
 | Clear terminal (display and scrollback) | `Ctrl+Shift+K` | `Cmd+K` |
 | Reset terminal display state | `Ctrl+Shift+R` | `Option+Cmd+R` |
@@ -1912,20 +1912,35 @@ that the inaccessible primary buffer is simultaneously visible. Wrapped rows
 are treated as logical text only where the model reliably preserves wrapping;
 wide and combining characters retain cell ownership.
 
-The initial behavior is literal, case-insensitive search. Regex, whole-word,
-and case toggles remain absent until deliberately implemented. Matches receive
-a subtle highlight and the active match the stronger selection treatment.
-Enter/Down advances, Shift+Enter/Up reverses, and Escape clears the transient
-query/highlights and restores terminal focus. No result uses `No matches`
-rather than a fabricated `0 of 0` position.
+The initial behavior is literal, case-insensitive search, per-row (matching
+does not span a row boundary). Regex, whole-word, and case toggles remain
+absent until deliberately implemented. Enter/Down advances, Shift+Enter/Up
+reverses (both wrap past the last/first match), and Escape clears the
+transient query/highlights and restores terminal focus. No result uses
+`No matches` rather than a fabricated `0 of 0` position; the find bar shows
+`N of M` while a match is selected.
 
-Search focus prevents input from reaching the PTY. Navigation scrolls locally
-and never sends mouse or keyboard reporting. New output may extend the result
-set without moving the current match unexpectedly. Search highlighting remains
-independent of terminal text selection; Copy operates on explicit selection,
-not implicitly on the current match. Queries are never logged or persisted.
-Search may collapse into overflow at narrow widths while remaining available
-through `Ctrl+Shift+F` and the command palette.
+Search focus prevents input from reaching the PTY (the same
+`terminal_input_enabled` blackout used by confirmation dialogs, so `Ctrl+C`
+and other keystrokes while the bar has focus never leak into the shell).
+Navigation scrolls locally and never sends mouse or keyboard reporting. New
+output may extend the result set without moving the current match
+unexpectedly; the current selection is preserved by document row across a
+rescan whenever that row still matches. Search state (query, matches) is
+never logged or persisted. Search may collapse into overflow at narrow
+widths while remaining available through `Ctrl+Shift+F`/`Cmd+F` and the
+command palette ("Find in Terminal…").
+
+**Known implementation gap:** matches do not currently receive an in-grid
+visual highlight (subtle for all matches, stronger for the active one).
+Implementing that would require plumbing a second highlight kind through the
+renderer's per-cell and shaped-run paint paths (`crates/festerm-ui-egui/src/
+renderer.rs`) alongside the existing selection highlight, which was judged too
+invasive for this pass. Instead, navigating to a match scrolls it into view
+(the retained-scrollback case brings it to the top of the viewport; a
+live-screen match returns to the latest position) and the find bar's `N of M`
+counter is the sole indicator of which match is current. This is a deliberate,
+disclosed scope reduction, not an oversight.
 
 ### Reserved local input and clipboard
 
