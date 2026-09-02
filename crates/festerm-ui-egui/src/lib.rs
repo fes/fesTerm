@@ -58,7 +58,7 @@ pub(crate) use geometry::{dimensions_from_viewport, viewport_layout, CellGeometr
 #[cfg(test)]
 pub(crate) use input::{
     record_terminal_input, route_pointer_event, InputRoutingReports, KeyboardOwnership,
-    PointerInputEvent, TerminalPointerState,
+    PointerInputEvent, TerminalPointerState, RECLAIM_FOCUS_WINDOW,
 };
 #[cfg(test)]
 pub(crate) use renderer::{
@@ -1838,25 +1838,30 @@ mod tests {
     }
 
     #[test]
-    fn window_refocus_reclaims_egui_focus_only_if_terminal_owned_keyboard_before_losing_it() {
-        // A view that owned terminal keyboard input when the OS window lost
-        // focus must ask to reclaim egui's own widget focus once the window
-        // regains it, rather than requiring an explicit click back into the
-        // terminal.
-        let mut owned_before_losing_focus = KeyboardOwnership::default();
-        owned_before_losing_focus.focus_in_if_needed(true);
-        owned_before_losing_focus.note_window_losing_focus();
-        assert!(owned_before_losing_focus.take_reclaim_focus_on_window_refocus());
-        // The flag is consumed by the take; a second read must not
-        // re-trigger a stale reclaim on some later, unrelated refocus.
-        assert!(!owned_before_losing_focus.take_reclaim_focus_on_window_refocus());
+    fn window_refocus_arms_reclaim_unconditionally_and_it_fires_until_it_sticks_or_expires() {
+        // The reclaim window is armed on every regained-focus event
+        // unconditionally (see `KeyboardOwnership::reclaim_until`'s doc
+        // comment for why gating it on prior terminal ownership is
+        // fragile), and keeps re-asserting focus every frame - not just
+        // once - until either egui reports the terminal focused again or
+        // the window fully elapses.
+        let mut keyboard = KeyboardOwnership::default();
+        let start = Instant::now();
+        keyboard.begin_reclaim_on_window_refocus(start);
 
-        // A view that never held terminal keyboard focus (e.g. the launcher
-        // or an inactive tab) must not spuriously steal focus back on
-        // refocus.
-        let mut never_owned = KeyboardOwnership::default();
-        never_owned.note_window_losing_focus();
-        assert!(!never_owned.take_reclaim_focus_on_window_refocus());
+        // Still within the window and focus hasn't stuck yet: keep firing.
+        assert!(keyboard.reclaim_focus_due(start + Duration::from_millis(1), false));
+        assert!(keyboard.reclaim_focus_due(start + Duration::from_millis(500), false));
+
+        // Once egui reports the terminal has focus again, the reclaim
+        // window closes immediately rather than continuing to fire.
+        assert!(!keyboard.reclaim_focus_due(start + Duration::from_millis(501), true));
+        assert!(!keyboard.reclaim_focus_due(start + Duration::from_millis(502), false));
+
+        // A fresh reclaim window that never sticks gives up once it fully
+        // elapses.
+        keyboard.begin_reclaim_on_window_refocus(start);
+        assert!(!keyboard.reclaim_focus_due(start + RECLAIM_FOCUS_WINDOW, false));
     }
 
     #[test]

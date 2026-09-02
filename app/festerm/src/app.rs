@@ -575,7 +575,7 @@ impl FesTermApp {
     /// assumed once at window creation, so it stays correct across a future
     /// runtime chip-height change with no further wiring.
     #[cfg(target_os = "macos")]
-    fn sync_native_window_chrome(&self, frame: &eframe::Frame) {
+    fn sync_native_window_chrome(&self, context: &egui::Context, frame: &eframe::Frame) {
         use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 
         let Ok(window_handle) = frame.window_handle() else {
@@ -591,10 +591,26 @@ impl FesTermApp {
             )),
         );
         festerm_macos_window::disable_native_window_movement(appkit_handle.ns_view);
+
+        // AppKit doesn't reliably hand first-responder status back to
+        // winit's content view just because the window became key again -
+        // see `reclaim_first_responder`'s doc comment for why a plain click
+        // on the blank native title-bar strip can regain window focus
+        // without ever restoring real keyboard delivery. Re-assert it on
+        // every regained-focus event regardless of where the activating
+        // click landed.
+        let window_just_focused = context.input(|i| {
+            i.events
+                .iter()
+                .any(|event| matches!(event, egui::Event::WindowFocused(true)))
+        });
+        if window_just_focused {
+            festerm_macos_window::reclaim_first_responder(appkit_handle.ns_view);
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn sync_native_window_chrome(&self, _frame: &eframe::Frame) {}
+    fn sync_native_window_chrome(&self, _context: &egui::Context, _frame: &eframe::Frame) {}
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
         if self.overlays.blocks_terminal_input() {
@@ -3187,7 +3203,7 @@ impl eframe::App for FesTermApp {
             self.evaluate_close_request(context);
         }
         self.handle_dropped_files(context);
-        self.sync_native_window_chrome(frame);
+        self.sync_native_window_chrome(context, frame);
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
@@ -5735,6 +5751,46 @@ mod tests {
         harness.step();
 
         assert_eq!(harness.state().state.tabs().len(), before - 1);
+    }
+
+    #[test]
+    fn clicking_a_background_chip_gives_its_terminal_keyboard_focus() {
+        // User-reported bug: clicking a session chip to bring it back into
+        // focus activated the tab, but the chrome row (not the terminal)
+        // kept egui's own keyboard focus, so typed keys went nowhere until
+        // the user separately clicked inside the terminal viewport.
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        // Two local sessions now exist; the second (just started) is active
+        // and already holds terminal keyboard focus by construction.
+        let chips = harness
+            .get_all_by_label_contains(" chip")
+            .collect::<Vec<_>>();
+        assert_eq!(chips.len(), 2, "expected exactly two session chips");
+        assert!(
+            harness.get_by_label("Terminal viewport").is_focused(),
+            "the freshly started session's terminal should already hold focus"
+        );
+
+        // Click the first (background) chip.
+        harness
+            .get_all_by_label_contains(" chip")
+            .next()
+            .expect("first chip")
+            .click();
+        harness.run();
+
+        assert!(
+            harness.get_by_label("Terminal viewport").is_focused(),
+            "activating a background chip must hand keyboard focus to its terminal, \
+             not leave it stranded on the chrome row"
+        );
     }
 
     #[test]

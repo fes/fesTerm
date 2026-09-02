@@ -139,13 +139,36 @@ pub fn route_mouse_input(
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct KeyboardOwnership {
     pub(crate) terminal_owned: bool,
-    /// Set when the OS window loses focus while this view held terminal
-    /// keyboard ownership, so a later regain of OS window focus knows this
-    /// was the view the user was last typing into and should reclaim
-    /// egui's own widget-level keyboard focus, not just resume in-band PTY
-    /// focus reporting. Cleared once consumed.
-    reclaim_focus_on_window_refocus: bool,
+    /// While `Some`, every frame up to this deadline re-asserts egui
+    /// keyboard focus on the terminal response rather than requesting it
+    /// exactly once.
+    ///
+    /// A single `request_focus()` call on the frame the OS window regains
+    /// focus is not reliable, for two independent reasons: winit's own
+    /// `WindowEvent::Focused` notifications on macOS can arrive as a rapid,
+    /// spurious back-and-forth around a real focus change (this app's own
+    /// live testing observed several `false`/`true` pairs land within a
+    /// single frame for one real click), so gating a reclaim on "did this
+    /// view own terminal focus right before the *last* loss" is fragile -
+    /// which loss in that flurry counts is unpredictable. And even a
+    /// reclaim that *does* land can be silently discarded moments later:
+    /// egui clears any widget's focus if that widget isn't part of the UI
+    /// tree for even one single frame after gaining it (its own "dead man's
+    /// switch", see `egui::memory::Focus::end_pass`), and a transient frame,
+    /// a host-key/password prompt racing with session state, a one-shot
+    /// overlay, or any other momentary UI branch that skips building the
+    /// terminal widget, can trip that switch shortly after a real click
+    /// reclaims focus, before the user starts typing. Unconditionally
+    /// arming a short re-assert window on every regained-focus event, and
+    /// re-requesting focus every frame within it until it actually sticks,
+    /// survives both failure modes.
+    reclaim_until: Option<Instant>,
 }
+
+/// How long after regaining OS window focus to keep re-asserting egui
+/// keyboard focus on the terminal, in case a transient frame drops it via
+/// egui's own dead-man's-switch before the user starts typing again.
+pub(crate) const RECLAIM_FOCUS_WINDOW: Duration = Duration::from_millis(750);
 
 impl KeyboardOwnership {
     pub(crate) fn focus_in_if_needed(
@@ -169,20 +192,27 @@ impl KeyboardOwnership {
         }
     }
 
-    /// Records, when the OS window is losing focus, whether this view
-    /// currently owns terminal keyboard input - so it can reclaim egui's
-    /// widget-level focus if the window regains focus later.
-    pub(crate) fn note_window_losing_focus(&mut self) {
-        if self.terminal_owned {
-            self.reclaim_focus_on_window_refocus = true;
-        }
+    /// Arms a short window (`RECLAIM_FOCUS_WINDOW`) during which
+    /// [`Self::reclaim_focus_due`] keeps re-asserting egui keyboard focus,
+    /// unconditionally, whenever the OS window reports regaining focus.
+    /// Callers should still skip acting on the result while a modal/overlay
+    /// legitimately owns input focus instead.
+    pub(crate) fn begin_reclaim_on_window_refocus(&mut self, now: Instant) {
+        self.reclaim_until = Some(now + RECLAIM_FOCUS_WINDOW);
     }
 
-    /// Consumes the pending reclaim flag, if set, returning whether this
-    /// view should re-request egui keyboard focus now that the OS window
-    /// has regained focus.
-    pub(crate) fn take_reclaim_focus_on_window_refocus(&mut self) -> bool {
-        std::mem::take(&mut self.reclaim_focus_on_window_refocus)
+    /// Returns whether the terminal should re-assert egui keyboard focus
+    /// this frame, clearing the reclaim window once it either succeeds
+    /// (`has_focus` is true) or expires.
+    pub(crate) fn reclaim_focus_due(&mut self, now: Instant, has_focus: bool) -> bool {
+        let Some(deadline) = self.reclaim_until else {
+            return false;
+        };
+        if has_focus || now >= deadline {
+            self.reclaim_until = None;
+            return false;
+        }
+        true
     }
 }
 
@@ -283,7 +313,28 @@ pub(crate) fn route_egui_events(
         keyboard,
         pointer,
     } = input;
-    let keyboard_focused = response.has_focus() || response.clicked();
+    // Whether the terminal should currently accept keyboard input.
+    //
+    // This intentionally does *not* depend on egui's own internal
+    // widget-level focus tracking (`response.has_focus()`/`clicked()`).
+    // There is only ever one terminal view rendered per frame (the active
+    // tab), and every legitimate reason a keystroke should instead go
+    // elsewhere - an open context menu, command palette, in-terminal
+    // search, or a foreground modal/overlay - already gets folded into
+    // `suppress.blackout` at the call site (`TerminalViewOptions
+    // ::terminal_input_enabled` in `view.rs`/`app.rs`). Gating routing on
+    // egui's own focus state *in addition* to that was a real, reproduced
+    // bug: winit's macOS `WindowEvent::Focused` notifications can fire a
+    // rapid, spurious sequence of false/true pairs around one real click,
+    // and even a reclaimed focus can be silently dropped moments later by
+    // egui's own "dead man's switch" (`egui::memory::Focus::end_pass`)
+    // if the terminal widget is skipped from the UI tree for even one
+    // frame - both of which left the terminal never regaining widget
+    // focus after certain OS-level refocus clicks even though real
+    // keystrokes were arriving. Since blackout already fully captures
+    // whether something else should own input, keyboard routing no longer
+    // needs a second, less reliable focus signal on top of it.
+    let keyboard_focused = !suppress.blackout;
     let events = ui.input(|input| input.events.clone());
     let mut reports = InputRoutingReports::default();
     let mut focus_out_routed = false;
@@ -349,15 +400,13 @@ pub(crate) fn route_egui_events(
                 }
             }
             egui::Event::WindowFocused(focused) => {
-                if !focused {
-                    // Remember whether this view owned terminal keyboard
-                    // input at the moment the OS window lost focus, so a
-                    // later regain of window focus can reclaim egui's own
-                    // widget focus here rather than leaving it stranded
-                    // until the user clicks the terminal again.
-                    keyboard.note_window_losing_focus();
-                } else if keyboard.take_reclaim_focus_on_window_refocus() {
-                    response.request_focus();
+                if focused {
+                    // The OS window regaining focus doesn't guarantee egui's
+                    // own widget-level keyboard focus survived intact - see
+                    // `KeyboardOwnership::reclaim_until`'s doc comment - so
+                    // unconditionally arm a short window to keep
+                    // re-asserting it below, after the event loop.
+                    keyboard.begin_reclaim_on_window_refocus(Instant::now());
                 }
                 let focus = if focused {
                     keyboard.focus_in_if_needed(keyboard_focused)
@@ -436,6 +485,18 @@ pub(crate) fn route_egui_events(
     if terminal_key_routed {
         // egui uses Tab and arrows for widget navigation. A terminal-owned
         // key must retain the grid's keyboard ownership after routing.
+        response.request_focus();
+    } else if !suppress.blackout && keyboard.reclaim_focus_due(Instant::now(), response.has_focus())
+    {
+        // See `KeyboardOwnership::reclaim_until`'s doc comment: keep
+        // re-asserting focus every frame for a short window after
+        // regaining OS window focus, rather than requesting it exactly
+        // once, so a transient frame that drops the terminal widget from
+        // egui's own focus bookkeeping gets repaired on the very next
+        // frame instead of leaving the terminal stranded until the user
+        // clicks it directly. Skipped during a full blackout (an open
+        // context menu or foreground modal) so a legitimately focused
+        // overlay widget isn't clobbered.
         response.request_focus();
     }
 

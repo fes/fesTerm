@@ -627,6 +627,40 @@ pub fn disable_native_window_movement(ns_view: NonNull<std::ffi::c_void>) {
 #[cfg(not(target_os = "macos"))]
 pub fn disable_native_window_movement(_: ()) {}
 
+/// Forces winit's own content `NSView` back to first responder so key events
+/// resume being delivered after the OS window regains key/main status.
+///
+/// This works around a real AppKit gap (winit itself hits the same issue
+/// internally - see its `set_style_mask`'s "If we don't do this, key
+/// handling will break" comment): `windowDidBecomeKey`/egui's own
+/// `WindowFocused(true)` fire reliably whenever the *window* becomes key
+/// again, but AppKit does not always restore first-responder status to the
+/// content view as part of that - most notably when the activating click
+/// lands in the blank native title-bar strip above fesTerm's own chip row
+/// (`disable_native_window_movement`'s doc comment explains why that strip
+/// exists) rather than on any interactive view. In that case the window is
+/// key, egui's own focus bookkeeping still thinks the terminal is focused,
+/// but no keyDown ever reaches the app until the user separately clicks
+/// inside real view content. Explicitly reclaiming first-responder status on
+/// every regained-focus event closes that gap regardless of where the
+/// activating click landed.
+#[cfg(target_os = "macos")]
+pub fn reclaim_first_responder(ns_view: NonNull<std::ffi::c_void>) {
+    use objc2_app_kit::NSView;
+
+    // SAFETY: winit supplies a live NSView pointer for the root window
+    // handle; this function runs on the main thread while that window is
+    // alive.
+    let ns_view = unsafe { ns_view.cast::<NSView>().as_ref() };
+    let Some(ns_window) = ns_view.window() else {
+        return;
+    };
+    let _ = ns_window.makeFirstResponder(Some(ns_view));
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reclaim_first_responder(_: ()) {}
+
 #[cfg(test)]
 mod tests {
     use super::{
