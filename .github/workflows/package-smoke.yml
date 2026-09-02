@@ -40,6 +40,12 @@ jobs:
         with:
           python-version: '3.x'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Distinct cache key from ci.yml's `quality` job: this workflow
+          # builds `--release` artifacts, which produce different
+          # fingerprints/objects than the dev/test builds cached there.
+          key: package-smoke
       - name: Validate packaging metadata
         run: |
           python scripts/generate_windows_icon.py --check
@@ -49,7 +55,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libudev-dev pkg-config
+      - name: Cache pinned cargo-packager binary
+        id: cargo-packager-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager
+            ~/.cargo/bin/cargo-packager.exe
+          key: cargo-packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
       - name: Install pinned cargo-packager
+        if: steps.cargo-packager-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --version 0.11.8 --locked
       - name: Build unsigned macOS package
         if: matrix.platform == 'macos'
