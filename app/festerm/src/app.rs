@@ -1714,12 +1714,23 @@ impl FesTermApp {
         let mut needs_repaint = false;
         let active = self.state.active();
         for (id, session) in self.state.session_tabs_with_id_mut() {
-            if session.controller.pump_events(&mut session.terminal) {
+            let hit_limit = session.controller.pump_events(&mut session.terminal);
+            // `hit_limit` alone only reports whether the bounded per-frame
+            // drain was exhausted (backpressure) - a normal, modest burst of
+            // output drains well under the per-frame cap and reports
+            // `false` there even though real output was ingested. Use
+            // `last_pump_output_received()` for "did output actually
+            // arrive", both for scheduling a repaint and for the
+            // background-tab "new output" chip pulse (feature request #68);
+            // relying on `hit_limit` for the latter meant it almost never
+            // fired for ordinary output.
+            let output_received = session.controller.last_pump_output_received();
+            if hit_limit || output_received {
                 needs_repaint = true;
-                // Feature request #68: only mark a *background* tab as
-                // having new output; the active tab is already visible, so
-                // there is nothing to notify the user of.
-                if id != active {
+                if output_received && id != active {
+                    // Only mark a *background* tab as having new output; the
+                    // active tab is already visible, so there is nothing to
+                    // notify the user of.
                     session.has_new_output_since_active = true;
                 }
             }
@@ -3454,7 +3465,8 @@ impl FesTermApp {
                         .forward_terminal_replies(&mut session.terminal);
                     session.controller.flush_pending_writes();
                     session.controller.flush_pending_resize();
-                    if session.controller.pump_events(&mut session.terminal) {
+                    session.controller.pump_events(&mut session.terminal);
+                    if session.controller.last_pump_output_received() {
                         ui.ctx().request_repaint();
                     }
                     overlay_action = overlay::show(ui.ctx(), session.chip_status());
@@ -4266,6 +4278,54 @@ mod tests {
         assert!(
             !second_chip.pulse_new_output,
             "the active tab's own chip must never pulse"
+        );
+    }
+
+    #[test]
+    fn modest_background_session_output_sets_the_new_output_flag_via_real_pump() {
+        // Regression test for a bug (user-reported: the pulse never showed
+        // despite the preference being on and background tabs producing
+        // output) where `pump_all_sessions` gated `has_new_output_since_active`
+        // on `SessionController::pump_events`'s own `bool` return value -
+        // which only reports whether the bounded per-frame drain hit
+        // `MAX_SESSION_EVENTS_PER_FRAME` (a backpressure signal), not "did
+        // output arrive". A real local shell's startup banner/prompt is a
+        // few dozen bytes across a handful of events - nowhere near that
+        // cap - so the flag was essentially never set for ordinary output.
+        // Exercises a real spawned local session end-to-end through
+        // `pump_all_sessions` rather than manually setting the flag (unlike
+        // `chip_pulses_only_for_a_background_session_with_new_output_and_the_preference_on`
+        // above, which only covers `chip_view_models`'s gating logic once
+        // the flag is already set).
+        let context = egui::Context::default();
+        let (mut app, first) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .dispatch(AppCommand::TogglePulseNewOutputDot, &context);
+        // Starting a second local session makes it active, leaving `first`
+        // in the background while its real shell process starts up and
+        // prints its initial prompt.
+        app.state.dispatch(AppCommand::StartLocalSession, &context);
+        assert_ne!(app.state.active(), first, "the new session must be active");
+
+        let deadline = Instant::now() + Duration::from_millis(2_500);
+        let mut pulsing = false;
+        while Instant::now() < deadline {
+            app.pump_all_sessions(&context);
+            let (chips, _) = app.chip_view_models();
+            if chips
+                .iter()
+                .find(|chip| chip.id == ChipId(first.chip_id()))
+                .is_some_and(|chip| chip.pulse_new_output)
+            {
+                pulsing = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            pulsing,
+            "a background tab's real (modest) shell startup output must set the pulse flag"
         );
     }
 

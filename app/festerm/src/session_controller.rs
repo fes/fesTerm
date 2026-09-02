@@ -332,6 +332,14 @@ pub struct SessionController<S: Session> {
     /// mismatch is what produced a stray, un-erased row from zsh's
     /// `PROMPT_EOL_MARK` on the very first local shell).
     has_requested_resize: bool,
+    /// Whether the most recent [`Self::pump_events`] call observed at least
+    /// one `SessionEvent::Output` chunk, independent of `hit_limit` (which
+    /// only reports whether the bounded per-frame drain was exhausted -
+    /// true for backpressure, not for "any output arrived"). Callers that
+    /// want to know whether new session output landed this frame (e.g. the
+    /// background-tab "new output" chip pulse, feature request #68) must
+    /// read this rather than `pump_events`'s own return value.
+    last_pump_output_received: bool,
 }
 
 impl<S: Session> SessionController<S> {
@@ -364,6 +372,7 @@ impl<S: Session> SessionController<S> {
             last_resize: None,
             resize_probe: ResizeProbe::default(),
             has_requested_resize: false,
+            last_pump_output_received: false,
         }
     }
 
@@ -392,6 +401,7 @@ impl<S: Session> SessionController<S> {
             last_resize: None,
             resize_probe: ResizeProbe::default(),
             has_requested_resize: false,
+            last_pump_output_received: false,
         }
     }
 
@@ -484,7 +494,16 @@ impl<S: Session> SessionController<S> {
     }
 
     /// Returns whether another frame is required to continue a bounded drain.
+    ///
+    /// This reports backpressure (the per-frame event cap was hit), *not*
+    /// "did any output arrive" - a normal, modest burst of output drains
+    /// well under [`MAX_SESSION_EVENTS_PER_FRAME`] and reports `false` here
+    /// even though real output was ingested. Callers that need to know
+    /// whether output arrived this call (e.g. the background-tab "new
+    /// output" chip pulse) must read [`Self::last_pump_output_received`]
+    /// instead of this return value.
     pub fn pump_events(&mut self, terminal: &mut Terminal) -> bool {
+        self.last_pump_output_received = false;
         let Some(session) = &self.session else {
             return false;
         };
@@ -505,7 +524,15 @@ impl<S: Session> SessionController<S> {
         if result.hit_limit {
             self.last_backpressure = Some(FlowDirection::Output);
         }
+        self.last_pump_output_received = result.output_received;
         result.hit_limit
+    }
+
+    /// Whether the most recent [`Self::pump_events`] call observed at least
+    /// one chunk of session output. See that method's doc comment for why
+    /// this is distinct from its own `bool` return value.
+    pub const fn last_pump_output_received(&self) -> bool {
+        self.last_pump_output_received
     }
 
     fn observe_session_event(&mut self, event: SessionEvent) {
@@ -855,6 +882,11 @@ pub fn terminal_size(dimensions: Dimensions) -> Result<TerminalSize, String> {
 
 pub struct PumpResult {
     pub hit_limit: bool,
+    /// Whether at least one `SessionEvent::Output` chunk was observed during
+    /// this call, regardless of whether the bounded drain hit its limit.
+    /// Unlike `hit_limit` (a backpressure signal), this is what callers
+    /// should check to learn "did new output arrive this frame".
+    pub output_received: bool,
 }
 
 /// A borrowed session event delivered while the terminal is pumped.
@@ -872,21 +904,29 @@ pub fn pump_session_events(
     maximum: usize,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
+    let mut output_received = false;
     for _ in 0..maximum {
         match session.try_recv_event() {
             Ok(event) => match &event {
                 SessionEvent::Output(bytes) => {
+                    output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
                     terminal.ingest(bytes);
                 }
                 _ => observe(PumpedSessionEvent::Event(&event)),
             },
             Err(SessionTryReceiveError::Empty | SessionTryReceiveError::Closed) => {
-                return PumpResult { hit_limit: false };
+                return PumpResult {
+                    hit_limit: false,
+                    output_received,
+                };
             }
         }
     }
-    PumpResult { hit_limit: true }
+    PumpResult {
+        hit_limit: true,
+        output_received,
+    }
 }
 
 pub fn seed_session_failure(terminal: &mut Terminal, error: &str) {
@@ -1155,12 +1195,51 @@ mod tests {
         let mut terminal =
             Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
 
-        let needs_repaint = controller.pump_events(&mut terminal);
+        let hit_limit = controller.pump_events(&mut terminal);
 
-        assert!(!needs_repaint);
+        // `pump_events`'s own return value is a backpressure signal (was it
+        // hit the bounded per-frame drain cap), not "did output arrive" - a
+        // modest, single-event burst like this one drains well under the
+        // cap and reports `false` here even though real output was
+        // ingested. `last_pump_output_received()` is the correct signal for
+        // "did output arrive this call" (e.g. the background-tab "new
+        // output" chip pulse, feature request #68 - see the regression test
+        // below for the bug this previously caused).
+        assert!(!hit_limit);
+        assert!(controller.last_pump_output_received());
         assert!(terminal
             .row_text(0)
             .is_some_and(|row| row.starts_with("fake backend output")));
+    }
+
+    #[test]
+    fn modest_background_output_is_not_lost_behind_the_backpressure_signal() {
+        // Regression test for a bug where the chip "new output" pulse
+        // (feature request #68) was gated on `pump_events`'s own `bool`
+        // return, which only reports whether the bounded per-frame drain
+        // hit `MAX_SESSION_EVENTS_PER_FRAME` - so any burst under that cap
+        // (i.e. almost all ordinary output) never set the pulse flag.
+        // `last_pump_output_received()` must report the output regardless
+        // of whether the per-frame cap was hit.
+        let session = FakeSession::new([SessionEvent::Output(b"a few lines\r\n".to_vec())]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        assert!(!controller.last_pump_output_received());
+        let hit_limit = controller.pump_events(&mut terminal);
+        assert!(
+            !hit_limit,
+            "a single modest event never hits the per-frame cap"
+        );
+        assert!(
+            controller.last_pump_output_received(),
+            "modest output must still be reported as received"
+        );
+
+        // A pump call that observes no output at all clears the flag.
+        controller.pump_events(&mut terminal);
+        assert!(!controller.last_pump_output_received());
     }
 
     #[test]
