@@ -37,12 +37,10 @@ fn parse_osc8(data: &[u8]) -> Option<Option<Arc<str>>> {
     if uri.is_empty() {
         return Some(None);
     }
-    let uri = std::str::from_utf8(uri).ok()?;
-    if uri.len() > 2_048 || uri.chars().any(char::is_control) {
-        return None;
-    }
-    let scheme = uri.split_once(':')?.0;
-    matches!(scheme, "http" | "https" | "mailto").then(|| Some(Arc::from(uri)))
+    let Ok(uri) = std::str::from_utf8(uri) else {
+        return Some(None);
+    };
+    Some(crate::normalize_external_web_url(uri).map(Arc::from))
 }
 
 /// The separator preceding a retained CSI parameter.

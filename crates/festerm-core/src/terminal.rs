@@ -346,6 +346,7 @@ pub struct Terminal {
     current_background: Color,
     title: String,
     current_hyperlink: Option<Arc<str>>,
+    current_hyperlink_cells_remaining: usize,
     reply_queue: Vec<u8>,
     input_queue: Vec<u8>,
     reply_queue_overflowed: bool,
@@ -378,6 +379,7 @@ impl Terminal {
             current_background: Color::Default,
             title: String::new(),
             current_hyperlink: None,
+            current_hyperlink_cells_remaining: 0,
             reply_queue: Vec::new(),
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
@@ -518,6 +520,7 @@ impl Terminal {
         self.current_background = Color::Default;
         self.title.clear();
         self.current_hyperlink = None;
+        self.current_hyperlink_cells_remaining = 0;
         self.parser = Parser::new();
         self.utf8 = Utf8Decoder::new();
     }
@@ -732,6 +735,8 @@ impl Terminal {
                 self.clear_pending_wrap();
             }
             TerminalOp::LineFeed | TerminalOp::Index => {
+                self.current_hyperlink = None;
+                self.current_hyperlink_cells_remaining = 0;
                 self.index();
                 self.clear_pending_wrap();
             }
@@ -745,6 +750,8 @@ impl Terminal {
                 self.clear_pending_wrap();
             }
             TerminalOp::NextLine => {
+                self.current_hyperlink = None;
+                self.current_hyperlink_cells_remaining = 0;
                 self.active_buffer_mut().cursor.column = 0;
                 self.index();
                 self.clear_pending_wrap();
@@ -815,7 +822,11 @@ impl Terminal {
     fn apply_osc_action(&mut self, action: Option<OscAction>) {
         match action {
             Some(OscAction::SetTitle(title)) => self.title = title,
-            Some(OscAction::SetHyperlink(hyperlink)) => self.current_hyperlink = hyperlink,
+            Some(OscAction::SetHyperlink(hyperlink)) => {
+                self.current_hyperlink_cells_remaining =
+                    if hyperlink.is_some() { 4_096 } else { 0 };
+                self.current_hyperlink = hyperlink;
+            }
             None => {}
         }
     }
@@ -879,6 +890,12 @@ impl Terminal {
         let background = self.current_background;
         let attributes = self.current_attributes;
         let hyperlink = self.current_hyperlink.clone();
+        if self.current_hyperlink_cells_remaining > 0 {
+            self.current_hyperlink_cells_remaining -= 1;
+            if self.current_hyperlink_cells_remaining == 0 {
+                self.current_hyperlink = None;
+            }
+        }
         let buffer = self.active_buffer_mut();
         buffer.screen.replace_cluster(
             cursor.column,
@@ -1537,6 +1554,8 @@ impl Terminal {
         self.current_attributes = Attributes::NONE;
         self.current_foreground = Color::Default;
         self.current_background = Color::Default;
+        self.current_hyperlink = None;
+        self.current_hyperlink_cells_remaining = 0;
     }
 
     fn set_modes(&mut self, private: bool, enabled: bool, parameters: CsiParameters) {
@@ -1614,6 +1633,8 @@ impl Terminal {
         if self.active_screen == ActiveScreen::Alternate {
             return;
         }
+        self.current_hyperlink = None;
+        self.current_hyperlink_cells_remaining = 0;
         if self.alternate.is_none() {
             let Ok(alternate) = BufferState::new(self.dimensions()) else {
                 return;
@@ -1640,6 +1661,8 @@ impl Terminal {
     }
 
     fn leave_alternate(&mut self, reset: bool) {
+        self.current_hyperlink = None;
+        self.current_hyperlink_cells_remaining = 0;
         if self.active_screen == ActiveScreen::Alternate {
             self.active_screen = ActiveScreen::Primary;
             self.primary.screen.mark_all_dirty();

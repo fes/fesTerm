@@ -1347,6 +1347,194 @@ mod tests {
         assert!(harness.query_by_label("Open link").is_some());
         assert!(harness.query_by_label("Copy link").is_some());
         assert!(harness.state().sink.0.is_empty());
+        harness.get_by_label("Open link").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().view.take_link_requests(),
+            vec![Arc::<str>::from("https://example.com/")]
+        );
+
+        let non_link_cell = grid.left_top()
+            + egui::vec2(
+                harness
+                    .state()
+                    .view
+                    .diagnostics()
+                    .grid_rect
+                    .unwrap()
+                    .width()
+                    / 10.0
+                    * 6.0,
+                2.0,
+            );
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: non_link_cell,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("Open link").is_none());
+    }
+
+    #[test]
+    fn ordinary_click_never_activates_an_osc8_link() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let position = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(2.0, 2.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
+    }
+
+    #[test]
+    fn command_click_emits_link_intent_without_terminal_input() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let position = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(2.0, 2.0);
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            });
+        }
+        harness.run();
+
+        assert_eq!(
+            harness.state_mut().view.take_link_requests(),
+            vec![Arc::<str>::from("https://example.com/")]
+        );
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn lost_command_click_release_cannot_arm_a_later_click() {
+        struct State {
+            terminal: Terminal,
+            view: TerminalView,
+            sink: Sink,
+            blocked: bool,
+        }
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let state = State {
+            terminal,
+            view: TerminalView::default(),
+            sink: Sink::default(),
+            blocked: false,
+        };
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            terminal_input_enabled: !state.blocked,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+        let position = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(2.0, 2.0);
+        let command = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        harness.event(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: command,
+        });
+        harness.run();
+
+        harness.state_mut().blocked = true;
+        harness.event(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: command,
+        });
+        harness.run();
+
+        harness.state_mut().blocked = false;
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
     }
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]

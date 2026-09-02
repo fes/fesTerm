@@ -119,7 +119,7 @@ reference-application acceptance; P5 remains a manual release gate.
 | Tab stops | Set, clear, resize, and traverse explicit tab stops | passing | Core fixture |
 | Cursor styles | Apply DECSCUSR shapes without changing cell geometry | passing | Core fixture; renderer shape mapping |
 | Titles | Apply sanitized OSC 0/2 titles without affecting grid state | passing | Core fixture; application title mapping |
-| Hyperlinks | Preserve safe OSC 8 metadata without automatic activation | partial | Core and renderer metadata tests |
+| Hyperlinks | Preserve normalized HTTP/HTTPS OSC 8 metadata; open only by explicit modifier-click or context command through application policy | implemented | Core parser/lifetime, UI intent-routing, and application allowlist tests |
 | Terminal identity | Return conservative primary and secondary device attributes | passing | Core fixture |
 | Unicode width | Keep common wide and combining characters aligned | passing | Grid fixtures and core test |
 | Emoji and fallback | Preserve cell layout across fallback fonts | passing | All 3,773 fully-qualified Unicode 15.1 emoji are tested for streamed two-cell geometry, color classification/rasterization, and owned monochrome scalar coverage; users can select deterministic color or monochrome presentation without changing geometry; bounded positive/negative caches with per-frame work budgets and cold/warm Criterion workloads; reviewed Windows/Linux snapshots; native emoji smoke verifies geometry and color-texture submission |

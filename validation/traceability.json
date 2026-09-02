@@ -372,7 +372,8 @@
       ],
       "requirements": [
         "docs/gui-design.md#reserved-local-input-and-clipboard",
-        "docs/gui-design.md#terminal-selection"
+        "docs/gui-design.md#terminal-selection",
+        "docs/gui-design.md#explicit-terminal-hyperlinks"
       ],
       "decisions": [
         "ADR-0012"
@@ -380,12 +381,20 @@
       "automated_tests": [
         "terminal_context_menu_intercepts_local_right_click_without_pty_input",
         "terminal_context_menu_exposes_copy_for_selection_without_clearing_it",
-        "selection_expands_continuations_and_copies_leading_text"
+        "selection_expands_continuations_and_copies_leading_text",
+        "terminal_context_menu_uses_explicit_link_under_pointer_only",
+        "ordinary_click_never_activates_an_osc8_link",
+        "command_click_emits_link_intent_without_terminal_input",
+        "lost_command_click_release_cannot_arm_a_later_click",
+        "osc8_rejects_malformed_spoofable_and_non_web_targets",
+        "unterminated_osc8_links_end_at_security_boundaries",
+        "external_link_policy_accepts_only_normalized_http_and_https_urls"
       ],
       "manual_scenarios": [
         "TI-01",
         "TI-02",
-        "TI-03"
+        "TI-03",
+        "TI-10"
       ],
       "status": "partial",
       "prerequisites": [

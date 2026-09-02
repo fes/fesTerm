@@ -9,7 +9,10 @@ use festerm_core::{ContentPosition, InputEventOutcome, MouseTrackingMode, Termin
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
-    geometry::{cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, ViewSize},
+    geometry::{
+        cell_from_point, dimensions_from_viewport, viewport_layout, CellMetrics, CellPosition,
+        ViewSize,
+    },
     input::{
         route_egui_events, EncodedInputSink, InputAdapterState, InputSinkDiagnostics,
         InputSuppression, KeyboardOwnership, TerminalPointerState, TERMINAL_RESIZE_DEBOUNCE,
@@ -125,10 +128,13 @@ pub struct TerminalView {
     /// Explicit OSC 8 target captured under the pointer when the local menu
     /// opens. It remains stable while the pointer moves through the popup.
     context_link: Option<Arc<str>>,
+    primary_link_gesture: Option<(Arc<str>, CellPosition)>,
+    last_rendered_frame: Option<u64>,
     secondary_gesture: SecondaryGestureOwnership,
     history: HistoryViewport,
     scrollbar_dragging: bool,
     pending_paste_requests: VecDeque<String>,
+    pending_link_requests: VecDeque<Arc<str>>,
     /// Fractional scroll rows left over from the last wheel event after
     /// applying `scroll_speed_multiplier`, carried into the next event so a
     /// slow clickstop (e.g. "Very slow", well under `1.0`) actually slows
@@ -372,6 +378,12 @@ impl TerminalView {
         self.pending_paste_requests.drain(..).collect()
     }
 
+    /// Takes explicit OSC 8 activation intents for application-owned
+    /// validation and OS launch policy.
+    pub fn take_link_requests(&mut self) -> Vec<Arc<str>> {
+        self.pending_link_requests.drain(..).collect()
+    }
+
     /// Scrolls history so a terminal-search match becomes visible, used by
     /// the application-owned find bar (`docs/gui-design.md`
     /// "Terminal-content search"). `row` is a "document row": a retained
@@ -450,6 +462,14 @@ impl TerminalView {
         sink: &mut impl EncodedInputSink,
         options: TerminalViewOptions,
     ) {
+        let frame = ui.ctx().cumulative_frame_nr();
+        if self
+            .last_rendered_frame
+            .is_some_and(|previous| frame > previous.saturating_add(1))
+        {
+            self.primary_link_gesture = None;
+        }
+        self.last_rendered_frame = Some(frame);
         if !crate::fonts::terminal_font_family_installed(ui.ctx(), self.fonts.font_set().family()) {
             let generation =
                 crate::install_terminal_font_family(ui.ctx(), self.fonts.font_set().family());
@@ -512,6 +532,7 @@ impl TerminalView {
             .apply_viewport_with_content_positions(terminal, viewport, metrics, &positions);
         if matches!(resize_outcome, ResizeOutcome::Resized(_)) {
             self.pointer = TerminalPointerState::default();
+            self.primary_link_gesture = None;
             let mapped_top_content_row = top_position_index
                 .and_then(|index| mapped_positions.get(index).copied().flatten())
                 .and_then(|position| {
@@ -701,6 +722,7 @@ impl TerminalView {
                 self.history.sync(terminal);
                 self.selection.clear();
                 self.pointer = TerminalPointerState::default();
+                self.primary_link_gesture = None;
             }
         }
 
@@ -796,6 +818,83 @@ impl TerminalView {
             });
         });
 
+        // Command-click (Ctrl on Windows/Linux, Command on macOS) is the only
+        // direct activation gesture. Consume both halves only when the press
+        // began on an explicit OSC 8 cell; ordinary clicks and modifier-clicks
+        // elsewhere keep their existing terminal/selection behavior.
+        let link_snapshot =
+            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
+        let has_command_release = ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::PointerButton {
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers,
+                        ..
+                    } if modifiers.command
+                )
+            })
+        });
+        if !ui.input(|input| input.pointer.primary_down()) && !has_command_release {
+            self.primary_link_gesture = None;
+        }
+        if let Some(link) = ui
+            .input(|input| input.pointer.hover_pos())
+            .filter(|position| vp_layout.viewport.contains(*position))
+            .and_then(|position| {
+                cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, position)
+            })
+            .and_then(|cell| link_snapshot.cell(cell.column, cell.row))
+            .and_then(|cell| cell.hyperlink_target())
+        {
+            response.clone().on_hover_text(link.as_ref());
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        ui.input_mut(|input| {
+            input.events.retain(|event| {
+                let egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers,
+                } = event
+                else {
+                    return true;
+                };
+                if *pressed {
+                    if !modifiers.command || !vp_layout.viewport.contains(*pos) {
+                        return true;
+                    }
+                    let Some(cell) =
+                        cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, *pos)
+                    else {
+                        return true;
+                    };
+                    let Some(link) = link_snapshot
+                        .cell(cell.column, cell.row)
+                        .and_then(|cell| cell.hyperlink_target())
+                    else {
+                        return true;
+                    };
+                    self.primary_link_gesture = Some((link, cell));
+                    return false;
+                }
+                let Some((link, pressed_cell)) = self.primary_link_gesture.take() else {
+                    return true;
+                };
+                if modifiers.command
+                    && vp_layout.viewport.contains(*pos)
+                    && cell_from_point(layout.rect.min, layout.dimensions, layout.metrics, *pos)
+                        == Some(pressed_cell)
+                {
+                    self.pending_link_requests.push_back(link);
+                }
+                false
+            });
+        });
+
         // A TUI with mouse tracking owns ordinary right-click. Shift is the
         // stable local override; without mouse tracking, right-click is local
         // by default. Remove both press and release before terminal routing so
@@ -872,8 +971,10 @@ impl TerminalView {
                     if selected_text.is_some() || options.paste_available {
                         ui.separator();
                     }
+                    ui.label(egui::RichText::new(link.as_ref()).small().monospace())
+                        .on_hover_text(link.as_ref());
                     if ui.button("Open link").clicked() {
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(link.as_ref()));
+                        self.pending_link_requests.push_back(link.clone());
                         ui.close();
                     }
                     if ui.button("Copy link").clicked() {

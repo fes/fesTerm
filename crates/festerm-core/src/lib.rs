@@ -32,6 +32,25 @@ pub const MAX_STRING_BYTES: usize = 4096;
 pub const TRANSPORT_QUEUE_HIGH_WATERMARK: usize = 64 * 1024;
 pub use history::{LogicalLine, ScrollbackStats, DEFAULT_SCROLLBACK_LIMIT_BYTES};
 
+/// Parses and normalizes an untrusted external web target.
+///
+/// Only absolute ASCII HTTP/HTTPS URLs with a host are eligible for OS
+/// activation. Callers must still require an explicit user gesture.
+pub fn normalize_external_web_url(target: &str) -> Option<String> {
+    if target.len() > 2_048
+        || !target.is_ascii()
+        || target.bytes().any(|byte| byte.is_ascii_whitespace())
+    {
+        return None;
+    }
+    let parsed = url::Url::parse(target).ok()?;
+    (matches!(parsed.scheme(), "http" | "https")
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none())
+    .then(|| parsed.to_string())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Dimensions {
     columns: usize,
@@ -485,6 +504,66 @@ mod tests {
         let first = terminal.cell(0, 0).unwrap().hyperlink_target().unwrap();
         let second = terminal.cell(4, 0).unwrap().hyperlink_target().unwrap();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn osc8_rejects_malformed_spoofable_and_non_web_targets() {
+        for target in [
+            "https://",
+            "https://a b",
+            "https://example.com/\u{202e}spoof",
+            "https://github.com@evil.example/login",
+            "mailto:user@example.com",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+        ] {
+            let mut terminal = terminal(8, 1);
+            terminal.ingest(format!("\x1b]8;;{target}\x1b\\X").as_bytes());
+            assert_eq!(
+                terminal.cell(0, 0).unwrap().hyperlink(),
+                None,
+                "{target:?} must not become an activatable link"
+            );
+        }
+
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(
+            b"\x1b]8;;https://example.com\x1b\\A\
+              \x1b]8;;https://\x1b\\B",
+        );
+        assert_eq!(
+            terminal.cell(0, 0).unwrap().hyperlink(),
+            Some("https://example.com/")
+        );
+        assert_eq!(terminal.cell(1, 0).unwrap().hyperlink(), None);
+    }
+
+    #[test]
+    fn unterminated_osc8_links_end_at_security_boundaries() {
+        let mut terminal = terminal(16, 2);
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\linked\nplain");
+        assert_eq!(
+            terminal.cell(0, 0).unwrap().hyperlink(),
+            Some("https://example.com/")
+        );
+        assert_eq!(terminal.cell(6, 1).unwrap().hyperlink(), None);
+
+        terminal.reset_to_initial_state();
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\linked\x1b[0mplain");
+        assert_eq!(terminal.cell(6, 0).unwrap().hyperlink(), None);
+
+        terminal.reset_to_initial_state();
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\linked\x1b[?1049hplain");
+        assert_eq!(terminal.cell(0, 0).unwrap().hyperlink(), None);
+
+        let mut bounded = Terminal::new(Dimensions::new(80, 60).unwrap()).unwrap();
+        bounded.ingest(b"\x1b]8;;https://example.com\x1b\\");
+        bounded.ingest(&vec![b'x'; 4_097]);
+        assert_eq!(
+            bounded.cell(15, 51).unwrap().hyperlink(),
+            Some("https://example.com/")
+        );
+        assert_eq!(bounded.cell(16, 51).unwrap().hyperlink(), None);
     }
 
     #[test]

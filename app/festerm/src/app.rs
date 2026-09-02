@@ -35,7 +35,8 @@ use crate::overlay_state::{
 };
 use crate::screens;
 use crate::tabs::{
-    AppCommand, AppState, HostKeyTrustDecision, InspectorTransport, TabContent, TabId,
+    AppCommand, AppState, ExternalLinkTarget, HostKeyTrustDecision, InspectorTransport, TabContent,
+    TabId,
 };
 use crate::updates::{UpdateController, UpdateStatus};
 
@@ -1449,6 +1450,23 @@ impl FesTermApp {
                 .copied()
                 .map(secret_store_message)
         })
+    }
+
+    fn request_external_link(&mut self, target: &str, context: &egui::Context) {
+        let Some(target) = festerm_core::normalize_external_web_url(target) else {
+            self.overlays.transient_notice = Some((
+                "This link is not a valid web address.".to_owned(),
+                Instant::now() + Duration::from_secs(3),
+            ));
+            context.request_repaint();
+            return;
+        };
+        self.state.dispatch(
+            AppCommand::OpenExternalLink {
+                target: ExternalLinkTarget::new(target),
+            },
+            context,
+        );
     }
 
     fn start_stored_password_profile(&mut self, profile_id: String, context: &egui::Context) {
@@ -3374,6 +3392,7 @@ impl FesTermApp {
         let mut overlay_action = None;
         let paste_was_pending = self.overlays.pending_paste.is_some();
         let mut deferred_pastes = Vec::new();
+        let mut deferred_links = Vec::new();
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
         let secure_storage_status = self.secure_storage_status_message();
@@ -3472,6 +3491,7 @@ impl FesTermApp {
                             options,
                         );
                         deferred_pastes = session.view.take_paste_requests();
+                        deferred_links = session.view.take_link_requests();
                     }
                     session
                         .controller
@@ -3498,6 +3518,9 @@ impl FesTermApp {
             self.cancel_paste_confirmation();
         } else if !self.overlays.blocks_terminal_input() && deferred_pastes.len() == 1 {
             self.handle_paste_request(active_tab_id, deferred_pastes.remove(0));
+        }
+        for link in deferred_links {
+            self.request_external_link(link.as_ref(), ui.ctx());
         }
         let inspector_action = inspector_open
             .then(|| {

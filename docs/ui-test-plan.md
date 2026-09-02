@@ -195,8 +195,10 @@ Headless production-widget tests also cover both local context-menu escape
 paths. Terminal tests prove ordinary right-click is local when mouse reporting
 is off, unmodified right-click reaches a reporting TUI, Shift+right-click opens
 the local menu without emitting mouse bytes, selection survives menu opening,
-OSC 8 actions come only from the explicit link under the pointer, and Paste is
-omitted for read-only sessions. Chip tests prove a secondary-click targets an
+OSC 8 actions come only from the explicit link under the pointer, ordinary
+click never emits launch intent, modifier-click and context Open route through
+the same application request, malformed/spoofable/non-web targets are rejected,
+and Paste is omitted for read-only sessions. Chip tests prove a secondary-click targets an
 inactive chip without activating it, edge-inapplicable move entries are
 omitted, and Move/Rename/Close gestures remain semantic application commands.
 Native menu geometry, clipboard delivery, focus restoration, and platform

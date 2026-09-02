@@ -111,10 +111,12 @@ Examples that are application commands include:
 
 This distinction prevents the application command system from becoming a second terminal-input protocol.
 
-Terminal-local context actions—selection Copy, Paste contents, and explicit
-OSC 8 link actions—remain UI/input operations rather than application
-commands. In contrast, a chip context menu translates Rename, Move left/right,
-and Close into the same typed tab commands used by direct chrome gestures.
+Terminal-local selection Copy and Paste contents remain UI/input operations.
+Explicit OSC 8 activation emits an application `OpenExternalLink` intent so
+URL parsing, scheme/host policy, safe rejection feedback, and OS launch remain
+centralized and testable. Copy Link Address remains a local clipboard action.
+In contrast, a chip context menu translates Rename, Move left/right, and Close
+into the same typed tab commands used by direct chrome gestures.
 Opening a chip menu targets its stable tab identifier without activating it.
 
 ## Command Palette Rule
