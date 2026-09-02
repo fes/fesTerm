@@ -118,6 +118,31 @@ default.
 
 **Conclusion:** retain the default MSVC linker for native Windows ARM64.
 
+### 6. Cargo dependency/target caching in `package-smoke.yml`
+
+[Issue #86](https://github.com/fes/fesTerm/issues/86): unlike `ci.yml`,
+`.github/workflows/package-smoke.yml` (the `--release` packaging/installer
+smoke, triggered on PRs touching `app/festerm/**`, `Cargo.lock`/`Cargo.toml`,
+`packaging/**`, etc.) had no caching at all — every run rebuilt
+`cargo-packager` from source and recompiled the full release workspace from
+scratch. Fixed in PR #87 by adding `Swatinem/rust-cache` (key `package-smoke`,
+distinct from `ci.yml`'s `quality` key since the release profile produces
+different artifacts) and caching the pinned `cargo-packager` binary via
+`actions/cache` keyed on `${{ runner.os }}-${{ runner.arch }}`.
+
+Measured on PR #87 (`rustc 1.98.0`, GitHub-hosted runners):
+
+| Job | Cache-cold (first run) | Warm cache (second run) | Improvement |
+| --- | ---: | ---: | ---: |
+| windows | 15m18s | 2m44s | ~82% faster |
+| linux | 8m44s | 1m28s | ~83% faster |
+| macos | 8m19s | 1m6s | ~87% faster |
+
+The cold-run numbers are consistent with the pre-caching baseline (windows
+14m33s measured on PR #85), confirming the first run after adding caching is
+representative of the true prior no-cache cost, and the second run reflects
+steady-state warm-cache performance going forward.
+
 ## Guidance added for local development (not required)
 
 See [`README.md`](../README.md#speeding-up-local-builds) for optional,
