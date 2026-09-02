@@ -63,6 +63,55 @@ pub(crate) struct PendingSettingsResetConfirmation {
     pub(crate) cancel_focus_requested: bool,
 }
 
+/// Aggregate confirmation shown once, for the whole application, when the
+/// OS requests that the window close while any session still has something
+/// to lose (`docs/gui-design.md` "Closing sessions and quitting",
+/// `docs/gui-action-graph.md` `QUIT-01`/`QUIT-02`). Deliberately summarizes
+/// exact counts instead of per-session identity, unlike
+/// [`PendingCloseConfirmation`] - fesTerm has exactly one native window, so
+/// this same dialog serves both the window-close button and "Quit fesTerm".
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingQuitConfirmation {
+    pub(crate) counts: crate::tabs::LiveSessionCounts,
+    pub(crate) cancel_focus_requested: bool,
+}
+
+impl PendingQuitConfirmation {
+    /// A plain-language summary of exactly what will be discarded, e.g.
+    /// "1 local process, 2 SSH connections, and 1 serial device are still
+    /// open." Singular/plural nouns are chosen per count so the message
+    /// never reads oddly for the common one-session case.
+    pub(crate) fn summary_message(&self) -> String {
+        fn phrase(count: usize, singular: &str, plural: &str) -> Option<String> {
+            match count {
+                0 => None,
+                1 => Some(format!("1 {singular}")),
+                n => Some(format!("{n} {plural}")),
+            }
+        }
+        let parts: Vec<String> = [
+            phrase(self.counts.local, "local process", "local processes"),
+            phrase(self.counts.ssh, "SSH connection", "SSH connections"),
+            phrase(self.counts.serial, "serial device", "serial devices"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let joined = match parts.as_slice() {
+            [] => "0 sessions".to_owned(),
+            [only] => only.clone(),
+            [first, second] => format!("{first} and {second}"),
+            [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+        };
+        let verb = if self.counts.total() == 1 {
+            "is"
+        } else {
+            "are"
+        };
+        format!("{joined} {verb} still open.")
+    }
+}
+
 pub(crate) struct PendingPasswordStore {
     pub(crate) receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
     pub(crate) profile_id: String,
@@ -88,6 +137,7 @@ pub(crate) struct OverlayState {
     pub(crate) pending_close: Option<PendingCloseConfirmation>,
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
+    pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
     pub(crate) transient_notice: Option<(String, Instant)>,
     /// The About modal is open. Like the confirmation prompts above (and
@@ -116,6 +166,7 @@ impl OverlayState {
         self.pending_close.is_some()
             || self.pending_paste.is_some()
             || self.pending_settings_reset.is_some()
+            || self.pending_quit.is_some()
             || self.about_open
     }
 }
@@ -150,6 +201,67 @@ mod tests {
             ..OverlayState::default()
         };
         assert!(!overlays.blocks_terminal_input());
+    }
+
+    #[test]
+    fn blocks_terminal_input_is_true_while_quit_is_pending() {
+        let overlays = OverlayState {
+            pending_quit: Some(PendingQuitConfirmation {
+                counts: crate::tabs::LiveSessionCounts {
+                    local: 1,
+                    ssh: 0,
+                    serial: 0,
+                },
+                cancel_focus_requested: false,
+            }),
+            ..OverlayState::default()
+        };
+        assert!(overlays.blocks_terminal_input());
+    }
+
+    #[test]
+    fn quit_summary_uses_singular_nouns_and_verb_for_exactly_one_session() {
+        let pending = PendingQuitConfirmation {
+            counts: crate::tabs::LiveSessionCounts {
+                local: 1,
+                ssh: 0,
+                serial: 0,
+            },
+            cancel_focus_requested: false,
+        };
+        assert_eq!(pending.summary_message(), "1 local process is still open.");
+    }
+
+    #[test]
+    fn quit_summary_lists_every_nonzero_transport_with_oxford_comma() {
+        let pending = PendingQuitConfirmation {
+            counts: crate::tabs::LiveSessionCounts {
+                local: 1,
+                ssh: 2,
+                serial: 1,
+            },
+            cancel_focus_requested: false,
+        };
+        assert_eq!(
+            pending.summary_message(),
+            "1 local process, 2 SSH connections, and 1 serial device are still open."
+        );
+    }
+
+    #[test]
+    fn quit_summary_joins_exactly_two_transports_with_and_only() {
+        let pending = PendingQuitConfirmation {
+            counts: crate::tabs::LiveSessionCounts {
+                local: 0,
+                ssh: 3,
+                serial: 1,
+            },
+            cancel_focus_requested: false,
+        };
+        assert_eq!(
+            pending.summary_message(),
+            "3 SSH connections and 1 serial device are still open."
+        );
     }
 
     #[test]

@@ -30,7 +30,7 @@ use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
 use crate::native_smoke::NativeWindowSmoke;
 use crate::overlay_state::{
     CloseConsequence, OverlayState, PendingCloseConfirmation, PendingPasswordStore,
-    PendingPasteConfirmation, PendingSettingsResetConfirmation,
+    PendingPasteConfirmation, PendingQuitConfirmation, PendingSettingsResetConfirmation,
 };
 use crate::screens;
 use crate::tabs::{
@@ -292,6 +292,11 @@ pub struct FesTermApp {
     terminal_font_generation: TerminalFontGeneration,
     about_icon: Option<egui::TextureHandle>,
     updates: UpdateController,
+    /// Set once the aggregate quit confirmation has been deliberately
+    /// confirmed, so the follow-up OS close request that actually tears
+    /// down the window is let through instead of being intercepted again
+    /// (`docs/gui-action-graph.md` `QUIT-03`).
+    quit_confirmed: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -522,6 +527,7 @@ impl FesTermApp {
             terminal_font_generation,
             about_icon: Some(about_icon),
             updates: UpdateController::from_build(),
+            quit_confirmed: false,
         }
     }
 
@@ -664,6 +670,37 @@ impl FesTermApp {
         }
     }
 
+    /// Intercepts the OS "close this window" request and, if any session
+    /// still has something to lose, cancels it and shows one aggregate
+    /// confirmation instead of letting the window disappear silently
+    /// (`docs/gui-design.md` "Closing sessions and quitting",
+    /// `docs/gui-action-graph.md` `QUIT-01`/`QUIT-02`). fesTerm has exactly
+    /// one native window, so the same path covers both the window's close
+    /// button and "Quit fesTerm" - both arrive here as the same
+    /// `close_requested` viewport event.
+    ///
+    /// Split from `logic()`'s real `ctx.input` read so tests can drive it
+    /// directly without needing a way to fabricate a genuine close-request
+    /// input event on a headless `egui::Context`.
+    fn evaluate_close_request(&mut self, context: &egui::Context) {
+        if self.quit_confirmed || self.overlays.pending_quit.is_some() {
+            // Already deliberately confirmed, or a second close-requested
+            // event arrived while the confirmation is already showing -
+            // either way, do not open (or reopen) another dialog.
+            return;
+        }
+        let counts = self.state.live_session_counts();
+        if counts.total() == 0 {
+            // Nothing would be lost: let the close proceed untouched.
+            return;
+        }
+        context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.overlays.pending_quit = Some(PendingQuitConfirmation {
+            counts,
+            cancel_focus_requested: false,
+        });
+    }
+
     fn handle_paste_request(&mut self, tab: TabId, text: String) {
         let text = normalize_paste_line_endings(&text);
         let Some(session) = self.state.session_tab_mut(tab) else {
@@ -770,6 +807,67 @@ impl FesTermApp {
         // dialog. Restore the active surface, not a stale invoker node.
         if let Some(session) = self.state.session_tab_mut(pending.restore_tab) {
             session.view.request_focus_on_next_frame();
+        }
+    }
+
+    /// Renders the one aggregate confirmation for closing the window while
+    /// live sessions remain (`docs/gui-design.md` "Closing sessions and
+    /// quitting"). Revalidates the live counts every frame rather than
+    /// trusting the snapshot captured when the dialog opened, so a session
+    /// that exits on its own while the dialog is showing is reflected
+    /// immediately, and the dialog closes itself if none remain.
+    fn show_quit_confirmation(&mut self, context: &egui::Context, escape: bool) {
+        if self.overlays.pending_quit.is_none() {
+            return;
+        }
+        let counts = self.state.live_session_counts();
+        if counts.total() == 0 {
+            self.overlays.pending_quit = None;
+            return;
+        }
+        if let Some(pending) = self.overlays.pending_quit.as_mut() {
+            pending.counts = counts;
+        }
+        let pending = *self.overlays.pending_quit.as_ref().expect("checked above");
+
+        let mut cancel = escape;
+        let mut confirm = false;
+        egui::Modal::new(egui::Id::new("quit_confirmation"))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
+                ui.heading("Quit fesTerm?");
+                ui.add_space(6.0);
+                ui.label(pending.summary_message());
+                ui.label("Unsaved terminal history will be discarded.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    let cancel_button = ui.button("Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    if cancel_button.clicked() {
+                        cancel = true;
+                    }
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Quit fesTerm").color(theme::STATUS_ERROR),
+                        ))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                });
+            });
+        if let Some(current) = self.overlays.pending_quit.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.overlays.pending_quit = None;
+        } else if confirm {
+            self.overlays.pending_quit = None;
+            self.quit_confirmed = true;
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -2761,6 +2859,9 @@ impl FesTermApp {
 
 impl eframe::App for FesTermApp {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        if context.input(|i| i.viewport().close_requested()) {
+            self.evaluate_close_request(context);
+        }
         self.sync_native_window_chrome(frame);
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
@@ -2838,7 +2939,8 @@ impl FesTermApp {
         let confirmation_escape = escape_pressed
             && (self.overlays.pending_close.is_some()
                 || self.overlays.pending_paste.is_some()
-                || self.overlays.pending_settings_reset.is_some());
+                || self.overlays.pending_settings_reset.is_some()
+                || self.overlays.pending_quit.is_some());
         let about_escape = escape_pressed && self.overlays.about_open;
 
         if !self.focus_mode {
@@ -3178,6 +3280,8 @@ impl FesTermApp {
 
         if self.overlays.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
+        } else if self.overlays.pending_quit.is_some() {
+            self.show_quit_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_settings_reset.is_some() {
             self.show_settings_reset_confirmation(ui.ctx(), confirmation_escape);
         } else {
@@ -3234,6 +3338,7 @@ impl FesTermApp {
             terminal_font_generation: TerminalFontGeneration::default(),
             about_icon: None,
             updates: UpdateController::unavailable_for_test(),
+            quit_confirmed: false,
         }
     }
 
@@ -3441,6 +3546,94 @@ mod tests {
             app.state.active_tab().content,
             TabContent::Launcher
         ));
+    }
+
+    #[test]
+    fn closing_with_no_live_sessions_needs_no_quit_confirmation() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.evaluate_close_request(&context);
+
+        assert!(app.overlays.pending_quit.is_none());
+    }
+
+    #[test]
+    fn closing_with_a_live_session_shows_aggregate_quit_confirmation() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+
+        app.evaluate_close_request(&context);
+
+        let pending = app.overlays.pending_quit.expect("should be pending");
+        assert_eq!(pending.counts.local, 1);
+        assert_eq!(pending.counts.ssh, 0);
+        assert_eq!(pending.counts.serial, 0);
+    }
+
+    #[test]
+    fn a_second_close_request_does_not_reopen_the_quit_confirmation() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+
+        app.evaluate_close_request(&context);
+        app.overlays
+            .pending_quit
+            .as_mut()
+            .unwrap()
+            .cancel_focus_requested = true;
+        app.evaluate_close_request(&context);
+
+        // Still the same pending confirmation (focus flag untouched by a
+        // second, redundant close-requested event), not a fresh one.
+        assert!(
+            app.overlays
+                .pending_quit
+                .expect("should still be pending")
+                .cancel_focus_requested
+        );
+    }
+
+    #[test]
+    fn aggregate_quit_confirmation_is_safe_by_default_and_confirmed_deliberately() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.evaluate_close_request(&context);
+        assert!(app.overlays.pending_quit.is_some());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(360.0, 516.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Cancel").is_focused());
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert!(harness.state().overlays.pending_quit.is_some());
+        assert!(!harness.state().quit_confirmed);
+
+        harness.get_by_label("Quit fesTerm").click();
+        harness.step();
+        assert!(harness.state().overlays.pending_quit.is_none());
+        assert!(harness.state().quit_confirmed);
+    }
+
+    #[test]
+    fn escape_cancels_the_aggregate_quit_confirmation_without_quitting() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.evaluate_close_request(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness.state().overlays.pending_quit.is_none());
+        assert!(!harness.state().quit_confirmed);
     }
 
     #[test]

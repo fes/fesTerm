@@ -346,6 +346,22 @@ pub struct SessionTab {
     pub has_new_output_since_active: bool,
 }
 
+/// Exact per-transport counts of sessions that would lose something by
+/// closing, used to build the aggregate application-quit confirmation
+/// message (`docs/gui-design.md` "Closing sessions and quitting").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LiveSessionCounts {
+    pub local: usize,
+    pub ssh: usize,
+    pub serial: usize,
+}
+
+impl LiveSessionCounts {
+    pub const fn total(&self) -> usize {
+        self.local + self.ssh + self.serial
+    }
+}
+
 /// Narrow transport metadata safe for application chrome. Keeping this owned
 /// by the tab prevents egui code from reaching into PTY or SSH backends.
 pub enum InspectorTransport {
@@ -1453,6 +1469,30 @@ impl AppState {
 
     pub fn tabs(&self) -> &[Tab] {
         &self.tabs
+    }
+
+    /// Exact counts of live local processes, SSH connections, and open
+    /// serial devices across every tab, for the aggregate application-quit
+    /// confirmation (`docs/gui-action-graph.md` `QUIT-01`). Uses the same
+    /// "still live" test as `SessionTab::close_requires_confirmation` so the
+    /// aggregate summary and the per-session dialog never disagree about
+    /// which sessions actually have something to lose by closing.
+    pub fn live_session_counts(&self) -> LiveSessionCounts {
+        let mut counts = LiveSessionCounts::default();
+        for tab in &self.tabs {
+            let TabContent::Session(session) = &tab.content else {
+                continue;
+            };
+            if !session.close_requires_confirmation() {
+                continue;
+            }
+            match session.inspector_transport {
+                InspectorTransport::Local { .. } => counts.local += 1,
+                InspectorTransport::Ssh { .. } => counts.ssh += 1,
+                InspectorTransport::Serial { .. } => counts.serial += 1,
+            }
+        }
+        counts
     }
 
     pub const fn active(&self) -> TabId {

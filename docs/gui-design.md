@@ -2161,6 +2161,17 @@ uses the same aggregate model across every window owned by that application
 process and names its destructive action **Quit fesTerm**; on macOS, Close
 Window and Quit retain their distinct native lifecycle meanings.
 
+fesTerm currently opens exactly one native window per process, so its window
+close button, its native "Quit fesTerm" menu command, and platform shortcuts
+such as Cmd+Q all surface to the application as the same OS
+`close_requested` viewport event — there is no separate signal to
+distinguish "close this window" from "quit the application" while only one
+window exists. The implemented dialog therefore always reads **Quit
+fesTerm**, covering both cases with the single aggregate summary described
+above. If a future release adds independent windows, the window-close path
+should regain its own **Close Window** wording and only the last window's
+close should trigger the process-wide **Quit fesTerm** language.
+
 All destructive confirmations are modal to their owning window. Cancel has
 initial focus, Escape cancels, clicking outside does not dismiss, and Enter
 cannot confirm destruction unless the user has explicitly moved focus to the
