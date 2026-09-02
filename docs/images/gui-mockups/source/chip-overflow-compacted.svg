@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="752" height="168" viewBox="0 0 752 168">
+  <rect width="752" height="168" rx="10" fill="#11161e"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="16" y="24" fill="#e8edf2" font-size="13" font-weight="600">Crowded: inactive chips compact first</text>
+    <text x="16" y="42" fill="#788592" font-size="10">The focused chip keeps its normal width; only inactive chips absorb the shortage.</text>
+    <g transform="translate(16 57)">
+      <rect width="184" height="42" rx="7" fill="#29333e" stroke="#91a7b8" stroke-width="1.5"/>
+      <rect x="10" y="12" width="16" height="14" rx="3" fill="none" stroke="#e8edf2" stroke-width="1.5"/>
+      <path d="M13 16l4 3-4 3m6 0h4" fill="none" stroke="#e8edf2" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="25" cy="11" r="3.2" fill="#4fc17d" stroke="#11161e" stroke-width="1.3"/>
+      <text x="35" y="21" fill="#e8edf2" font-size="12" font-weight="600">production-db</text>
+      <text x="35" y="34" fill="#a7b2bd" font-size="9">focused · unchanged</text>
+      <path d="M169 15l7 7m0-7l-7 7" stroke="#a7b2bd" stroke-width="1.4" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(208 57)"><rect width="82" height="42" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><text x="26" y="25" fill="#d6dde4" font-size="11">dev…</text></g>
+    <g transform="translate(298 57)"><rect width="82" height="42" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><text x="26" y="25" fill="#d6dde4" font-size="11">logs…</text></g>
+    <g transform="translate(388 57)"><rect width="82" height="42" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><text x="26" y="25" fill="#d6dde4" font-size="11">docs…</text></g>
+    <g transform="translate(478 57)"><rect width="82" height="42" rx="7" fill="#1a222c" stroke="#35414e"/><circle cx="14" cy="21" r="5" fill="none" stroke="#a7b2bd" stroke-width="1.5"/><text x="26" y="25" fill="#d6dde4" font-size="11">test…</text></g>
+    <g fill="none" stroke="#a7b2bd" stroke-width="1.5" stroke-linecap="round">
+      <path d="M582 78h12m-6-6v12"/><circle cx="630" cy="78" r="6"/><path d="M634 82l5 5"/>
+      <circle cx="673" cy="78" r="1.5" fill="#a7b2bd"/><circle cx="680" cy="78" r="1.5" fill="#a7b2bd"/><circle cx="687" cy="78" r="1.5" fill="#a7b2bd"/>
+      <path d="M720 73l10 10m0-10l-10 10"/>
+    </g>
+    <path d="M16 119h544" stroke="#35414e" stroke-dasharray="3 3"/>
+    <text x="16" y="139" fill="#91a7b8" font-size="10">184 px focused (protected)</text>
+    <text x="208" y="139" fill="#788592" font-size="10">82 px inactive (compacted, no scrolling)</text>
+  </g>
+</svg>

@@ -810,49 +810,132 @@ Until that migration, the current status dot is allocated at the primary label's
 
 ### Tab overflow and wrapping
 
-The default is one horizontally scrollable row. This preserves terminal height
-and resolves the default preference tracked in issue #24. Optional wrapping
-remains available for users who value simultaneous session visibility more
-than terminal height.
+The default is a single row that behaves like a browser tab strip but keeps
+fesTerm's independent-chip visual treatment. Optional wrapping remains
+available for users who value simultaneous session visibility more than
+terminal height.
 
-In single-row mode, chips first compact (shrink proportionally toward a
-minimum width, mirroring a browser tab strip) as the row gets crowded;
-horizontal scrolling only takes over once chips have compacted as far as
-they will go and still don't fit (`crates/festerm-ui-egui/src/chrome.rs`'s
-`shrink_to_fit_single_row`).
+The single-row behavior has three visually distinct states:
 
-The design must remain usable with many sessions. The implementation should support:
+![Roomy chip row: all chips at natural width](images/gui-mockups/chip-overflow-roomy.png)
 
-- compact chip width and sensible truncation;
-- a default single-row mode that first shrinks chips to fit, then falls back to horizontal scrolling;
+![Crowded chip row: focused chip remains normal while inactive chips compact](images/gui-mockups/chip-overflow-compacted.png)
+
+![Overflowing chip row: scrolling begins after inactive chips reach minimum](images/gui-mockups/chip-overflow-scrolling.png)
+
+Editable sources live beside the other reviewed mockups in
+`images/gui-mockups/source/`.
+
+#### Single-row allocation contract
+
+The **focused chip is the protected anchor**. At every supported window width,
+it keeps its normal chip width, including its type icon, state badge, stable
+primary identity, and active-only Close control. Crowding is absorbed by
+inactive chips before scrolling is introduced; the focused chip does not join
+a uniform proportional shrink.
+
+For each layout pass:
+
+1. Reserve New Session, required platform window controls, inter-chip spacing,
+   and any global actions that have not already collapsed into overflow. The
+   remaining width is the chip-strip budget.
+2. Measure the focused chip at its ordinary natural width, capped only by the
+   normal maximum-width rule. Reserve that width first.
+3. Give each inactive chip its natural width when the remaining budget permits.
+4. When there is a shortage, remove or truncate inactive secondary metadata,
+   then distribute the shortage across **inactive chips only**. Use a
+   water-filling/equalized allocation so no inactive chip is pushed below its
+   minimum while another remains unnecessarily wide.
+5. If the focused width plus every inactive minimum, required gaps, and fixed
+   controls still exceed the row budget, keep the focused chip at normal width,
+   keep inactive chips at their minimums, and enable horizontal scrolling.
+6. On activation, expand the newly focused chip to normal width, allow the
+   previously focused chip to enter the inactive compaction pool, and adjust
+   the scroll offset so the new focused chip is fully visible. Widths are
+   derived from the current layout; a compacted width must not become a chip's
+   cached natural width.
+
+In formula form, scrolling begins only when:
+
+```text
+focused_normal_width
++ sum(inactive_minimum_widths)
++ required_gaps
+> chip_strip_budget
+```
+
+Before that threshold, the row compacts inactive chips and does not scroll.
+After that threshold, the focused chip remains fully visible and normal-sized
+while minimum-width inactive chips may move offscreen. Wheel/trackpad input over
+the row scrolls horizontally, dragging near an edge auto-scrolls during
+reorder, and activating, creating, restoring, or keyboard-switching to a
+surface reveals its focused chip completely.
+
+The following are non-conforming:
+
+- immediately enabling a horizontal scroll area while inactive chips are still
+  wider than their minimums;
+- shrinking focused and inactive chips together by one proportional scale;
+- shrinking the focused chip merely to postpone scrolling;
+- permanently caching a forced compact width as a chip's natural width; or
+- allowing a newly focused chip to remain clipped or compacted.
+
+Current implementation: `shrink_to_fit_single_row` provides the first
+compaction seam, but an equal proportional shrink of every chip is
+transitional and does **not** satisfy this target. Its width allocation must
+protect the focused chip and apply the shortage to inactive chips.
+
+The design remains usable with many sessions through:
+
+- stable minimum-width inactive chips and sensible ellipsis;
+- the compact-then-scroll single-row sequence above;
 - an optional multi-row wrapped-chip mode for wide displays;
-- keyboard switching that follows a predictable logical order independent of visual wrapping;
-- a searchable session switcher keyed primarily by stable identity; and
+- keyboard switching in predictable logical order independent of wrapping or
+  scroll position;
+- the command palette as the searchable session switcher keyed primarily by
+  stable identity; and
 - graceful narrow-window collapse without merging chips into a connected strip.
 
-Chips clip overflowing text with an ellipsis rather than growing without bound: both the primary and secondary lines truncate to a fixed chip-width range instead of forcing the whole row layout to widen to fit a long terminal-provided title (for example, a full shell executable path). Where a terminal-provided title looks path-like, the chip's secondary text shows only its final path component (e.g. `cmd.exe`) rather than the full path, so the identity-first chip stays compact; this is purely a display reduction and never mutates the underlying terminal-provided title data.
+Chips clip overflowing text with an ellipsis rather than growing without bound.
+Where a terminal-provided title looks path-like, the secondary display may use
+its final path component; this is purely display reduction and never mutates
+the retained title.
 
-The chip row and the trailing global icon controls (search, panel toggle, overflow menu) share one horizontal row, so the chip row's own wrap/scroll width budget is capped to leave room for those icons (`TRAILING_CONTROLS_RESERVED_WIDTH` in `crates/festerm-ui-egui/src/chrome.rs`) rather than being computed as if it owned the full row width. This prevents the last wrapped or scrolled chip from rendering underneath the icons on narrow windows.
+The chip row and trailing controls share one horizontal band. The chip-strip
+budget must account for platform-specific trailing controls rather than
+rendering beneath them. Less-used global actions, starting with terminal Search
+and Session Inspector, collapse into overflow before the protected focused chip
+is compromised. New Session and required platform controls remain visible.
 
-Activating, creating, restoring, or keyboard-switching to a session scrolls
-its chip fully into view. Overflow affordances appear only when needed; wheel
-and trackpad input over the row may scroll it horizontally, and dragging near
-an edge auto-scrolls during reorder. Overflow menus contain application
-actions rather than a duplicate hidden-tab list; the command palette remains
-the searchable session switcher.
+Full chip text remains available through accessible naming and hover help.
+Duplicate visible names are allowed and never receive fabricated numeric
+suffixes. The overflow menu remains an application-action menu, not a duplicate
+hidden-tab list.
 
-Chip reduction order is secondary-line removal, reduction toward minimum chip
-width, then stable-identity ellipsis. The type icon, state badge, and entire
-active identity are never removed merely to retain optional chrome actions.
-New Session and platform-required window controls remain visible; Search and
-Session Inspector collapse into overflow first. Full text remains available
-through accessible naming and hover help. Duplicate visible names are allowed
-and are never silently given fabricated numeric suffixes.
+Wrapping adds complete 34 px rows plus normal spacing and genuinely resizes the
+terminal viewport; it never floats over terminal content. The focused-chip
+priority still applies within presentation, but wrapping is a distinct explicit
+preference and must not be used as an automatic substitute for the default
+single-row compact-then-scroll behavior.
 
-Wrapping adds complete 34 px rows plus normal spacing and genuinely resizes
-the terminal viewport; it never floats over terminal content. That resize is
-acceptable because wrapping is an explicit preference.
+#### Required compaction validation
 
+Structural tests must drive exact row budgets and prove all of the following:
+
+- all chips use natural widths when they fit;
+- reducing width changes inactive chip widths while focused width remains
+  exactly its normal width;
+- inactive chips reach their minimum before horizontal overflow becomes true;
+- crossing the threshold enables scrolling without changing focused width;
+- switching focus expands the new focused chip, releases the old one for
+  compaction, and reveals the new focused chip completely;
+- closing chips allows remaining inactive chips to grow back toward natural
+  widths; and
+- long or rapidly changing untrusted titles cannot alter the allocation order
+  or overlap fixed chrome controls.
+
+Rendered review should compare the three states above at the same scale and
+verify that compaction is visible before any scroll affordance appears.
 
 ## Session Creation Workflow
 
@@ -2211,18 +2294,24 @@ command.
 
 When horizontal space is constrained, remove or collapse information in this order:
 
-1. Secondary terminal-provided title in the chip; when compact detail has been
-   relocated to the status bar, that relocated value ellipsizes first.
-2. Chip width toward its minimum, then stable-identity ellipsis.
+1. Optional inactive-chip secondary metadata; when compact active detail has
+   been relocated to the status bar, that relocated value ellipsizes first.
+2. Inactive chip width toward its minimum, then inactive stable-identity
+   ellipsis. The focused chip remains at its normal width.
 3. Less-used global actions into overflow, starting with terminal Search and
    Session Inspector.
-4. Status-bar locality/platform, retaining grid dimensions and accessible
+4. Horizontal scrolling after all visible inactive chips have reached minimum
+   width; never skip inactive compaction by creating a scroll area immediately.
+5. Status-bar locality/platform, retaining grid dimensions and accessible
    state.
 
-The stable primary session identity, type icon, state badge, New Session, and
-platform-required window controls should remain visible as long as possible.
-The active chip is always scrolled fully into view. The command palette—not an
-overflow menu—is the session switcher when many chips are offscreen.
+The focused chip's stable primary identity, type icon, state badge, and Close
+control remain fully visible at normal width. New Session and platform-required
+window controls remain visible as long as possible. Activating an offscreen
+chip expands it to normal focused width and scrolls it fully into view while
+the old focused chip becomes eligible for inactive compaction. The command
+palette—not an overflow menu—is the session switcher when many chips are
+offscreen.
 
 The terminal viewport must never become fragmented or uncovered because chrome, diagnostics, or footer geometry was calculated after terminal dimensions.
 
