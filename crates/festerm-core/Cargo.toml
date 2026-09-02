@@ -20,6 +20,7 @@ unicode-width = "=0.2.2"
 # sustained high-volume output (e.g. `dir /s`) where every cell write and
 # every scrolled-up row clones its text.
 compact_str = "0.9"
+url = "2.5"
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false }

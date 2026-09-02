@@ -98,7 +98,7 @@ user input, clipboard disclosure, network activity, or process invocation.
 | --- | --- |
 | Query replies (DECRQSS, title, color, font) | Reply only to recognized requests; never echo attacker-controlled payloads; strip C0 controls from every reply sent to a child session. |
 | OSC 52 clipboard | Disable reads. If writes are implemented, require explicit opt-in or confirmation and cap decoded payload size. |
-| OSC 8 hyperlinks | Preserve the URI after only the first parameter separator, allowlist schemes, bound URI length, and require user action before opening. |
+| OSC 8 hyperlinks | Preserve only normalized absolute ASCII HTTP/HTTPS URLs with a host after the first parameter separator; bound URI and link-run length; require explicit user action and repeat validation in the application before opening. |
 | OSC 7 working directory | Never resolve an untrusted hostname or interpolate it into a shell command. |
 | Titles and reporting | Sanitize control characters and bound lengths. Do not enable title-report queries by default. |
 | DCS/graphics/passthrough | Keep unsupported protocols disabled; cap all payload, repeat, and allocation sizes. |
@@ -109,6 +109,11 @@ and the historical DECRQSS issues documented in
 [ANSI Terminal Security](https://dgl.cx/2023/09/ansi-terminal-security).
 OSC 8 parsing must split only the first parameter separator, as illustrated by
 [xterm.js #4944](https://github.com/xtermjs/xterm.js/issues/4944).
+Allowlisted text is parsed with the WHATWG URL parser rather than accepted by
+scheme prefix, preventing malformed web-looking strings from falling through
+an OS opener's local-file path behavior. Non-ASCII targets are rejected;
+internationalized hosts remain available through their Punycode form and
+other characters through percent encoding.
 
 ## Milestone 2 Implemented Behavior
 

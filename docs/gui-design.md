@@ -2082,15 +2082,21 @@ The initial link implementation supports explicit OSC 8 hyperlinks only.
 Automatic URL and path detection is deferred because punctuation, wrapping,
 and local-versus-remote ownership are ambiguous.
 
-Explicit links use restrained hover underlining and expose their full target
-in a tooltip. `Ctrl+click` on Windows/Linux or `Cmd+click` on macOS opens a
-validated target through the OS handler; ordinary clicks retain terminal
-selection/mouse behavior. Context actions Open Link and Copy Link Address
-appear only over a real link range. Copying terminal text copies visible text,
-not the hidden URI. Common explicit schemes such as HTTPS, HTTP, and mailto may
-open directly; unfamiliar schemes require confirmation, and malformed/control-
-character targets are rejected. Links remain usable in read-only history and
-are excluded from diagnostics unless explicitly requested.
+Explicit links expose their normalized ASCII target in the context menu and
+full tooltip. `Ctrl+click` on Windows/Linux or `Cmd+click` on macOS opens a
+validated target through the application-owned OS-handler command; ordinary
+clicks retain terminal selection/mouse behavior. Context actions **Open link**
+and **Copy link** appear only over a real link range. Copying terminal text
+copies visible text, not the hidden URI. Only absolute HTTP and HTTPS URLs with
+a host may open; malformed, whitespace-bearing, non-ASCII, local-file, mail,
+script, and unknown-scheme targets are rejected. Parser filtering is repeated
+authoritatively at launch time. Links remain usable in read-only history and
+are excluded from diagnostics.
+
+An unterminated OSC 8 range is cleared by a hard line/index boundary, SGR
+reset, terminal reset, or primary/alternate-screen transition, and is capped
+at 4,096 printed cells. This prevents a hostile remote producer from silently
+annotating unrelated later prompts or output.
 
 A future local path action must first verify a client-local existing path. An
 SSH path is remote and must never be passed to the local OS without a separate

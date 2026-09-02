@@ -984,6 +984,11 @@ pub enum AppCommand {
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
+    /// Opens an explicit terminal hyperlink after application-owned URL
+    /// validation. Terminal presentation emits intent only.
+    OpenExternalLink {
+        target: ExternalLinkTarget,
+    },
     /// Opens (or focuses) the singleton Profiles surface directly into the
     /// editor for one existing profile, e.g. from a Launcher card's edit
     /// icon.
@@ -1196,6 +1201,25 @@ pub enum AppCommand {
 /// It has no public getter and redacts `Debug`, so application commands remain
 /// safe to inspect in UI tests and diagnostics.
 pub struct PasswordToStore(String);
+
+/// A normalized external URL whose contents stay out of command diagnostics.
+pub struct ExternalLinkTarget(String);
+
+impl ExternalLinkTarget {
+    pub(crate) fn new(target: String) -> Self {
+        Self(target)
+    }
+
+    fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for ExternalLinkTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ExternalLinkTarget([REDACTED])")
+    }
+}
 
 impl PasswordToStore {
     pub(crate) fn new(password: String) -> Self {
@@ -1748,11 +1772,18 @@ impl AppState {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
+            AppCommand::OpenExternalLink { target } => {
+                if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
+                {
+                    context.open_url(egui::OpenUrl::new_tab(target));
+                }
+            }
             AppCommand::OpenProfileEditor { identifier } => self.open_profile_editor(identifier),
             AppCommand::StartLocalSession => self.start_local_session(context),
             AppCommand::StartConfiguredLocalProfile { profile_id } => {
                 self.start_configured_local_profile(&profile_id, context)
             }
+
             AppCommand::StartSshSession {
                 profile,
                 authentication,
@@ -2379,6 +2410,34 @@ mod tests {
             .filter(|tab| matches!(tab.content, TabContent::Launcher))
             .map(|tab| tab.id)
             .collect()
+    }
+
+    #[test]
+    fn external_link_policy_accepts_only_normalized_http_and_https_urls() {
+        assert_eq!(
+            festerm_core::normalize_external_web_url("HTTPS://Example.COM/path"),
+            Some("https://example.com/path".to_owned())
+        );
+        for target in [
+            "https://",
+            "https://a b",
+            "https://example.com/\u{202e}spoof",
+            "https://github.com@evil.example/login",
+            "mailto:user@example.com",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(
+                festerm_core::normalize_external_web_url(target),
+                None,
+                "{target:?} must not reach the OS opener"
+            );
+        }
+
+        let command = AppCommand::OpenExternalLink {
+            target: ExternalLinkTarget::new("https://example.com/private-query".to_owned()),
+        };
+        assert!(!format!("{command:?}").contains("private-query"));
     }
 
     #[test]
