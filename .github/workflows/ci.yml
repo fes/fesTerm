@@ -66,6 +66,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: quality
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
       - name: Install a software Vulkan renderer for headless wgpu snapshot tests
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -75,7 +78,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo nextest run --workspace
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
