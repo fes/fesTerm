@@ -162,8 +162,9 @@ drift.
 
 The next sequencing is therefore deliberate: refresh the exact M6 candidate
 and close its native evidence loops while finishing the remaining M9
-selection work; configurable future-session scrollback limits are now
-implemented. M10 packaging and updater infrastructure is now
+history evidence; configurable future-session scrollback limits and stable
+selection remapping across primary reflow are now implemented. M10 packaging
+and updater infrastructure is now
 implemented rather than merely reserved: native manifests, platform signing,
 notarization, updater signatures, and the protected tag-driven GitHub release
 workflow landed in `89a59ae`, and signed production releases (most recently

@@ -636,7 +636,7 @@ pub(crate) fn paint_grid(
         return GridPaintStats::default();
     };
     let mut stats = GridPaintStats::default();
-    let selection_range = paint.selection.range();
+    let selection_range = paint.selection.range_in_snapshot(paint.snapshot);
     painter.rect_filled(paint.layout.rect, 0.0, DEFAULT_BACKGROUND);
     for row in 0..dimensions.rows() {
         let Some(cells) = paint.cache.row(row) else {

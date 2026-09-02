@@ -5,7 +5,7 @@ use std::{
 };
 
 use egui::{Align2, Popup, Rect, Sense, Stroke, Ui};
-use festerm_core::{InputEventOutcome, MouseTrackingMode, Terminal};
+use festerm_core::{ContentPosition, InputEventOutcome, MouseTrackingMode, Terminal};
 
 use crate::{
     cache::{ResizeOutcome, ResizeTracker, TerminalRenderCache},
@@ -163,21 +163,24 @@ impl HistoryViewport {
         self.observed_history_rows = rows;
     }
 
-    /// Rescales an anchored offset proportionally after a resize reflows
-    /// retained scrollback, so a history position stays roughly the same
-    /// relative place in the (now differently sized) retained history
-    /// instead of jumping to an unrelated raw row count. `previous_rows` and
-    /// `new_rows` are the physical-row totals observed immediately before
-    /// and after the resize that triggered reflow.
-    fn reflowed(&mut self, previous_rows: usize, new_rows: usize) {
+    fn reflowed(
+        &mut self,
+        previous_rows: usize,
+        new_rows: usize,
+        mapped_top_content_row: Option<usize>,
+    ) {
         if self.offset_rows > 0 && previous_rows > 0 {
-            let ratio = f64::from(u32::try_from(self.offset_rows).unwrap_or(u32::MAX))
-                / f64::from(u32::try_from(previous_rows).unwrap_or(u32::MAX).max(1));
-            let rescaled = (ratio * new_rows as f64).round();
-            self.offset_rows = if rescaled.is_finite() && rescaled >= 0.0 {
-                (rescaled as usize).min(new_rows)
+            self.offset_rows = if let Some(content_row) = mapped_top_content_row {
+                new_rows.saturating_sub(content_row.min(new_rows))
             } else {
-                new_rows
+                let ratio = f64::from(u32::try_from(self.offset_rows).unwrap_or(u32::MAX))
+                    / f64::from(u32::try_from(previous_rows).unwrap_or(u32::MAX).max(1));
+                let rescaled = (ratio * new_rows as f64).round();
+                if rescaled.is_finite() && rescaled >= 0.0 {
+                    (rescaled as usize).min(new_rows)
+                } else {
+                    new_rows
+                }
             };
         } else {
             self.offset_rows = self.offset_rows.min(new_rows);
@@ -300,7 +303,10 @@ impl TerminalView {
     /// `egui::Event::Copy` handling), without duplicating the selection
     /// logic.
     pub fn selected_text(&self, terminal: &Terminal) -> Option<String> {
-        selection_text(TerminalSnapshot::from_terminal(terminal), &self.selection)
+        selection_text(
+            TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
+            &self.selection,
+        )
     }
 
     fn set_font_size_points(&mut self, requested: f32) -> bool {
@@ -477,17 +483,63 @@ impl TerminalView {
         };
         let calculated = dimensions_from_viewport(viewport, metrics);
         self.diagnostics.calculated_dimensions = calculated;
-        let history_rows_before_resize = terminal.scrollback_stats().physical_rows();
-        if matches!(
-            self.resize.apply_viewport(terminal, viewport, metrics),
-            ResizeOutcome::Resized(_)
-        ) {
-            self.selection.clear();
+        let stats_before_resize = terminal.scrollback_stats();
+        let history_rows_before_resize = stats_before_resize.physical_rows();
+        let alternate_screen = terminal.modes().alternate_screen();
+        let old_first_content_row = stats_before_resize.content_row_origin().saturating_add(
+            history_rows_before_resize.saturating_sub(self.history.offset_rows) as u64,
+        );
+        let mut positions = Vec::new();
+        let top_position_index = (!alternate_screen && self.history.offset_rows > 0).then(|| {
+            positions.push(ContentPosition {
+                column: 0,
+                absolute_row: old_first_content_row,
+            });
+            positions.len() - 1
+        });
+        let selection_position_indices = (!alternate_screen)
+            .then(|| self.selection.content_endpoints())
+            .flatten()
+            .map(|(anchor, head, active)| {
+                let anchor_index = positions.len();
+                positions.push(anchor);
+                let head_index = positions.len();
+                positions.push(head);
+                (anchor_index, head_index, active)
+            });
+        let (resize_outcome, mapped_positions) = self
+            .resize
+            .apply_viewport_with_content_positions(terminal, viewport, metrics, &positions);
+        if matches!(resize_outcome, ResizeOutcome::Resized(_)) {
             self.pointer = TerminalPointerState::default();
+            let mapped_top_content_row = top_position_index
+                .and_then(|index| mapped_positions.get(index).copied().flatten())
+                .and_then(|position| {
+                    let origin = terminal.scrollback_stats().content_row_origin();
+                    position
+                        .absolute_row
+                        .checked_sub(origin)
+                        .and_then(|row| usize::try_from(row).ok())
+                });
             self.history.reflowed(
                 history_rows_before_resize,
                 terminal.scrollback_stats().physical_rows(),
+                mapped_top_content_row,
             );
+            if alternate_screen {
+                self.selection.clamp_rectangular(terminal.dimensions());
+            } else if let Some((anchor_index, head_index, active)) = selection_position_indices {
+                let mapped = mapped_positions
+                    .get(anchor_index)
+                    .copied()
+                    .flatten()
+                    .zip(mapped_positions.get(head_index).copied().flatten());
+                if let Some((anchor, head)) = mapped {
+                    self.selection.remap_content(anchor, head, active);
+                } else {
+                    self.selection.clear();
+                }
+            }
             sink.record_terminal_resize(terminal.dimensions());
             // Guarantees the sink's debounced resize (see
             // `TERMINAL_RESIZE_DEBOUNCE`) actually gets flushed even if the
@@ -861,6 +913,7 @@ impl TerminalView {
                 selection: &mut self.selection,
                 keyboard: &mut self.keyboard,
                 pointer: &mut self.pointer,
+                viewport_offset_rows: self.history.offset_rows,
             },
             sink,
             InputSuppression {
@@ -1120,14 +1173,28 @@ mod history_overlay_tests {
 
         // Reflow to a wider terminal that halves the physical row count:
         // the anchored offset should rescale proportionally (40/100 -> ~20).
-        history.reflowed(100, 50);
+        history.reflowed(100, 50, None);
         assert_eq!(history.offset_rows, 20);
         assert_eq!(history.observed_history_rows, 50);
 
         // Reflow that shrinks retained history below the rescaled offset
         // must clamp rather than leave a stale, out-of-range position.
-        history.reflowed(50, 5);
+        history.reflowed(50, 5, None);
         assert!(history.offset_rows <= 5);
+    }
+
+    #[test]
+    fn reflowed_uses_the_mapped_top_logical_position_when_available() {
+        let mut history = HistoryViewport {
+            offset_rows: 40,
+            observed_history_rows: 100,
+            unseen_output: false,
+        };
+
+        history.reflowed(100, 50, Some(12));
+
+        assert_eq!(history.offset_rows, 38);
+        assert_eq!(history.observed_history_rows, 50);
     }
 
     #[test]
@@ -1136,7 +1203,7 @@ mod history_overlay_tests {
         // latest") must remain following after reflow instead of being
         // pulled into history.
         let mut history = HistoryViewport::default();
-        history.reflowed(100, 40);
+        history.reflowed(100, 40, None);
         assert_eq!(history.offset_rows, 0);
         assert_eq!(history.observed_history_rows, 40);
     }

@@ -12,6 +12,8 @@ pub struct ScrollbackStats {
     charged_bytes: usize,
     logical_lines: usize,
     physical_rows: usize,
+    content_row_origin: u64,
+    screen_row_origin: u64,
     evicted_lines: u64,
     oversize_lines: u64,
 }
@@ -28,6 +30,14 @@ impl ScrollbackStats {
     }
     pub const fn physical_rows(self) -> usize {
         self.physical_rows
+    }
+    pub const fn content_row_origin(self) -> u64 {
+        self.content_row_origin
+    }
+
+    /// Monotonic content coordinate of the first live-screen row.
+    pub const fn screen_row_origin(self) -> u64 {
+        self.screen_row_origin
     }
     pub const fn evicted_lines(self) -> u64 {
         self.evicted_lines
@@ -46,6 +56,14 @@ pub struct LogicalLine {
     physical_rows: usize,
     hard_break: bool,
     charged_bytes: usize,
+    /// Count of cells ever removed from the front of this line by
+    /// [`drop_oldest_physical_row`](Self::drop_oldest_physical_row). A stable
+    /// cell-offset anchor captured before trimming is expressed in the
+    /// line's *original* cell-stream numbering; this lets
+    /// [`locate_offset`](Self::locate_offset) detect and reject an offset
+    /// that has since been trimmed away, instead of silently resolving it
+    /// against different, shifted content.
+    trimmed_offset: usize,
 }
 
 impl LogicalLine {
@@ -70,6 +88,39 @@ impl LogicalLine {
         self.hard_break
     }
 
+    /// Removes this line's first physical row's cells from the front,
+    /// shifting all remaining row boundaries down accordingly. Used to
+    /// incrementally shrink a still-open (not yet hard-broken) line that has
+    /// grown past the scrollback byte budget, retaining as much of its most
+    /// recent content as fits rather than discarding it wholesale. Returns
+    /// `false` if there are no physical rows left to drop.
+    fn drop_oldest_physical_row(&mut self) -> bool {
+        let Some(&first_end) = self.row_ends.first() else {
+            return false;
+        };
+        self.cells.drain(0..first_end);
+        self.row_ends.remove(0);
+        for end in &mut self.row_ends {
+            *end -= first_end;
+        }
+        // `drain`/`remove` shift elements down but never shrink allocated
+        // capacity, and charging is capacity-based (see `charged_cells`), so
+        // without this the trimmed prefix would still be billed for cells
+        // that no longer exist - defeating the whole point of trimming.
+        self.cells.shrink_to_fit();
+        self.row_ends.shrink_to_fit();
+        self.physical_rows = self.physical_rows.saturating_sub(1);
+        self.trimmed_offset = self.trimmed_offset.saturating_add(first_end);
+        self.charged_bytes = size_of::<LogicalLine>()
+            .saturating_add(charged_cells(&self.cells, self.cells.capacity()))
+            .saturating_add(size_of::<usize>().saturating_mul(self.row_ends.capacity()));
+        true
+    }
+
+    pub fn physical_row_soft_wrapped(&self, row: usize) -> Option<bool> {
+        (row < self.physical_rows).then(|| row + 1 < self.physical_rows || !self.hard_break)
+    }
+
     /// Converts a (physical row, column-within-row) position on this line
     /// into an absolute cell-stream offset, clamping the column to that
     /// row's actual content length. Used to capture a stable cursor anchor
@@ -80,15 +131,20 @@ impl LogicalLine {
             .and_then(|previous| self.row_ends.get(previous).copied())
             .unwrap_or(0);
         let end = self.row_ends.get(row).copied().unwrap_or(self.cells.len());
-        start + column.min(end.saturating_sub(start))
+        self.trimmed_offset + start + column.min(end.saturating_sub(start))
     }
 
-    /// Converts an absolute cell-stream offset back into a (physical row,
-    /// column-within-row) position using this line's current physical-row
-    /// boundaries. Used after a reflow to relocate a cursor anchor captured
-    /// via [`cell_offset_for_row`](Self::cell_offset_for_row) at the old
-    /// boundaries.
-    fn locate_offset(&self, offset: usize) -> (usize, usize) {
+    /// Converts an absolute cell-stream offset (in this line's *original*,
+    /// untrimmed numbering) back into a (physical row, column-within-row)
+    /// position using this line's current physical-row boundaries. Used
+    /// after a reflow to relocate a cursor anchor captured via
+    /// [`cell_offset_for_row`](Self::cell_offset_for_row) at the old
+    /// boundaries. Returns `None` if the offset refers to content that has
+    /// since been trimmed from the front of this line (see
+    /// [`drop_oldest_physical_row`](Self::drop_oldest_physical_row)) - such
+    /// an anchor must fail to resolve rather than alias shifted content.
+    fn locate_offset(&self, offset: usize) -> Option<(usize, usize)> {
+        let offset = offset.checked_sub(self.trimmed_offset)?;
         let offset = offset.min(self.cells.len());
         let row = self
             .row_ends
@@ -99,7 +155,7 @@ impl LogicalLine {
             .checked_sub(1)
             .and_then(|previous| self.row_ends.get(previous).copied())
             .unwrap_or(0);
-        (row, offset - start)
+        Some((row, offset - start))
     }
 
     /// Rebuilds physical-row boundaries for this logical line at `columns`,
@@ -154,8 +210,9 @@ pub(crate) struct Scrollback {
     lines: VecDeque<LogicalLine>,
     next_id: u64,
     evicted_lines: u64,
+    content_row_origin: u64,
+    screen_row_origin: u64,
     oversize_lines: u64,
-    dropping_oversize_line: bool,
 }
 
 impl Scrollback {
@@ -166,8 +223,9 @@ impl Scrollback {
             lines: VecDeque::new(),
             next_id: 0,
             evicted_lines: 0,
+            content_row_origin: 0,
+            screen_row_origin: 0,
             oversize_lines: 0,
-            dropping_oversize_line: false,
         }
     }
 
@@ -183,11 +241,13 @@ impl Scrollback {
     }
 
     fn push_row(&mut self, row: ScreenRow) {
+        self.screen_row_origin = self.screen_row_origin.saturating_add(1);
         let ends_line = !row.soft_wrapped;
-        if self.limit_bytes == 0 || self.dropping_oversize_line {
-            if ends_line {
-                self.dropping_oversize_line = false;
-            }
+        if self.limit_bytes == 0 {
+            // Nothing is retained; keep `content_row_origin` tracking
+            // `screen_row_origin` so the (empty) retained range stays
+            // well-defined for callers.
+            self.content_row_origin = self.screen_row_origin;
             return;
         }
 
@@ -201,6 +261,7 @@ impl Scrollback {
                 physical_rows: 0,
                 hard_break: false,
                 charged_bytes: size_of::<LogicalLine>(),
+                trimmed_offset: 0,
             });
             self.charged_bytes = self.charged_bytes.saturating_add(size_of::<LogicalLine>());
         }
@@ -214,17 +275,29 @@ impl Scrollback {
         line.charged_bytes = size_of::<LogicalLine>()
             .saturating_add(charged_cells(&line.cells, line.cells.capacity()))
             .saturating_add(size_of::<usize>().saturating_mul(line.row_ends.capacity()));
+        if ends_line || line.charged_bytes > self.limit_bytes {
+            // `cells`/`row_ends` may have spare capacity left over from
+            // incremental `Vec` growth (e.g. a growth-strategy doubling);
+            // since charging is capacity-based (see `charged_cells`), that
+            // spare capacity can transiently look like real retained bytes.
+            // Shrink now - before this line is considered for eviction
+            // (wholesale once complete, or incremental trimming while still
+            // open) - so a merely-large-but-actually-in-budget line is
+            // never evicted, and any content genuinely older than this line
+            // (e.g. `evict_complete_lines`'s other retained lines) is never
+            // sacrificed to cover what was only ever unused capacity.
+            line.cells.shrink_to_fit();
+            line.row_ends.shrink_to_fit();
+            line.charged_bytes = size_of::<LogicalLine>()
+                .saturating_add(charged_cells(&line.cells, line.cells.capacity()))
+                .saturating_add(size_of::<usize>().saturating_mul(line.row_ends.capacity()));
+        }
         self.charged_bytes = self
             .charged_bytes
-            .saturating_add(line.charged_bytes.saturating_sub(prior_charge));
+            .saturating_sub(prior_charge)
+            .saturating_add(line.charged_bytes);
 
-        if line.charged_bytes > self.limit_bytes {
-            let removed = self.lines.pop_back().expect("oversize line exists");
-            self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
-            self.oversize_lines = self.oversize_lines.saturating_add(1);
-            self.dropping_oversize_line = !ends_line;
-        }
-        self.evict_complete_lines();
+        self.enforce_limit();
     }
 
     fn evict_complete_lines(&mut self) {
@@ -237,13 +310,16 @@ impl Scrollback {
             };
             self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
             self.evicted_lines = self.evicted_lines.saturating_add(1);
+            self.content_row_origin = self
+                .content_row_origin
+                .saturating_add(removed.physical_rows as u64);
         }
     }
 
     pub(crate) fn clear(&mut self) {
+        self.content_row_origin = self.screen_row_origin;
         self.lines.clear();
         self.charged_bytes = 0;
-        self.dropping_oversize_line = false;
     }
 
     /// Rewraps every retained logical line's physical-row boundaries at the
@@ -298,7 +374,7 @@ impl Scrollback {
         let mut absolute_row = 0;
         for line in &self.lines {
             if line.id == line_id {
-                let (row, column) = line.locate_offset(offset);
+                let (row, column) = line.locate_offset(offset)?;
                 return Some((column, absolute_row + row));
             }
             absolute_row += line.physical_rows;
@@ -373,23 +449,58 @@ impl Scrollback {
         segments.reverse();
         let rows = segments.into_iter().flatten().collect();
         self.enforce_limit();
+        self.screen_row_origin = self
+            .content_row_origin
+            .saturating_add(self.total_physical_rows() as u64);
         rows
     }
 
+    /// Brings retained content back under `limit_bytes`, first by evicting
+    /// whole completed lines from the front (oldest first), then - if a
+    /// single still-open line by itself exceeds the budget - by
+    /// incrementally trimming that line's own oldest physical rows from its
+    /// front. This never opens a coordinate gap: every row removed here is
+    /// removed from the front of the retained range, so
+    /// `content_row_origin + total_physical_rows() == screen_row_origin`
+    /// continues to hold for whatever remains.
     fn enforce_limit(&mut self) {
         self.evict_complete_lines();
         if self.charged_bytes <= self.limit_bytes {
             return;
         }
 
-        let removed = self
-            .lines
-            .pop_front()
-            .expect("over-budget scrollback contains an open line");
-        debug_assert!(!removed.hard_break);
-        self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
-        self.oversize_lines = self.oversize_lines.saturating_add(1);
-        self.dropping_oversize_line = true;
+        let mut counted = false;
+        while self.charged_bytes > self.limit_bytes {
+            let Some(line) = self.lines.front_mut() else {
+                break;
+            };
+            debug_assert!(
+                !line.hard_break,
+                "only a still-open line should remain once complete lines are evicted"
+            );
+            let prior_charge = line.charged_bytes;
+            if !line.drop_oldest_physical_row() {
+                // Nothing left to trim; drop the (now-empty) line entirely.
+                let removed = self.lines.pop_front().expect("front line exists");
+                self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
+                break;
+            }
+            let line = self.lines.front().expect("front line exists");
+            self.charged_bytes = self
+                .charged_bytes
+                .saturating_sub(prior_charge.saturating_sub(line.charged_bytes));
+            self.content_row_origin = self.content_row_origin.saturating_add(1);
+            if !counted {
+                self.oversize_lines = self.oversize_lines.saturating_add(1);
+                counted = true;
+            }
+            if line.physical_rows() == 0 {
+                // Trimmed down to nothing; remove it so every retained line
+                // has at least one physical row.
+                let removed = self.lines.pop_front().expect("front line exists");
+                self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
+            }
+        }
     }
 
     pub(crate) fn stats(&self) -> ScrollbackStats {
@@ -398,6 +509,8 @@ impl Scrollback {
             charged_bytes: self.charged_bytes,
             logical_lines: self.lines.len(),
             physical_rows: self.lines.iter().map(|line| line.physical_rows).sum(),
+            content_row_origin: self.content_row_origin,
+            screen_row_origin: self.screen_row_origin,
             evicted_lines: self.evicted_lines,
             oversize_lines: self.oversize_lines,
         }

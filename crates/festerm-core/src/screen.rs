@@ -129,6 +129,12 @@ impl Screen {
         Some(self.cells[start..end].iter().map(Cell::character).collect())
     }
 
+    /// Whether this physical row continues into the next row without a hard
+    /// line break.
+    pub fn row_soft_wrapped(&self, row: usize) -> Option<bool> {
+        (row < self.dimensions.rows()).then(|| self.soft_wrapped_rows[self.physical_row(row)])
+    }
+
     pub fn is_row_dirty(&self, row: usize) -> Option<bool> {
         self.dirty_rows.get(row).copied()
     }
