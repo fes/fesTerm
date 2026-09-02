@@ -138,7 +138,7 @@ pub use modes::{CursorStyle, MouseTrackingMode, TerminalModes};
 pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
-pub use terminal::{Terminal, TerminalError};
+pub use terminal::{ContentPosition, Terminal, TerminalError};
 
 #[cfg(test)]
 mod model_tests;
@@ -146,10 +146,10 @@ mod model_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        Attributes, CellWidth, Color, Dimensions, FocusEvent, InputEvent, InputEventOutcome, Key,
-        KeypadKey, Modifiers, MouseButton, MouseEvent, MouseEventKind, MouseTrackingMode,
-        MouseWheel, Parser, QueuePushResult, Terminal, TerminalOp, MAX_CELL_COUNT,
-        MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
+        Attributes, CellWidth, Color, ContentPosition, Dimensions, FocusEvent, InputEvent,
+        InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent, MouseEventKind,
+        MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Terminal, TerminalOp,
+        MAX_CELL_COUNT, MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
 
@@ -1240,6 +1240,60 @@ mod tests {
         assert_eq!(terminal.row_text(1).as_deref(), Some("def"));
         assert_eq!(terminal.row_text(2).as_deref(), Some("ghX"));
         assert_eq!(terminal.row_text(3).as_deref(), Some("z  "));
+    }
+
+    #[test]
+    fn resize_remaps_content_positions_through_logical_lines() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"abcdefghX\r\nz\r\n");
+
+        let mapped = terminal
+            .resize_with_content_positions(
+                Dimensions::new(3, 2).unwrap(),
+                &[
+                    ContentPosition {
+                        column: 1,
+                        absolute_row: 1,
+                    },
+                    ContentPosition {
+                        column: 0,
+                        absolute_row: 3,
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            mapped,
+            vec![
+                Some(ContentPosition {
+                    column: 2,
+                    absolute_row: 1,
+                }),
+                Some(ContentPosition {
+                    column: 0,
+                    absolute_row: 3,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn resize_does_not_alias_blank_trailing_rows_to_real_content() {
+        let mut terminal = terminal(4, 4);
+        terminal.ingest(b"abc");
+
+        let mapped = terminal
+            .resize_with_content_positions(
+                Dimensions::new(3, 4).unwrap(),
+                &[ContentPosition {
+                    column: 0,
+                    absolute_row: 3,
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(mapped, vec![None]);
     }
 
     #[test]

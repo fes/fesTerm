@@ -291,7 +291,7 @@
       ],
       "automated_tests": [
         "chip_row_never_overlaps_the_trailing_icon_controls_on_a_narrow_window",
-        "viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes",
+        "viewport_replay_preserves_cache_geometry_during_output_resizes",
         "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface",
         "about_exposes_updates_only_for_a_configured_packaged_build",
         "developer_builds_never_contact_the_update_endpoint",
@@ -454,6 +454,15 @@
       "automated_tests": [
         "history_snapshot_projects_retained_rows_without_moving_the_live_cursor",
         "scrollback_limit_changes_apply_only_to_subsequent_sessions",
+        "resize_remaps_content_positions_through_logical_lines",
+        "resize_does_not_alias_blank_trailing_rows_to_real_content",
+        "terminal_view_preserves_selected_text_across_primary_reflow",
+        "alternate_screen_selection_uses_rectangular_resize_coordinates",
+        "selection_copy_does_not_insert_newlines_at_soft_wraps",
+        "selection_copy_treats_trimmed_history_cells_as_blank_padding",
+        "evicted_selection_positions_never_alias_new_history_content",
+        "discarded_scrollback_rows_never_alias_new_screen_content",
+        "retention_after_an_oversized_gap_does_not_reuse_discarded_coordinates",
         "local_wheel_anchors_history_and_ctrl_end_resumes_following",
         "scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width"
       ],
@@ -463,7 +472,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "selection reflow, eviction, and disconnected-history completion"
+        "eviction and disconnected-history completion"
       ]
     },
     {

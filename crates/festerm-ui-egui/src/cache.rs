@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use festerm_core::{Attributes, Cell, CellWidth, Color, Dimensions, Terminal};
+use festerm_core::{Attributes, Cell, CellWidth, Color, ContentPosition, Dimensions, Terminal};
 
 use crate::{
     geometry::{dimensions_from_viewport, CellMetrics, ViewSize},
@@ -169,14 +169,28 @@ impl ResizeTracker {
         }
     }
 
-    pub(crate) fn apply_viewport(
+    pub(crate) fn apply_viewport_with_content_positions(
         &mut self,
         terminal: &mut Terminal,
         available: ViewSize,
         cell: CellMetrics,
-    ) -> ResizeOutcome {
-        dimensions_from_viewport(available, cell).map_or(ResizeOutcome::Unchanged, |dimensions| {
-            self.apply(terminal, dimensions)
-        })
+        positions: &[ContentPosition],
+    ) -> (ResizeOutcome, Vec<Option<ContentPosition>>) {
+        let Some(dimensions) = dimensions_from_viewport(available, cell) else {
+            return (ResizeOutcome::Unchanged, Vec::new());
+        };
+        if self.last_requested == Some(dimensions) && terminal.dimensions() == dimensions {
+            return (
+                ResizeOutcome::Unchanged,
+                positions.iter().copied().map(Some).collect(),
+            );
+        }
+        match terminal.resize_with_content_positions(dimensions, positions) {
+            Ok(positions) => {
+                self.last_requested = Some(dimensions);
+                (ResizeOutcome::Resized(dimensions), positions)
+            }
+            Err(_) => (ResizeOutcome::Rejected, Vec::new()),
+        }
     }
 }

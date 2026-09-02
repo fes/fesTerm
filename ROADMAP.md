@@ -401,10 +401,9 @@ viewport projection, per-session follow/anchor state, local wheel navigation,
 Shift+Page Up/Down, Ctrl+End, conditional `Jump to latest`, the thin
 application-reserved overlay scrollbar, primary-screen resize reflow, a
 one-shot eviction notice, and read-only history after a session exits or
-disconnects and a persisted scrollback-limit setting are implemented.
-Selection preservation across reflow (selection is currently invalidated
-rather than remapped through stable logical positions, short of ADR 0017's
-full "Stable positions and reflow" promise) remains.
+disconnects, a persisted scrollback-limit setting, and selection/viewport
+remapping through stable logical positions across primary reflow are
+implemented.
 
 ### Outcome
 

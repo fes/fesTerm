@@ -12,6 +12,8 @@ pub struct ScrollbackStats {
     charged_bytes: usize,
     logical_lines: usize,
     physical_rows: usize,
+    content_row_origin: u64,
+    screen_row_origin: u64,
     evicted_lines: u64,
     oversize_lines: u64,
 }
@@ -28,6 +30,14 @@ impl ScrollbackStats {
     }
     pub const fn physical_rows(self) -> usize {
         self.physical_rows
+    }
+    pub const fn content_row_origin(self) -> u64 {
+        self.content_row_origin
+    }
+
+    /// Monotonic content coordinate of the first live-screen row.
+    pub const fn screen_row_origin(self) -> u64 {
+        self.screen_row_origin
     }
     pub const fn evicted_lines(self) -> u64 {
         self.evicted_lines
@@ -68,6 +78,10 @@ impl LogicalLine {
     }
     pub const fn has_hard_break(&self) -> bool {
         self.hard_break
+    }
+
+    pub fn physical_row_soft_wrapped(&self, row: usize) -> Option<bool> {
+        (row < self.physical_rows).then(|| row + 1 < self.physical_rows || !self.hard_break)
     }
 
     /// Converts a (physical row, column-within-row) position on this line
@@ -154,6 +168,9 @@ pub(crate) struct Scrollback {
     lines: VecDeque<LogicalLine>,
     next_id: u64,
     evicted_lines: u64,
+    content_row_origin: u64,
+    screen_row_origin: u64,
+    discarded_gap_rows: u64,
     oversize_lines: u64,
     dropping_oversize_line: bool,
 }
@@ -166,6 +183,9 @@ impl Scrollback {
             lines: VecDeque::new(),
             next_id: 0,
             evicted_lines: 0,
+            content_row_origin: 0,
+            screen_row_origin: 0,
+            discarded_gap_rows: 0,
             oversize_lines: 0,
             dropping_oversize_line: false,
         }
@@ -183,12 +203,28 @@ impl Scrollback {
     }
 
     fn push_row(&mut self, row: ScreenRow) {
+        let row_coordinate = self.screen_row_origin;
+        self.screen_row_origin = self.screen_row_origin.saturating_add(1);
         let ends_line = !row.soft_wrapped;
         if self.limit_bytes == 0 || self.dropping_oversize_line {
+            self.discarded_gap_rows = self.discarded_gap_rows.saturating_add(1);
             if ends_line {
                 self.dropping_oversize_line = false;
             }
             return;
+        }
+
+        // Retained rows are represented as one contiguous coordinate range.
+        // If rows were discarded (zero limit or an oversized logical line),
+        // retaining again must not place new content into those stale
+        // coordinates. Drop the older pre-gap history and begin a fresh
+        // retained range at this row's actual monotonic coordinate.
+        if self.discarded_gap_rows > 0 {
+            self.evicted_lines = self.evicted_lines.saturating_add(self.lines.len() as u64);
+            self.lines.clear();
+            self.charged_bytes = 0;
+            self.content_row_origin = row_coordinate;
+            self.discarded_gap_rows = 0;
         }
 
         if self.lines.back().is_none_or(|line| line.hard_break) {
@@ -222,6 +258,9 @@ impl Scrollback {
             let removed = self.lines.pop_back().expect("oversize line exists");
             self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
             self.oversize_lines = self.oversize_lines.saturating_add(1);
+            self.discarded_gap_rows = self
+                .discarded_gap_rows
+                .saturating_add(removed.physical_rows as u64);
             self.dropping_oversize_line = !ends_line;
         }
         self.evict_complete_lines();
@@ -237,12 +276,17 @@ impl Scrollback {
             };
             self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
             self.evicted_lines = self.evicted_lines.saturating_add(1);
+            self.content_row_origin = self
+                .content_row_origin
+                .saturating_add(removed.physical_rows as u64);
         }
     }
 
     pub(crate) fn clear(&mut self) {
+        self.content_row_origin = self.screen_row_origin;
         self.lines.clear();
         self.charged_bytes = 0;
+        self.discarded_gap_rows = 0;
         self.dropping_oversize_line = false;
     }
 
@@ -373,6 +417,10 @@ impl Scrollback {
         segments.reverse();
         let rows = segments.into_iter().flatten().collect();
         self.enforce_limit();
+        self.screen_row_origin = self
+            .content_row_origin
+            .saturating_add(self.total_physical_rows() as u64)
+            .saturating_add(self.discarded_gap_rows);
         rows
     }
 
@@ -389,6 +437,9 @@ impl Scrollback {
         debug_assert!(!removed.hard_break);
         self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
         self.oversize_lines = self.oversize_lines.saturating_add(1);
+        self.content_row_origin = self
+            .content_row_origin
+            .saturating_add(removed.physical_rows as u64);
         self.dropping_oversize_line = true;
     }
 
@@ -398,6 +449,8 @@ impl Scrollback {
             charged_bytes: self.charged_bytes,
             logical_lines: self.lines.len(),
             physical_rows: self.lines.iter().map(|line| line.physical_rows).sum(),
+            content_row_origin: self.content_row_origin,
+            screen_row_origin: self.screen_row_origin,
             evicted_lines: self.evicted_lines,
             oversize_lines: self.oversize_lines,
         }

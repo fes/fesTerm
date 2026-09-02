@@ -18,6 +18,14 @@ use crate::{
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
 
+/// A physical cell position in the combined retained-history and primary
+/// screen row stream, counted from the oldest retained row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContentPosition {
+    pub column: usize,
+    pub absolute_row: u64,
+}
+
 #[derive(Debug)]
 pub struct TerminalError {
     message: String,
@@ -119,9 +127,13 @@ impl BufferState {
         &self,
         dimensions: Dimensions,
         scrollback: &mut Scrollback,
-    ) -> Result<Self, TerminalError> {
+        positions: &[ContentPosition],
+    ) -> Result<(Self, Vec<Option<ContentPosition>>), TerminalError> {
         let old_dimensions = self.screen.dimensions();
         let rows_before_screen = scrollback.total_physical_rows();
+        let stats_before = scrollback.stats();
+        let old_content_row_origin = stats_before.content_row_origin();
+        let old_screen_row_origin = stats_before.screen_row_origin();
         // Only fold rows up through the cursor's own row or the last row
         // with any occupied content, whichever is greater. Wholly-blank
         // trailing rows are not real logical content; folding them in
@@ -137,12 +149,31 @@ impl BufferState {
 
         let mut combined = scrollback.clone();
         combined.push_rows(fold_rows);
-
+        let combined_rows = combined.total_physical_rows();
         // Capture the cursor's stable logical anchor using the current
         // (pre-reflow) row boundaries, which still mirror the screen's
         // actual per-row breaks at this point.
         let cursor_absolute_row = rows_before_screen + self.cursor.row.min(content_rows - 1);
         let cursor_anchor = combined.line_and_offset_at(cursor_absolute_row, self.cursor.column);
+        let position_anchors = positions
+            .iter()
+            .map(|position| {
+                let relative_row = if position.absolute_row < old_screen_row_origin {
+                    position
+                        .absolute_row
+                        .checked_sub(old_content_row_origin)
+                        .and_then(|row| usize::try_from(row).ok())
+                        .filter(|row| *row < rows_before_screen)?
+                } else {
+                    rows_before_screen.checked_add(
+                        usize::try_from(position.absolute_row - old_screen_row_origin).ok()?,
+                    )?
+                };
+                (relative_row < combined_rows)
+                    .then(|| combined.line_and_offset_at(relative_row, position.column))
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
 
         if dimensions.columns() != old_dimensions.columns() {
             combined.reflow(dimensions.columns());
@@ -156,9 +187,35 @@ impl BufferState {
         // silently relocate an anchor that belonged in the tail.
         let resolved_anchor =
             cursor_anchor.and_then(|(line_id, offset)| combined.resolve_anchor(line_id, offset));
+        let resolved_positions = position_anchors
+            .into_iter()
+            .map(|anchor| {
+                anchor.and_then(|(line_id, offset)| combined.resolve_anchor(line_id, offset))
+            })
+            .collect::<Vec<_>>();
 
         let tail_rows = combined.split_off_tail(dimensions.rows());
         let scrollback_rows_after = combined.total_physical_rows();
+        let retained_origin = combined.stats().content_row_origin();
+        let screen_origin = combined.stats().screen_row_origin();
+        let resolved_positions = resolved_positions
+            .into_iter()
+            .map(|position| {
+                position.and_then(|(column, relative_row)| {
+                    let absolute_row = if relative_row < scrollback_rows_after {
+                        retained_origin.saturating_add(relative_row as u64)
+                    } else {
+                        screen_origin.saturating_add((relative_row - scrollback_rows_after) as u64)
+                    };
+                    (relative_row < scrollback_rows_after + dimensions.rows()).then_some(
+                        ContentPosition {
+                            column,
+                            absolute_row,
+                        },
+                    )
+                })
+            })
+            .collect();
         let screen = Screen::from_rows(dimensions, tail_rows)?;
         *scrollback = combined;
 
@@ -203,7 +260,7 @@ impl BufferState {
         };
         resized.pending_wrap &= resized.cursor.column + 1 == dimensions.columns();
         resized.clamp_saved_states(dimensions);
-        Ok(resized)
+        Ok((resized, resolved_positions))
     }
 
     fn grapheme_anchor_survives_resize(&self, anchor: Cursor, dimensions: Dimensions) -> bool {
@@ -514,7 +571,20 @@ impl Terminal {
     /// keeps the rectangular clip/pad model, relying on the application to
     /// redraw after the PTY resize.
     pub fn resize(&mut self, dimensions: Dimensions) -> Result<(), TerminalError> {
-        let primary = self.primary.reflowed(dimensions, &mut self.scrollback)?;
+        self.resize_with_content_positions(dimensions, &[])
+            .map(drop)
+    }
+
+    /// Resizes like [`Self::resize`] while remapping primary-content positions
+    /// through the same stable logical-line anchors used for the cursor.
+    pub fn resize_with_content_positions(
+        &mut self,
+        dimensions: Dimensions,
+        positions: &[ContentPosition],
+    ) -> Result<Vec<Option<ContentPosition>>, TerminalError> {
+        let (primary, positions) =
+            self.primary
+                .reflowed(dimensions, &mut self.scrollback, positions)?;
         let alternate = match &self.alternate {
             Some(alternate) => Some(alternate.resized(dimensions)?),
             None => None,
@@ -523,7 +593,7 @@ impl Terminal {
         self.primary = primary;
         self.alternate = alternate;
         self.tab_stops = resized_tab_stops(&self.tab_stops, dimensions);
-        Ok(())
+        Ok(positions)
     }
 
     pub fn take_dirty_rows(&mut self) -> Vec<usize> {

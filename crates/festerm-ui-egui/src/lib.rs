@@ -5,7 +5,7 @@
 //! remain in `festerm-core`.
 
 use egui::Color32;
-use festerm_core::{Cell, Cursor, CursorStyle, Terminal, TerminalModes};
+use festerm_core::{Cell, ContentPosition, Cursor, CursorStyle, Terminal, TerminalModes};
 
 mod cache;
 pub mod chrome;
@@ -139,18 +139,130 @@ impl<'a> TerminalSnapshot<'a> {
         if self.viewport_offset_rows == 0 || self.modes.alternate_screen() {
             return self.terminal.screen().cell_ref(column, row);
         }
-        let history_rows = self.terminal.scrollback_stats().physical_rows();
-        let first = history_rows.saturating_sub(self.viewport_offset_rows);
-        let content_row = first + row;
-        if content_row < history_rows {
+        self.absolute_cell(column, self.content_row_for_viewport_row(row)?)
+    }
+
+    pub(crate) fn content_position(self, position: CellPosition) -> Option<ContentPosition> {
+        (position.column < self.dimensions().columns() && position.row < self.dimensions().rows())
+            .then(|| ContentPosition {
+                column: position.column,
+                absolute_row: self
+                    .content_row_for_viewport_row(position.row)
+                    .expect("validated viewport row has content coordinate"),
+            })
+    }
+
+    pub(crate) fn content_row_for_viewport_row(self, row: usize) -> Option<u64> {
+        (row < self.dimensions().rows()).then(|| {
+            if self.modes.alternate_screen() {
+                return row as u64;
+            }
+            let stats = self.terminal.scrollback_stats();
+            if row < self.viewport_offset_rows {
+                stats.content_row_origin().saturating_add(
+                    (stats.physical_rows() - self.viewport_offset_rows + row) as u64,
+                )
+            } else {
+                stats
+                    .screen_row_origin()
+                    .saturating_add((row - self.viewport_offset_rows) as u64)
+            }
+        })
+    }
+
+    pub(crate) fn contains_content_row(self, content_row: u64) -> bool {
+        if self.modes.alternate_screen() {
+            return content_row < self.dimensions().rows() as u64;
+        }
+        let stats = self.terminal.scrollback_stats();
+        let history_end = stats
+            .content_row_origin()
+            .saturating_add(stats.physical_rows() as u64);
+        (content_row >= stats.content_row_origin() && content_row < history_end)
+            || (content_row >= stats.screen_row_origin()
+                && content_row
+                    < stats
+                        .screen_row_origin()
+                        .saturating_add(self.dimensions().rows() as u64))
+    }
+
+    pub(crate) fn next_content_row(self, content_row: u64) -> Option<u64> {
+        if self.modes.alternate_screen() {
+            return (content_row + 1 < self.dimensions().rows() as u64).then_some(content_row + 1);
+        }
+        let stats = self.terminal.scrollback_stats();
+        let history_end = stats
+            .content_row_origin()
+            .saturating_add(stats.physical_rows() as u64);
+        if content_row + 1 < history_end {
+            Some(content_row + 1)
+        } else if content_row < stats.screen_row_origin() {
+            Some(stats.screen_row_origin())
+        } else {
+            (content_row + 1
+                < stats
+                    .screen_row_origin()
+                    .saturating_add(self.dimensions().rows() as u64))
+            .then_some(content_row + 1)
+        }
+    }
+
+    pub(crate) fn absolute_cell(self, column: usize, content_row: u64) -> Option<&'a Cell> {
+        if column >= self.dimensions().columns() {
+            return None;
+        }
+        if self.modes.alternate_screen() {
             return self
                 .terminal
-                .scrollback_physical_row(content_row)
+                .screen()
+                .cell_ref(column, usize::try_from(content_row).ok()?);
+        }
+        let stats = self.terminal.scrollback_stats();
+        let history_rows = stats.physical_rows();
+        if content_row < stats.screen_row_origin() {
+            let relative_row =
+                usize::try_from(content_row.checked_sub(stats.content_row_origin())?).ok()?;
+            if relative_row >= history_rows {
+                return None;
+            }
+            return self
+                .terminal
+                .scrollback_physical_row(relative_row)
                 .and_then(|cells| cells.get(column));
+        }
+        self.terminal.screen().cell_ref(
+            column,
+            usize::try_from(content_row - stats.screen_row_origin()).ok()?,
+        )
+    }
+
+    pub(crate) fn absolute_row_soft_wrapped(self, content_row: u64) -> Option<bool> {
+        if self.modes.alternate_screen() {
+            return self
+                .terminal
+                .screen()
+                .row_soft_wrapped(usize::try_from(content_row).ok()?);
+        }
+        let stats = self.terminal.scrollback_stats();
+        let history_rows = stats.physical_rows();
+        if content_row < stats.screen_row_origin() {
+            let relative_row =
+                usize::try_from(content_row.checked_sub(stats.content_row_origin())?).ok()?;
+            if relative_row >= history_rows {
+                return None;
+            }
+            let mut remaining = relative_row;
+            for line in self.terminal.scrollback_lines() {
+                if remaining < line.physical_rows() {
+                    return line.physical_row_soft_wrapped(remaining);
+                }
+                remaining -= line.physical_rows();
+            }
+            return None;
         }
         self.terminal
             .screen()
-            .cell_ref(column, content_row - history_rows)
+            .row_soft_wrapped(usize::try_from(content_row - stats.screen_row_origin()).ok()?)
     }
 
     pub const fn viewport_offset_rows(self) -> usize {
@@ -394,7 +506,6 @@ mod tests {
             }
         }
 
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
         fn with_terminal(terminal: Terminal) -> Self {
             Self {
                 view: TerminalView::default(),
@@ -484,6 +595,96 @@ mod tests {
             .diagnostics()
             .grid_rect
             .is_some_and(|grid| grid.is_finite()));
+    }
+
+    #[test]
+    fn terminal_view_preserves_selected_text_across_primary_reflow() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 120.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        let columns = harness.state().terminal.dimensions().columns();
+        assert!(columns > 12);
+        let text = (0..columns - 1)
+            .map(|index| char::from(b'a' + u8::try_from(index % 26).unwrap()))
+            .collect::<String>();
+        harness.state_mut().terminal.ingest(text.as_bytes());
+        harness.run();
+
+        let start = CellPosition { column: 3, row: 0 };
+        let end = CellPosition {
+            column: columns - 4,
+            row: 0,
+        };
+        harness.state_mut().view.selection.begin(start);
+        harness.state_mut().view.selection.extend(end);
+        harness.state_mut().view.selection.finish();
+        let before = selection_text(
+            TerminalSnapshot::from_terminal(&harness.state().terminal),
+            &harness.state().view.selection,
+        )
+        .unwrap();
+
+        harness.set_size(Vec2::new(180.0, 120.0));
+        harness.run();
+
+        assert!(harness.state().terminal.dimensions().columns() < columns);
+        assert!(
+            harness.state().terminal.scrollback_stats().physical_rows() > 0,
+            "the narrow viewport should push part of the selected line off-screen"
+        );
+        assert!(harness.state().view.selection.range().is_some());
+        assert_eq!(
+            selection_text(
+                TerminalSnapshot::from_terminal(&harness.state().terminal),
+                &harness.state().view.selection,
+            )
+            .unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn alternate_screen_selection_uses_rectangular_resize_coordinates() {
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"\x1b[?1049hcurrent alternate row");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 240.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::with_terminal(terminal),
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+
+        harness.set_size(Vec2::new(400.0, 180.0));
+        harness.run();
+
+        assert_eq!(
+            harness
+                .state()
+                .view
+                .selected_text(&harness.state().terminal),
+            Some("current".to_owned())
+        );
     }
 
     #[test]
@@ -1442,17 +1643,6 @@ mod tests {
         let mut resize_terminal = terminal(80, 24);
         resize_terminal.ingest(b"banner\r\nprompt> ");
         let mut resize = visual_harness(resize_terminal);
-        resize
-            .state_mut()
-            .view
-            .selection
-            .begin(CellPosition { column: 0, row: 0 });
-        resize
-            .state_mut()
-            .view
-            .selection
-            .extend(CellPosition { column: 5, row: 0 });
-        resize.state_mut().view.selection.finish();
         for (name, size, output) in [
             (
                 "terminal-resize-narrow",
@@ -1514,7 +1704,7 @@ mod tests {
                 height: 520.0,
             },
         ] {
-            resize.apply_viewport(&mut terminal, viewport, cell);
+            resize.apply_viewport_with_content_positions(&mut terminal, viewport, cell, &[]);
             let dirty_rows = terminal.take_dirty_rows();
             cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
 
@@ -1529,19 +1719,17 @@ mod tests {
     }
 
     #[test]
-    fn viewport_replay_preserves_cache_geometry_and_selection_during_output_resizes() {
+    fn viewport_replay_preserves_cache_geometry_during_output_resizes() {
         enum Step {
             Output(&'static [u8]),
             Viewport(ViewSize),
-            Selection(CellPosition, CellPosition),
         }
 
         let cell = CellMetrics::new(10.0, 20.0).unwrap();
         let mut terminal = terminal(80, 24);
         let mut cache = TerminalRenderCache::default();
         let mut resize = ResizeTracker::default();
-        let mut selection = Selection::default();
-        let mut sink = Sink::default();
+        let sink = Sink::default();
 
         for step in [
             Step::Output(b"Windows banner\r\nC:\\Users\\fes>"),
@@ -1549,10 +1737,6 @@ mod tests {
                 width: 370.0,
                 height: 260.0,
             }),
-            Step::Selection(
-                CellPosition { column: 0, row: 0 },
-                CellPosition { column: 6, row: 0 },
-            ),
             Step::Output(b"\x1b[2;1Hactive output"),
             Step::Viewport(ViewSize {
                 width: 0.0,
@@ -1571,14 +1755,13 @@ mod tests {
             match step {
                 Step::Output(bytes) => terminal.ingest(bytes),
                 Step::Viewport(viewport) => {
-                    let outcome = resize.apply_viewport(&mut terminal, viewport, cell);
-                    if matches!(outcome, ResizeOutcome::Resized(_)) {
-                        selection.clear();
-                        assert!(
-                            selection.range().is_none(),
-                            "a real terminal resize must clear local selection"
-                        );
-                    }
+                    let (_outcome, positions) = resize.apply_viewport_with_content_positions(
+                        &mut terminal,
+                        viewport,
+                        cell,
+                        &[],
+                    );
+                    assert!(positions.is_empty());
                     let layout =
                         viewport_layout(Pos2::new(0.0, 0.0), viewport, cell, terminal.dimensions());
                     assert_eq!(layout.dimensions, terminal.dimensions());
@@ -1608,31 +1791,6 @@ mod tests {
                     if dimensions_from_viewport(viewport, cell).is_some() {
                         assert!(layout.viewport.contains_rect(cursor_rect));
                     }
-                }
-                Step::Selection(start, end) => {
-                    route_mouse_input(
-                        &mut terminal,
-                        MouseEvent {
-                            kind: MouseEventKind::Press(MouseButton::Left),
-                            column: start.column,
-                            row: start.row,
-                            modifiers: Modifiers::NONE,
-                        },
-                        &mut selection,
-                        &mut sink,
-                    );
-                    route_mouse_input(
-                        &mut terminal,
-                        MouseEvent {
-                            kind: MouseEventKind::Release(MouseButton::Left),
-                            column: end.column,
-                            row: end.row,
-                            modifiers: Modifiers::NONE,
-                        },
-                        &mut selection,
-                        &mut sink,
-                    );
-                    assert!(selection.range().is_some());
                 }
             }
 
@@ -1720,6 +1878,149 @@ mod tests {
             Some("界e".to_owned())
         );
         assert!(sink.0.is_empty());
+    }
+
+    #[test]
+    fn selection_copy_does_not_insert_newlines_at_soft_wraps() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"abcdefgh");
+        let mut selection = Selection::default();
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition { column: 3, row: 1 });
+        selection.finish();
+
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            Some("abcdefgh".to_owned())
+        );
+    }
+
+    #[test]
+    fn selection_copy_treats_trimmed_history_cells_as_blank_padding() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"abc\r\ndef\r\nghi");
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 0 },
+            ContentPosition {
+                column: 0,
+                absolute_row: 0,
+            },
+        );
+        selection.extend_at(
+            CellPosition { column: 2, row: 1 },
+            ContentPosition {
+                column: 2,
+                absolute_row: 1,
+            },
+        );
+        selection.finish();
+
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            Some("abc     \ndef".to_owned())
+        );
+    }
+
+    #[test]
+    fn evicted_selection_positions_never_alias_new_history_content() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 1024).unwrap();
+        for line in 0..12 {
+            terminal.ingest(format!("line-{line:02}\r\n").as_bytes());
+        }
+        let selected_row = terminal.scrollback_stats().content_row_origin();
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 0 },
+            ContentPosition {
+                column: 0,
+                absolute_row: selected_row,
+            },
+        );
+        selection.extend_at(
+            CellPosition { column: 3, row: 0 },
+            ContentPosition {
+                column: 3,
+                absolute_row: selected_row,
+            },
+        );
+        selection.finish();
+
+        for line in 12..40 {
+            terminal.ingest(format!("line-{line:02}\r\n").as_bytes());
+        }
+        let snapshot = TerminalSnapshot::from_terminal_viewport(
+            &terminal,
+            terminal.scrollback_stats().physical_rows(),
+        );
+
+        assert!(terminal.scrollback_stats().content_row_origin() > selected_row);
+        assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection.range_in_snapshot(snapshot), None);
+    }
+
+    #[test]
+    fn discarded_scrollback_rows_never_alias_new_screen_content() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 0).unwrap();
+        terminal.ingest(b"old");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 0 },
+            snapshot
+                .content_position(CellPosition { column: 0, row: 0 })
+                .unwrap(),
+        );
+        selection.extend_at(
+            CellPosition { column: 2, row: 0 },
+            snapshot
+                .content_position(CellPosition { column: 2, row: 0 })
+                .unwrap(),
+        );
+        selection.finish();
+
+        terminal.ingest(b"\r\nnew\r\nnext");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+
+        assert!(terminal.scrollback_stats().screen_row_origin() > 0);
+        assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection.range_in_snapshot(snapshot), None);
+    }
+
+    #[test]
+    fn retention_after_an_oversized_gap_does_not_reuse_discarded_coordinates() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 1024).unwrap();
+        terminal.ingest(b"kept\r\noversize");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 1 },
+            snapshot
+                .content_position(CellPosition { column: 0, row: 1 })
+                .unwrap(),
+        );
+        selection.extend_at(
+            CellPosition { column: 3, row: 1 },
+            snapshot
+                .content_position(CellPosition { column: 3, row: 1 })
+                .unwrap(),
+        );
+        selection.finish();
+        let selected_row = selection.content_endpoints().unwrap().0.absolute_row;
+
+        terminal.ingest(&vec![b'x'; 4096]);
+        terminal.ingest(b"\r\nnew-1\r\nnew-2\r\nnew-3\r\nnew-4");
+        let snapshot = TerminalSnapshot::from_terminal_viewport(
+            &terminal,
+            terminal.scrollback_stats().physical_rows(),
+        );
+
+        assert!(terminal.scrollback_stats().content_row_origin() > selected_row);
+        assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection.range_in_snapshot(snapshot), None);
     }
 
     #[test]
@@ -1897,6 +2198,7 @@ mod tests {
                 &mut selection,
                 &mut pointer,
                 &mut sink,
+                0,
             )
             .is_some());
         }
@@ -1932,6 +2234,7 @@ mod tests {
             &mut selection,
             &mut pointer,
             &mut sink,
+            0,
         )
         .is_some());
         assert!(route_pointer_event(
@@ -1946,6 +2249,7 @@ mod tests {
             &mut selection,
             &mut pointer,
             &mut sink,
+            0,
         )
         .is_some());
 
@@ -1987,6 +2291,7 @@ mod tests {
                     &mut selection,
                     &mut pointer,
                     &mut sink,
+                    0,
                 )
                 .map(|route| route.outcome),
                 Some(InputEventOutcome::SelectionAllowed)

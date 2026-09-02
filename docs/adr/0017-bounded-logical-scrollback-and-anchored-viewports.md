@@ -114,8 +114,8 @@ terminal cells or searchable/copied text.
 ## Consequences
 
 - M9 was implemented incrementally: logical storage/accounting first, then
-  viewport projection/navigation, then primary-screen resize reflow (selection
-  and search over history remain future work).
+  viewport projection/navigation, then primary-screen resize reflow and stable
+  selection remapping. Search over history remains future work.
 - The renderer consumes a borrowed viewport projection rather than treating
   `Screen` row numbers as durable content identities.
 - Existing visible-grid APIs remain useful for protocol fixtures, but new M9

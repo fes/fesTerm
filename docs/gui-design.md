@@ -2036,7 +2036,8 @@ count only when reliably measurable.
 Activating the control or `Ctrl+End` returns to the bottom and resumes follow.
 Shift+Page Up/Down and Shift-modified wheel behavior are guaranteed local
 scroll escape hatches even when a TUI owns normal paging/mouse input. Resize
-preserves the viewed logical region where possible, search leaves follow
+preserves the viewed logical region and maps selection endpoints through their
+logical lines; Copy omits synthetic newlines at soft-wrap boundaries. Search leaves follow
 suspended after navigating backward, and scroll position is per session across
 chip switches but not persisted after closure. Disconnected/exited sessions
 have no live-follow state or new-output indicator.
@@ -2326,6 +2327,9 @@ Drag creates linear selection; double-click selects a Unicode-aware terminal
 word, and triple-click selects a logical line by joining soft wraps but not
 real breaks. Shift+click extends. Alt+drag (Option on macOS) creates rectangular
 cell selection; Shift forces either local mode while mouse reporting is active.
+Primary-screen resize preserves an existing selection by remapping both
+endpoints through stable logical-line positions rather than retaining stale
+physical row coordinates.
 Word rules may recognize common path punctuation but never infer shell syntax.
 
 Wide glyphs are indivisible, combining marks stay with their bases, and

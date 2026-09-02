@@ -104,6 +104,16 @@ pub fn route_mouse_input(
     selection: &mut Selection,
     sink: &mut impl EncodedInputSink,
 ) -> InputRoute {
+    route_mouse_input_in_viewport(terminal, event, selection, sink, 0)
+}
+
+fn route_mouse_input_in_viewport(
+    terminal: &mut Terminal,
+    event: MouseEvent,
+    selection: &mut Selection,
+    sink: &mut impl EncodedInputSink,
+    viewport_offset_rows: usize,
+) -> InputRoute {
     let position = CellPosition {
         column: event.column,
         row: event.row,
@@ -111,15 +121,21 @@ pub fn route_mouse_input(
     let route = route_input(terminal, InputEvent::Mouse(event), sink);
     match route.outcome {
         InputEventOutcome::SelectionAllowed => {
-            let position =
-                normalize_selection_position(TerminalSnapshot::from_terminal(terminal), position);
+            let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows);
+            let position = normalize_selection_position(snapshot, position).and_then(|position| {
+                snapshot
+                    .content_position(position)
+                    .map(|content| (position, content))
+            });
             match (event.kind, position) {
-                (MouseEventKind::Press(MouseButton::Left), Some(position)) => {
-                    selection.begin(position);
+                (MouseEventKind::Press(MouseButton::Left), Some((position, content))) => {
+                    selection.begin_at(position, content);
                 }
-                (MouseEventKind::Move { .. }, Some(position)) => selection.extend(position),
-                (MouseEventKind::Release(MouseButton::Left), Some(position)) => {
-                    selection.extend(position);
+                (MouseEventKind::Move { .. }, Some((position, content))) => {
+                    selection.extend_at(position, content);
+                }
+                (MouseEventKind::Release(MouseButton::Left), Some((position, content))) => {
+                    selection.extend_at(position, content);
                     selection.finish();
                 }
                 (MouseEventKind::Release(MouseButton::Left), None) => selection.finish(),
@@ -283,6 +299,7 @@ pub(crate) struct InputAdapterState<'a> {
     pub(crate) selection: &'a mut Selection,
     pub(crate) keyboard: &'a mut KeyboardOwnership,
     pub(crate) pointer: &'a mut TerminalPointerState,
+    pub(crate) viewport_offset_rows: usize,
 }
 
 /// Which parts of terminal input `route_egui_events` should suppress this
@@ -312,6 +329,7 @@ pub(crate) fn route_egui_events(
         selection,
         keyboard,
         pointer,
+        viewport_offset_rows,
     } = input;
     // Whether the terminal should currently accept keyboard input.
     //
@@ -358,9 +376,10 @@ pub(crate) fn route_egui_events(
         }
         match event {
             egui::Event::Copy if keyboard_focused => {
-                if let Some(text) =
-                    selection_text(TerminalSnapshot::from_terminal(terminal), selection)
-                {
+                if let Some(text) = selection_text(
+                    TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows),
+                    selection,
+                ) {
                     ui.ctx().copy_text(text);
                 }
             }
@@ -441,6 +460,7 @@ pub(crate) fn route_egui_events(
                         selection,
                         pointer,
                         sink,
+                        viewport_offset_rows,
                     ) {
                         reports.record(observed, route);
                     }
@@ -455,6 +475,7 @@ pub(crate) fn route_egui_events(
                     selection,
                     pointer,
                     sink,
+                    viewport_offset_rows,
                 ) {
                     reports.record(observed, route);
                 }
@@ -473,6 +494,7 @@ pub(crate) fn route_egui_events(
                     selection,
                     pointer,
                     sink,
+                    viewport_offset_rows,
                 ) {
                     reports.record(observed, route);
                 }
@@ -573,6 +595,7 @@ pub(crate) fn route_pointer_event(
     selection: &mut Selection,
     pointer: &mut TerminalPointerState,
     sink: &mut impl EncodedInputSink,
+    viewport_offset_rows: usize,
 ) -> Option<InputRoute> {
     match event {
         PointerInputEvent::Button {
@@ -584,7 +607,7 @@ pub(crate) fn route_pointer_event(
             let cell = layout.cell_geometry().hit_test(position);
             pointer.press(button, position, cell.is_some(), modifiers);
             cell.map(|position| {
-                route_mouse_input(
+                route_mouse_input_in_viewport(
                     terminal,
                     MouseEvent {
                         kind: MouseEventKind::Press(button),
@@ -594,6 +617,7 @@ pub(crate) fn route_pointer_event(
                     },
                     selection,
                     sink,
+                    viewport_offset_rows,
                 )
             })
         }
@@ -614,7 +638,7 @@ pub(crate) fn route_pointer_event(
                 })?
             });
             let route = cell.map(|position| {
-                route_mouse_input(
+                route_mouse_input_in_viewport(
                     terminal,
                     MouseEvent {
                         kind: MouseEventKind::Release(button),
@@ -624,6 +648,7 @@ pub(crate) fn route_pointer_event(
                     },
                     selection,
                     sink,
+                    viewport_offset_rows,
                 )
             });
             pointer.release(button, position, modifiers);
@@ -645,7 +670,7 @@ pub(crate) fn route_pointer_event(
                     })?
                 })
                 .map(|position| {
-                    route_mouse_input(
+                    route_mouse_input_in_viewport(
                         terminal,
                         MouseEvent {
                             kind: MouseEventKind::Move {
@@ -657,13 +682,14 @@ pub(crate) fn route_pointer_event(
                         },
                         selection,
                         sink,
+                        viewport_offset_rows,
                     )
                 })
         }
         PointerInputEvent::Wheel { delta_y, modifiers } if delta_y != 0.0 => {
             pointer.last_position.and_then(|position| {
                 layout.cell_geometry().hit_test(position).map(|position| {
-                    route_mouse_input(
+                    route_mouse_input_in_viewport(
                         terminal,
                         MouseEvent {
                             kind: MouseEventKind::Wheel(if delta_y > 0.0 {
@@ -677,6 +703,7 @@ pub(crate) fn route_pointer_event(
                         },
                         selection,
                         sink,
+                        viewport_offset_rows,
                     )
                 })
             })
