@@ -143,3 +143,52 @@ Requires a Rust toolchain (via [rustup](https://rustup.rs/)).
 cargo build
 cargo run
 ```
+
+### Speeding up local builds
+
+The workspace has 18 crates and a large GUI/GPU dependency graph (`eframe`,
+`egui`, `wgpu`, `naga`, Windows bindings, SSH dependencies), so cold and
+repeated full-validation builds can be slow, especially on native Windows
+ARM64. CI already caches Cargo registry/target artifacts via
+[`Swatinem/rust-cache`](https://github.com/Swatinem/rust-cache) (see
+`.github/workflows/ci.yml`); the following are optional, opt-in techniques for
+local development. Neither is required — the repository works fine without
+either configured. See [`docs/build-performance.md`](docs/build-performance.md)
+for the full record of what has been measured and what remains open.
+
+**Optional `sccache`.** [`sccache`](https://github.com/mozilla/sccache) is a
+compiler cache that works across separate Git worktrees of the same
+repository (unlike Cargo's own incremental cache, which is keyed to a single
+`target` directory). Install it (`cargo install sccache` or your package
+manager), then set:
+
+```sh
+# any shell that persists env vars for your cargo invocations, e.g. ~/.cargo/config.toml:
+[build]
+rustc-wrapper = "sccache"
+```
+
+or per-invocation via `RUSTC_WRAPPER=sccache cargo build`. `sccache` caches
+compiled object code keyed by compiler flags/inputs, so a second worktree
+building the same dependency versions reuses the cache even though it has its
+own `target` directory. If `sccache` is not installed, Cargo silently ignores
+an unset `rustc-wrapper` and behaves exactly as today.
+
+**Optional shared `CARGO_TARGET_DIR`.** Setting `CARGO_TARGET_DIR` to the same
+path across multiple worktrees of this repository lets them share compiled
+dependency artifacts directly (no wrapper needed), which is effective when
+working through feature branches **sequentially** in one worktree at a time:
+
+```sh
+export CARGO_TARGET_DIR="$HOME/.cargo-target/festerm"
+```
+
+This does **not** eliminate lock contention for concurrent builds: Cargo takes
+a file lock on the target directory for the duration of a build, so two
+worktrees building against the same shared `CARGO_TARGET_DIR` at the same time
+will serialize (`Blocking waiting for file lock on build directory`) rather
+than run in parallel — confirmed by testing two simultaneous `cargo check`
+invocations against a shared target directory from separate worktrees. Do not
+point concurrent build agents/CI jobs at a shared `CARGO_TARGET_DIR` for this
+reason; it is only a good fit for one developer working across worktrees one
+at a time.
