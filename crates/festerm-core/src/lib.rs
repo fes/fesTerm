@@ -1518,7 +1518,7 @@ mod tests {
         // in the stream happened to grow large (see `Scrollback::push_row`
         // and `Scrollback::enforce_limit`).
         let dimensions = Dimensions::new(8, 4).unwrap();
-        let mut terminal = Terminal::with_scrollback_limit(dimensions, 65536).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 131_072).unwrap();
         for index in 0..20 {
             terminal.ingest(format!("early-line-{index}\r\n").as_bytes());
         }
@@ -1529,6 +1529,7 @@ mod tests {
         );
         let early_lines_before: Vec<String> = terminal
             .scrollback_lines()
+            .filter(|line| line.has_hard_break())
             .map(|line| line.cells().iter().map(crate::Cell::character).collect())
             .collect();
         assert!(
@@ -1538,38 +1539,100 @@ mod tests {
             "at least one early line must still be present before the oversize burst"
         );
 
-        // One unbroken line, with no `\r\n`, comfortably larger than a
-        // typical line but nowhere near the entire budget by itself.
-        terminal.ingest(&vec![b'x'; 400]);
-        for index in 0..5 {
-            terminal.ingest(format!("late-line-{index}\r\n").as_bytes());
-        }
+        // Cross the Vec capacity-doubling boundary that originally made
+        // unused allocation headroom look like retained payload. The
+        // compact line and the existing history still fit together, so no
+        // early line may be evicted.
+        terminal.ingest(&vec![b'x'; 1_100]);
 
         let stats = terminal.scrollback_stats();
         assert!(stats.charged_bytes() <= stats.limit_bytes());
 
-        let lines_after: Vec<String> = terminal
+        let early_lines_after: Vec<String> = terminal
             .scrollback_lines()
+            .filter(|line| line.has_hard_break())
             .map(|line| line.cells().iter().map(crate::Cell::character).collect())
+            .filter(|line: &String| line.contains("early-line"))
             .collect();
         assert!(
-            lines_after.iter().any(|line| line.contains("early-line")),
-            "an unrelated oversized line elsewhere in the stream must not evict \
-             previously retained, in-budget history: {lines_after:?}"
+            early_lines_after.starts_with(&early_lines_before),
+            "unused Vec capacity must preserve every previously retained line: \
+             before={early_lines_before:?}, after={early_lines_after:?}"
         );
 
         // Now push a burst so large that it alone exceeds the entire
         // budget; only *this* line's own oldest rows may be discarded (via
         // incremental front-trimming), and total retained bytes must never
         // exceed the configured limit, however this plays out.
-        terminal.ingest(&vec![b'y'; 200_000]);
+        terminal.ingest(&vec![b'y'; 400_000]);
         terminal.ingest(b"\r\n");
         let stats = terminal.scrollback_stats();
         assert!(stats.charged_bytes() <= stats.limit_bytes());
-        assert!(
-            stats.oversize_lines() > 0,
-            "a line that alone exceeds the whole budget must be recorded as oversize"
+        assert_eq!(
+            stats.oversize_lines(),
+            1,
+            "one oversized logical line must be counted once, not once per trim"
         );
+        assert!(
+            terminal.scrollback_trim_compactions() < 400_000 / (dimensions.columns() * 4) as u64,
+            "oversized-line trimming must compact in batches rather than once per physical row"
+        );
+    }
+
+    #[test]
+    fn a_fully_trimmed_open_line_counts_as_one_oversize_event() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 1).unwrap();
+
+        terminal.ingest(&vec![b'x'; 10_000]);
+        assert_eq!(terminal.scrollback_stats().oversize_lines(), 1);
+
+        terminal.ingest(b"\r\n");
+        terminal.ingest(&vec![b'y'; 10_000]);
+        assert_eq!(terminal.scrollback_stats().oversize_lines(), 2);
+    }
+
+    #[test]
+    fn zero_scrollback_resize_preserves_the_visible_screen() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 0).unwrap();
+        terminal.ingest(b"abcdefgh\r\nZ");
+
+        terminal.resize(Dimensions::new(4, 3).unwrap()).unwrap();
+
+        assert_eq!(terminal.scrollback_stats().charged_bytes(), 0);
+        assert_eq!(terminal.row_text(0).as_deref(), Some("abcd"));
+        assert_eq!(terminal.row_text(1).as_deref(), Some("efgh"));
+        assert_eq!(terminal.row_text(2).as_deref(), Some("Z   "));
+        assert_eq!(
+            (terminal.cursor().column(), terminal.cursor().row()),
+            (1, 2)
+        );
+    }
+
+    #[test]
+    fn resize_eviction_rejects_stale_positions_instead_of_aliasing() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 2_048).unwrap();
+        for index in 0..20 {
+            terminal.ingest(format!("{index:02}-abcde\r\n").as_bytes());
+        }
+        let oldest_row = terminal.scrollback_stats().content_row_origin();
+
+        let mapped = terminal
+            .resize_with_content_positions(
+                Dimensions::new(2, 2).unwrap(),
+                &[ContentPosition {
+                    column: 0,
+                    absolute_row: oldest_row,
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(mapped, vec![None]);
+        let stats = terminal.scrollback_stats();
+        assert!(stats.content_row_origin() > oldest_row);
+        assert!(stats.charged_bytes() <= stats.limit_bytes());
     }
 
     #[test]

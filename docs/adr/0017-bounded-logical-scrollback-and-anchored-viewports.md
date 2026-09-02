@@ -62,10 +62,14 @@ RSS. Diagnostics expose only configured bytes, charged bytes, retained logical
 lines/physical rows, and eviction counts—never terminal text.
 
 Eviction removes complete oldest logical lines until the charged size is at or
-below the limit. An open logical line that alone exceeds the budget is not
-partially retained: its off-screen segments are discarded through its next hard
-break, with a content-free oversize-line counter. This keeps the bound strict
-and never manufactures an orphan soft-wrap fragment.
+below the limit. If one still-open logical line alone exceeds the budget, its
+oldest physical rows are trimmed in amortized batches while its most recent
+suffix remains available. Stable offsets retain the number of cells trimmed
+from the front so stale anchors fail closed instead of resolving onto shifted
+text. A content-free oversize-line counter increments once per affected logical
+line, not once per trim. Capacity compaction and incremental owned-payload
+accounting keep the bound strict without rescanning or shifting the full
+retained line for every appended row.
 
 ### Stable positions and reflow
 
@@ -127,15 +131,13 @@ terminal cells or searchable/copied text.
 
 ## Validation impact
 
-- **Invariants introduced or changed:** Scrollback is bounded by a configured
-  byte budget that never permits a coordinate gap between `content_row_origin`
-  and `screen_row_origin`; an oversized still-open logical line is trimmed
-  incrementally from its own front rather than evicting unrelated retained
-  history; a cursor/selection anchor that predates trimmed or evicted content
-  always fails safely (clamps or reports content-free "older history
-  discarded") instead of aliasing onto unrelated or shifted content; primary-
-  screen resize reflow remaps stable selection endpoints through logical
-  history rather than raw screen coordinates.
+- **Invariants introduced or changed:** Scrollback remains within its configured
+  charged-byte limit without coordinate gaps. Oversized open lines are trimmed
+  in amortized batches and counted once per logical line. Anchors preserve
+  endpoint affinity and fail safely after trimming or resize-time eviction
+  instead of aliasing shifted content. Primary-screen resize remaps stable
+  cursor and selection positions through logical history and preserves the
+  visible screen even when history is disabled.
 - **GUI/action edges affected:** `HIST-*` (scrollback retention, viewport
   navigation, and follow/anchor behavior), `SSH-*` (reconnect/liveness history
   continuity), `SEARCH-*` (terminal-content search over retained history),
@@ -154,9 +156,17 @@ terminal cells or searchable/copied text.
   `discarded_scrollback_rows_never_alias_new_screen_content`,
   `retention_after_an_oversized_gap_does_not_reuse_discarded_coordinates`,
   `an_unrelated_oversized_line_does_not_evict_prior_in_budget_history`,
+  `a_fully_trimmed_open_line_counts_as_one_oversize_event`,
+  `fully_trimmed_open_line_rejects_stale_anchor_after_recreation`,
+  `trimmed_end_boundary_does_not_alias_recreated_content`,
+  `end_boundary_affinity_stays_on_the_preceding_soft_wrapped_row`,
+  `generated_output_resize_and_clear_sequences_keep_scrollback_strictly_bounded`,
+  `resize_eviction_rejects_stale_positions_instead_of_aliasing`,
+  `zero_scrollback_resize_preserves_the_visible_screen`,
   `local_wheel_anchors_history_and_ctrl_end_resumes_following`,
   `scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width`.
 - **Native/manual evidence required:** `TI-04`, `TI-05`, `TI-07`, `CP-05`
   (native usability/performance validation of history retention, reconnect
-  presentation, and terminal-content search near the default limit).
+  presentation, terminal-content search near the default limit, sustained
+  unbroken output near the configured bound, and resize with history disabled).
 - **Coverage superseded:** None.

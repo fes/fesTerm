@@ -134,6 +134,7 @@ impl BufferState {
         let stats_before = scrollback.stats();
         let old_content_row_origin = stats_before.content_row_origin();
         let old_screen_row_origin = stats_before.screen_row_origin();
+        let scrollback_limit = stats_before.limit_bytes();
         // Only fold rows up through the cursor's own row or the last row
         // with any occupied content, whichever is greater. Wholly-blank
         // trailing rows are not real logical content; folding them in
@@ -148,6 +149,10 @@ impl BufferState {
         fold_rows.truncate(content_rows);
 
         let mut combined = scrollback.clone();
+        // Resize must reflow the complete live screen even when retained
+        // history is disabled or near its bound. Apply the real scrollback
+        // policy only after the new visible tail has been split back out.
+        combined.set_limit_bytes(usize::MAX);
         combined.push_rows(fold_rows);
         let combined_rows = combined.total_physical_rows();
         // Capture the cursor's stable logical anchor using the current
@@ -185,29 +190,31 @@ impl BufferState {
         // truncated to its kept prefix and reuses the same identity for
         // that shorter remainder, so resolving after the split could
         // silently relocate an anchor that belonged in the tail.
-        let resolved_anchor =
-            cursor_anchor.and_then(|(line_id, offset)| combined.resolve_anchor(line_id, offset));
+        let resolved_anchor = cursor_anchor.and_then(|anchor| combined.resolve_anchor(anchor));
         let resolved_positions = position_anchors
             .into_iter()
-            .map(|anchor| {
-                anchor.and_then(|(line_id, offset)| combined.resolve_anchor(line_id, offset))
-            })
+            .map(|anchor| anchor.and_then(|anchor| combined.resolve_anchor(anchor)))
             .collect::<Vec<_>>();
 
+        let origin_before_split = combined.stats().content_row_origin();
         let tail_rows = combined.split_off_tail(dimensions.rows());
+        combined.set_limit_bytes(scrollback_limit);
         let scrollback_rows_after = combined.total_physical_rows();
         let retained_origin = combined.stats().content_row_origin();
         let screen_origin = combined.stats().screen_row_origin();
+        let evicted_rows = usize::try_from(retained_origin.saturating_sub(origin_before_split))
+            .unwrap_or(usize::MAX);
         let resolved_positions = resolved_positions
             .into_iter()
             .map(|position| {
                 position.and_then(|(column, relative_row)| {
-                    let absolute_row = if relative_row < scrollback_rows_after {
-                        retained_origin.saturating_add(relative_row as u64)
+                    let adjusted_row = relative_row.checked_sub(evicted_rows)?;
+                    let absolute_row = if adjusted_row < scrollback_rows_after {
+                        retained_origin.saturating_add(adjusted_row as u64)
                     } else {
-                        screen_origin.saturating_add((relative_row - scrollback_rows_after) as u64)
+                        screen_origin.saturating_add((adjusted_row - scrollback_rows_after) as u64)
                     };
-                    (relative_row < scrollback_rows_after + dimensions.rows()).then_some(
+                    (adjusted_row < scrollback_rows_after + dimensions.rows()).then_some(
                         ContentPosition {
                             column,
                             absolute_row,
@@ -223,7 +230,9 @@ impl BufferState {
             column: 0,
             row: dimensions.rows() - 1,
         };
-        if let Some((column, absolute_row)) = resolved_anchor {
+        if let Some((column, absolute_row)) = resolved_anchor
+            .and_then(|(column, row)| row.checked_sub(evicted_rows).map(|row| (column, row)))
+        {
             if absolute_row >= scrollback_rows_after {
                 cursor = Cursor {
                     column: column.min(dimensions.columns() - 1),
@@ -469,6 +478,11 @@ impl Terminal {
     /// Returns content-free retained-history accounting and eviction metrics.
     pub fn scrollback_stats(&self) -> ScrollbackStats {
         self.scrollback.stats()
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn scrollback_trim_compactions(&self) -> u64 {
+        self.scrollback.trim_compactions()
     }
 
     /// Changes the retained primary-history byte limit and immediately evicts
