@@ -251,7 +251,9 @@ impl<'a> TerminalSnapshot<'a> {
             if relative_row >= history_rows {
                 return None;
             }
-            return self.terminal.scrollback_physical_row_soft_wrapped(relative_row);
+            return self
+                .terminal
+                .scrollback_physical_row_soft_wrapped(relative_row);
         }
         self.terminal
             .screen()
