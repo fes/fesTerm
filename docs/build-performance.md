@@ -143,6 +143,27 @@ The cold-run numbers are consistent with the pre-caching baseline (windows
 representative of the true prior no-cache cost, and the second run reflects
 steady-state warm-cache performance going forward.
 
+### 7. Dedupe `push`+`pull_request` CI runs; shallow checkout in `quality`
+
+PR #88 fixed two more `ci.yml` inefficiencies:
+
+- `on.push` had no branch filter, so every push to a branch with an open
+  PR fired the full `checks`+`quality` matrix twice for the same commit
+  (once via `push`, once via `pull_request`) — roughly doubling CI compute
+  during PR iteration for no additional coverage. Restricted `push` to
+  `branches: [main]`; PR branches are already fully covered by the
+  `pull_request` event (which also runs the stricter validation-traceability
+  diff check).
+- The `quality` job's checkout used `fetch-depth: 0` (full history)
+  unnecessarily — only the `checks` job needs history, for
+  `check_validation_traceability.py --base`'s diff. Dropped it from
+  `quality` in favor of the default shallow checkout.
+
+Verified empirically on PR #88: pushing the branch produced **zero**
+`push`-event CI runs (previously every branch push produced one), confirmed
+via `gh run list`; the `pull_request`-triggered run passed on all three OSes
+with the shallow checkout.
+
 ## Guidance added for local development (not required)
 
 See [`README.md`](../README.md#speeding-up-local-builds) for optional,
