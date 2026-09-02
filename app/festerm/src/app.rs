@@ -715,6 +715,12 @@ impl FesTermApp {
     /// directly without needing a way to fabricate a genuine close-request
     /// input event on a headless `egui::Context`.
     fn evaluate_close_request(&mut self, context: &egui::Context) {
+        if self.native_smoke.is_some() {
+            // Native smoke owns the window lifecycle and writes its result
+            // before requesting deterministic teardown. Interactive quit
+            // confirmation must not cancel that automation-owned close.
+            return;
+        }
         if self.quit_confirmed || self.overlays.pending_quit.is_some() {
             // Already deliberately confirmed, or a second close-requested
             // event arrived while the confirmation is already showing -
@@ -3956,6 +3962,17 @@ mod tests {
         assert_eq!(pending.counts.local, 1);
         assert_eq!(pending.counts.ssh, 0);
         assert_eq!(pending.counts.serial, 0);
+    }
+
+    #[test]
+    fn native_smoke_close_bypasses_live_session_quit_confirmation() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.native_smoke = Some(NativeWindowSmoke::finished_for_test());
+
+        app.evaluate_close_request(&context);
+
+        assert!(app.overlays.pending_quit.is_none());
     }
 
     #[test]

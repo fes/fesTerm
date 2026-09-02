@@ -73,6 +73,25 @@ impl NativeWindowSmoke {
         matches!(self.kind, SmokeKind::Emoji)
     }
 
+    #[cfg(test)]
+    pub fn finished_for_test() -> Self {
+        Self {
+            result_path: PathBuf::new(),
+            test_child_path: PathBuf::new(),
+            started: Instant::now(),
+            phase: Phase::Finished,
+            phase_started: Instant::now(),
+            resize_dimensions: Vec::new(),
+            focus_observed: false,
+            initial_output_bytes: None,
+            post_resize_output_bytes: None,
+            first_resize_generation: None,
+            allow_unfocused: false,
+            kind: SmokeKind::NativeWindow,
+            live_resize_driver_result_path: None,
+        }
+    }
+
     pub fn from_environment() -> Option<Self> {
         let kind = match (
             std::env::var_os(SMOKE_ENV).is_some(),

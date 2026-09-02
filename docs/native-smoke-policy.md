@@ -173,7 +173,9 @@ FESTERM_NATIVE_SMOKE_RESULT_PATH=native-smoke-window-result.txt \
 ```
 
 The last command must produce `status=pass` after its controlled resize
-sequence. Record the runner type, commit SHA, and result in this table and
+sequence and exit without showing interactive live-session close confirmation;
+the smoke driver owns deterministic window teardown after writing its result.
+Record the runner type, commit SHA, and result in this table and
 `docs/milestone-acceptance-record.md`. If no logged-in desktop context is
 available, record the PTY results but retain the native-window item as
 advisory and pending; do not substitute a headless frame for it.
