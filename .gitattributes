@@ -7,6 +7,11 @@ assets/fonts/**/*.txt text eol=lf
 assets/fonts/**/*.md text eol=lf
 assets/fonts/**/*.toml text eol=lf
 assets/fonts/*/LICENSE text eol=lf
+# JuliaMono's upstream release archive ships its LICENSE with CRLF line
+# endings; the checked-in copy and its sha256 pin in manifest.json preserve
+# those upstream bytes exactly, so exempt it from eol normalization (later
+# patterns override earlier ones for the same path).
+assets/fonts/julia-mono/LICENSE -text
 assets/fonts/**/*.ttf binary
 assets/fonts/noto-emoji/OFL.txt whitespace=-blank-at-eol
 tests/fixtures/unicode/**/*.txt text eol=lf whitespace=-blank-at-eol
