@@ -532,6 +532,9 @@ pub struct InterfaceSettings {
     /// relative to fesTerm's original fixed pixel-to-row mapping.
     #[serde(default, skip_serializing_if = "ScrollSpeedPreference::is_default")]
     scroll_speed: ScrollSpeedPreference,
+    /// Retained primary-history payload budget for newly created sessions.
+    #[serde(default, skip_serializing_if = "ScrollbackLimitPreference::is_default")]
+    scrollback_limit: ScrollbackLimitPreference,
     /// Whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) temporarily overlays each eligible chip's quick-switch
     /// number in place of its usual status presentation (feature request
@@ -573,6 +576,7 @@ impl InterfaceSettings {
         terminal_ligatures: false,
         emoji_presentation: EmojiPresentationPreference::Color,
         scroll_speed: ScrollSpeedPreference::Normal,
+        scrollback_limit: ScrollbackLimitPreference::MiB64,
         quick_switch_overlay: false,
         compact_launcher_grid: false,
         pulse_new_output_dot: false,
@@ -596,6 +600,7 @@ impl InterfaceSettings {
             terminal_ligatures: false,
             emoji_presentation: EmojiPresentationPreference::Color,
             scroll_speed: ScrollSpeedPreference::Normal,
+            scrollback_limit: ScrollbackLimitPreference::MiB64,
             quick_switch_overlay: false,
             compact_launcher_grid: false,
             pulse_new_output_dot: false,
@@ -624,6 +629,15 @@ impl InterfaceSettings {
     /// Sets the scrollback scroll-speed clickstop (feature request #67).
     pub const fn with_scroll_speed(mut self, scroll_speed: ScrollSpeedPreference) -> Self {
         self.scroll_speed = scroll_speed;
+        self
+    }
+
+    /// Sets the retained primary-history budget for newly created sessions.
+    pub const fn with_scrollback_limit(
+        mut self,
+        scrollback_limit: ScrollbackLimitPreference,
+    ) -> Self {
+        self.scrollback_limit = scrollback_limit;
         self
     }
 
@@ -690,6 +704,10 @@ impl InterfaceSettings {
 
     pub const fn scroll_speed(self) -> ScrollSpeedPreference {
         self.scroll_speed
+    }
+
+    pub const fn scrollback_limit(self) -> ScrollbackLimitPreference {
+        self.scrollback_limit
     }
 
     pub const fn quick_switch_overlay(self) -> bool {
@@ -824,6 +842,46 @@ impl ScrollSpeedPreference {
 
     const fn is_default(&self) -> bool {
         matches!(self, Self::Normal)
+    }
+}
+
+/// A bounded retained primary-history budget for newly created sessions.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScrollbackLimitPreference {
+    Disabled,
+    #[serde(rename = "16-mib")]
+    MiB16,
+    #[default]
+    #[serde(rename = "64-mib")]
+    MiB64,
+    #[serde(rename = "256-mib")]
+    MiB256,
+}
+
+impl ScrollbackLimitPreference {
+    pub const ALL: [Self; 4] = [Self::Disabled, Self::MiB16, Self::MiB64, Self::MiB256];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Disabled => "Disabled",
+            Self::MiB16 => "16 MiB",
+            Self::MiB64 => "64 MiB",
+            Self::MiB256 => "256 MiB",
+        }
+    }
+
+    pub const fn bytes(self) -> usize {
+        match self {
+            Self::Disabled => 0,
+            Self::MiB16 => 16 * 1024 * 1024,
+            Self::MiB64 => 64 * 1024 * 1024,
+            Self::MiB256 => 256 * 1024 * 1024,
+        }
+    }
+
+    const fn is_default(&self) -> bool {
+        matches!(self, Self::MiB64)
     }
 }
 
@@ -4326,6 +4384,48 @@ schema_version = 99
         assert_eq!(
             ScrollSpeedPreference::from_index(99),
             ScrollSpeedPreference::VeryFast
+        );
+    }
+
+    #[test]
+    fn scrollback_limit_round_trips_and_defaults_to_sixty_four_mib() {
+        let settings =
+            InterfaceSettings::DEFAULT.with_scrollback_limit(ScrollbackLimitPreference::MiB16);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings)
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("scrollback_limit = \"16-mib\""));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            settings
+        );
+        assert_eq!(
+            Configuration::parse("schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n")
+                .unwrap()
+                .interface_settings()
+                .scrollback_limit(),
+            ScrollbackLimitPreference::MiB64
+        );
+        assert!(Configuration::parse(
+            "schema_version = 1\n\n[settings]\nscrollback_limit = \"unbounded\"\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn scrollback_limit_clickstops_have_stable_labels_and_byte_values() {
+        assert_eq!(
+            ScrollbackLimitPreference::ALL.map(ScrollbackLimitPreference::label),
+            ["Disabled", "16 MiB", "64 MiB", "256 MiB"]
+        );
+        assert_eq!(
+            ScrollbackLimitPreference::ALL.map(ScrollbackLimitPreference::bytes),
+            [0, 16 * 1024 * 1024, 64 * 1024 * 1024, 256 * 1024 * 1024]
         );
     }
 

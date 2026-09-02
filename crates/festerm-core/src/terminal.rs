@@ -412,6 +412,12 @@ impl Terminal {
         self.scrollback.stats()
     }
 
+    /// Changes the retained primary-history byte limit and immediately evicts
+    /// complete oldest logical lines if the new limit is smaller.
+    pub fn set_scrollback_limit(&mut self, limit_bytes: usize) {
+        self.scrollback.set_limit_bytes(limit_bytes);
+    }
+
     /// Borrows one retained physical row by its oldest-first history index.
     pub fn scrollback_physical_row(&self, mut row: usize) -> Option<&[Cell]> {
         for line in self.scrollback.lines() {

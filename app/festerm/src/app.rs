@@ -2953,6 +2953,7 @@ impl FesTermApp {
                             terminal_ligatures: self.state.terminal_ligatures(),
                             emoji_presentation: self.state.emoji_presentation(),
                             scroll_speed: self.state.scroll_speed(),
+                            scrollback_limit: self.state.scrollback_limit(),
                             quick_switch_overlay: self.state.quick_switch_overlay(),
                             compact_launcher_grid: self.state.compact_launcher_grid(),
                             pulse_new_output_dot: self.state.pulse_new_output_dot(),
@@ -3111,7 +3112,8 @@ impl FesTermApp {
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
-                | AppCommand::SetScrollSpeed(_)) => {
+                | AppCommand::SetScrollSpeed(_)
+                | AppCommand::SetScrollbackLimit(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     self.persist_interface_settings();

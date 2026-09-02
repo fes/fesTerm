@@ -1373,6 +1373,21 @@ mod tests {
     }
 
     #[test]
+    fn changing_scrollback_limit_evicts_immediately_and_can_disable_history() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"first\r\nsecond\r\nthird\r\n");
+        assert!(terminal.scrollback_stats().logical_lines() > 0);
+
+        terminal.set_scrollback_limit(0);
+        assert_eq!(terminal.scrollback_stats().limit_bytes(), 0);
+        assert_eq!(terminal.scrollback_stats().charged_bytes(), 0);
+        assert_eq!(terminal.scrollback_stats().logical_lines(), 0);
+
+        terminal.ingest(b"fourth\r\nfifth\r\n");
+        assert_eq!(terminal.scrollback_stats().logical_lines(), 0);
+    }
+
+    #[test]
     fn resize_growing_past_a_bottom_row_prompt_still_ingests_new_output() {
         let mut terminal = terminal(20, 6);
         // Fill the screen with 5 filler lines + a prompt, landing the

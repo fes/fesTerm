@@ -21,7 +21,8 @@ use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, EmojiPresentationPreference,
     InterfaceSettings, PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
-    SshProfileConfiguration, TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
+    ScrollbackLimitPreference, SshProfileConfiguration, TerminalFontPreference,
+    WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtySession};
@@ -422,6 +423,10 @@ struct SessionResultMeta<'a> {
 }
 
 impl SessionTab {
+    fn set_scrollback_limit(&mut self, preference: ScrollbackLimitPreference) {
+        self.terminal.set_scrollback_limit(preference.bytes());
+    }
+
     /// Starts a fresh default local session. `window_dimensions`, when
     /// supplied, is the currently rendered window's terminal grid size (see
     /// `AppState::current_session_dimensions`); a new tab created from an
@@ -1111,6 +1116,9 @@ pub enum AppCommand {
     /// Selects a clickstop scaling how far one trackpad/wheel scroll step
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
+    /// Selects the retained primary-history budget for sessions created
+    /// after this preference changes.
+    SetScrollbackLimit(ScrollbackLimitPreference),
     /// Toggles whether holding the quick-switch modifier (Cmd on macOS, Ctrl
     /// elsewhere) overlays each eligible chip's quick-switch number in
     /// place of its usual status presentation (feature request #69).
@@ -1253,6 +1261,7 @@ pub struct AppState {
     terminal_ligatures: bool,
     emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
+    scrollback_limit: ScrollbackLimitPreference,
     quick_switch_overlay: bool,
     compact_launcher_grid: bool,
     pulse_new_output_dot: bool,
@@ -1300,6 +1309,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
+            scrollback_limit: settings.scrollback_limit(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
@@ -1323,7 +1333,7 @@ impl AppState {
         let session = SessionTab::start_primary(context, smoke_profile);
         let id = TabId::next();
         let settings = configuration.interface_settings();
-        let state = Self {
+        let mut state = Self {
             tabs: vec![Tab {
                 id,
                 content: TabContent::Session(Box::new(session)),
@@ -1340,6 +1350,7 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
+            scrollback_limit: settings.scrollback_limit(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
@@ -1347,6 +1358,7 @@ impl AppState {
             pending_profile_edit: None,
             workspace_dirty: false,
         };
+        state.apply_scrollback_limit_to_sessions();
         (state, id)
     }
 
@@ -1413,7 +1425,7 @@ impl AppState {
 
         let active = focused.unwrap_or_else(|| restored[0].id);
         let settings = configuration.interface_settings();
-        Self {
+        let mut state = Self {
             tabs: restored,
             active,
             configuration,
@@ -1427,13 +1439,16 @@ impl AppState {
             terminal_ligatures: settings.terminal_ligatures(),
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
+            scrollback_limit: settings.scrollback_limit(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
             pending_profile_edit: None,
             workspace_dirty: false,
-        }
+        };
+        state.apply_scrollback_limit_to_sessions();
+        state
     }
 
     pub fn tabs(&self) -> &[Tab] {
@@ -1550,6 +1565,10 @@ impl AppState {
         self.scroll_speed
     }
 
+    pub const fn scrollback_limit(&self) -> ScrollbackLimitPreference {
+        self.scrollback_limit
+    }
+
     pub const fn quick_switch_overlay(&self) -> bool {
         self.quick_switch_overlay
     }
@@ -1580,6 +1599,7 @@ impl AppState {
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
+        .with_scrollback_limit(self.scrollback_limit)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
@@ -1755,6 +1775,9 @@ impl AppState {
             AppCommand::SetScrollSpeed(speed) => {
                 self.scroll_speed = speed;
             }
+            AppCommand::SetScrollbackLimit(limit) => {
+                self.scrollback_limit = limit;
+            }
             AppCommand::ToggleQuickSwitchOverlay => {
                 self.quick_switch_overlay = !self.quick_switch_overlay;
             }
@@ -1781,6 +1804,7 @@ impl AppState {
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
                 self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
+                self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
@@ -2080,7 +2104,8 @@ impl AppState {
         }
     }
 
-    fn place_session(&mut self, session: SessionTab) {
+    fn place_session(&mut self, mut session: SessionTab) {
+        session.set_scrollback_limit(self.scrollback_limit);
         self.workspace_dirty = true;
         // Starting a session from the active Launcher or restored
         // authentication-required tab replaces that surface in place (same
@@ -2101,6 +2126,14 @@ impl AppState {
             content: TabContent::Session(Box::new(session)),
         });
         self.set_active(id);
+    }
+
+    fn apply_scrollback_limit_to_sessions(&mut self) {
+        for tab in &mut self.tabs {
+            if let TabContent::Session(session) = &mut tab.content {
+                session.set_scrollback_limit(self.scrollback_limit);
+            }
+        }
     }
 
     fn resolve_ssh_password(&mut self, tab: TabId, password: String) {
@@ -2146,13 +2179,14 @@ impl AppState {
             restarts.push((index, retry.profile.clone(), retry.options.clone()));
         }
         for (index, profile, options) in restarts {
-            let restarted = SessionTab::start_ssh(
+            let mut restarted = SessionTab::start_ssh(
                 profile,
                 SshAuthentication::interactive(),
                 options,
                 0,
                 context,
             );
+            restarted.set_scrollback_limit(self.scrollback_limit);
             if let Some(tab) = self.tabs.get_mut(index) {
                 tab.content = TabContent::Session(Box::new(restarted));
             }
@@ -3120,6 +3154,47 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert_eq!(state.scroll_speed(), ScrollSpeedPreference::Normal);
+    }
+
+    #[test]
+    fn scrollback_limit_changes_apply_only_to_subsequent_sessions() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let TabContent::Session(first) = &state.active_tab().content else {
+            panic!("expected a session tab");
+        };
+        assert_eq!(
+            first.terminal.scrollback_stats().limit_bytes(),
+            ScrollbackLimitPreference::MiB64.bytes()
+        );
+
+        state.dispatch(
+            AppCommand::SetScrollbackLimit(ScrollbackLimitPreference::Disabled),
+            &context,
+        );
+        assert_eq!(
+            state.interface_settings().scrollback_limit(),
+            ScrollbackLimitPreference::Disabled
+        );
+        let TabContent::Session(first) = &state.tabs()[0].content else {
+            panic!("expected a session tab");
+        };
+        assert_eq!(
+            first.terminal.scrollback_stats().limit_bytes(),
+            ScrollbackLimitPreference::MiB64.bytes(),
+            "changing the preference must not mutate an existing session"
+        );
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let TabContent::Session(second) = &state.active_tab().content else {
+            panic!("expected a session tab");
+        };
+        assert_eq!(second.terminal.scrollback_stats().limit_bytes(), 0);
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert_eq!(state.scrollback_limit(), ScrollbackLimitPreference::MiB64);
     }
 
     #[test]

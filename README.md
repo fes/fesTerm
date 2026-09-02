@@ -17,7 +17,7 @@ reference-application evidence is still incomplete; this is a formal
 compatibility certification and is tracked independently of whether 0.1.x
 development builds are packaged and released (see
 [#50](https://github.com/fes/fesTerm/issues/50)). M9 has bounded logical
-scrollback, anchored viewport navigation, primary-screen resize reflow,
+configurable bounded scrollback, anchored viewport navigation, primary-screen resize reflow,
 read-only disconnected history, clear/reset commands, and eviction feedback;
 configurable limits and selection remapping across reflow remain open.
 
