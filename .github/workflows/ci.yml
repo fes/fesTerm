@@ -2,6 +2,12 @@ name: CI
 
 on:
   push:
+    # Feature-branch pushes are already covered by the `pull_request` event
+    # below (which also runs the stricter validation-traceability diff
+    # check); without this filter, every push to an open PR's branch fired
+    # this entire matrix twice for the same commit. Direct pushes to `main`
+    # (e.g. merges) still need their own run.
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -54,8 +60,6 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
