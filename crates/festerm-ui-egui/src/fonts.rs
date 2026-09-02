@@ -98,8 +98,21 @@ pub(crate) fn is_color_emoji(text: &str) -> bool {
     if EmojiSetData::new::<BasicEmoji>().contains_str(text) {
         return true;
     }
-    let has_sequence_marker =
-        text.contains(['\u{fe0f}', '\u{200d}', '\u{20e3}']) || text.chars().count() > 1;
+    // A multi-character `text` reaching this point is either a genuine
+    // multi-codepoint emoji sequence (e.g. an unqualified ZWJ sequence, or a
+    // flag built from two regional-indicator scalars with no explicit
+    // marker) or a run of several merged, plain terminal cells (glyph runs
+    // shape many adjacent single-width ASCII cells as one string; see
+    // `glyph_runs` in renderer.rs). Real emoji scalars are never ASCII, so
+    // requiring non-ASCII content here (in addition to an explicit marker)
+    // keeps flags/ZWJ sequences classified as color emoji while preventing
+    // ordinary merged ASCII text - e.g. "08/13/2026" - from being misrouted
+    // to the emoji font just because it contains a digit (digits carry the
+    // loose Unicode `Emoji` property as valid keycap-sequence bases, even
+    // though a bare digit alone is plain text; see `EmojiPresentation` above,
+    // which correctly excludes it).
+    let has_sequence_marker = text.contains(['\u{fe0f}', '\u{200d}', '\u{20e3}'])
+        || (text.chars().count() > 1 && !text.is_ascii());
     has_sequence_marker
         && text
             .chars()
@@ -544,6 +557,36 @@ mod tests {
                     "U+{code_point:04X} with VS15 should use text presentation"
                 );
             }
+        }
+    }
+
+    /// Regression test for a bug where merged glyph runs of plain ASCII
+    /// terminal output (e.g. a `dir` listing's dates and digit-heavy names)
+    /// were misrouted to the emoji font. `glyph_runs` in renderer.rs merges
+    /// many adjacent single-width ASCII cells into one shaping string, and
+    /// `is_color_emoji` is called with that merged string. Digits, `#`, and
+    /// `*` all carry the loose Unicode `Emoji` property (they are valid
+    /// keycap-sequence bases), so any multi-character ASCII run containing
+    /// one was incorrectly classified as a color-emoji sequence, which both
+    /// swapped in a different (proportional) font and produced visible
+    /// spacing gaps against the fixed monospace cell width.
+    #[test]
+    fn merged_ascii_runs_never_use_emoji_presentation() {
+        for text in [
+            "08/13/2026",
+            "12:03 PM",
+            "2,275,096,628",
+            "fbad1",
+            "eaa2e0c142ea2bd7",
+            "0",
+            "2026",
+            "#1",
+            "file*2.txt",
+        ] {
+            assert!(
+                !is_color_emoji(text),
+                "{text} is plain ASCII and must not use emoji presentation"
+            );
         }
     }
 
