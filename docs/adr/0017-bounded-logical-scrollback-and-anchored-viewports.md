@@ -124,3 +124,39 @@ terminal cells or searchable/copied text.
   the configured budget merely because it changes physical row count.
 - Native usability and performance validation is still required near the
   default limit on every supported desktop.
+
+## Validation impact
+
+- **Invariants introduced or changed:** Scrollback is bounded by a configured
+  byte budget that never permits a coordinate gap between `content_row_origin`
+  and `screen_row_origin`; an oversized still-open logical line is trimmed
+  incrementally from its own front rather than evicting unrelated retained
+  history; a cursor/selection anchor that predates trimmed or evicted content
+  always fails safely (clamps or reports content-free "older history
+  discarded") instead of aliasing onto unrelated or shifted content; primary-
+  screen resize reflow remaps stable selection endpoints through logical
+  history rather than raw screen coordinates.
+- **GUI/action edges affected:** `HIST-*` (scrollback retention, viewport
+  navigation, and follow/anchor behavior), `SSH-*` (reconnect/liveness history
+  continuity), `SEARCH-*` (terminal-content search over retained history),
+  `GEN-*` (reconnect/relaunch generation boundaries within history), `STOP-*`
+  (closing/quitting sessions with retained history).
+- **Automated tests required:**
+  `history_snapshot_projects_retained_rows_without_moving_the_live_cursor`,
+  `scrollback_limit_changes_apply_only_to_subsequent_sessions`,
+  `resize_remaps_content_positions_through_logical_lines`,
+  `resize_does_not_alias_blank_trailing_rows_to_real_content`,
+  `terminal_view_preserves_selected_text_across_primary_reflow`,
+  `alternate_screen_selection_uses_rectangular_resize_coordinates`,
+  `selection_copy_does_not_insert_newlines_at_soft_wraps`,
+  `selection_copy_treats_trimmed_history_cells_as_blank_padding`,
+  `evicted_selection_positions_never_alias_new_history_content`,
+  `discarded_scrollback_rows_never_alias_new_screen_content`,
+  `retention_after_an_oversized_gap_does_not_reuse_discarded_coordinates`,
+  `an_unrelated_oversized_line_does_not_evict_prior_in_budget_history`,
+  `local_wheel_anchors_history_and_ctrl_end_resumes_following`,
+  `scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width`.
+- **Native/manual evidence required:** `TI-04`, `TI-05`, `TI-07`, `CP-05`
+  (native usability/performance validation of history retention, reconnect
+  presentation, and terminal-content search near the default limit).
+- **Coverage superseded:** None.
