@@ -29,8 +29,9 @@ use crate::configuration_startup::{
 use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
 use crate::native_smoke::NativeWindowSmoke;
 use crate::overlay_state::{
-    CloseConsequence, OverlayState, PendingCloseConfirmation, PendingPasswordStore,
-    PendingPasteConfirmation, PendingQuitConfirmation, PendingSettingsResetConfirmation,
+    CloseConsequence, OverlayState, PendingCloseConfirmation, PendingFileDropConfirmation,
+    PendingPasswordStore, PendingPasteConfirmation, PendingQuitConfirmation,
+    PendingSettingsResetConfirmation,
 };
 use crate::screens;
 use crate::tabs::{
@@ -873,6 +874,170 @@ impl FesTermApp {
 
     fn cancel_paste_confirmation(&mut self) {
         let Some(pending) = self.overlays.pending_paste.take() else {
+            return;
+        };
+        if let Some(session) = self.state.session_tab_mut(pending.tab) {
+            session.view.request_focus_on_next_frame();
+        }
+    }
+
+    /// Inspects this frame's OS file drops (`docs/gui-design.md`
+    /// "Drag-and-drop input") and, for a local live session that still
+    /// accepts input, stages a bounded insertion preview instead of ever
+    /// silently guessing shell-specific quoting. Drops onto anything else
+    /// (SSH/serial sessions, Launcher/Settings, an already-blocked overlay,
+    /// or a session that no longer accepts input) are rejected with a
+    /// factual transient notice rather than a misleading client-local path
+    /// insertion.
+    fn handle_dropped_files(&mut self, context: &egui::Context) {
+        let dropped = context.input(|i| i.raw.dropped_files.clone());
+        if dropped.is_empty() {
+            return;
+        }
+        if self.overlays.blocks_terminal_input() {
+            return;
+        }
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            self.reject_file_drop(context, "File drop needs an active session.");
+            return;
+        };
+        if !matches!(
+            session.inspector_transport,
+            InspectorTransport::Local { .. }
+        ) {
+            self.reject_file_drop(
+                context,
+                "File drop only inserts paths into a local session, never a remote or serial one.",
+            );
+            return;
+        }
+        if !session.accepts_input() {
+            self.reject_file_drop(context, "File drop needs a running session.");
+            return;
+        }
+        let paths: Vec<String> = dropped
+            .iter()
+            .map(|file| file.path().to_string_lossy().into_owned())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let identity = session.label.clone();
+        let lifecycle_generation = session.controller.lifecycle_generation();
+        let path_count = paths.len();
+        self.overlays.pending_file_drop = Some(PendingFileDropConfirmation {
+            tab: active,
+            identity,
+            text: paths.join(" "),
+            path_count,
+            lifecycle_generation,
+            cancel_focus_requested: false,
+        });
+    }
+
+    fn reject_file_drop(&mut self, context: &egui::Context, message: &str) {
+        self.overlays.transient_notice = Some((
+            message.to_owned(),
+            Instant::now() + Duration::from_millis(2_500),
+        ));
+        context.request_repaint();
+    }
+
+    fn show_file_drop_confirmation(&mut self, context: &egui::Context, escape: bool) {
+        let Some(pending) = self.overlays.pending_file_drop.as_ref().cloned() else {
+            return;
+        };
+        let valid_target = self.state.active() == pending.tab
+            && self
+                .state
+                .session_tab_mut(pending.tab)
+                .is_some_and(|session| {
+                    session.accepts_input()
+                        && session.controller.lifecycle_generation() == pending.lifecycle_generation
+                        && matches!(
+                            session.inspector_transport,
+                            InspectorTransport::Local { .. }
+                        )
+                });
+        if !valid_target {
+            self.cancel_file_drop_confirmation();
+            return;
+        }
+
+        let (preview, _shown_lines, shown_characters) = bounded_paste_preview(&pending.text);
+        let omitted_characters = pending
+            .text
+            .chars()
+            .count()
+            .saturating_sub(shown_characters);
+        let mut cancel = escape;
+        let mut insert = false;
+        let noun = if pending.path_count == 1 {
+            "path"
+        } else {
+            "paths"
+        };
+        egui::Modal::new(egui::Id::new("file_drop_confirmation"))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 440.0));
+                ui.heading(format!(
+                    "Insert {} {noun} into \u{201c}{}\u{201d}?",
+                    pending.path_count, pending.identity
+                ));
+                ui.label(
+                    "The exact path text below will be inserted as typed input; no Enter is sent \
+                     and no file contents are read.",
+                );
+                ui.add_space(6.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(preview).monospace())
+                                    .selectable(true)
+                                    .wrap(),
+                            );
+                        });
+                });
+                if omitted_characters > 0 {
+                    ui.label(format!("Preview omits {omitted_characters} characters."));
+                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let cancel_button = ui.button("Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    if cancel_button.clicked() {
+                        cancel = true;
+                    }
+                    if ui.button("Insert Path").clicked() {
+                        insert = true;
+                    }
+                });
+            });
+        if let Some(current) = self.overlays.pending_file_drop.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.cancel_file_drop_confirmation();
+        } else if insert {
+            self.overlays.pending_file_drop = None;
+            if let Some(session) = self.state.session_tab_mut(pending.tab) {
+                let _ = festerm_ui_egui::route_input(
+                    &mut session.terminal,
+                    festerm_core::InputEvent::Paste(pending.text),
+                    &mut session.controller,
+                );
+            }
+        }
+    }
+
+    fn cancel_file_drop_confirmation(&mut self) {
+        let Some(pending) = self.overlays.pending_file_drop.take() else {
             return;
         };
         if let Some(session) = self.state.session_tab_mut(pending.tab) {
@@ -2862,6 +3027,7 @@ impl eframe::App for FesTermApp {
         if context.input(|i| i.viewport().close_requested()) {
             self.evaluate_close_request(context);
         }
+        self.handle_dropped_files(context);
         self.sync_native_window_chrome(frame);
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
@@ -2939,6 +3105,7 @@ impl FesTermApp {
         let confirmation_escape = escape_pressed
             && (self.overlays.pending_close.is_some()
                 || self.overlays.pending_paste.is_some()
+                || self.overlays.pending_file_drop.is_some()
                 || self.overlays.pending_settings_reset.is_some()
                 || self.overlays.pending_quit.is_some());
         let about_escape = escape_pressed && self.overlays.about_open;
@@ -3284,6 +3451,8 @@ impl FesTermApp {
             self.show_quit_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_settings_reset.is_some() {
             self.show_settings_reset_confirmation(ui.ctx(), confirmation_escape);
+        } else if self.overlays.pending_file_drop.is_some() {
+            self.show_file_drop_confirmation(ui.ctx(), confirmation_escape);
         } else {
             self.show_paste_confirmation(ui.ctx(), confirmation_escape);
         }
@@ -3634,6 +3803,126 @@ mod tests {
         harness.step();
         assert!(harness.state().overlays.pending_quit.is_none());
         assert!(!harness.state().quit_confirmed);
+    }
+
+    #[derive(Debug)]
+    struct FakeDroppedFile(std::path::PathBuf);
+
+    impl egui::DroppedFile for FakeDroppedFile {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Err("test file drops are never read".to_owned())
+        }
+    }
+
+    fn simulate_file_drop(context: &egui::Context, paths: &[&str]) {
+        context.input_mut(|input| {
+            for path in paths {
+                input
+                    .raw
+                    .dropped_files
+                    .push(std::sync::Arc::new(FakeDroppedFile(path.into())));
+            }
+        });
+    }
+
+    #[test]
+    fn dropping_a_file_on_a_live_local_session_stages_a_bounded_preview() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        simulate_file_drop(&context, &["/tmp/example.txt"]);
+
+        app.handle_dropped_files(&context);
+
+        let pending = app
+            .overlays
+            .pending_file_drop
+            .expect("should stage a preview");
+        assert_eq!(pending.tab, tab);
+        assert_eq!(pending.text, "/tmp/example.txt");
+        assert_eq!(pending.path_count, 1);
+    }
+
+    #[test]
+    fn dropping_multiple_files_preserves_drop_order_space_joined() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        simulate_file_drop(&context, &["/tmp/b.txt", "/tmp/a.txt"]);
+
+        app.handle_dropped_files(&context);
+
+        let pending = app
+            .overlays
+            .pending_file_drop
+            .expect("should stage a preview");
+        assert_eq!(pending.text, "/tmp/b.txt /tmp/a.txt");
+        assert_eq!(pending.path_count, 2);
+    }
+
+    #[test]
+    fn dropping_a_file_on_launcher_is_rejected_with_a_transient_notice() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        simulate_file_drop(&context, &["/tmp/example.txt"]);
+
+        app.handle_dropped_files(&context);
+
+        assert!(app.overlays.pending_file_drop.is_none());
+        assert!(app.overlays.transient_notice.is_some());
+    }
+
+    #[test]
+    fn file_drop_confirmation_is_safe_by_default_and_confirmed_deliberately() {
+        let context = egui::Context::default();
+        let (mut app, tab) = FesTermApp::for_test_with_live_session(&context);
+        simulate_file_drop(&context, &["/tmp/example.txt"]);
+        app.handle_dropped_files(&context);
+        assert!(app.overlays.pending_file_drop.is_some());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(440.0, 400.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Cancel").is_focused());
+
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert!(harness.state().overlays.pending_file_drop.is_some());
+
+        harness.get_by_label("Insert Path").click();
+        harness.step();
+        assert!(harness.state().overlays.pending_file_drop.is_none());
+        // Confirming routes the path text through the same `Paste` input
+        // path as an ordinary paste; verifying overlay/session identity
+        // stays intact here (rather than asserting on real PTY echo
+        // timing, which content assertions elsewhere in this file avoid
+        // for the same reason) is the deterministic part of this contract.
+        assert_eq!(harness.state().state.active(), tab);
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Session(_)
+        ));
+    }
+
+    #[test]
+    fn escape_cancels_file_drop_without_inserting_anything() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        simulate_file_drop(&context, &["/tmp/example.txt"]);
+        app.handle_dropped_files(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness.state().overlays.pending_file_drop.is_none());
     }
 
     #[test]

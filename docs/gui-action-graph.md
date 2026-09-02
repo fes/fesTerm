@@ -256,8 +256,8 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 | `PASTE-07` | `K12 → K2/other` | Change clipboard, switch/close tab, reconnect/disconnect, stop input, or generation. | Prompt cancels; zero captured bytes; never follows another chip/fresh generation; focus returns to viable owner. | Rebuild `K2`. | P,H,N |
 | `PASTE-08` | `K12/K11` | Preview CRLF/CR, trailing newline, tabs/spaces, Unicode, controls, over-limit content. | Counts and omission exact; only non-tab/newline controls escaped for display; controls not silently rewritten except line-ending normalization. | Cancel and clear clipboard fixture. | P,H,V,N |
 | `DROP-01` | `LiveLocal → LiveLocal/PasteConfirm` | Drop plain text. | Same ordering/confirmation as Paste. | Cancel/reset fixture. | H,N; target |
-| `DROP-02` | Live local → path preview/input | Drop one/multiple files when implemented. | Absolute client paths, known-shell quoting or explicit raw preview, no Enter/read/upload, stable order. | Cancel preview or clear input line. | H,N,U,privacy; deferred |
-| `DROP-03` | SSH/read-only/app field | Drop file path/text. | SSH never inserts misleading local path; read-only rejects; app fields own targeted drops. | Cancel/clear field. | H,N; deferred |
+| `DROP-02` | Live local → path preview/input | Drop one/multiple files. | Absolute client paths, space-joined and unquoted in stable drop order, bounded preview (control characters escaped for display) offering Insert Path or Cancel — no reliably known shell family yet, so raw-path preview is always used rather than guessing PowerShell/POSIX-shell/`cmd.exe` quoting; no Enter/read/upload. | Cancel preview or clear input line. | H,N,U,privacy |
+| `DROP-03` | SSH/serial/read-only/other tab | Drop file path/text. | SSH/serial never insert a misleading local path and are rejected with a factual transient notice instead of a dialog; a disconnected/exited/non-input-accepting session is rejected the same way; Launcher/Settings with no active session are rejected. | Transient notice clears itself. | H,N |
 
 ## K. Scrollback, search, read-only history, and generations
 

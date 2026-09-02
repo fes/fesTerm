@@ -56,6 +56,24 @@ pub(crate) struct PendingPasteConfirmation {
     pub(crate) cancel_focus_requested: bool,
 }
 
+/// A bounded confirmation shown before inserting file paths dropped onto a
+/// local live session (`docs/gui-design.md` "Drag-and-drop input"). fesTerm
+/// has no reliably known per-profile shell family yet, so this is always
+/// shown rather than ever silently guessing PowerShell/POSIX-shell/`cmd.exe`
+/// quoting - the same "otherwise" fallback the design doc specifies.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingFileDropConfirmation {
+    pub(crate) tab: TabId,
+    pub(crate) identity: String,
+    /// The literal, unquoted, space-joined absolute paths in drop order -
+    /// exactly what gets inserted as one ordered `Paste` input operation on
+    /// confirmation. Never auto-sent with a trailing Enter.
+    pub(crate) text: String,
+    pub(crate) path_count: usize,
+    pub(crate) lifecycle_generation: u64,
+    pub(crate) cancel_focus_requested: bool,
+}
+
 /// Confirmation shown only when resetting would actually discard a change
 /// from defaults (`docs/gui-action-graph.md` SET-02).
 #[derive(Clone, Debug)]
@@ -136,6 +154,7 @@ pub(crate) struct PendingPasswordStore {
 pub(crate) struct OverlayState {
     pub(crate) pending_close: Option<PendingCloseConfirmation>,
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
+    pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
@@ -165,6 +184,7 @@ impl OverlayState {
     pub(crate) fn blocks_terminal_input(&self) -> bool {
         self.pending_close.is_some()
             || self.pending_paste.is_some()
+            || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
             || self.pending_quit.is_some()
             || self.about_open

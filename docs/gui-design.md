@@ -2244,24 +2244,32 @@ call it safe.
 
 ### Drag-and-drop input
 
-Plain-text drops follow the same ordering and safety rules as Paste. Local
-file-path dropping is an explicit future requirement because it is useful for
-interactive CLIs, but it is not implemented until path insertion semantics are
-reliable.
+Plain-text drops follow the same ordering and safety rules as Paste.
 
-For a future local live session, a file drop inserts absolute client paths as
-one ordered input operation and never sends Enter, reads file contents, or
-uploads automatically. A reliably known profile shell family may supply
-PowerShell, POSIX-shell, or `cmd.exe` quoting. Otherwise a bounded preview
-offers raw-path insertion or Cancel rather than guessing. Multiple paths retain
-drop order; control/newline characters receive escaped warning presentation.
+For a local live session, a file drop inserts absolute client paths as one
+ordered input operation and never sends Enter, reads file contents, or
+uploads automatically. fesTerm has no reliably known per-profile shell
+family yet, so it always takes the documented fallback: a bounded preview
+(escaping control characters the same way the large-paste preview does)
+offers raw-path insertion or Cancel rather than ever guessing
+PowerShell/POSIX-shell/`cmd.exe` quoting. Multiple paths retain drop order,
+space-joined and unquoted, in the inserted text and in the preview.
 
-A local file dropped on SSH must not insert a misleading client-local path. A
-future transfer workflow may explicitly upload and then insert a verified
-remote path, but those remain two visible operations. Application text fields
-receive drops targeted to them; disconnected/exited terminals reject input
-drops. Paths remain transient input and never enter logs, diagnostics,
-profiles, or workspaces.
+A local file dropped on SSH or serial must not insert a misleading
+client-local path, so drops onto anything other than a local session are
+rejected with a factual transient notice instead of a dialog. A future
+transfer workflow may explicitly upload and then insert a verified remote
+path, but those remain two visible operations and are not implemented yet.
+Disconnected/exited terminals and any session that does not currently
+accept input also reject input drops. Paths remain transient input and
+never enter logs, diagnostics, profiles, or workspaces.
+
+fesTerm currently routes every OS file drop to the active tab's session
+regardless of where over the window it lands (there is no per-widget drop
+target yet, so a drop over a settings text field, for instance, still
+reaches the active terminal instead). This is a known scoping gap versus
+"application text fields receive drops targeted to them" and should be
+revisited if per-widget targeting becomes necessary.
 
 ## Accessibility
 
