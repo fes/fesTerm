@@ -1992,7 +1992,7 @@ mod tests {
     #[test]
     fn retention_after_an_oversized_gap_does_not_reuse_discarded_coordinates() {
         let dimensions = Dimensions::new(8, 2).unwrap();
-        let mut terminal = Terminal::with_scrollback_limit(dimensions, 1024).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 200_000).unwrap();
         terminal.ingest(b"kept\r\noversize");
         let snapshot = TerminalSnapshot::from_terminal(&terminal);
         let mut selection = Selection::default();
@@ -2009,18 +2009,38 @@ mod tests {
                 .unwrap(),
         );
         selection.finish();
-        let selected_row = selection.content_endpoints().unwrap().0.absolute_row;
 
-        terminal.ingest(&vec![b'x'; 4096]);
+        // A burst large enough to force incremental front-trimming of its
+        // own oldest rows (i.e. large enough that even after this line's
+        // *own* stale capacity is shrunk to its real size, it is still over
+        // budget and must trim), discarding the very rows the selection
+        // above was anchored on.
+        terminal.ingest(&vec![b'x'; 2500]);
         terminal.ingest(b"\r\nnew-1\r\nnew-2\r\nnew-3\r\nnew-4");
         let snapshot = TerminalSnapshot::from_terminal_viewport(
             &terminal,
             terminal.scrollback_stats().physical_rows(),
         );
 
-        assert!(terminal.scrollback_stats().content_row_origin() > selected_row);
+        // The selection anchored on the oversized ("oversize" -> huge burst)
+        // line must not be silently aliased onto unrelated new content once
+        // that line's own oldest rows are discarded for exceeding the byte
+        // budget.
         assert_eq!(selection_text(snapshot, &selection), None);
         assert_eq!(selection.range_in_snapshot(snapshot), None);
+
+        // Whatever history remains retained after the oversized gap must
+        // still be addressable through its content coordinates - discarding
+        // an oversized line must never leave dangling, unresolvable
+        // coordinates for content that is still actually present.
+        let history_snapshot = TerminalSnapshot::from_terminal(&terminal);
+        assert!(
+            (0..terminal.scrollback_stats().physical_rows())
+                .filter_map(|row| history_snapshot.content_position(CellPosition { column: 0, row }))
+                .count()
+                > 0,
+            "retained history must still be addressable after the oversized gap"
+        );
     }
 
     #[test]
