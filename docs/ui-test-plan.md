@@ -206,10 +206,16 @@ Chrome allocation tests cover the exact focused-chip-first threshold at both
 vertical densities: the focused chip retains natural width, inactive chips
 water-fill to the 72 px floor, optional controls collapse before scrolling,
 scrolling preserves compact widths and reveals a newly focused chip, and New
-Session has no empty reserved gap when scrolling is unnecessary. Separate
-geometry regressions keep compact titles and Close centered and ensure
-overflowing chips share the scroll-control baseline so terminal paint cannot
-erase their bottom outlines.
+Session has no empty reserved gap when scrolling is unnecessary. Run the same
+exact-budget matrix in both full-height 34 px/two-line and compact-height
+28 px/one-line modes; changing density must not change allocation priority.
+Separate geometry regressions keep compact titles and Close centered and
+ensure overflowing chips share the scroll-control baseline so terminal paint
+cannot erase their bottom outlines. These tests treat focused-chip
+preservation as a structural contract, not a screenshot-only preference: they
+assert that removing chips lets remaining widths return toward their natural
+measurements, and that a test which only proves a horizontal `ScrollArea`
+works is insufficient.
 
 Settings/application tests cover the default-on persisted live-close
 confirmation switch, its semantic toggle command, reset behavior, the ordinary
