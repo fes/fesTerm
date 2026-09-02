@@ -681,16 +681,14 @@ fn reader_worker(
     done_sender: SyncSender<Result<(), SessionError>>,
 ) {
     let mut buffer = vec![0_u8; MAX_IO_CHUNK_BYTES.min(16 * 1024)];
-    loop {
+    let result = loop {
         if shared.cancel.load(Ordering::Acquire) {
-            let _ = done_sender.send(Ok(()));
-            return;
+            break Ok(());
         }
         match reader.read(&mut buffer) {
             Ok(0) => {
                 if shared.cancel.load(Ordering::Acquire) {
-                    let _ = done_sender.send(Ok(()));
-                    return;
+                    break Ok(());
                 }
                 let error = SessionError::new(
                     SessionErrorKind::Output,
@@ -698,13 +696,11 @@ fn reader_worker(
                 );
                 shared.record_error(error.clone());
                 shared.cancel.store(true, Ordering::Release);
-                let _ = done_sender.send(Err(error));
-                return;
+                break Err(error);
             }
             Ok(read) => {
                 if !shared.emit_output(buffer[..read].to_vec()) {
-                    let _ = done_sender.send(Ok(()));
-                    return;
+                    break Ok(());
                 }
             }
             Err(error) if is_read_timeout(&error) => {
@@ -713,8 +709,7 @@ fn reader_worker(
             }
             Err(error) => {
                 if shared.cancel.load(Ordering::Acquire) {
-                    let _ = done_sender.send(Ok(()));
-                    return;
+                    break Ok(());
                 }
                 let error = SessionError::new(
                     SessionErrorKind::Output,
@@ -722,11 +717,22 @@ fn reader_worker(
                 );
                 shared.record_error(error.clone());
                 shared.cancel.store(true, Ordering::Release);
-                let _ = done_sender.send(Err(error));
-                return;
+                break Err(error);
             }
         }
-    }
+    };
+    // Close this thread's cloned file descriptor *before* signaling
+    // completion. `serialport` opens ports exclusively by default (TIOCEXCL
+    // plus an advisory flock), and that lock is only released once every fd
+    // referencing the device is closed. `control_worker` forwards this
+    // signal straight into `SerialSession::shutdown`'s return value, so if
+    // `reader` were dropped after sending (i.e. implicitly at function
+    // return), a caller reopening the same device immediately after
+    // `shutdown()` returns could race the OS into still reporting the
+    // device busy. Dropping here makes the fd closure a strict
+    // happens-before of shutdown's completion.
+    drop(reader);
+    let _ = done_sender.send(result);
 }
 
 fn control_worker(
