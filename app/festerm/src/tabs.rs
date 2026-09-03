@@ -12,6 +12,7 @@
 //! routes session output through the single-writer `Terminal` +
 //! `SessionController` pair defined in `session_controller.rs`.
 
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -31,12 +32,14 @@ use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
     HostKeyPrompt, PasswordPrompt, Session, SessionErrorKind, SessionEvent, SessionEventNotifier,
     SessionId, SessionLifecycle, SessionMetrics, SessionSendError, SessionTryReceiveError,
-    ShutdownError, ShutdownResult, TerminalSize,
+    ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
+    SshPortForwardState, TerminalSize,
 };
 use festerm_sessiond::PersistentSession;
 use festerm_ssh::{
     HostKeyDecisionResolutionError, HostTrustDecision, PasswordDecisionResolutionError,
-    SessionStrategy, SshAuthentication, SshConnectionProfile, SshLivenessCheckError,
+    SessionStrategy, SftpTerminalSession, SftpTerminalSessionStartError, SshAuthentication,
+    SshConnectionProfile, SshLivenessCheckError, SshPortForwardRequestError, SshPortForwardSpec,
     SshReconnectError, SshSession, SshSessionOptions, SshSessionStartError,
 };
 use festerm_ui_egui::{
@@ -90,7 +93,10 @@ pub enum ApplicationSession {
     Local(LocalPtySession),
     Persistent(PersistentSession),
     Ssh(SshSession),
+    Sftp(SftpTerminalSession),
     Serial(SerialSession),
+    #[cfg(test)]
+    TestSsh(crate::session_controller::fake::FakeSshSession),
 }
 
 /// The host-key decisions exposed by the application (ADR 0020).
@@ -122,7 +128,7 @@ impl From<HostKeyTrustDecision> for HostTrustDecision {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HostKeyTrustResolutionError {
     NoPendingPrompt,
-    NotSshSession,
+    NotRemoteSession,
     Transport(HostKeyDecisionResolutionError),
 }
 
@@ -130,7 +136,9 @@ impl std::fmt::Display for HostKeyTrustResolutionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPendingPrompt => formatter.write_str("no host-key prompt is pending"),
-            Self::NotSshSession => formatter.write_str("the tab is not an SSH session"),
+            Self::NotRemoteSession => {
+                formatter.write_str("the tab is not a remote SSH/SFTP session")
+            }
             Self::Transport(error) => error.fmt(formatter),
         }
     }
@@ -141,7 +149,7 @@ impl std::fmt::Display for HostKeyTrustResolutionError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PasswordResolutionError {
     NoPendingPrompt,
-    NotSshSession,
+    NotRemoteSession,
     Transport(PasswordDecisionResolutionError),
 }
 
@@ -149,7 +157,9 @@ impl std::fmt::Display for PasswordResolutionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPendingPrompt => formatter.write_str("no password prompt is pending"),
-            Self::NotSshSession => formatter.write_str("the tab is not an SSH session"),
+            Self::NotRemoteSession => {
+                formatter.write_str("the tab is not a remote SSH/SFTP session")
+            }
             Self::Transport(error) => error.fmt(formatter),
         }
     }
@@ -179,11 +189,16 @@ impl ApplicationSession {
         prompt: &HostKeyPrompt,
         decision: HostKeyTrustDecision,
     ) -> Result<(), HostKeyTrustResolutionError> {
-        let Self::Ssh(session) = self else {
-            return Err(HostKeyTrustResolutionError::NotSshSession);
+        let resolver = match self {
+            Self::Ssh(session) => session.host_key_decision_resolver(),
+            Self::Sftp(session) => session.host_key_decision_resolver(),
+            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => {
+                return Err(HostKeyTrustResolutionError::NotRemoteSession)
+            }
+            #[cfg(test)]
+            Self::TestSsh(_) => return Err(HostKeyTrustResolutionError::NotRemoteSession),
         };
-        session
-            .host_key_decision_resolver()
+        resolver
             .resolve(prompt, decision.into())
             .map_err(HostKeyTrustResolutionError::Transport)
     }
@@ -196,11 +211,16 @@ impl ApplicationSession {
         prompt: &PasswordPrompt,
         password: String,
     ) -> Result<(), PasswordResolutionError> {
-        let Self::Ssh(session) = self else {
-            return Err(PasswordResolutionError::NotSshSession);
+        let resolver = match self {
+            Self::Ssh(session) => session.password_decision_resolver(),
+            Self::Sftp(session) => session.password_decision_resolver(),
+            Self::Local(_) | Self::Persistent(_) | Self::Serial(_) => {
+                return Err(PasswordResolutionError::NotRemoteSession)
+            }
+            #[cfg(test)]
+            Self::TestSsh(_) => return Err(PasswordResolutionError::NotRemoteSession),
         };
-        session
-            .password_decision_resolver()
+        resolver
             .resolve(prompt, password)
             .map_err(PasswordResolutionError::Transport)
     }
@@ -227,10 +247,83 @@ impl ApplicationSession {
     /// open tab (e.g. after an OS wake/network-change signal) should not
     /// have to distinguish tab kinds first.
     fn try_check_liveness(&self) -> Result<(), SshLivenessCheckError> {
-        let Self::Ssh(session) = self else {
-            return Ok(());
-        };
-        session.try_check_liveness()
+        match self {
+            Self::Ssh(session) => session.try_check_liveness(),
+            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => Ok(()),
+            #[cfg(test)]
+            Self::TestSsh(_) => Ok(()),
+        }
+    }
+
+    /// Whether this session currently supports live SSH port-forward operations.
+    pub fn live_port_forwarding_available(&self) -> bool {
+        match self {
+            Self::Ssh(session) => session.lifecycle() == SessionLifecycle::Running,
+            #[cfg(test)]
+            Self::TestSsh(session) => session.lifecycle() == SessionLifecycle::Running,
+            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => false,
+        }
+    }
+
+    /// Adds one live-only SSH port forward to the connected session.
+    pub fn try_add_port_forward(
+        &self,
+        forward: impl SshPortForwardSpec,
+    ) -> Result<(), SshPortForwardRequestError> {
+        match self {
+            Self::Ssh(session) => session.try_add_port_forward(forward),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.try_add_port_forward(forward),
+            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => {
+                Err(SshPortForwardRequestError::NotRunning)
+            }
+        }
+    }
+
+    /// Removes one SSH port forward identified by its listening bind tuple.
+    pub fn try_remove_port_forward(
+        &self,
+        direction: SshPortForwardDirection,
+        bind_host: impl Into<String>,
+        bind_port: u16,
+    ) -> Result<(), SshPortForwardRequestError> {
+        let bind_host = bind_host.into();
+        match self {
+            Self::Ssh(session) => session.try_remove_port_forward(direction, bind_host, bind_port),
+            #[cfg(test)]
+            Self::TestSsh(session) => {
+                session.try_remove_port_forward(direction, bind_host, bind_port)
+            }
+            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => {
+                Err(SshPortForwardRequestError::NotRunning)
+            }
+        }
+    }
+
+    /// Requests a fresh snapshot of the connected SSH session's active port forwards.
+    pub fn try_query_port_forwards(&self) -> Result<(), SshPortForwardRequestError> {
+        match self {
+            Self::Ssh(session) => session.try_query_port_forwards(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.try_query_port_forwards(),
+            Self::Local(_) | Self::Persistent(_) | Self::Sftp(_) | Self::Serial(_) => {
+                Err(SshPortForwardRequestError::NotRunning)
+            }
+        }
+    }
+
+    pub fn sftp_working_directories(&self) -> Option<(String, PathBuf)> {
+        match self {
+            Self::Sftp(session) => session.working_directories().map(|directories| {
+                (
+                    directories.remote().to_owned(),
+                    directories.local().to_path_buf(),
+                )
+            }),
+            Self::Local(_) | Self::Persistent(_) | Self::Ssh(_) | Self::Serial(_) => None,
+            #[cfg(test)]
+            Self::TestSsh(_) => None,
+        }
     }
 }
 
@@ -240,7 +333,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.id(),
             Self::Persistent(session) => session.id(),
             Self::Ssh(session) => session.id(),
+            Self::Sftp(session) => session.id(),
             Self::Serial(session) => session.id(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.id(),
         }
     }
 
@@ -249,7 +345,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.lifecycle(),
             Self::Persistent(session) => session.lifecycle(),
             Self::Ssh(session) => session.lifecycle(),
+            Self::Sftp(session) => session.lifecycle(),
             Self::Serial(session) => session.lifecycle(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.lifecycle(),
         }
     }
 
@@ -258,7 +357,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.metrics(),
             Self::Persistent(session) => session.metrics(),
             Self::Ssh(session) => session.metrics(),
+            Self::Sftp(session) => session.metrics(),
             Self::Serial(session) => session.metrics(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.metrics(),
         }
     }
 
@@ -267,7 +369,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.try_send_input(bytes),
             Self::Persistent(session) => session.try_send_input(bytes),
             Self::Ssh(session) => session.try_send_input(bytes),
+            Self::Sftp(session) => session.try_send_input(bytes),
             Self::Serial(session) => session.try_send_input(bytes),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.try_send_input(bytes),
         }
     }
 
@@ -276,7 +381,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.try_resize(size),
             Self::Persistent(session) => session.try_resize(size),
             Self::Ssh(session) => session.try_resize(size),
+            Self::Sftp(session) => session.try_resize(size),
             Self::Serial(session) => session.try_resize(size),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.try_resize(size),
         }
     }
 
@@ -285,7 +393,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.try_shutdown(),
             Self::Persistent(session) => session.try_shutdown(),
             Self::Ssh(session) => session.try_shutdown(),
+            Self::Sftp(session) => session.try_shutdown(),
             Self::Serial(session) => session.try_shutdown(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.try_shutdown(),
         }
     }
 
@@ -294,7 +405,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.try_recv_event(),
             Self::Persistent(session) => session.try_recv_event(),
             Self::Ssh(session) => session.try_recv_event(),
+            Self::Sftp(session) => session.try_recv_event(),
             Self::Serial(session) => session.try_recv_event(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.try_recv_event(),
         }
     }
 
@@ -303,7 +417,10 @@ impl Session for ApplicationSession {
             Self::Local(session) => session.shutdown(timeout),
             Self::Persistent(session) => session.shutdown(timeout),
             Self::Ssh(session) => session.shutdown(timeout),
+            Self::Sftp(session) => session.shutdown(timeout),
             Self::Serial(session) => session.shutdown(timeout),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.shutdown(timeout),
         }
     }
 }
@@ -383,6 +500,11 @@ pub enum InspectorTransport {
         /// or connection handle.
         persistence: Option<InspectorPersistence>,
     },
+    Sftp {
+        username: String,
+        host: String,
+        port: u16,
+    },
     Serial {
         device: String,
         baud_rate: u32,
@@ -406,6 +528,15 @@ pub struct InspectorPersistence {
 /// trust material, so restoration must return the user to the transient
 /// authentication form instead of starting a transport.
 pub struct SshAuthenticationRequiredTab {
+    pub profile: SshProfileConfiguration,
+}
+
+/// A restored SFTP workspace surface that deliberately has no live session.
+///
+/// Workspace metadata contains destination details but never authentication or
+/// trust material, so restoration must return the user to the transient
+/// authentication form instead of starting a transport.
+pub struct SftpAuthenticationRequiredTab {
     pub profile: SshProfileConfiguration,
 }
 
@@ -622,6 +753,48 @@ impl SessionTab {
         )
     }
 
+    fn start_sftp(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        local_working_directory: Option<PathBuf>,
+        known_host_fingerprint: Option<String>,
+        profile_id: Option<&str>,
+        context: &egui::Context,
+    ) -> Self {
+        let size = profile.initial_size();
+        let dimensions = Dimensions::new(usize::from(size.columns()), usize::from(size.rows()))
+            .expect("validated SFTP terminal size fits terminal dimensions");
+        let label = profile_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{}@{}", profile.username(), profile.identity().host()));
+        let launch_secondary = Some(format!(
+            "SFTP · {}:{}",
+            profile.identity().host(),
+            profile.identity().port()
+        ));
+        let inspector_transport = InspectorTransport::Sftp {
+            username: profile.username().to_owned(),
+            host: profile.identity().host().to_owned(),
+            port: profile.identity().port(),
+        };
+        let result = SftpTerminalSession::start_with_notifier(
+            profile,
+            authentication,
+            local_working_directory,
+            known_host_fingerprint,
+            make_notifier(context),
+        )
+        .map(ApplicationSession::Sftp);
+        Self::from_sftp_session_result(
+            result,
+            dimensions,
+            &label,
+            launch_secondary,
+            profile_id.map(str::to_owned),
+            inspector_transport,
+        )
+    }
+
     fn from_local_session_result<E: std::fmt::Display>(
         result: Result<ApplicationSession, E>,
         dimensions: Dimensions,
@@ -662,6 +835,28 @@ impl SessionTab {
                 session_name: "SSH session",
                 inspector_transport,
                 ssh_password_retry: password_retry,
+            },
+        )
+    }
+
+    fn from_sftp_session_result(
+        result: Result<ApplicationSession, SftpTerminalSessionStartError>,
+        dimensions: Dimensions,
+        label: &str,
+        launch_secondary: Option<String>,
+        profile_identifier: Option<String>,
+        inspector_transport: InspectorTransport,
+    ) -> Self {
+        Self::from_session_result(
+            result,
+            dimensions,
+            SessionResultMeta {
+                label,
+                launch_secondary,
+                profile_identifier,
+                session_name: "SFTP session",
+                inspector_transport,
+                ssh_password_retry: None,
             },
         )
     }
@@ -827,11 +1022,19 @@ impl SessionTab {
     pub fn system_label(&self) -> &'static str {
         match &self.inspector_transport {
             InspectorTransport::Ssh { .. } => "Remote",
+            InspectorTransport::Sftp { .. } => "Remote",
             InspectorTransport::Serial { .. } => "Serial",
             InspectorTransport::Local { .. } if cfg!(windows) => "Local · Windows",
             InspectorTransport::Local { .. } if cfg!(target_os = "macos") => "Local · macOS",
             InspectorTransport::Local { .. } => "Local · Linux",
         }
+    }
+
+    pub fn dynamic_secondary(&self) -> Option<String> {
+        self.controller
+            .session()
+            .and_then(ApplicationSession::sftp_working_directories)
+            .map(|(remote, local)| format!("{remote} · {}", local.display()))
     }
 
     /// Transport-specific factual state for the persistent status bar.
@@ -844,7 +1047,10 @@ impl SessionTab {
             (_, ChipStatus::Failed) => "Failed",
             (_, ChipStatus::Exited) => "Exited",
             (InspectorTransport::Local { .. }, ChipStatus::Connected) => "Running",
-            (InspectorTransport::Ssh { .. }, ChipStatus::Connected) => "Connected",
+            (
+                InspectorTransport::Ssh { .. } | InspectorTransport::Sftp { .. },
+                ChipStatus::Connected,
+            ) => "Connected",
             (InspectorTransport::Serial { .. }, ChipStatus::Connected) => "Open",
             (_, ChipStatus::Neutral) => "",
         }
@@ -853,9 +1059,12 @@ impl SessionTab {
     /// The active SSH host-key request, if the transport is waiting for one.
     /// Local tabs never expose this UI state.
     pub fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {
-        matches!(self.controller.session(), Some(ApplicationSession::Ssh(_)))
-            .then(|| self.controller.host_key_prompt())
-            .flatten()
+        matches!(
+            self.controller.session(),
+            Some(ApplicationSession::Ssh(_) | ApplicationSession::Sftp(_))
+        )
+        .then(|| self.controller.host_key_prompt())
+        .flatten()
     }
 
     /// Sends a nonblocking, one-time host-key decision to the SSH worker.
@@ -884,9 +1093,12 @@ impl SessionTab {
     /// is waiting for one. Local tabs never expose this UI state. Mirrors
     /// [`Self::host_key_prompt`].
     pub fn password_prompt(&self) -> Option<&PasswordPrompt> {
-        matches!(self.controller.session(), Some(ApplicationSession::Ssh(_)))
-            .then(|| self.controller.password_prompt())
-            .flatten()
+        matches!(
+            self.controller.session(),
+            Some(ApplicationSession::Ssh(_) | ApplicationSession::Sftp(_))
+        )
+        .then(|| self.controller.password_prompt())
+        .flatten()
     }
 
     /// Sends a password value to the already-connected SSH worker for the
@@ -931,6 +1143,72 @@ impl SessionTab {
         }
         result
     }
+
+    /// Whether the current live transport can accept SSH port-forward requests.
+    pub fn live_port_forwarding_available(&self) -> bool {
+        self.controller
+            .session()
+            .is_some_and(ApplicationSession::live_port_forwarding_available)
+    }
+
+    /// Whether this tab owns an SSH session transport, regardless of its current lifecycle state.
+    pub fn is_ssh_session(&self) -> bool {
+        match self.controller.session() {
+            Some(ApplicationSession::Ssh(_)) => true,
+            #[cfg(test)]
+            Some(ApplicationSession::TestSsh(_)) => true,
+            Some(ApplicationSession::Local(_))
+            | Some(ApplicationSession::Persistent(_))
+            | Some(ApplicationSession::Sftp(_))
+            | Some(ApplicationSession::Serial(_))
+            | None => false,
+        }
+    }
+
+    /// The most recent live SSH port-forward snapshot for this tab.
+    pub fn port_forwards(&self) -> &[SshPortForwardRuntime] {
+        self.controller.port_forwards()
+    }
+
+    /// Count of currently active port forwards, excluding failed entries.
+    pub fn active_port_forward_count(&self) -> usize {
+        self.port_forwards()
+            .iter()
+            .filter(|forward| forward.state() == SshPortForwardState::Active)
+            .count()
+    }
+
+    /// Requests a fresh port-forward snapshot from the live SSH worker.
+    pub fn query_port_forwards(&self) -> Result<(), SshPortForwardRequestError> {
+        self.controller
+            .session()
+            .ok_or(SshPortForwardRequestError::NotRunning)?
+            .try_query_port_forwards()
+    }
+
+    /// Adds one live-only SSH port forward to the current tab's SSH session.
+    pub fn add_port_forward(
+        &self,
+        forward: impl SshPortForwardSpec,
+    ) -> Result<(), SshPortForwardRequestError> {
+        self.controller
+            .session()
+            .ok_or(SshPortForwardRequestError::NotRunning)?
+            .try_add_port_forward(forward)
+    }
+
+    /// Removes one live SSH port forward identified by its listening tuple.
+    pub fn remove_port_forward(
+        &self,
+        direction: SshPortForwardDirection,
+        bind_host: impl Into<String>,
+        bind_port: u16,
+    ) -> Result<(), SshPortForwardRequestError> {
+        self.controller
+            .session()
+            .ok_or(SshPortForwardRequestError::NotRunning)?
+            .try_remove_port_forward(direction, bind_host, bind_port)
+    }
 }
 
 fn local_profile_secondary(profile: &LocalProfile) -> Option<String> {
@@ -962,6 +1240,7 @@ pub enum TabContent {
     Settings,
     Profiles,
     SshAuthenticationRequired(SshAuthenticationRequiredTab),
+    SftpAuthenticationRequired(SftpAuthenticationRequiredTab),
     Session(Box<SessionTab>),
 }
 
@@ -1013,9 +1292,20 @@ pub enum AppCommand {
         authentication: SshAuthentication,
         options: SshSessionOptions,
     },
+    /// Starts one text-mode SFTP transport from explicitly supplied, secret-free
+    /// connection metadata and transient authentication.
+    StartSftpSession {
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+    },
     /// Starts an existing configured SSH profile by resolving its native
     /// stored password on the SSH worker. This command has no password value.
     StartStoredPasswordSshProfile {
+        profile_id: String,
+    },
+    /// Starts an existing configured SFTP profile by resolving its native
+    /// stored password on the SFTP worker. This command has no password value.
+    StartStoredPasswordSftpProfile {
         profile_id: String,
     },
     /// Launches a saved SSH profile the same way a saved local profile
@@ -1028,6 +1318,10 @@ pub enum AppCommand {
     /// (openssh-style in-terminal password prompt, no composition-root
     /// resource needed). Never reaches `AppState::dispatch` for real work.
     StartConfiguredSshProfile {
+        profile_id: String,
+    },
+    /// Launches a saved SSH profile as a text-mode SFTP tab.
+    StartConfiguredSftpProfile {
         profile_id: String,
     },
     /// Starts a serial session from explicitly supplied line settings. The
@@ -1048,6 +1342,12 @@ pub enum AppCommand {
         profile_id: String,
         password: PasswordToStore,
         options: SshSessionOptions,
+    },
+    /// Requests that the composition root store a password for an existing
+    /// configured SSH profile before starting it as SFTP.
+    StoreSftpPassword {
+        profile_id: String,
+        password: PasswordToStore,
     },
     /// Requests that the composition root store or replace a password for
     /// an existing configured SSH profile from the Profiles editor, with no
@@ -1160,6 +1460,8 @@ pub enum AppCommand {
     /// running, unattached `festerm-sessiond` sessions as one-click
     /// "Resume" entries (feature request #70).
     ToggleShowResumableSessions,
+    /// Sets or clears the default starting local directory for new SFTP sessions.
+    SetDefaultSftpLocalDirectory(Option<PathBuf>),
     /// Resumes a locally running, unattached `festerm-sessiond` session by
     /// name, surfaced via the Launcher's "Resume" list (feature request
     /// #70). The composition root attaches to it and opens a new tab.
@@ -1313,6 +1615,8 @@ pub struct AppState {
     /// unattached `festerm-sessiond` sessions as one-click "Resume" entries
     /// (feature request #70).
     show_resumable_sessions: bool,
+    /// The default starting local directory for new SFTP sessions.
+    default_sftp_local_directory: Option<PathBuf>,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -1335,7 +1639,7 @@ impl AppState {
     /// still request a deterministic primary session explicitly.
     pub fn with_launcher(configuration: Configuration) -> Self {
         let id = TabId::next();
-        let settings = configuration.interface_settings();
+        let settings = configuration.interface_settings().clone();
         Self {
             tabs: vec![Tab {
                 id,
@@ -1358,6 +1662,9 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            default_sftp_local_directory: settings
+                .default_sftp_local_directory()
+                .map(Path::to_path_buf),
             pending_profile_edit: None,
             workspace_dirty: false,
         }
@@ -1376,7 +1683,7 @@ impl AppState {
     ) -> (Self, TabId) {
         let session = SessionTab::start_primary(context, smoke_profile);
         let id = TabId::next();
-        let settings = configuration.interface_settings();
+        let settings = configuration.interface_settings().clone();
         let mut state = Self {
             tabs: vec![Tab {
                 id,
@@ -1399,6 +1706,9 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            default_sftp_local_directory: settings
+                .default_sftp_local_directory()
+                .map(Path::to_path_buf),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1448,6 +1758,15 @@ impl AppState {
                         profile: ssh.clone(),
                     })
                 }
+                WorkspaceTab::SftpSession(tab) => {
+                    let ssh = configuration
+                        .profile(tab.profile_id())
+                        .and_then(festerm_config::Profile::as_ssh)
+                        .expect("validated workspace SFTP profile reference");
+                    TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
+                        profile: ssh.clone(),
+                    })
+                }
                 WorkspaceTab::SerialSession(tab) => {
                     let serial = configuration
                         .profile(tab.profile_id())
@@ -1468,7 +1787,7 @@ impl AppState {
         }
 
         let active = focused.unwrap_or_else(|| restored[0].id);
-        let settings = configuration.interface_settings();
+        let settings = configuration.interface_settings().clone();
         let mut state = Self {
             tabs: restored,
             active,
@@ -1488,6 +1807,9 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            default_sftp_local_directory: settings
+                .default_sftp_local_directory()
+                .map(Path::to_path_buf),
             pending_profile_edit: None,
             workspace_dirty: false,
         };
@@ -1516,7 +1838,7 @@ impl AppState {
             }
             match session.inspector_transport {
                 InspectorTransport::Local { .. } => counts.local += 1,
-                InspectorTransport::Ssh { .. } => counts.ssh += 1,
+                InspectorTransport::Ssh { .. } | InspectorTransport::Sftp { .. } => counts.ssh += 1,
                 InspectorTransport::Serial { .. } => counts.serial += 1,
             }
         }
@@ -1561,6 +1883,10 @@ impl AppState {
                     identifier.clone(),
                     ssh.profile.identifier(),
                 )?),
+                TabContent::SftpAuthenticationRequired(sftp) => Some(WorkspaceTab::sftp_session(
+                    identifier.clone(),
+                    sftp.profile.identifier(),
+                )?),
                 TabContent::Session(session) => session
                     .profile_identifier
                     .as_deref()
@@ -1568,6 +1894,15 @@ impl AppState {
                         let profile = self.configuration.profile(profile_id)?;
                         if profile.as_local().is_some() {
                             Some(WorkspaceTab::local_session(identifier.clone(), profile_id))
+                        } else if profile.as_ssh().is_some()
+                            && matches!(
+                                session.inspector_transport,
+                                InspectorTransport::Sftp { .. }
+                            )
+                        {
+                            Some(WorkspaceTab::sftp_session(identifier.clone(), profile_id))
+                        } else if profile.as_ssh().is_some() {
+                            Some(WorkspaceTab::ssh_session(identifier.clone(), profile_id))
                         } else if profile.as_serial().is_some() {
                             Some(WorkspaceTab::serial_session(identifier.clone(), profile_id))
                         } else {
@@ -1653,10 +1988,14 @@ impl AppState {
         self.show_resumable_sessions
     }
 
+    pub fn default_sftp_local_directory(&self) -> Option<&Path> {
+        self.default_sftp_local_directory.as_deref()
+    }
+
     /// Returns the current chip-layout, status-bar, and session-detail
     /// preferences as a persistable value, for the composition root to write
     /// through after a toggle or reset.
-    pub const fn interface_settings(&self) -> InterfaceSettings {
+    pub fn interface_settings(&self) -> InterfaceSettings {
         InterfaceSettings::new(
             chip_layout_to_preference(self.chip_layout),
             self.status_bar_visible,
@@ -1672,6 +2011,11 @@ impl AppState {
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
         .with_show_resumable_sessions(self.show_resumable_sessions)
+        .with_default_sftp_local_directory(
+            self.default_sftp_local_directory
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+        )
     }
 
     pub fn active_tab_mut(&mut self) -> &mut Tab {
@@ -1699,7 +2043,8 @@ impl AppState {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
-                | TabContent::SshAuthenticationRequired(_) => None,
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_) => None,
             })
     }
 
@@ -1727,7 +2072,8 @@ impl AppState {
             TabContent::Launcher
             | TabContent::Settings
             | TabContent::Profiles
-            | TabContent::SshAuthenticationRequired(_) => None,
+            | TabContent::SshAuthenticationRequired(_)
+            | TabContent::SftpAuthenticationRequired(_) => None,
         })
     }
 
@@ -1743,7 +2089,8 @@ impl AppState {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
-                | TabContent::SshAuthenticationRequired(_) => None,
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_) => None,
             })
     }
 
@@ -1789,11 +2136,18 @@ impl AppState {
                 authentication,
                 options,
             } => self.execute_ssh_session(profile, authentication, options, context),
+            AppCommand::StartSftpSession {
+                profile,
+                authentication,
+            } => self.execute_sftp_session(profile, authentication, None, context),
             AppCommand::StartStoredPasswordSshProfile { .. }
+            | AppCommand::StartStoredPasswordSftpProfile { .. }
             | AppCommand::StoreSshPassword { .. }
+            | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
             | AppCommand::StoreProfilePrivateKey { .. }
-            | AppCommand::StartConfiguredSshProfile { .. } => {}
+            | AppCommand::StartConfiguredSshProfile { .. }
+            | AppCommand::StartConfiguredSftpProfile { .. } => {}
             AppCommand::StartSerialSession { settings } => {
                 self.start_serial_session(settings, context)
             }
@@ -1865,6 +2219,9 @@ impl AppState {
             AppCommand::ToggleShowResumableSessions => {
                 self.show_resumable_sessions = !self.show_resumable_sessions;
             }
+            AppCommand::SetDefaultSftpLocalDirectory(path) => {
+                self.default_sftp_local_directory = path;
+            }
             AppCommand::ResumeUnattachedSession { name } => {
                 self.start_resumed_session(&name, context);
             }
@@ -1884,6 +2241,7 @@ impl AppState {
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
                 self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
+                self.default_sftp_local_directory = None;
             }
             // The composition root fully intercepts these before dispatch to
             // persist through the configuration reloader (mirroring
@@ -2086,6 +2444,40 @@ impl AppState {
         true
     }
 
+    /// Starts a saved SSH profile as a text-mode SFTP session, using the
+    /// same host-key-first interactive password flow as Quick Connect when
+    /// no stored credential is present.
+    pub fn start_configured_sftp_profile_interactive(
+        &mut self,
+        profile_id: &str,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+        else {
+            return false;
+        };
+        let size = self
+            .current_session_dimensions()
+            .and_then(|dimensions| terminal_size(dimensions).ok());
+        let connection_profile =
+            size.and_then(|size| profile.to_connection_profile_with_size(size).ok());
+        let Some(connection_profile) =
+            connection_profile.or_else(|| profile.to_connection_profile().ok())
+        else {
+            return false;
+        };
+        self.execute_sftp_session(
+            connection_profile,
+            SshAuthentication::interactive(),
+            Some(profile_id),
+            context,
+        );
+        true
+    }
+
     fn execute_ssh_session(
         &mut self,
         profile: SshConnectionProfile,
@@ -2116,6 +2508,27 @@ impl AppState {
             authentication,
             options,
             0,
+            context,
+        ));
+    }
+
+    fn execute_sftp_session(
+        &mut self,
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        profile_id: Option<&str>,
+        context: &egui::Context,
+    ) {
+        let known_host_fingerprint = self
+            .configuration
+            .known_host_fingerprint(profile.identity().host(), profile.identity().port())
+            .map(str::to_owned);
+        self.place_session(SessionTab::start_sftp(
+            profile,
+            authentication,
+            self.default_sftp_local_directory.clone(),
+            known_host_fingerprint,
+            profile_id,
             context,
         ));
     }
@@ -2167,6 +2580,45 @@ impl AppState {
         true
     }
 
+    /// Resolves only profile metadata on the application path and hands the
+    /// opaque credential source to the SFTP worker; secret retrieval remains
+    /// in that worker immediately before authentication.
+    pub fn start_stored_password_sftp_profile(
+        &mut self,
+        profile_id: &str,
+        store: Arc<dyn SecretStore>,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+        else {
+            return false;
+        };
+        let Some(reference) = profile.credential_reference() else {
+            return false;
+        };
+        let Ok(connection_profile) = profile.to_connection_profile() else {
+            return false;
+        };
+        let authentication = match profile.credential_kind() {
+            festerm_config::CredentialKind::Password => {
+                SshAuthentication::stored_password(store, reference)
+            }
+            festerm_config::CredentialKind::PrivateKey => {
+                SshAuthentication::stored_private_key(store, reference)
+            }
+        };
+        self.execute_sftp_session(
+            connection_profile,
+            authentication,
+            Some(profile_id),
+            context,
+        );
+        true
+    }
+
     fn resolve_host_key_trust(&mut self, tab: TabId, decision: HostKeyTrustDecision) {
         let Some(session) = self.session_tab_mut(tab) else {
             return;
@@ -2203,7 +2655,9 @@ impl AppState {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
             if matches!(
                 tab.content,
-                TabContent::Launcher | TabContent::SshAuthenticationRequired(_)
+                TabContent::Launcher
+                    | TabContent::SshAuthenticationRequired(_)
+                    | TabContent::SftpAuthenticationRequired(_)
             ) {
                 tab.content = TabContent::Session(Box::new(session));
                 return;
@@ -2399,6 +2853,39 @@ impl AppState {
 }
 
 #[cfg(test)]
+impl SessionTab {
+    fn for_test_ssh(
+        session: crate::session_controller::fake::FakeSshSession,
+        username: &str,
+        host: &str,
+        port: u16,
+    ) -> Self {
+        let dimensions = Dimensions::new(80, 24).expect("test dimensions are valid");
+        let mut controller =
+            SessionController::for_test(ApplicationSession::TestSsh(session.clone()));
+        controller.set_lifecycle_for_test(SessionLifecycle::Running);
+        Self {
+            terminal: Terminal::new(dimensions).expect("terminal allocation"),
+            controller,
+            view: TerminalView::default(),
+            label: format!("{username}@{host}"),
+            launch_secondary: Some(format!("SSH · {host}:{port}")),
+            profile_identifier: None,
+            inspector_transport: InspectorTransport::Ssh {
+                username: username.to_owned(),
+                host: host.to_owned(),
+                port,
+                persistence: None,
+            },
+            eviction_notice_shown: false,
+            ssh_password_retry: None,
+            has_new_output_since_active: false,
+            search: crate::search::TerminalSearchState::default(),
+        }
+    }
+}
+
+#[cfg(test)]
 impl AppState {
     /// Test-only constructor that starts with a Launcher tab instead of
     /// spawning a real local shell, so dispatch/tab-lifecycle tests do not
@@ -2410,6 +2897,19 @@ impl AppState {
 
     pub(crate) fn for_test_with_configuration(configuration: Configuration) -> Self {
         Self::with_launcher(configuration)
+    }
+
+    pub(crate) fn replace_active_with_test_ssh_session(
+        &mut self,
+        session: crate::session_controller::fake::FakeSshSession,
+        username: &str,
+        host: &str,
+        port: u16,
+    ) -> TabId {
+        let tab = self.active;
+        let replacement = SessionTab::for_test_ssh(session, username, host, port);
+        self.active_tab_mut().content = TabContent::Session(Box::new(replacement));
+        tab
     }
 }
 
@@ -2675,6 +3175,45 @@ mod tests {
     }
 
     #[test]
+    fn restored_sftp_tab_requires_fresh_authentication_without_starting_a_session() {
+        let context = egui::Context::default();
+        let workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::sftp_session("remote", "production").expect("SFTP tab is valid")],
+            Some("remote".to_owned()),
+        )
+        .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(
+            vec![festerm_config::Profile::ssh(
+                "production",
+                "ssh.example.test",
+                2200,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .expect("SSH profile is valid")],
+            workspace.clone(),
+        )
+        .expect("configuration is valid");
+
+        let mut state = AppState::with_restored_workspace(&context, configuration, &workspace);
+
+        let TabContent::SftpAuthenticationRequired(tab) = &state.active_tab().content else {
+            panic!("saved SFTP metadata must restore an authentication-required surface");
+        };
+        assert_eq!(tab.profile.identifier(), "production");
+        assert_eq!(tab.profile.host(), "ssh.example.test");
+        assert_eq!(tab.profile.port(), 2200);
+        assert_eq!(tab.profile.username(), "deploy");
+        assert_eq!(
+            state.session_tabs_with_id_mut().count(),
+            0,
+            "the SFTP restoration starts no network transport"
+        );
+    }
+
+    #[test]
     fn workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions() {
         let context = egui::Context::default();
         let configuration = Configuration::new(vec![
@@ -2724,6 +3263,18 @@ mod tests {
                 profile: ssh,
             }),
         });
+        let sftp = state
+            .configuration()
+            .profile("production")
+            .and_then(festerm_config::Profile::as_ssh)
+            .unwrap()
+            .clone();
+        state.tabs.push(Tab {
+            id: TabId::next(),
+            content: TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
+                profile: sftp,
+            }),
+        });
         state.active = settings;
 
         let captured = state.capture_workspace_configuration().unwrap();
@@ -2735,11 +3286,12 @@ mod tests {
                 .iter()
                 .map(WorkspaceTab::identifier)
                 .collect::<Vec<_>>(),
-            ["tab-1", "tab-2", "tab-3"]
+            ["tab-1", "tab-2", "tab-3", "tab-4"]
         );
         assert!(matches!(workspace.tabs()[0], WorkspaceTab::LocalSession(_)));
         assert!(matches!(workspace.tabs()[1], WorkspaceTab::Settings(_)));
         assert!(matches!(workspace.tabs()[2], WorkspaceTab::SshSession(_)));
+        assert!(matches!(workspace.tabs()[3], WorkspaceTab::SftpSession(_)));
         assert_eq!(workspace.focused_tab_id(), Some("tab-2"));
         assert_eq!(captured.profiles(), state.configuration().profiles());
     }

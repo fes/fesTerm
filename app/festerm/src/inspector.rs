@@ -22,6 +22,11 @@ pub enum TransportFacts<'a> {
         host: &'a str,
         port: u16,
     },
+    Sftp {
+        username: &'a str,
+        host: &'a str,
+        port: u16,
+    },
     Serial {
         device: &'a str,
         baud_rate: u32,
@@ -205,6 +210,16 @@ pub fn show(
                                     fact(ui, "Destination", &format!("{host}:{port}"), true);
                                     fact(ui, "Username", username, true);
                                     fact(ui, "Type", "SSH", false);
+                                }
+                                TransportFacts::Sftp {
+                                    username,
+                                    host,
+                                    port,
+                                } => {
+                                    section_heading(ui, "Connection");
+                                    fact(ui, "Destination", &format!("{host}:{port}"), true);
+                                    fact(ui, "Username", username, true);
+                                    fact(ui, "Type", "SFTP", false);
                                 }
                                 TransportFacts::Serial {
                                     device,
