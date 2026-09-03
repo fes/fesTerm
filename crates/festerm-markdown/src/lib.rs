@@ -516,6 +516,13 @@ impl MarkdownDocument {
         })
     }
 
+    /// Returns the index of the deepest heading whose section owns `byte_offset`.
+    pub fn nearest_heading_index_at_byte(&self, byte_offset: usize) -> Option<usize> {
+        self.headings.iter().rposition(|heading| {
+            heading.section_start_byte <= byte_offset && byte_offset < heading.section_end_byte
+        })
+    }
+
     fn source_span_unchecked(&self, byte_range: Range<usize>) -> SourceSpan {
         SourceSpan {
             byte_start: byte_range.start,
