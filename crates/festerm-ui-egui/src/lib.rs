@@ -747,6 +747,67 @@ mod tests {
     }
 
     #[test]
+    fn copy_with_no_selection_is_forwarded_as_a_terminal_interrupt() {
+        // egui-winit collapses plain Ctrl+C into `Event::Copy` upstream
+        // before an app ever sees a `Key` event for `C` (it has no Shift
+        // check in `is_copy_command`, and `Modifiers::command == ctrl` on
+        // Windows/Linux) - this is the regression this test guards
+        // against: an empty-selection Copy must still reach the terminal
+        // as the interrupt byte instead of being silently swallowed.
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        harness.get_by_label("Terminal viewport").click();
+        harness.run();
+
+        assert!(harness.state().view.selection().range().is_none());
+        harness.event(egui::Event::Copy);
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![vec![0x03]]);
+    }
+
+    #[test]
+    fn copy_with_an_active_selection_copies_it_and_then_deselects() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"copy me");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+        assert!(harness.state().view.selection().range().is_some());
+
+        harness.event(egui::Event::Copy);
+        harness.run();
+
+        // A real terminal interrupt must not also be sent for a Copy that
+        // had a selection to act on.
+        assert!(harness.state().sink.0.is_empty());
+        assert!(harness.state().view.selection().range().is_none());
+    }
+
+    #[test]
     fn history_snapshot_projects_retained_rows_without_moving_the_live_cursor() {
         let mut terminal = terminal(4, 2);
         terminal.ingest(b"one\r\ntwo\r\ntri\r\n");
@@ -1153,6 +1214,95 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("Paste").is_none());
         assert!(!harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn middle_click_pastes_locally_without_leaking_a_mouse_report_when_the_tui_is_not_tracking() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        let center = harness.get_by_label("Terminal viewport").rect().center();
+
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // The paste itself only arrives asynchronously via a later
+        // `Event::Paste` once the OS clipboard responds to the requested
+        // `ViewportCommand::RequestPaste`, so the only thing observable
+        // here is the absence of any mouse-report bytes: both the press
+        // and its matching release must be claimed locally rather than
+        // falling through to `route_pointer_event`.
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn middle_click_passes_through_to_tui_mouse_reporting_unless_shift_overrides() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1000h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let center = harness.get_by_label("Terminal viewport").rect().center();
+
+        // A TUI that has turned on mouse tracking (e.g. vim, tmux) owns
+        // ordinary middle-click by default, since many such programs bind
+        // it to their own paste-buffer behavior.
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(!harness.state().sink.0.is_empty());
+        let reports_before_override = harness.state().sink.0.len();
+
+        // Shift is the stable local override, mirroring the right-click
+        // convention: it forces the local clipboard-paste handling even
+        // though the TUI is tracking the mouse.
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0.len(), reports_before_override);
     }
 
     #[test]

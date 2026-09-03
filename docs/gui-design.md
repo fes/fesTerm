@@ -1537,7 +1537,7 @@ A disconnected or exited session becomes a read-only terminal history surface:
   former mouse-reporting modifiers.
 - `Ctrl+Shift+C`, the Copy command, and context-menu Copy copy a selection.
   Plain `Ctrl+C` with no selection does nothing rather than pretending to send
-  an interrupt.
+  an interrupt (there is no live process to receive it in this state).
 - The compact overlay must not capture interaction across the viewport.
 - History remains only until the tab is closed and is not automatically saved
   to disk. Any future transcript export is explicit and warns about sensitive
@@ -1950,18 +1950,30 @@ alternate-screen mode, mouse reporting, or extended keyboard protocols cannot
 disable them.
 
 - Windows/Linux reserve `Ctrl+Shift+C` and `Ctrl+Shift+V`; macOS reserves
-  `Cmd+C` and `Cmd+V`. Plain `Ctrl+C` in a live terminal remains terminal
-  input, normally the interrupt character.
+  `Cmd+C` and `Cmd+V`. The pinned windowing backend (`egui-winit`) cannot
+  distinguish plain `Ctrl+C` from `Ctrl+Shift+C` before either reaches the
+  app - both convert to the same Copy command upstream, with no Shift bit
+  surviving the conversion. fesTerm resolves this the way other terminal
+  emulators resolve the same ambiguity: a Copy command with an active
+  selection copies it (and clears the selection, matching other terminal
+  programs); a Copy command with no selection is instead forwarded to a live
+  terminal as the interrupt character, so plain `Ctrl+C` still works as
+  expected in the common case where nothing is selected.
 - Shift+drag always forces local selection. Shift+right-click always opens the
   local context menu. Without terminal mouse reporting, ordinary drag selects
   and ordinary right-click opens the menu; with reporting, unmodified mouse
-  events go to the terminal application.
+  events go to the terminal application. Middle-click follows the same
+  reporting-aware rule and pastes locally (the common X11/terminal-emulator
+  convention) when not claimed by terminal mouse reporting; Shift+middle-click
+  always pastes locally even while the terminal application is tracking the
+  mouse.
 - When an application text field owns focus, standard Copy/Paste applies to
   that field instead of the terminal.
 - Copy reads selected cells from fesTerm's model and remains available for any
   retained selectable buffer. It joins soft-wrapped rows, preserves real line
   breaks, omits unused trailing cells, and preserves displayed wide/combining
-  Unicode. It does not clear selection.
+  Unicode. Copying a selection clears it afterward, matching other terminal
+  programs.
 - Paste reads the OS clipboard and uses the ordered bounded session input path.
   It remains available whenever a live session accepts input and compatible
   clipboard text exists. A terminal program cannot disable it.
