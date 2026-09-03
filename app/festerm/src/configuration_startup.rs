@@ -42,6 +42,30 @@ pub(crate) enum ConfigurationStartupStatus {
 }
 
 impl ConfigurationStartupStatus {
+    /// True for exactly the variants that mean an automatic-save call
+    /// actually wrote the replacement configuration to disk, i.e. the
+    /// in-memory `AppState` may now safely commit to that replacement too.
+    ///
+    /// This centralizes the "commit only on success" invariant that every
+    /// `FesTermApp::save_*`/`persist_*`/`reorder_profiles`/`delete_profile`
+    /// caller previously re-derived by hand with its own
+    /// `matches!(status, ConfigurationStartupStatus::WhicheverSaved)` check
+    /// (#53 "workspace/configuration orchestration" seam) - a single
+    /// shared source of truth instead of one manually kept in sync per call
+    /// site.
+    pub(crate) const fn was_saved(self) -> bool {
+        matches!(
+            self,
+            Self::WorkspaceSaved
+                | Self::PasswordCredentialSaved
+                | Self::InterfaceSettingsSaved
+                | Self::KnownHostTrustSaved
+                | Self::ProfileSaved
+                | Self::ProfileDeleted
+                | Self::ProfilesReordered
+        )
+    }
+
     /// Human-readable diagnostic text for each startup/save status. No
     /// longer surfaced in the Settings UI (the "Configuration" card was
     /// removed there), but retained as the basis for regression tests that
@@ -477,6 +501,49 @@ mod tests {
     impl Drop for TestDirectory {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).expect("test directory can be removed");
+        }
+    }
+
+    #[test]
+    fn was_saved_is_true_for_every_successful_save_variant_and_false_otherwise() {
+        // #53: a single source of truth for "did this status just commit a
+        // write", replacing seven independently hand-written matches!(...)
+        // checks previously scattered across app.rs's save_*/persist_*
+        // methods.
+        for saved in [
+            ConfigurationStartupStatus::WorkspaceSaved,
+            ConfigurationStartupStatus::PasswordCredentialSaved,
+            ConfigurationStartupStatus::InterfaceSettingsSaved,
+            ConfigurationStartupStatus::KnownHostTrustSaved,
+            ConfigurationStartupStatus::ProfileSaved,
+            ConfigurationStartupStatus::ProfileDeleted,
+            ConfigurationStartupStatus::ProfilesReordered,
+        ] {
+            assert!(saved.was_saved(), "{saved:?} should count as saved");
+        }
+
+        for not_saved in [
+            ConfigurationStartupStatus::Loaded,
+            ConfigurationStartupStatus::Missing,
+            ConfigurationStartupStatus::InitialFailure(ConfigurationLoadFailure::Invalid),
+            ConfigurationStartupStatus::WorkspaceSaveFailure(ConfigurationLoadFailure::Invalid),
+            ConfigurationStartupStatus::PasswordCredentialSaveFailure(
+                ConfigurationLoadFailure::Invalid,
+            ),
+            ConfigurationStartupStatus::InterfaceSettingsSaveFailure(
+                ConfigurationLoadFailure::Invalid,
+            ),
+            ConfigurationStartupStatus::KnownHostTrustSaveFailure(
+                ConfigurationLoadFailure::Invalid,
+            ),
+            ConfigurationStartupStatus::ProfileSaveFailure(ConfigurationLoadFailure::Invalid),
+            ConfigurationStartupStatus::ProfileDeleteFailure(ConfigurationLoadFailure::Invalid),
+            ConfigurationStartupStatus::ProfilesReorderFailure(ConfigurationLoadFailure::Invalid),
+        ] {
+            assert!(
+                !not_saved.was_saved(),
+                "{not_saved:?} should not count as saved"
+            );
         }
     }
 
