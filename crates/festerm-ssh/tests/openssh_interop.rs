@@ -2,6 +2,7 @@ use std::{
     env, fs,
     io::Write,
     process::{Command, Stdio},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -93,6 +94,112 @@ fn marker_seen(output_tail: &mut Vec<u8>, bytes: &[u8], marker: &[u8]) -> bool {
         output_tail.drain(..first_retained_byte);
     }
     seen
+}
+
+struct RawInteropClient {
+    expected_fingerprint: Option<String>,
+}
+
+impl russh::client::Handler for RawInteropClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &russh::keys::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        let fingerprint = server_public_key
+            .fingerprint(russh::keys::HashAlg::Sha256)
+            .to_string();
+        if let Some(expected) = self.expected_fingerprint.as_deref() {
+            assert_eq!(
+                fingerprint, expected,
+                "raw russh test saw an unexpected OpenSSH fixture host-key fingerprint"
+            );
+        }
+        Ok(true)
+    }
+}
+
+fn expected_host_fingerprint_from_environment() -> Option<String> {
+    env::var("FESTERM_OPENSSH_EXPECTED_HOST_FINGERPRINT")
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+fn remaining_until(deadline: Instant, operation: &str) -> Duration {
+    deadline
+        .checked_duration_since(Instant::now())
+        .unwrap_or_else(|| panic!("{operation} did not complete within the test timeout"))
+}
+
+fn raw_russh_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("could not build the raw russh interoperability test runtime")
+}
+
+async fn connect_authenticated_raw_handle(
+    configuration: &OpenSshConfiguration,
+    expected_fingerprint: Option<&str>,
+    deadline: Instant,
+) -> russh::client::Handle<RawInteropClient> {
+    let config = Arc::new(russh::client::Config {
+        nodelay: true,
+        ..Default::default()
+    });
+    let mut handle = match tokio::time::timeout(
+        remaining_until(deadline, "OpenSSH fixture raw russh connection"),
+        russh::client::connect(
+            config,
+            (configuration.host.as_str(), configuration.port),
+            RawInteropClient {
+                expected_fingerprint: expected_fingerprint.map(str::to_owned),
+            },
+        ),
+    )
+    .await
+    {
+        Ok(Ok(handle)) => handle,
+        Ok(Err(_)) => panic!("could not establish a raw russh connection to the OpenSSH fixture"),
+        Err(_) => panic!("raw russh connection to the OpenSSH fixture timed out"),
+    };
+    let authentication = match tokio::time::timeout(
+        remaining_until(deadline, "OpenSSH fixture raw russh authentication"),
+        handle.authenticate_password(
+            configuration.username.clone(),
+            configuration.password.clone(),
+        ),
+    )
+    .await
+    {
+        Ok(Ok(authentication)) => authentication,
+        Ok(Err(_)) => panic!("raw russh authentication against the OpenSSH fixture failed"),
+        Err(_) => panic!("raw russh authentication against the OpenSSH fixture timed out"),
+    };
+    assert!(
+        authentication.success(),
+        "raw russh authentication against the OpenSSH fixture was rejected"
+    );
+    handle
+}
+
+async fn shutdown_raw_handle(mut handle: russh::client::Handle<RawInteropClient>) {
+    match tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+        let _ = handle
+            .disconnect(
+                russh::Disconnect::ByApplication,
+                "festerm raw interop shutdown",
+                "",
+            )
+            .await;
+        let _ = (&mut handle).await;
+    })
+    .await
+    {
+        Ok(()) => {}
+        Err(_) => panic!("raw russh OpenSSH handle did not shut down within the test timeout"),
+    }
 }
 
 #[test]
@@ -489,6 +596,143 @@ fn controlled_openssh_ecdsa_p256_host_key_interoperability() {
         Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
         Err(_) => panic!("ECDSA host-key SSH session did not shut down within the test timeout"),
     }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_sftp_subsystem_smoke() {
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let expected_fingerprint = expected_host_fingerprint_from_environment();
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let handle = connect_authenticated_raw_handle(
+            &configuration,
+            expected_fingerprint.as_deref(),
+            deadline,
+        )
+        .await;
+        let mut channel = match tokio::time::timeout(
+            remaining_until(deadline, "open the raw SFTP subsystem channel"),
+            handle.channel_open_session(),
+        )
+        .await
+        {
+            Ok(Ok(channel)) => channel,
+            Ok(Err(_)) => panic!("could not open a raw SFTP subsystem channel"),
+            Err(_) => panic!("opening the raw SFTP subsystem channel timed out"),
+        };
+        match tokio::time::timeout(
+            remaining_until(deadline, "request the raw SFTP subsystem"),
+            channel.request_subsystem(true, "sftp"),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => panic!("could not request the raw SFTP subsystem"),
+            Err(_) => panic!("requesting the raw SFTP subsystem timed out"),
+        }
+
+        let mut subsystem_accepted = false;
+        while Instant::now() < deadline && !subsystem_accepted {
+            let wait = remaining_until(deadline, "wait for the raw SFTP subsystem reply")
+                .min(Duration::from_millis(100));
+            match tokio::time::timeout(wait, channel.wait()).await {
+                Ok(Some(russh::ChannelMsg::Success)) => subsystem_accepted = true,
+                Ok(Some(
+                    russh::ChannelMsg::Failure | russh::ChannelMsg::Eof | russh::ChannelMsg::Close,
+                ))
+                | Ok(None) => {
+                    panic!("the OpenSSH fixture rejected or closed the raw SFTP subsystem request")
+                }
+                Ok(Some(_)) | Err(_) => {}
+            }
+        }
+
+        assert!(
+            subsystem_accepted,
+            "the OpenSSH fixture did not accept the raw SFTP subsystem request within the test timeout"
+        );
+        shutdown_raw_handle(handle).await;
+    });
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_direct_tcpip_echo_smoke() {
+    const ECHO_PAYLOAD: &[u8] = b"__FESTERM_OPENSSH_DIRECT_TCPIP_ECHO_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let expected_fingerprint = expected_host_fingerprint_from_environment();
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let handle = connect_authenticated_raw_handle(
+            &configuration,
+            expected_fingerprint.as_deref(),
+            deadline,
+        )
+        .await;
+        let mut channel = match tokio::time::timeout(
+            remaining_until(deadline, "open the raw direct-tcpip channel"),
+            handle.channel_open_direct_tcpip("127.0.0.1", 9000, "127.0.0.1", 0),
+        )
+        .await
+        {
+            Ok(Ok(channel)) => channel,
+            Ok(Err(_)) => panic!("could not open a raw direct-tcpip channel to 127.0.0.1:9000"),
+            Err(_) => panic!("opening the raw direct-tcpip channel timed out"),
+        };
+        match tokio::time::timeout(
+            remaining_until(deadline, "send the raw direct-tcpip echo payload"),
+            channel.data(ECHO_PAYLOAD),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => panic!("could not send the raw direct-tcpip echo payload"),
+            Err(_) => panic!("sending the raw direct-tcpip echo payload timed out"),
+        }
+        match tokio::time::timeout(
+            remaining_until(deadline, "close the raw direct-tcpip write side"),
+            channel.eof(),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => panic!("could not close the raw direct-tcpip write side"),
+            Err(_) => panic!("closing the raw direct-tcpip write side timed out"),
+        }
+
+        let mut echoed = Vec::new();
+        while Instant::now() < deadline && echoed.len() < ECHO_PAYLOAD.len() {
+            let wait = remaining_until(deadline, "read the raw direct-tcpip echo reply")
+                .min(Duration::from_millis(100));
+            match tokio::time::timeout(wait, channel.wait()).await {
+                Ok(Some(russh::ChannelMsg::Data { data })) => {
+                    echoed.extend_from_slice(data.as_ref());
+                    assert!(
+                        echoed.len() <= ECHO_PAYLOAD.len(),
+                        "the OpenSSH fixture echo service returned unexpected extra bytes"
+                    );
+                }
+                Ok(Some(russh::ChannelMsg::Failure)) => {
+                    panic!("the OpenSSH fixture direct-tcpip channel reported a failure")
+                }
+                Ok(Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close)) | Ok(None) => break,
+                Ok(Some(_)) | Err(_) => {}
+            }
+        }
+
+        assert_eq!(
+            echoed.as_slice(),
+            ECHO_PAYLOAD,
+            "the OpenSSH fixture direct-tcpip echo service did not return the expected payload within the test timeout"
+        );
+        shutdown_raw_handle(handle).await;
+    });
 }
 
 struct DockerFixture {
