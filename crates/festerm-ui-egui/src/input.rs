@@ -376,11 +376,35 @@ pub(crate) fn route_egui_events(
         }
         match event {
             egui::Event::Copy if keyboard_focused => {
-                if let Some(text) = selection_text(
+                match selection_text(
                     TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows),
                     selection,
                 ) {
-                    ui.ctx().copy_text(text);
+                    Some(text) => {
+                        ui.ctx().copy_text(text);
+                        selection.clear();
+                    }
+                    // egui-winit collapses plain Ctrl+C and Ctrl+Shift+C into
+                    // the same `Copy` event upstream (it has no Shift check
+                    // in `is_copy_command`, and `Modifiers::command` equals
+                    // `ctrl` on Windows/Linux) - a real `Event::Key` for `C`
+                    // is never emitted for either chord, so this app-level
+                    // code can never tell them apart. With no selection to
+                    // copy, treat it as the far more common case: a plain
+                    // Ctrl+C meant as a terminal interrupt. This mirrors how
+                    // other terminal emulators resolve the same historical
+                    // ambiguity, and only fires while the session can still
+                    // accept keystrokes (`suppress.keystrokes`), so a dead
+                    // or read-only session's Ctrl+C still does nothing.
+                    None if !suppress.keystrokes => {
+                        record_terminal_input(
+                            &mut reports,
+                            selection,
+                            Instant::now(),
+                            route_input(terminal, InputEvent::Key(Key::Control('c')), sink),
+                        );
+                    }
+                    None => {}
                 }
             }
             egui::Event::Paste(text) if keyboard_focused => {

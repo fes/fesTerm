@@ -131,6 +131,11 @@ pub struct TerminalView {
     primary_link_gesture: Option<(Arc<str>, CellPosition)>,
     last_rendered_frame: Option<u64>,
     secondary_gesture: SecondaryGestureOwnership,
+    /// Whether the in-progress middle-click gesture (paste-on-middle-click,
+    /// mirroring the X11 convention many terminal emulators adopt) has
+    /// claimed local handling, so its matching release is also suppressed
+    /// instead of falling through as an unmatched mouse-report release.
+    middle_click_paste_gesture: bool,
     history: HistoryViewport,
     scrollbar_dragging: bool,
     pending_paste_requests: VecDeque<String>,
@@ -933,6 +938,45 @@ impl TerminalView {
             });
         });
 
+        // A TUI with mouse tracking owns ordinary middle-click by default
+        // (e.g. tmux/vim have their own middle-click paste bindings); Shift
+        // is the stable local override, mirroring the right-click
+        // convention above. Without mouse tracking, middle-click pastes the
+        // clipboard directly - the common X11/terminal-emulator convention
+        // - via the same `RequestPaste` viewport command the context menu's
+        // Paste button already uses. Both press and release are removed
+        // from terminal routing so a locally handled paste can never also
+        // emit half of a mouse-report gesture.
+        let mut request_local_paste = false;
+        ui.input_mut(|input| {
+            input.events.retain(|event| {
+                let egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Middle,
+                    pressed,
+                    modifiers,
+                } = event
+                else {
+                    return true;
+                };
+                if *pressed {
+                    if !viewport_rect.contains(*pos) || (mouse_reporting && !modifiers.shift) {
+                        self.middle_click_paste_gesture = false;
+                        return true;
+                    }
+                    self.middle_click_paste_gesture = true;
+                    request_local_paste = true;
+                    return false;
+                }
+                !std::mem::take(&mut self.middle_click_paste_gesture)
+            });
+        });
+        if request_local_paste && options.paste_available {
+            response.request_focus();
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        }
+
         if let Some(position) = local_context_release {
             let snapshot =
                 TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows);
@@ -956,6 +1000,7 @@ impl TerminalView {
                 if let Some(text) = selected_text.clone() {
                     if ui.button("Copy").clicked() {
                         ui.ctx().copy_text(text);
+                        self.selection.clear();
                         ui.close();
                     }
                 }
