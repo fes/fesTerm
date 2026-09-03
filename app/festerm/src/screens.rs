@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SshPortForwardDirection,
-    SshProfileConfiguration, TerminalFontPreference,
+    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
+    SshPortForwardDirection, SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -2207,11 +2207,13 @@ pub struct SettingsViewModel {
     pub pulse_new_output_dot: bool,
     pub show_resumable_sessions: bool,
     pub default_sftp_local_directory: Option<String>,
+    pub sftp_pane_order: SftpPaneOrderPreference,
 }
 
 #[derive(Clone, Default)]
 struct SettingsState {
     default_sftp_local_directory: String,
+    sftp_pane_order: Option<SftpPaneOrderPreference>,
     synced_value: Option<String>,
     feedback: Option<String>,
 }
@@ -2242,6 +2244,7 @@ pub fn show_settings(
         pulse_new_output_dot,
         show_resumable_sessions,
         default_sftp_local_directory,
+        sftp_pane_order,
     } = settings;
     let state_id = ui.id().with("settings_state");
     let field_id = settings_sftp_directory_field_id(ui);
@@ -2253,6 +2256,7 @@ pub fn show_settings(
         state.synced_value = Some(model_value);
         state.feedback = None;
     }
+    state.sftp_pane_order.get_or_insert(sftp_pane_order);
     let mut command = None;
     ui.horizontal(|ui| {
         ui.add_space(26.0);
@@ -2583,6 +2587,44 @@ pub fn show_settings(
                         ui.add_space(12.0);
 
                         settings_card(ui, "SFTP", |ui| {
+                            ui.horizontal_top(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_max_width((ui.available_width() - 190.0).max(0.0));
+                                    ui.label(
+                                        egui::RichText::new("SFTP pane order")
+                                            .color(theme::TEXT_PRIMARY),
+                                    );
+                                    ssh_paragraph(
+                                        ui,
+                                        "Visual order for the GUI SFTP file manager. Commands and accessibility labels still refer to Local and Remote, never Left and Right.",
+                                    );
+                                });
+                                ui.add_space(16.0);
+                                ui.vertical(|ui| {
+                                    for (value, label) in [
+                                        (
+                                            SftpPaneOrderPreference::LocalLeft,
+                                            "Local left · Remote right",
+                                        ),
+                                        (
+                                            SftpPaneOrderPreference::RemoteLeft,
+                                            "Remote left · Local right",
+                                        ),
+                                    ] {
+                                        let response = ui.radio_value(
+                                            state
+                                                .sftp_pane_order
+                                                .get_or_insert(sftp_pane_order),
+                                            value,
+                                            label,
+                                        );
+                                        if response.changed() {
+                                            command = Some(AppCommand::SetSftpPaneOrder(value));
+                                        }
+                                    }
+                                });
+                            });
+                            ui.add_space(10.0);
                             ui.horizontal_top(|ui| {
                                 let mut label_id = None;
                                 ui.vertical(|ui| {
@@ -3531,6 +3573,13 @@ pub fn show_profiles(
                                 },
                             });
                         }
+                        if matches!(profile, Profile::Ssh(_))
+                            && ui.button("Open SFTP").clicked()
+                        {
+                            command = Some(AppCommand::OpenConfiguredSftpFileManagerProfile {
+                                profile_id: name.clone(),
+                            });
+                        }
                         if ui.button("Edit").clicked() {
                             next_mode = Some(match profile {
                                 Profile::Local(local) => ProfilesScreenMode::EditLocal(
@@ -4234,6 +4283,7 @@ mod tests {
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
                             default_sftp_local_directory: None,
+                            sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -4371,6 +4421,24 @@ mod tests {
         assert!(matches!(
             harness.state().command.as_ref(),
             Some(AppCommand::SetDefaultSftpLocalDirectory(Some(path))) if path == &directory
+        ));
+    }
+
+    #[test]
+    fn settings_sftp_pane_order_control_dispatches_the_selected_preference() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        harness
+            .get_by_role_and_label(accesskit::Role::RadioButton, "Remote left · Local right")
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::SetSftpPaneOrder(
+                SftpPaneOrderPreference::RemoteLeft
+            ))
         ));
     }
 
@@ -4617,6 +4685,7 @@ mod tests {
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
                             default_sftp_local_directory: None,
+                            sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",

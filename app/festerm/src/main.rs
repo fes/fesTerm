@@ -16,6 +16,7 @@ mod port_forward_draft;
 mod screens;
 mod search;
 pub mod session_controller;
+mod sftp_file_manager;
 mod tabs;
 mod updates;
 

@@ -2118,6 +2118,7 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "russh",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "winresource",

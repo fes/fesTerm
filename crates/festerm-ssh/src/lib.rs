@@ -3830,6 +3830,108 @@ impl Drop for SftpTerminalSession {
     }
 }
 
+/// Why opening a raw GUI SFTP session failed before a terminal-backed
+/// `SftpTerminalSession` was involved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuiSftpSessionConnectError {
+    MissingKnownHostFingerprint,
+    InteractiveAuthenticationUnsupported,
+    ConnectionFailed,
+}
+
+impl fmt::Display for GuiSftpSessionConnectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingKnownHostFingerprint => formatter.write_str(
+                "GUI SFTP currently requires a persisted host-key fingerprint for this destination",
+            ),
+            Self::InteractiveAuthenticationUnsupported => formatter.write_str(
+                "GUI SFTP currently requires an explicit password, private key, or stored credential",
+            ),
+            Self::ConnectionFailed => formatter.write_str("could not establish GUI SFTP session"),
+        }
+    }
+}
+
+impl std::error::Error for GuiSftpSessionConnectError {}
+
+/// Opens one raw [`SftpSession`] for the GUI file manager.
+///
+/// Unlike [`SftpTerminalSession`], this does not own a transcript, event
+/// queue, or interactive host-key/password prompt surface. It is intended for
+/// application-owned GUI workflows that already have a persisted host-trust
+/// record and an explicit credential to use for both the browsing session and
+/// the transfer worker.
+pub async fn connect_gui_sftp_session(
+    profile: SshConnectionProfile,
+    authentication: SshAuthentication,
+    local_working_directory: Option<PathBuf>,
+    known_host_fingerprint: Option<String>,
+) -> Result<SftpSession, GuiSftpSessionConnectError> {
+    if matches!(authentication, SshAuthentication::Interactive) {
+        return Err(GuiSftpSessionConnectError::InteractiveAuthenticationUnsupported);
+    }
+    if known_host_fingerprint.is_none() {
+        return Err(GuiSftpSessionConnectError::MissingKnownHostFingerprint);
+    }
+
+    struct NoopNotifier;
+    impl SessionEventNotifier for NoopNotifier {
+        fn notify(&self) {}
+    }
+
+    let (event_sender, _event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+    let (command_sender, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
+    drop(command_sender);
+    let shared = Arc::new(WorkerShared {
+        id: SessionId::next(),
+        lifecycle: Mutex::new(SessionLifecycle::Starting),
+        desired_terminal_size: Mutex::new(
+            TerminalSize::new(80, 24).expect("default GUI SFTP terminal size is valid"),
+        ),
+        pre_running_resize_pending: AtomicBool::new(false),
+        reconnecting: AtomicBool::new(false),
+        reconnect_requested: AtomicBool::new(false),
+        liveness_check_requested: AtomicBool::new(false),
+        shutdown_requested: AtomicBool::new(false),
+        metrics: Mutex::new(SessionMetrics::default()),
+        event_sender,
+        event_notifier: Arc::new(NoopNotifier),
+    });
+    let host_key_gate = Arc::new(HostKeyDecisionGate::new());
+    let password_gate = Arc::new(PasswordDecisionGate::new());
+    let command_receiver = WorkerCommandReceiver { receiver };
+    let authentication = authentication.into_worker_authentication();
+
+    let handle = match establish_authenticated_handle(
+        &profile,
+        &authentication,
+        known_host_fingerprint.as_deref(),
+        &shared,
+        &command_receiver,
+        &host_key_gate,
+        &password_gate,
+    )
+    .await
+    {
+        AuthenticatedHandleAttempt::Established(handle) => handle,
+        AuthenticatedHandleAttempt::Retryable(_, _)
+        | AuthenticatedHandleAttempt::Permanent(_, _)
+        | AuthenticatedHandleAttempt::Shutdown => {
+            return Err(GuiSftpSessionConnectError::ConnectionFailed);
+        }
+    };
+
+    match local_working_directory {
+        Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path)
+            .await
+            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+        None => sftp::SftpSession::connect(&handle)
+            .await
+            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+    }
+}
+
 fn sftp_prompt() -> &'static str {
     "sftp> "
 }
