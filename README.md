@@ -80,6 +80,8 @@ accepted.
   edit behavior.
 - [GUI design](docs/gui-design.md) — authoritative interaction model, independent
   session-chip principles, visual hierarchy, and canonical wireframe.
+- [GUI SFTP design](docs/sftp-ui-design.md) — split-pane local/remote file
+  workflow, transfer safety policy, keyboard model, and interactive mockups.
 - [GUI exploration action graph](docs/gui-action-graph.md) — stable state and
   transition IDs with assertions, cancellation, inverse, and checkpoint recovery paths.
 - [Validation traceability](validation/README.md) — machine-checked mappings

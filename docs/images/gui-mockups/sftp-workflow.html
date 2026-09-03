@@ -1,0 +1,446 @@
+<div id="festerm-sftp-review" class="fsftp-review">
+  <style>
+    #festerm-sftp-review {
+      --fsftp-window: #0e1319;
+      --fsftp-terminal: #11161e;
+      --fsftp-inactive: #1a222c;
+      --fsftp-active: #29333e;
+      --fsftp-overlay: #26313d;
+      --fsftp-selection: #28516b;
+      --fsftp-text: #e8edf2;
+      --fsftp-secondary: #a7b2bd;
+      --fsftp-muted: #788592;
+      --fsftp-border: #35414e;
+      --fsftp-border-active: #91a7b8;
+      --fsftp-accent: #42bfd0;
+      --fsftp-running: #4fc17d;
+      --fsftp-warning: #d2a94b;
+      --fsftp-error: #d96868;
+      color: var(--fsftp-text);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      width: 100%;
+      padding: 4px;
+      box-sizing: border-box;
+    }
+    #festerm-sftp-review * { box-sizing: border-box; }
+    #festerm-sftp-review button { font: inherit; }
+    #festerm-sftp-review .fsftp-stepbar {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(90px, 1fr));
+      gap: 6px;
+      margin: 0 0 10px;
+    }
+    #festerm-sftp-review .fsftp-step {
+      appearance: none;
+      border: 1px solid color-mix(in srgb, var(--fsftp-border) 86%, transparent);
+      border-radius: 7px;
+      background: light-dark(#eef2f5, #151c24);
+      color: light-dark(#33404c, #a7b2bd);
+      padding: 8px 9px;
+      text-align: left;
+      cursor: pointer;
+      min-height: 50px;
+    }
+    #festerm-sftp-review .fsftp-step strong { display: block; color: light-dark(#121820, #e8edf2); font-size: 12px; }
+    #festerm-sftp-review .fsftp-step span { display: block; font-size: 10px; margin-top: 3px; }
+    #festerm-sftp-review .fsftp-step[aria-current="step"] {
+      border-color: var(--fsftp-accent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fsftp-accent) 35%, transparent);
+      background: light-dark(#e6f7fa, #18303a);
+    }
+    #festerm-sftp-review .fsftp-window {
+      height: 692px;
+      min-width: 820px;
+      overflow: hidden;
+      border: 1px solid var(--fsftp-border);
+      border-radius: 11px;
+      background: var(--fsftp-window);
+      box-shadow: 0 18px 45px rgba(0,0,0,.28);
+      display: grid;
+      grid-template-rows: 58px 1fr 25px;
+      position: relative;
+    }
+    #festerm-sftp-review .fsftp-chrome {
+      background: var(--fsftp-terminal);
+      border-bottom: 1px solid #18212a;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+    }
+    #festerm-sftp-review .fsftp-chip {
+      height: 42px;
+      min-width: 190px;
+      border-radius: 8px;
+      border: 1px solid var(--fsftp-border);
+      background: var(--fsftp-inactive);
+      display: grid;
+      grid-template-columns: 28px 1fr 20px;
+      align-items: center;
+      padding: 0 8px;
+      gap: 6px;
+    }
+    #festerm-sftp-review .fsftp-chip.fsftp-chip-current {
+      background: var(--fsftp-active);
+      border-color: var(--fsftp-border-active);
+      box-shadow: 0 1px 0 rgba(255,255,255,.06);
+    }
+    #festerm-sftp-review .fsftp-chip-title { font-weight: 620; font-size: 13px; line-height: 16px; white-space: nowrap; }
+    #festerm-sftp-review .fsftp-chip-sub { color: var(--fsftp-secondary); font: 10px/12px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    #festerm-sftp-review .fsftp-chip-close { color: var(--fsftp-secondary); text-align: center; }
+    #festerm-sftp-review .fsftp-iconbox { position: relative; width: 24px; height: 24px; display: inline-grid; place-items: center; }
+    #festerm-sftp-review .fsftp-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+    #festerm-sftp-review .fsftp-status-badge { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--fsftp-running); right: 0; top: 0; box-shadow: 0 0 0 2px var(--fsftp-active); }
+    #festerm-sftp-review .fsftp-new,
+    #festerm-sftp-review .fsftp-global {
+      border: 1px solid var(--fsftp-border);
+      background: transparent;
+      color: var(--fsftp-secondary);
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+    }
+    #festerm-sftp-review .fsftp-chrome-spacer { flex: 1; }
+    #festerm-sftp-review .fsftp-global { border-color: transparent; }
+    #festerm-sftp-review .fsftp-main { min-height: 0; background: var(--fsftp-terminal); position: relative; overflow: hidden; }
+    #festerm-sftp-review .fsftp-statusline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border-top: 1px solid var(--fsftp-border);
+      color: var(--fsftp-secondary);
+      font-size: 11px;
+      background: #0c1117;
+    }
+    #festerm-sftp-review .fsftp-statusline .fsftp-grow { flex: 1; }
+    #festerm-sftp-review .fsftp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fsftp-running); display: inline-block; }
+    #festerm-sftp-review .fsftp-terminal-view {
+      height: 100%;
+      padding: 23px 24px;
+      font: 15px/1.58 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--fsftp-secondary);
+      position: relative;
+    }
+    #festerm-sftp-review .fsftp-terminal-view b { color: var(--fsftp-text); font-weight: 520; }
+    #festerm-sftp-review .fsftp-terminal-view .fsftp-ok { color: var(--fsftp-running); }
+    #festerm-sftp-review .fsftp-menu {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 240px;
+      background: var(--fsftp-overlay);
+      border: 1px solid var(--fsftp-border-active);
+      border-radius: 8px;
+      box-shadow: 0 16px 36px rgba(0,0,0,.45);
+      padding: 6px;
+      font-family: Inter, ui-sans-serif, sans-serif;
+    }
+    #festerm-sftp-review .fsftp-menu-label { padding: 8px 10px 5px; color: var(--fsftp-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    #festerm-sftp-review .fsftp-menu-item { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 5px; color: var(--fsftp-text); font-size: 13px; }
+    #festerm-sftp-review .fsftp-menu-item.fsftp-menu-active { background: var(--fsftp-selection); outline: 1px solid var(--fsftp-accent); }
+    #festerm-sftp-review .fsftp-menu-key { margin-left: auto; color: var(--fsftp-muted); font: 10px ui-monospace, monospace; }
+    #festerm-sftp-review .fsftp-filemanager { height: 100%; display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+    #festerm-sftp-review .fsftp-dual { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 76px minmax(0, 1fr); }
+    #festerm-sftp-review .fsftp-pane { min-width: 0; display: grid; grid-template-rows: 35px 39px 37px 1fr 26px; background: var(--fsftp-window); }
+    #festerm-sftp-review .fsftp-pane + .fsftp-pane { border-left: 1px solid var(--fsftp-border); }
+    #festerm-sftp-review .fsftp-pane-head { display: flex; align-items: center; gap: 7px; padding: 0 11px; border-bottom: 1px solid var(--fsftp-border); background: #121922; }
+    #festerm-sftp-review .fsftp-pane-head strong { font-size: 11px; letter-spacing: .08em; }
+    #festerm-sftp-review .fsftp-pane-head span { font: 10px ui-monospace, monospace; color: var(--fsftp-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #festerm-sftp-review .fsftp-pane-head .fsftp-grow { flex: 1; }
+    #festerm-sftp-review .fsftp-remote-tag { color: var(--fsftp-accent); }
+    #festerm-sftp-review .fsftp-toolbar { display: flex; align-items: center; gap: 2px; padding: 5px 7px; border-bottom: 1px solid var(--fsftp-border); }
+    #festerm-sftp-review .fsftp-tool { width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: transparent; color: var(--fsftp-secondary); border-radius: 5px; padding: 0; }
+    #festerm-sftp-review .fsftp-tool:hover { background: var(--fsftp-active); color: var(--fsftp-text); }
+    #festerm-sftp-review .fsftp-crumbs { flex: 1; height: 28px; min-width: 0; display: flex; align-items: center; overflow: hidden; border: 1px solid var(--fsftp-border); border-radius: 5px; background: var(--fsftp-inactive); padding: 0 7px; }
+    #festerm-sftp-review .fsftp-crumbs span { font: 10px ui-monospace, monospace; white-space: nowrap; color: var(--fsftp-secondary); }
+    #festerm-sftp-review .fsftp-crumbs .fsftp-current { color: var(--fsftp-text); }
+    #festerm-sftp-review .fsftp-slash { color: var(--fsftp-muted); padding: 0 4px; }
+    #festerm-sftp-review .fsftp-filterrow { display: flex; align-items: center; padding: 5px 8px; gap: 6px; border-bottom: 1px solid var(--fsftp-border); }
+    #festerm-sftp-review .fsftp-filter { flex: 1; height: 26px; border: 1px solid var(--fsftp-border); border-radius: 5px; background: var(--fsftp-terminal); color: var(--fsftp-muted); display: flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 10px; }
+    #festerm-sftp-review .fsftp-tablewrap { overflow: hidden; min-height: 0; }
+    #festerm-sftp-review .fsftp-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
+    #festerm-sftp-review .fsftp-table th { height: 27px; padding: 0 7px; text-align: left; font-weight: 540; color: var(--fsftp-muted); border-bottom: 1px solid var(--fsftp-border); background: #10171f; }
+    #festerm-sftp-review .fsftp-table td { height: 31px; padding: 0 7px; color: var(--fsftp-secondary); border-bottom: 1px solid rgba(53,65,78,.46); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #festerm-sftp-review .fsftp-table th:nth-child(1) { width: 53%; }
+    #festerm-sftp-review .fsftp-table th:nth-child(2) { width: 15%; text-align: right; }
+    #festerm-sftp-review .fsftp-table td:nth-child(2) { text-align: right; font-family: ui-monospace, monospace; }
+    #festerm-sftp-review .fsftp-table th:nth-child(3) { width: 22%; }
+    #festerm-sftp-review .fsftp-table th:nth-child(4) { width: 10%; }
+    #festerm-sftp-review .fsftp-filecell { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--fsftp-text); }
+    #festerm-sftp-review .fsftp-filecell .fsftp-icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--fsftp-secondary); }
+    #festerm-sftp-review .fsftp-row-selected td { background: var(--fsftp-selection); color: var(--fsftp-text); }
+    #festerm-sftp-review .fsftp-row-new td { background: rgba(79,193,125,.10); }
+    #festerm-sftp-review .fsftp-row-new .fsftp-filecell { color: #b9edce; }
+    #festerm-sftp-review .fsftp-pane-foot { display: flex; align-items: center; gap: 8px; padding: 0 9px; border-top: 1px solid var(--fsftp-border); color: var(--fsftp-muted); font-size: 10px; }
+    #festerm-sftp-review .fsftp-transferrail { border-left: 1px solid var(--fsftp-border); border-right: 1px solid var(--fsftp-border); background: #0d131a; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 12px; padding: 8px; }
+    #festerm-sftp-review .fsftp-transfer { width: 54px; min-height: 57px; border: 1px solid var(--fsftp-border); border-radius: 7px; background: var(--fsftp-inactive); color: var(--fsftp-secondary); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 5px; font-size: 9px; line-height: 11px; text-align: center; }
+    #festerm-sftp-review .fsftp-transfer.fsftp-transfer-ready { border-color: var(--fsftp-accent); color: var(--fsftp-text); background: #17303a; box-shadow: 0 0 0 1px rgba(66,191,208,.18); }
+    #festerm-sftp-review .fsftp-transfer[disabled] { opacity: .45; }
+    #festerm-sftp-review .fsftp-queue { border-top: 1px solid var(--fsftp-border); background: #121922; padding: 9px 12px 10px; }
+    #festerm-sftp-review .fsftp-queue-head { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 7px; }
+    #festerm-sftp-review .fsftp-queue-head strong { font-size: 12px; }
+    #festerm-sftp-review .fsftp-queue-head .fsftp-grow { flex: 1; }
+    #festerm-sftp-review .fsftp-queue-action { color: var(--fsftp-accent); }
+    #festerm-sftp-review .fsftp-progress-track { height: 5px; border-radius: 99px; background: var(--fsftp-inactive); overflow: hidden; margin-bottom: 7px; }
+    #festerm-sftp-review .fsftp-progress-fill { height: 100%; width: 42%; background: var(--fsftp-accent); border-radius: inherit; }
+    #festerm-sftp-review .fsftp-queue-row { display: grid; grid-template-columns: 18px minmax(180px,1fr) minmax(210px,1fr) 120px 60px; align-items: center; gap: 8px; min-height: 27px; font-size: 10px; color: var(--fsftp-secondary); }
+    #festerm-sftp-review .fsftp-queue-row strong { color: var(--fsftp-text); font-weight: 540; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #festerm-sftp-review .fsftp-queue-row .fsftp-error-text { color: #f19a9a; }
+    #festerm-sftp-review .fsftp-dialogshade { position: absolute; inset: 0; background: rgba(5,9,13,.62); display: grid; place-items: center; }
+    #festerm-sftp-review .fsftp-dialog { width: 510px; background: var(--fsftp-overlay); border: 1px solid var(--fsftp-border-active); border-radius: 9px; box-shadow: 0 26px 70px rgba(0,0,0,.58); overflow: hidden; }
+    #festerm-sftp-review .fsftp-dialog-title { display: flex; gap: 10px; align-items: center; padding: 15px 17px 11px; font-size: 15px; font-weight: 650; }
+    #festerm-sftp-review .fsftp-dialog-body { padding: 0 17px 14px; color: var(--fsftp-secondary); font-size: 12px; line-height: 1.42; }
+    #festerm-sftp-review .fsftp-compare { margin: 12px 0; display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--fsftp-border); border-radius: 6px; overflow: hidden; }
+    #festerm-sftp-review .fsftp-compare > div { padding: 10px; background: var(--fsftp-inactive); min-width: 0; }
+    #festerm-sftp-review .fsftp-compare > div + div { border-left: 1px solid var(--fsftp-border); }
+    #festerm-sftp-review .fsftp-compare small { color: var(--fsftp-muted); text-transform: uppercase; letter-spacing: .07em; }
+    #festerm-sftp-review .fsftp-compare strong { display: block; margin: 4px 0; color: var(--fsftp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #festerm-sftp-review .fsftp-compare span { display: block; font: 10px/1.55 ui-monospace, monospace; color: var(--fsftp-secondary); }
+    #festerm-sftp-review .fsftp-check { display: flex; align-items: center; gap: 7px; color: var(--fsftp-secondary); }
+    #festerm-sftp-review .fsftp-checkbox { width: 14px; height: 14px; border: 1px solid var(--fsftp-border-active); border-radius: 3px; background: var(--fsftp-terminal); }
+    #festerm-sftp-review .fsftp-dialog-actions { padding: 11px 17px 15px; border-top: 1px solid var(--fsftp-border); display: flex; justify-content: flex-end; gap: 8px; }
+    #festerm-sftp-review .fsftp-dialog-action { border: 1px solid var(--fsftp-border-active); background: var(--fsftp-inactive); color: var(--fsftp-text); border-radius: 6px; padding: 7px 13px; font-size: 11px; }
+    #festerm-sftp-review .fsftp-dialog-action.fsftp-safe-focus { outline: 2px solid var(--fsftp-accent); outline-offset: 1px; background: var(--fsftp-selection); }
+    #festerm-sftp-review .fsftp-dialog-action.fsftp-keep { border-color: var(--fsftp-accent); color: #d8fbff; }
+    #festerm-sftp-review .fsftp-errorbar { display: flex; align-items: center; gap: 8px; margin: 6px 8px 0; padding: 7px 9px; border: 1px solid rgba(217,104,104,.55); border-radius: 6px; background: rgba(217,104,104,.10); color: #f0b0b0; font-size: 10px; }
+    #festerm-sftp-review .fsftp-errorbar .fsftp-grow { flex: 1; }
+    #festerm-sftp-review .fsftp-errorbar strong { color: #ffd0d0; }
+    #festerm-sftp-review .fsftp-errorbar a { color: #d8fbff; }
+    #festerm-sftp-review .fsftp-hidden { display: none !important; }
+    @media (max-width: 900px) {
+      #festerm-sftp-review { overflow-x: auto; }
+      #festerm-sftp-review .fsftp-stepbar { min-width: 820px; }
+    }
+  </style>
+
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="fi-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="fi-remote" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 9h8M8 13h5M17 13h.01"/></symbol>
+    <symbol id="fi-plus" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
+    <symbol id="fi-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></symbol>
+    <symbol id="fi-back" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+    <symbol id="fi-up" viewBox="0 0 24 24"><path d="m5 15 7-7 7 7"/></symbol>
+    <symbol id="fi-home" viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-6v-6h-4v6H4z"/></symbol>
+    <symbol id="fi-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 8A7 7 0 0 1 18 7l2 5M17.9 16A7 7 0 0 1 6 17l-2-5"/></symbol>
+    <symbol id="fi-folder" viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/></symbol>
+    <symbol id="fi-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4"/></symbol>
+    <symbol id="fi-code" viewBox="0 0 24 24"><path d="M9 8 5 12l4 4M15 8l4 4-4 4"/></symbol>
+    <symbol id="fi-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="m5 18 5-5 3 3 2-2 4 4"/></symbol>
+    <symbol id="fi-archive" viewBox="0 0 24 24"><path d="M5 4h14v4H5zM6 8h12v12H6zM10 12h4"/></symbol>
+    <symbol id="fi-arrow-right" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+    <symbol id="fi-arrow-left" viewBox="0 0 24 24"><path d="M20 12H4m6-6-6 6 6 6"/></symbol>
+    <symbol id="fi-warning" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4zM12 9v5M12 17h.01"/></symbol>
+    <symbol id="fi-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="fi-error" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></symbol>
+    <symbol id="fi-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+  </svg>
+
+  <nav class="fsftp-stepbar" aria-label="SFTP workflow mockups">
+    <button class="fsftp-step" data-step="0" aria-current="step"><strong>1 · Open</strong><span>SSH session action</span></button>
+    <button class="fsftp-step" data-step="1"><strong>2 · Browse</strong><span>Local + Remote</span></button>
+    <button class="fsftp-step" data-step="2"><strong>3 · Transfer</strong><span>Upload queued</span></button>
+    <button class="fsftp-step" data-step="3"><strong>4 · Conflict</strong><span>Safe decision</span></button>
+    <button class="fsftp-step" data-step="4"><strong>5 · Complete</strong><span>Keep Both result</span></button>
+    <button class="fsftp-step" data-step="5"><strong>6 · Error</strong><span>Recover in queue</span></button>
+  </nav>
+
+  <section class="fsftp-window" aria-label="fesTerm SFTP workflow mockup">
+    <header class="fsftp-chrome">
+      <div class="fsftp-chip" id="terminal-chip">
+        <span class="fsftp-iconbox"><svg class="fsftp-icon"><use href="#fi-terminal"/></svg><i class="fsftp-status-badge"></i></span>
+        <span><span class="fsftp-chip-title">production-db</span><span class="fsftp-chip-sub">ops@prod-03.example</span></span>
+        <span class="fsftp-chip-close">×</span>
+      </div>
+      <div class="fsftp-chip fsftp-chip-current fsftp-hidden" id="sftp-chip">
+        <span class="fsftp-iconbox"><svg class="fsftp-icon"><use href="#fi-remote"/></svg><i class="fsftp-status-badge"></i></span>
+        <span><span class="fsftp-chip-title">SFTP · production-db</span><span class="fsftp-chip-sub">Remote files</span></span>
+        <span class="fsftp-chip-close">×</span>
+      </div>
+      <button class="fsftp-new" aria-label="New Session"><svg class="fsftp-icon"><use href="#fi-plus"/></svg></button>
+      <span class="fsftp-chrome-spacer"></span>
+      <button class="fsftp-global" aria-label="Search"><svg class="fsftp-icon"><use href="#fi-search"/></svg></button>
+      <button class="fsftp-global" aria-label="Application menu"><svg class="fsftp-icon"><use href="#fi-more"/></svg></button>
+    </header>
+
+    <main class="fsftp-main">
+      <section id="open-screen" class="fsftp-terminal-view" aria-label="Open SFTP from SSH session">
+        <div>Last login: Thu Sep 03 09:41:18 on pts/2</div>
+        <div><b>ops@prod-03:~$</b> systemctl status festerm-api</div>
+        <div>● festerm-api.service — fesTerm API</div>
+        <div class="fsftp-ok">Active: active (running)</div>
+        <div><b>ops@prod-03:~$</b> <span style="display:inline-block;width:8px;height:16px;background:#e8edf2;vertical-align:-3px"></span></div>
+        <div class="fsftp-menu">
+          <div class="fsftp-menu-label">Session Inspector · production-db</div>
+          <div class="fsftp-menu-item"><svg class="fsftp-icon"><use href="#fi-remote"/></svg>Connection details</div>
+          <div class="fsftp-menu-item fsftp-menu-active"><svg class="fsftp-icon"><use href="#fi-folder"/></svg><strong>Open SFTP</strong><span class="fsftp-menu-key">↵</span></div>
+          <div class="fsftp-menu-item"><svg class="fsftp-icon"><use href="#fi-refresh"/></svg>Reconnect session</div>
+        </div>
+      </section>
+
+      <section id="manager-screen" class="fsftp-filemanager fsftp-hidden" aria-label="SFTP split-pane file manager">
+        <div class="fsftp-dual" id="pane-layout">
+          <section class="fsftp-pane" id="local-pane" aria-label="Local file pane">
+            <header class="fsftp-pane-head"><svg class="fsftp-icon"><use href="#fi-terminal"/></svg><strong>LOCAL</strong><span>· This computer</span><span class="fsftp-grow"></span><span>Writable</span></header>
+            <div class="fsftp-toolbar">
+              <button class="fsftp-tool" aria-label="Back in Local folder"><svg class="fsftp-icon"><use href="#fi-back"/></svg></button>
+              <button class="fsftp-tool" aria-label="Up from Local folder"><svg class="fsftp-icon"><use href="#fi-up"/></svg></button>
+              <button class="fsftp-tool" aria-label="Local home"><svg class="fsftp-icon"><use href="#fi-home"/></svg></button>
+              <button class="fsftp-tool" aria-label="Refresh Local folder"><svg class="fsftp-icon"><use href="#fi-refresh"/></svg></button>
+              <div class="fsftp-crumbs"><span>Users</span><b class="fsftp-slash">/</b><span>fes</span><b class="fsftp-slash">/</b><span>Downloads</span><b class="fsftp-slash">/</b><span class="fsftp-current">release</span></div>
+            </div>
+            <div class="fsftp-filterrow"><div class="fsftp-filter"><svg class="fsftp-icon" style="width:13px;height:13px"><use href="#fi-search"/></svg>Filter this folder</div><button class="fsftp-tool" aria-label="Local pane options"><svg class="fsftp-icon"><use href="#fi-more"/></svg></button></div>
+            <div class="fsftp-tablewrap">
+              <table class="fsftp-table"><thead><tr><th>Name ↑</th><th>Size</th><th>Modified</th><th>Type</th></tr></thead><tbody>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-folder"/></svg>checksums</span></td><td>—</td><td>Today 09:22</td><td>Folder</td></tr>
+                <tr id="source-row"><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-archive"/></svg>festerm-0.1.0.tar.gz</span></td><td>38.4 MB</td><td>Today 09:40</td><td>GZIP</td></tr>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-file"/></svg>festerm-0.1.0.sha256</span></td><td>96 B</td><td>Today 09:40</td><td>SHA256</td></tr>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-code"/></svg>release-notes.md</span></td><td>12 KB</td><td>Today 09:31</td><td>Markdown</td></tr>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-image"/></svg>screenshot.png</span></td><td>2.1 MB</td><td>Yesterday</td><td>PNG</td></tr>
+              </tbody></table>
+            </div>
+            <footer class="fsftp-pane-foot"><span>5 items</span><span>·</span><span id="local-selected">0 selected</span></footer>
+          </section>
+
+          <aside class="fsftp-transferrail" id="transfer-rail" aria-label="Transfer actions">
+            <button class="fsftp-transfer" id="upload-action" disabled><svg class="fsftp-icon"><use href="#fi-arrow-right"/></svg><span>Upload to Remote</span></button>
+            <button class="fsftp-transfer" disabled><svg class="fsftp-icon"><use href="#fi-arrow-left"/></svg><span>Download to Local</span></button>
+          </aside>
+
+          <section class="fsftp-pane" id="remote-pane" aria-label="Remote file pane">
+            <header class="fsftp-pane-head"><svg class="fsftp-icon fsftp-remote-tag"><use href="#fi-remote"/></svg><strong>REMOTE</strong><span>· ops@prod-03.example</span><span class="fsftp-grow"></span><i class="fsftp-dot"></i><span>Connected</span></header>
+            <div class="fsftp-toolbar">
+              <button class="fsftp-tool" aria-label="Back in Remote folder"><svg class="fsftp-icon"><use href="#fi-back"/></svg></button>
+              <button class="fsftp-tool" aria-label="Up from Remote folder"><svg class="fsftp-icon"><use href="#fi-up"/></svg></button>
+              <button class="fsftp-tool" aria-label="Remote home"><svg class="fsftp-icon"><use href="#fi-home"/></svg></button>
+              <button class="fsftp-tool" aria-label="Refresh Remote folder"><svg class="fsftp-icon"><use href="#fi-refresh"/></svg></button>
+              <div class="fsftp-crumbs"><span>srv</span><b class="fsftp-slash">/</b><span>releases</span><b class="fsftp-slash">/</b><span class="fsftp-current">2026.09</span></div>
+            </div>
+            <div>
+              <div class="fsftp-filterrow"><div class="fsftp-filter"><svg class="fsftp-icon" style="width:13px;height:13px"><use href="#fi-search"/></svg>Filter this folder</div><button class="fsftp-tool" aria-label="Remote pane options"><svg class="fsftp-icon"><use href="#fi-more"/></svg></button></div>
+              <div id="remote-error" class="fsftp-errorbar fsftp-hidden"><svg class="fsftp-icon"><use href="#fi-error"/></svg><strong>Permission denied</strong><span class="fsftp-grow">Could not upload symbols.zip</span><a>Retry</a><a>Details</a></div>
+            </div>
+            <div class="fsftp-tablewrap">
+              <table class="fsftp-table"><thead><tr><th>Name ↑</th><th>Size</th><th>Modified</th><th>Type</th></tr></thead><tbody>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-folder"/></svg>logs</span></td><td>—</td><td>Today 08:10</td><td>Folder</td></tr>
+                <tr id="existing-row"><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-archive"/></svg>festerm-0.1.0.tar.gz</span></td><td>37.9 MB</td><td>Yesterday</td><td>GZIP</td></tr>
+                <tr id="kept-row" class="fsftp-hidden"><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-archive"/></svg>festerm-0.1.0 (copy).tar.gz</span></td><td>38.4 MB</td><td>Just now</td><td>GZIP</td></tr>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-file"/></svg>manifest.json</span></td><td>1.2 KB</td><td>Yesterday</td><td>JSON</td></tr>
+                <tr><td><span class="fsftp-filecell"><svg class="fsftp-icon"><use href="#fi-code"/></svg>README.md</span></td><td>8 KB</td><td>Aug 31</td><td>Markdown</td></tr>
+              </tbody></table>
+            </div>
+            <footer class="fsftp-pane-foot"><span id="remote-count">4 items</span><span>·</span><span>0 selected</span></footer>
+          </section>
+        </div>
+
+        <section id="transfer-queue" class="fsftp-queue fsftp-hidden" aria-label="Transfer queue">
+          <div class="fsftp-queue-head"><strong>Transfers</strong><span id="queue-summary">1 active · 38.4 MB</span><span class="fsftp-grow"></span><span class="fsftp-queue-action" id="queue-top-action">Cancel</span></div>
+          <div class="fsftp-progress-track"><div class="fsftp-progress-fill" id="queue-progress"></div></div>
+          <div class="fsftp-queue-row"><span id="queue-icon"><svg class="fsftp-icon"><use href="#fi-arrow-right"/></svg></span><strong id="queue-file">festerm-0.1.0.tar.gz</strong><span id="queue-destination">→ /srv/releases/2026.09</span><span id="queue-bytes">16.1 / 38.4 MB</span><span id="queue-state">Uploading</span></div>
+        </section>
+      </section>
+
+      <div id="conflict-dialog" class="fsftp-dialogshade fsftp-hidden">
+        <section class="fsftp-dialog" role="dialog" aria-modal="true" aria-labelledby="collision-title">
+          <header class="fsftp-dialog-title" id="collision-title"><svg class="fsftp-icon" style="color:var(--fsftp-warning)"><use href="#fi-warning"/></svg>A file with this name already exists</header>
+          <div class="fsftp-dialog-body">Choose what to do with <strong style="color:var(--fsftp-text)">festerm-0.1.0.tar.gz</strong>. Nothing is overwritten until you choose Replace.
+            <div class="fsftp-compare">
+              <div><small>Source · Local</small><strong>festerm-0.1.0.tar.gz</strong><span>38.4 MB</span><span>Today at 09:40</span></div>
+              <div><small>Destination · Remote</small><strong>festerm-0.1.0.tar.gz</strong><span>37.9 MB</span><span>Yesterday at 17:12</span></div>
+            </div>
+            <label class="fsftp-check"><span class="fsftp-checkbox"></span>Apply this choice to all conflicts in this batch</label>
+          </div>
+          <footer class="fsftp-dialog-actions"><button class="fsftp-dialog-action">Replace</button><button class="fsftp-dialog-action fsftp-safe-focus">Skip</button><button class="fsftp-dialog-action fsftp-keep">Keep Both</button></footer>
+        </section>
+      </div>
+    </main>
+
+    <footer class="fsftp-statusline"><span id="status-context">SSH · ops@prod-03.example</span><span class="fsftp-grow"></span><i class="fsftp-dot"></i><span id="status-state">Connected</span></footer>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById('festerm-sftp-review');
+      const state = { step: 0, paneOrder: 'local-left', compactRows: true, accent: '#42bfd0' };
+      const byId = id => root.querySelector('#' + id);
+      const steps = [...root.querySelectorAll('.fsftp-step')];
+
+      function render() {
+        root.style.setProperty('--fsftp-accent', state.accent);
+        steps.forEach((button, index) => button.setAttribute('aria-current', index === state.step ? 'step' : 'false'));
+        const open = state.step === 0;
+        byId('open-screen').classList.toggle('fsftp-hidden', !open);
+        byId('manager-screen').classList.toggle('fsftp-hidden', open);
+        byId('terminal-chip').classList.toggle('fsftp-chip-current', open);
+        byId('sftp-chip').classList.toggle('fsftp-hidden', open);
+        byId('source-row').classList.toggle('fsftp-row-selected', state.step >= 2 && state.step <= 3);
+        byId('local-selected').textContent = state.step >= 2 && state.step <= 3 ? '1 selected · 38.4 MB' : '0 selected';
+        byId('upload-action').disabled = !(state.step >= 2 && state.step <= 3);
+        byId('upload-action').classList.toggle('fsftp-transfer-ready', state.step >= 2 && state.step <= 3);
+        byId('transfer-queue').classList.toggle('fsftp-hidden', !(state.step === 2 || state.step === 4 || state.step === 5));
+        byId('conflict-dialog').classList.toggle('fsftp-hidden', state.step !== 3);
+        byId('kept-row').classList.toggle('fsftp-hidden', state.step < 4);
+        byId('kept-row').classList.toggle('fsftp-row-new', state.step === 4);
+        byId('remote-count').textContent = state.step >= 4 ? '5 items' : '4 items';
+        byId('remote-error').classList.toggle('fsftp-hidden', state.step !== 5);
+
+        if (state.step === 2) {
+          byId('queue-summary').textContent = '1 active · 38.4 MB';
+          byId('queue-top-action').textContent = 'Cancel';
+          byId('queue-progress').style.width = '42%';
+          byId('queue-progress').style.background = 'var(--fsftp-accent)';
+          byId('queue-icon').innerHTML = '<svg class="fsftp-icon"><use href="#fi-arrow-right"/></svg>';
+          byId('queue-file').textContent = 'festerm-0.1.0.tar.gz';
+          byId('queue-destination').textContent = '→ /srv/releases/2026.09';
+          byId('queue-bytes').textContent = '16.1 / 38.4 MB';
+          byId('queue-state').textContent = 'Uploading';
+        } else if (state.step === 4) {
+          byId('queue-summary').textContent = '1 completed · Keep Both';
+          byId('queue-top-action').textContent = 'Clear';
+          byId('queue-progress').style.width = '100%';
+          byId('queue-progress').style.background = 'var(--fsftp-running)';
+          byId('queue-icon').innerHTML = '<svg class="fsftp-icon" style="color:var(--fsftp-running)"><use href="#fi-check"/></svg>';
+          byId('queue-file').textContent = 'festerm-0.1.0 (copy).tar.gz';
+          byId('queue-destination').textContent = '→ /srv/releases/2026.09';
+          byId('queue-bytes').textContent = '38.4 MB';
+          byId('queue-state').textContent = 'Complete';
+        } else if (state.step === 5) {
+          byId('queue-summary').textContent = '1 failed · Other transfers continue';
+          byId('queue-top-action').textContent = 'Clear completed';
+          byId('queue-progress').style.width = '9%';
+          byId('queue-progress').style.background = 'var(--fsftp-error)';
+          byId('queue-icon').innerHTML = '<svg class="fsftp-icon" style="color:var(--fsftp-error)"><use href="#fi-error"/></svg>';
+          byId('queue-file').textContent = 'symbols.zip';
+          byId('queue-destination').textContent = '→ /srv/releases/2026.09';
+          byId('queue-bytes').textContent = '3.2 / 34.8 MB';
+          byId('queue-state').innerHTML = '<span class="fsftp-error-text">Retry</span>';
+        }
+
+        const layout = byId('pane-layout');
+        const local = byId('local-pane');
+        const rail = byId('transfer-rail');
+        const remote = byId('remote-pane');
+        if (state.paneOrder === 'remote-left') {
+          layout.append(remote, rail, local);
+        } else {
+          layout.append(local, rail, remote);
+        }
+        root.querySelectorAll('.fsftp-table td').forEach(cell => cell.style.height = state.compactRows ? '31px' : '37px');
+        byId('status-context').textContent = open ? 'SSH · ops@prod-03.example' : 'SFTP · Local + ops@prod-03.example';
+        byId('status-state').textContent = state.step === 5 ? 'Connected · 1 transfer needs attention' : 'Connected';
+      }
+
+      steps.forEach(button => button.addEventListener('click', () => { state.step = Number(button.dataset.step); render(); }));
+      render();
+
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({ container: root.querySelector('.fsftp-window'), onChange: render });
+        tweak.addSelect(state, 'paneOrder', { label: 'Pane order', options: [{label:'Local left (default)', value:'local-left'}, {label:'Remote left', value:'remote-left'}], reference: 'sftp.pane-order' });
+        tweak.addToggle(state, 'compactRows', { label: 'Compact rows', reference: 'sftp.row-density' });
+        tweak.addColorPicker(state, 'accent', { label: 'Accent', reference: '--fsftp-accent' });
+      }
+    })();
+  </script>
+</div>

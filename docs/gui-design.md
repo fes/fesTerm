@@ -128,6 +128,13 @@ trees, or speculative architecture for them. Terminal-native multiplexers are
 the appropriate composition mechanism unless a compelling unmet need later
 justifies reopening this product decision.
 
+This prohibition applies to splitting terminal viewports. A graphical file
+transfer tool may use a local/remote split inside its own non-terminal
+application surface without introducing terminal pane trees or changing a
+session's one-viewport ownership. The proposed SFTP interaction model and
+reviewable workflow mockups are specified in
+[`sftp-ui-design.md`](sftp-ui-design.md).
+
 ### Window ownership
 
 Initial session management is single-window. One fesTerm process/window owns
