@@ -3,8 +3,12 @@ use std::{
     future::Future,
     io::Read,
     io::Write,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -17,7 +21,8 @@ use festerm_session::{
 };
 use festerm_ssh::{
     HostIdentity, HostTrustDecision, PersistenceProvider, PersistentSessionName, ReconnectPolicy,
-    RecoveryPolicy, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
+    RecoveryPolicy, SessionStrategy, SftpCommandOutcome, SftpEntryType, SftpSession,
+    SftpSessionError, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
     SshLivenessCheckError, SshPortForwardSpec, SshPrivateKey, SshSession, SshSessionOptions,
 };
 
@@ -26,6 +31,7 @@ const EVENT_TIMEOUT: Duration = Duration::from_secs(20);
 const RECONNECT_EVENT_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DOCKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
+static SFTP_INTEROP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 struct OpenSshConfiguration {
     host: String,
@@ -471,6 +477,110 @@ fn spawn_local_echo_server(deadline: Instant) -> (u16, thread::JoinHandle<()>) {
         panic!("the remote-forwarded connection never reached the local echo server");
     });
     (port, handle)
+}
+
+fn unique_sftp_artifact_root(label: &str) -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("festerm-ssh manifest must live under the workspace root");
+    workspace_root
+        .join("target/test-artifacts/festerm-ssh-sftp-interop")
+        .join(format!(
+            "{label}-{}-{}",
+            std::process::id(),
+            SFTP_INTEROP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+}
+
+fn recreate_directory(path: &Path) {
+    if path.exists() {
+        fs::remove_dir_all(path).expect("could not clear the pre-existing SFTP interop directory");
+    }
+    fs::create_dir_all(path).expect("could not create the SFTP interop directory");
+}
+
+fn remove_directory_if_present(path: &Path) {
+    if path.exists() {
+        fs::remove_dir_all(path).expect("could not remove the SFTP interop directory");
+    }
+}
+
+fn quote_command_argument(path: impl AsRef<Path>) -> String {
+    format!("\"{}\"", path.as_ref().display())
+}
+
+fn patterned_bytes(byte_count: usize) -> Vec<u8> {
+    (0..byte_count)
+        .map(|index| b'a' + (index % 26) as u8)
+        .collect()
+}
+
+async fn connect_authenticated_sftp_session(
+    configuration: &OpenSshConfiguration,
+    local_working_directory: &Path,
+    deadline: Instant,
+) -> (russh::client::Handle<RawInteropClient>, SftpSession) {
+    let expected_fingerprint = expected_host_fingerprint_from_environment();
+    let handle = connect_authenticated_raw_handle(
+        configuration,
+        expected_fingerprint.as_deref(),
+        None,
+        deadline,
+    )
+    .await;
+    let session = match tokio::time::timeout(
+        remaining_until(deadline, "connect the SFTP backend session"),
+        SftpSession::connect_with_local_directory(&handle, local_working_directory.to_path_buf()),
+    )
+    .await
+    {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => panic!("could not connect the SFTP backend session: {error}"),
+        Err(_) => panic!("connecting the SFTP backend session timed out"),
+    };
+    (handle, session)
+}
+
+async fn run_sftp_command(
+    session: &mut SftpSession,
+    command: &str,
+    deadline: Instant,
+    operation: &str,
+) -> SftpCommandOutcome {
+    match tokio::time::timeout(
+        remaining_until(deadline, operation),
+        session.execute_line(command),
+    )
+    .await
+    {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(error)) => panic!("SFTP command {command:?} failed during {operation}: {error}"),
+        Err(_) => panic!("SFTP command {command:?} timed out during {operation}"),
+    }
+}
+
+async fn expect_sftp_command_error(
+    session: &mut SftpSession,
+    command: &str,
+    deadline: Instant,
+    operation: &str,
+) -> SftpSessionError {
+    match tokio::time::timeout(
+        remaining_until(deadline, operation),
+        session.execute_line(command),
+    )
+    .await
+    {
+        Ok(Ok(outcome)) => {
+            panic!(
+                "SFTP command {command:?} unexpectedly succeeded during {operation}: {outcome:?}"
+            )
+        }
+        Ok(Err(error)) => error,
+        Err(_) => panic!("SFTP command {command:?} timed out during {operation}"),
+    }
 }
 
 #[test]
@@ -928,6 +1038,522 @@ fn controlled_openssh_sftp_subsystem_smoke() {
         );
         shutdown_raw_handle(handle).await;
     });
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_sftp_put_get_round_trip_and_tracks_working_directories() {
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let local_root = unique_sftp_artifact_root("round-trip");
+    let local_upload = local_root.join("upload.bin");
+    let local_downloads = local_root.join("downloads");
+    recreate_directory(&local_downloads);
+    let upload_bytes = patterned_bytes(200_000);
+    fs::write(&local_upload, &upload_bytes).expect("could not create local upload fixture");
+
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let (handle, mut session) =
+            connect_authenticated_sftp_session(&configuration, &local_root, deadline).await;
+
+        let remote_root_name = format!(
+            "festerm-sftp-round-trip-{}",
+            SFTP_INTEROP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        let created = run_sftp_command(
+            &mut session,
+            &format!("mkdir {remote_root_name}"),
+            deadline,
+            "create the remote SFTP test directory",
+        )
+        .await;
+        assert_eq!(
+            created,
+            SftpCommandOutcome::CreatedDirectory {
+                path: format!("/home/festerm/{remote_root_name}")
+            }
+        );
+
+        let changed_remote = run_sftp_command(
+            &mut session,
+            &format!("cd {remote_root_name}"),
+            deadline,
+            "change into the remote SFTP test directory",
+        )
+        .await;
+        assert_eq!(
+            changed_remote,
+            SftpCommandOutcome::ChangedDirectory {
+                path: format!("/home/festerm/{remote_root_name}")
+            }
+        );
+
+        let pwd = run_sftp_command(
+            &mut session,
+            "pwd",
+            deadline,
+            "read the remote working directory",
+        )
+        .await;
+        assert_eq!(
+            pwd,
+            SftpCommandOutcome::WorkingDirectory {
+                path: format!("/home/festerm/{remote_root_name}")
+            }
+        );
+
+        let changed_local = run_sftp_command(
+            &mut session,
+            &format!("lcd {}", quote_command_argument(&local_downloads)),
+            deadline,
+            "change the local working directory",
+        )
+        .await;
+        assert_eq!(
+            changed_local,
+            SftpCommandOutcome::ChangedLocalDirectory {
+                path: fs::canonicalize(&local_downloads)
+                    .expect("canonical local downloads directory")
+            }
+        );
+
+        let lpwd = run_sftp_command(
+            &mut session,
+            "lpwd",
+            deadline,
+            "read the local working directory",
+        )
+        .await;
+        assert_eq!(
+            lpwd,
+            SftpCommandOutcome::LocalWorkingDirectory {
+                path: fs::canonicalize(&local_downloads)
+                    .expect("canonical local downloads directory")
+            }
+        );
+
+        let upload = run_sftp_command(
+            &mut session,
+            &format!("put {}", quote_command_argument(&local_upload)),
+            deadline,
+            "upload the SFTP round-trip fixture",
+        )
+        .await;
+        assert_eq!(
+            upload,
+            SftpCommandOutcome::Uploaded {
+                local_path: fs::canonicalize(&local_upload).expect("canonical local upload path"),
+                remote_path: format!("/home/festerm/{remote_root_name}/upload.bin"),
+                byte_count: upload_bytes.len() as u64,
+            }
+        );
+
+        let listing = run_sftp_command(
+            &mut session,
+            "ls",
+            deadline,
+            "list the uploaded remote directory",
+        )
+        .await;
+        let SftpCommandOutcome::DirectoryListing { path, entries } = listing else {
+            panic!("ls must produce a directory listing");
+        };
+        assert_eq!(path, format!("/home/festerm/{remote_root_name}"));
+        assert!(
+            entries.iter().any(|entry| {
+                entry.name == "upload.bin"
+                    && entry.file_type == SftpEntryType::File
+                    && entry.size == Some(upload_bytes.len() as u64)
+            }),
+            "the uploaded file must appear in the remote listing"
+        );
+
+        let local_download = local_downloads.join("downloaded.bin");
+        let download = run_sftp_command(
+            &mut session,
+            &format!("get upload.bin {}", quote_command_argument(&local_download)),
+            deadline,
+            "download the uploaded file back to a second local path",
+        )
+        .await;
+        assert_eq!(
+            download,
+            SftpCommandOutcome::Downloaded {
+                remote_path: format!("/home/festerm/{remote_root_name}/upload.bin"),
+                local_path: local_download.clone(),
+                byte_count: upload_bytes.len() as u64,
+            }
+        );
+        assert_eq!(
+            fs::read(&local_download).expect("could not read downloaded file"),
+            upload_bytes,
+            "SFTP get must preserve the uploaded bytes exactly"
+        );
+
+        let removed = run_sftp_command(
+            &mut session,
+            "rm upload.bin",
+            deadline,
+            "remove the uploaded remote file",
+        )
+        .await;
+        assert_eq!(
+            removed,
+            SftpCommandOutcome::RemovedFile {
+                path: format!("/home/festerm/{remote_root_name}/upload.bin")
+            }
+        );
+
+        let changed_remote = run_sftp_command(
+            &mut session,
+            "cd ..",
+            deadline,
+            "leave the remote SFTP test directory",
+        )
+        .await;
+        assert_eq!(
+            changed_remote,
+            SftpCommandOutcome::ChangedDirectory {
+                path: "/home/festerm".to_owned()
+            }
+        );
+
+        let removed_directory = run_sftp_command(
+            &mut session,
+            &format!("rmdir {remote_root_name}"),
+            deadline,
+            "remove the remote SFTP test directory",
+        )
+        .await;
+        assert_eq!(
+            removed_directory,
+            SftpCommandOutcome::RemovedDirectory {
+                path: format!("/home/festerm/{remote_root_name}")
+            }
+        );
+
+        let closed = run_sftp_command(
+            &mut session,
+            "quit",
+            deadline,
+            "close the SFTP backend session",
+        )
+        .await;
+        assert_eq!(closed, SftpCommandOutcome::SessionClosed);
+        shutdown_raw_handle(handle).await;
+    });
+
+    remove_directory_if_present(&local_root);
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_sftp_refuses_overwrite_without_mutating_destinations() {
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let local_root = unique_sftp_artifact_root("overwrite");
+    recreate_directory(&local_root);
+    let local_original = local_root.join("original.bin");
+    let local_replacement = local_root.join("replacement.bin");
+    let existing_download = local_root.join("existing-download.bin");
+    fs::write(&local_original, patterned_bytes(32_000)).expect("could not create local source");
+    fs::write(&local_replacement, patterned_bytes(16_000))
+        .expect("could not create local replacement source");
+    fs::write(&existing_download, b"keep-local-destination")
+        .expect("could not create existing local destination");
+
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let (handle, mut session) =
+            connect_authenticated_sftp_session(&configuration, &local_root, deadline).await;
+        let remote_root_name = format!(
+            "festerm-sftp-overwrite-{}",
+            SFTP_INTEROP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        let remote_root = format!("/home/festerm/{remote_root_name}");
+
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("mkdir {remote_root_name}"),
+            deadline,
+            "create the remote overwrite test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("cd {remote_root_name}"),
+            deadline,
+            "change into the remote overwrite test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("put {}", quote_command_argument(&local_original)),
+            deadline,
+            "upload the original remote fixture",
+        )
+        .await;
+
+        let get_error = expect_sftp_command_error(
+            &mut session,
+            &format!(
+                "get original.bin {}",
+                quote_command_argument(&existing_download)
+            ),
+            deadline,
+            "attempt to overwrite an existing local file via get",
+        )
+        .await;
+        assert_eq!(
+            get_error,
+            SftpSessionError::DestinationExists {
+                path: existing_download.display().to_string()
+            }
+        );
+        assert_eq!(
+            fs::read(&existing_download).expect("could not read existing local destination"),
+            b"keep-local-destination",
+            "get must not modify an existing local destination file"
+        );
+
+        let put_error = expect_sftp_command_error(
+            &mut session,
+            &format!(
+                "put {} original.bin",
+                quote_command_argument(&local_replacement)
+            ),
+            deadline,
+            "attempt to overwrite an existing remote file via put",
+        )
+        .await;
+        assert_eq!(
+            put_error,
+            SftpSessionError::DestinationExists {
+                path: format!("{remote_root}/original.bin")
+            }
+        );
+
+        let remote_verification = local_root.join("remote-verification.bin");
+        let _ = run_sftp_command(
+            &mut session,
+            &format!(
+                "get original.bin {}",
+                quote_command_argument(&remote_verification)
+            ),
+            deadline,
+            "download the existing remote file for overwrite verification",
+        )
+        .await;
+        assert_eq!(
+            fs::read(&remote_verification).expect("could not read remote verification file"),
+            fs::read(&local_original).expect("could not read original local source"),
+            "put must not modify an existing remote destination file"
+        );
+
+        let _ = run_sftp_command(
+            &mut session,
+            "rm original.bin",
+            deadline,
+            "remove the remote overwrite fixture file",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "cd ..",
+            deadline,
+            "leave the remote overwrite test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("rmdir {remote_root_name}"),
+            deadline,
+            "remove the remote overwrite test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "quit",
+            deadline,
+            "close the overwrite SFTP session",
+        )
+        .await;
+        shutdown_raw_handle(handle).await;
+    });
+
+    remove_directory_if_present(&local_root);
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_sftp_mutating_commands_change_remote_state() {
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let local_root = unique_sftp_artifact_root("mutations");
+    recreate_directory(&local_root);
+    let local_upload = local_root.join("rename-source.txt");
+    fs::write(&local_upload, b"rename me").expect("could not create local rename fixture");
+
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let (handle, mut session) =
+            connect_authenticated_sftp_session(&configuration, &local_root, deadline).await;
+        let remote_root_name = format!(
+            "festerm-sftp-mutations-{}",
+            SFTP_INTEROP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+        let remote_root = format!("/home/festerm/{remote_root_name}");
+
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("mkdir {remote_root_name}"),
+            deadline,
+            "create the remote mutation test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("cd {remote_root_name}"),
+            deadline,
+            "change into the remote mutation test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "mkdir nested",
+            deadline,
+            "create a nested remote directory",
+        )
+        .await;
+
+        let nested_listing = run_sftp_command(
+            &mut session,
+            "ls",
+            deadline,
+            "list the remote mutation directory",
+        )
+        .await;
+        let SftpCommandOutcome::DirectoryListing { entries, .. } = nested_listing else {
+            panic!("ls must produce a directory listing");
+        };
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.name == "nested" && entry.file_type == SftpEntryType::Directory),
+            "mkdir must create a remotely visible directory"
+        );
+
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("put {}", quote_command_argument(&local_upload)),
+            deadline,
+            "upload the remote rename fixture",
+        )
+        .await;
+        let renamed = run_sftp_command(
+            &mut session,
+            "rename rename-source.txt renamed.txt",
+            deadline,
+            "rename the uploaded remote file",
+        )
+        .await;
+        assert_eq!(
+            renamed,
+            SftpCommandOutcome::Renamed {
+                source: format!("{remote_root}/rename-source.txt"),
+                destination: format!("{remote_root}/renamed.txt")
+            }
+        );
+
+        let chmod = run_sftp_command(
+            &mut session,
+            "chmod 640 renamed.txt",
+            deadline,
+            "change the uploaded remote file mode",
+        )
+        .await;
+        assert_eq!(
+            chmod,
+            SftpCommandOutcome::PermissionsChanged {
+                path: format!("{remote_root}/renamed.txt"),
+                mode: 0o640
+            }
+        );
+
+        let file_listing = run_sftp_command(
+            &mut session,
+            "ls renamed.txt",
+            deadline,
+            "inspect the renamed remote file",
+        )
+        .await;
+        let SftpCommandOutcome::DirectoryListing { entries, .. } = file_listing else {
+            panic!("ls renamed.txt must produce a single-entry listing");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "renamed.txt");
+        assert_eq!(entries[0].file_type, SftpEntryType::File);
+        assert_eq!(entries[0].permissions.map(|mode| mode & 0o777), Some(0o640));
+
+        let _ = run_sftp_command(
+            &mut session,
+            "rm renamed.txt",
+            deadline,
+            "remove the renamed remote file",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "rmdir nested",
+            deadline,
+            "remove the nested remote directory",
+        )
+        .await;
+
+        let final_listing = run_sftp_command(
+            &mut session,
+            "ls",
+            deadline,
+            "verify the remote directory is empty",
+        )
+        .await;
+        let SftpCommandOutcome::DirectoryListing { entries, .. } = final_listing else {
+            panic!("ls must produce a final directory listing");
+        };
+        assert!(
+            entries.is_empty(),
+            "rm and rmdir must leave the remote mutation directory empty"
+        );
+
+        let _ = run_sftp_command(
+            &mut session,
+            "cd ..",
+            deadline,
+            "leave the remote mutation test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("rmdir {remote_root_name}"),
+            deadline,
+            "remove the remote mutation test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "quit",
+            deadline,
+            "close the mutation SFTP session",
+        )
+        .await;
+        shutdown_raw_handle(handle).await;
+    });
+
+    remove_directory_if_present(&local_root);
 }
 
 #[test]
