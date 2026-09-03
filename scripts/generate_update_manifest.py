@@ -17,6 +17,7 @@ SUPPORTED_ARTIFACTS = {
     "linux-x86_64": {"appimage": ".AppImage"},
     "linux-aarch64": {"appimage": ".AppImage"},
     "windows-x86_64": {"nsis": ".exe"},
+    "windows-aarch64": {"nsis": ".exe"},
 }
 
 

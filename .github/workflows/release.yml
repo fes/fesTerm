@@ -163,9 +163,71 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  windows:
-    name: Package Windows
+  windows-arm-build:
+    name: Build Windows (aarch64)
     needs: validate
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    environment: release
+    env:
+      FESTERM_INSTALLATION_KIND: nsis
+      FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - name: Add native LLVM to PATH
+        shell: pwsh
+        run: |
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path (Join-Path $llvmBin 'clang.exe') -PathType Leaf)) {
+            throw "Native LLVM is unavailable at $llvmBin"
+          }
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Require ARM64 build configuration
+        shell: pwsh
+        run: |
+          $hostTriple = rustc -vV |
+            Select-String '^host: ' |
+            ForEach-Object { $_.Line.Substring(6) }
+          if ($hostTriple -ne 'aarch64-pc-windows-msvc') {
+            throw "Expected native Windows ARM64 Rust host, got $hostTriple"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:FESTERM_UPDATE_PUBLIC_KEY)) {
+            throw 'Missing protected release value: FESTERM_UPDATE_PUBLIC_KEY'
+          }
+          if ($env:FESTERM_UPDATE_PUBLIC_KEY -ne (Get-Content packaging/updater.pub -Raw).Trim()) {
+            throw 'Protected updater public key does not match packaging/updater.pub'
+          }
+      - name: Build and stage verified ARM64 ConPTY runtime
+        shell: pwsh
+        run: ./scripts/stage-conpty.ps1 -Configuration Release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-aarch64-package-input
+          path: |
+            target/release/festerm.exe
+            target/release/festerm-sessiond.exe
+            target/release/runtime/conpty
+          if-no-files-found: error
+          retention-days: 1
+
+  windows:
+    name: Sign and package Windows (${{ matrix.arch }})
+    needs: [validate, windows-arm-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+            pe_machine: '0x8664'
+            conpty_runtime: win-x64
+            conpty_host: x64
+          - arch: aarch64
+            target: aarch64-pc-windows-msvc
+            pe_machine: '0xAA64'
+            conpty_runtime: win-arm64
+            conpty_host: arm64
     runs-on: windows-2025
     timeout-minutes: 90
     environment: release
@@ -177,6 +239,7 @@ jobs:
       CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
       FESTERM_INSTALLATION_KIND: nsis
       FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+      PACKAGE_ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -211,13 +274,34 @@ jobs:
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       - name: Install pinned cargo-packager
         run: cargo install cargo-packager --version $env:CARGO_PACKAGER_VERSION --locked
-      - name: Build and stage verified ConPTY runtime
+      - name: Build and stage verified x86_64 ConPTY runtime
+        if: matrix.arch == 'x86_64'
+        shell: pwsh
+        run: ./scripts/stage-conpty.ps1 -Configuration Release
+      - name: Download native ARM64 package input
+        if: matrix.arch == 'aarch64'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-aarch64-package-input
+          path: target/release
+      - name: Verify package input architecture and ConPTY signatures
         shell: pwsh
         run: |
-          ./scripts/stage-conpty.ps1 -Configuration Release
+          $expectedMachine = [Convert]::ToUInt16('${{ matrix.pe_machine }}'.Substring(2), 16)
+          foreach ($binary in @(
+            'target/release/festerm.exe',
+            'target/release/festerm-sessiond.exe'
+          )) {
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path $binary))
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne $expectedMachine) {
+              throw "Unexpected PE architecture for ${binary}: 0x$($machine.ToString('X4'))"
+            }
+          }
           foreach ($sidecar in @(
-            'target/release/runtime/conpty/win-x64/conpty.dll',
-            'target/release/runtime/conpty/win-x64/x64/OpenConsole.exe'
+            'target/release/runtime/conpty/${{ matrix.conpty_runtime }}/conpty.dll',
+            'target/release/runtime/conpty/${{ matrix.conpty_runtime }}/${{ matrix.conpty_host }}/OpenConsole.exe'
           )) {
             if ((Get-AuthenticodeSignature $sidecar).Status -ne 'Valid') {
               throw "Pinned ConPTY sidecar is not Authenticode-valid: $sidecar"
@@ -243,47 +327,56 @@ jobs:
       - name: Build NSIS installer
         shell: pwsh
         run: |
-          cargo packager --config packaging/windows.toml --formats nsis
+          cargo packager --config packaging/windows.toml --formats nsis --target '${{ matrix.target }}'
           $installers = @(Get-ChildItem target/release -Filter '*-setup.exe')
           if ($installers.Count -ne 1) {
             throw "Expected one NSIS installer, found $($installers.Count)"
           }
           New-Item -ItemType Directory -Force dist | Out-Null
-          Move-Item $installers[0].FullName "dist/fesTerm-$env:VERSION-windows-x86_64-setup.exe"
+          Move-Item $installers[0].FullName "dist/fesTerm-$env:VERSION-windows-$env:PACKAGE_ARCH-setup.exe"
       - name: Sign NSIS installer
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
-          files: ${{ github.workspace }}\dist\fesTerm-${{ needs.validate.outputs.version }}-windows-x86_64-setup.exe
+          files: ${{ github.workspace }}\dist\fesTerm-${{ needs.validate.outputs.version }}-windows-${{ matrix.arch }}-setup.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
       - name: Verify and sign updater artifact
         shell: pwsh
         run: |
-          $installer = "dist/fesTerm-$env:VERSION-windows-x86_64-setup.exe"
+          $installer = "dist/fesTerm-$env:VERSION-windows-$env:PACKAGE_ARCH-setup.exe"
           if ((Get-AuthenticodeSignature $installer).Status -ne 'Valid') {
             throw 'NSIS installer does not have a valid Authenticode signature'
           }
           cargo packager signer sign $installer
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-windows
+          name: release-windows-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 
   linux:
-    name: Package Linux
+    name: Package Linux (${{ matrix.arch }})
     needs: validate
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     environment: release
     env:
       CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
       CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
       FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+      PACKAGE_ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -311,9 +404,9 @@ jobs:
           appimage=$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)
           test -n "$appimage"
           mkdir dist
-          mv "$appimage" "dist/fesTerm-${VERSION}-linux-x86_64.AppImage"
-          chmod +x "dist/fesTerm-${VERSION}-linux-x86_64.AppImage"
-          cargo packager signer sign "dist/fesTerm-${VERSION}-linux-x86_64.AppImage"
+          mv "$appimage" "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.AppImage"
+          chmod +x "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.AppImage"
+          cargo packager signer sign "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.AppImage"
       - name: Build package-managed Debian artifact
         env:
           FESTERM_INSTALLATION_KIND: managed
@@ -323,11 +416,11 @@ jobs:
           cargo packager --config packaging/linux.toml --formats deb
           deb=$(find target/release -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$deb"
-          mv "$deb" "dist/fesTerm-${VERSION}-linux-x86_64.deb"
-          dpkg-deb --info "dist/fesTerm-${VERSION}-linux-x86_64.deb"
+          mv "$deb" "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.deb"
+          dpkg-deb --info "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.deb"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-linux
+          name: release-linux-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 
@@ -360,9 +453,14 @@ jobs:
             "fesTerm-${VERSION}-macos-aarch64.app.tar.gz.sig"
             "fesTerm-${VERSION}-windows-x86_64-setup.exe"
             "fesTerm-${VERSION}-windows-x86_64-setup.exe.sig"
+            "fesTerm-${VERSION}-windows-aarch64-setup.exe"
+            "fesTerm-${VERSION}-windows-aarch64-setup.exe.sig"
             "fesTerm-${VERSION}-linux-x86_64.AppImage"
             "fesTerm-${VERSION}-linux-x86_64.AppImage.sig"
             "fesTerm-${VERSION}-linux-x86_64.deb"
+            "fesTerm-${VERSION}-linux-aarch64.AppImage"
+            "fesTerm-${VERSION}-linux-aarch64.AppImage.sig"
+            "fesTerm-${VERSION}-linux-aarch64.deb"
           )
           for artifact in "${expected[@]}"; do
             test -s "dist/$artifact"
@@ -381,7 +479,9 @@ jobs:
             --notes-file release-notes.md \
             --artifact "macos-aarch64=dist/fesTerm-${VERSION}-macos-aarch64.app.tar.gz=$base/fesTerm-${VERSION}-macos-aarch64.app.tar.gz=app" \
             --artifact "windows-x86_64=dist/fesTerm-${VERSION}-windows-x86_64-setup.exe=$base/fesTerm-${VERSION}-windows-x86_64-setup.exe=nsis" \
+            --artifact "windows-aarch64=dist/fesTerm-${VERSION}-windows-aarch64-setup.exe=$base/fesTerm-${VERSION}-windows-aarch64-setup.exe=nsis" \
             --artifact "linux-x86_64=dist/fesTerm-${VERSION}-linux-x86_64.AppImage=$base/fesTerm-${VERSION}-linux-x86_64.AppImage=appimage" \
+            --artifact "linux-aarch64=dist/fesTerm-${VERSION}-linux-aarch64.AppImage=$base/fesTerm-${VERSION}-linux-aarch64.AppImage=appimage" \
             --output festerm-update.json
       - name: Publish immutable artifacts, then update metadata
         run: |

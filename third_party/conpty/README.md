@@ -53,8 +53,9 @@ pwsh -NoProfile -File scripts\stage-conpty.ps1 -Configuration Release
 
 The script reads this manifest, caches the exact package under the current
 user's local application-data directory (never in the repository), verifies
-the archive and extracted x64 files, builds the workspace, and stages the
-documented layout below both `target\debug` and `target\debug\deps`.
+the archive and extracted files for the native x64 or ARM64 architecture,
+builds the workspace, and stages the documented layout below both
+`target\debug` and `target\debug\deps`.
 `-RunSmoke` additionally runs the pinned content-continuity ConPTY retention
 smoke. If Windows Application Control blocks the staged native runtime, record
 the policy failure; do not bypass the policy or substitute an unverified DLL.
