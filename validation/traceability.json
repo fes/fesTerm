@@ -833,10 +833,14 @@
       ],
       "automated_tests": [
         "sort_and_filter_keep_folders_first",
+        "breadcrumb_segments_expose_clickable_ancestors",
+        "arrow_selection_extends_contiguous_range",
         "pane_order_preference_swaps_visual_sides_only",
         "transfer_action_requires_selection_connection_and_writable_destination",
         "collision_resolution_wires_apply_to_all_scope",
-        "keyboard_shortcut_mapping_matches_expected_commands"
+        "keyboard_shortcut_mapping_matches_expected_commands",
+        "recursive_download_rejects_malicious_remote_entry_names",
+        "resolving_remaining_conflicts_after_cancelling_a_paused_item_does_not_panic"
       ],
       "manual_scenarios": [],
       "status": "partial",
@@ -1244,8 +1248,10 @@
         "markdown_viewer_palette_items_follow_the_active_viewer",
         "workspace_capture_omits_runtime_markdown_viewer_tabs",
         "find_navigation_wraps_in_both_directions",
+        "opening_find_requests_query_focus",
         "same_source_reload_preserves_current_match_when_possible",
         "mode_switch_anchor_round_trips_within_heading_section",
+        "source_mode_uses_precomputed_heading_lookup_per_line",
         "resource_approval_is_per_reference_and_clears",
         "markdown_source_errors_build_content_free_error_states",
         "markdown_load_errors_build_content_free_error_states",

@@ -2,6 +2,8 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
 };
 
 use eframe::egui::{
@@ -200,6 +202,7 @@ pub struct MarkdownFindState {
     query: String,
     matches: Vec<TextMatch>,
     current_index: Option<usize>,
+    focus_requested: bool,
 }
 
 impl MarkdownFindState {
@@ -209,6 +212,7 @@ impl MarkdownFindState {
 
     fn open(&mut self) {
         self.open = true;
+        self.focus_requested = true;
     }
 
     fn query(&self) -> &str {
@@ -226,6 +230,11 @@ impl MarkdownFindState {
         self.matches.clear();
         self.current_index = None;
         self.open = false;
+        self.focus_requested = false;
+    }
+
+    fn take_focus_request(&mut self) -> bool {
+        std::mem::take(&mut self.focus_requested)
     }
 
     fn matches(&self) -> &[TextMatch] {
@@ -297,6 +306,10 @@ struct LoadedImage {
     size: [usize; 2],
 }
 
+struct PendingImageLoad {
+    receiver: Receiver<Result<egui::ColorImage, String>>,
+}
+
 pub struct MarkdownViewerTab {
     source: MarkdownSource,
     title: String,
@@ -310,8 +323,11 @@ pub struct MarkdownViewerTab {
     find: MarkdownFindState,
     resource_approvals: ResourceApprovalState,
     loaded_images: BTreeMap<usize, LoadedImage>,
+    pending_image_loads: BTreeMap<usize, PendingImageLoad>,
     image_errors: BTreeMap<usize, String>,
     pending_scroll: Option<PendingScroll>,
+    line_heading_indices: Vec<Option<usize>>,
+    outline_keyboard_focus: bool,
 }
 
 impl MarkdownViewerTab {
@@ -345,8 +361,11 @@ impl MarkdownViewerTab {
             find: MarkdownFindState::default(),
             resource_approvals: ResourceApprovalState::default(),
             loaded_images: BTreeMap::new(),
+            pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
             pending_scroll: None,
+            line_heading_indices: Vec::new(),
+            outline_keyboard_focus: false,
         };
         tab.reload();
         tab
@@ -375,6 +394,7 @@ impl MarkdownViewerTab {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
+        self.poll_background_work(ui.ctx());
         let mut command = self.consume_shortcuts(ui.ctx(), tab_id);
         egui::Frame::new()
             .fill(theme::SURFACE_WINDOW)
@@ -387,16 +407,29 @@ impl MarkdownViewerTab {
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(8.0);
-                    if let Some(document) = self.document.clone() {
+                    if let Some(document) = self.document.as_ref() {
                         if document.source_text().is_empty() {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(24.0);
                                 ui.heading("This Markdown file is empty");
                             });
                         } else {
-                            self.show_document(ui, &document);
+                            let mut render_state = MarkdownRenderState {
+                                mode: self.mode,
+                                outline_open: self.outline_open,
+                                outline_selected: &mut self.outline_selected,
+                                find: &self.find,
+                                resource_approvals: &self.resource_approvals,
+                                loaded_images: &self.loaded_images,
+                                pending_image_loads: &self.pending_image_loads,
+                                image_errors: &self.image_errors,
+                                pending_scroll: &mut self.pending_scroll,
+                                line_heading_indices: &self.line_heading_indices,
+                                outline_keyboard_focus: &mut self.outline_keyboard_focus,
+                            };
+                            render_state.show_document(ui, document);
                         }
-                    } else if let Some(error) = self.error.clone() {
+                    } else if let Some(error) = self.error.as_ref().cloned() {
                         self.show_error(ui, &error, tab_id, &mut command);
                     } else {
                         ui.vertical_centered(|ui| {
@@ -428,12 +461,15 @@ impl MarkdownViewerTab {
                     .heading_index
                     .or_else(|| document.headings().first().map(|_| 0));
                 self.pending_scroll = Some(pending_scroll_for_anchor(&document, anchor));
+                self.line_heading_indices = build_line_heading_index_lookup(&document);
                 self.document = Some(document);
                 self.error = None;
                 self.stale_snapshot = false;
                 self.resource_approvals.clear();
                 self.loaded_images.clear();
+                self.pending_image_loads.clear();
                 self.image_errors.clear();
+                self.outline_keyboard_focus = false;
                 if let Some(document) = &self.document {
                     self.find.restore_for_reload(document);
                 }
@@ -484,18 +520,17 @@ impl MarkdownViewerTab {
         };
         if let (Some(document), Some(found)) = (&self.document, next) {
             self.pending_scroll = Some(PendingScroll::Byte(found.span().start().byte_offset()));
-            self.outline_selected = document
-                .nearest_heading_at_byte(found.span().start().byte_offset())
-                .and_then(|heading| {
-                    document
-                        .headings()
-                        .iter()
-                        .position(|candidate| candidate == heading)
-                });
+            self.outline_selected =
+                document.nearest_heading_index_at_byte(found.span().start().byte_offset());
         }
     }
 
     pub fn load_local_image(&mut self, reference_index: usize, context: &egui::Context) {
+        if self.loaded_images.contains_key(&reference_index)
+            || self.pending_image_loads.contains_key(&reference_index)
+        {
+            return;
+        }
         let Some(document) = &self.document else {
             return;
         };
@@ -519,28 +554,83 @@ impl MarkdownViewerTab {
             );
             return;
         }
-        match read_local_image(local.path(), reference.target()) {
-            Ok(image) => {
-                let texture = context.load_texture(
-                    format!("markdown-image-{}-{}", self.title, reference_index),
-                    image,
-                    egui::TextureOptions::LINEAR,
-                );
-                self.resource_approvals.approve(reference_index);
-                self.loaded_images.insert(
-                    reference_index,
-                    LoadedImage {
-                        size: texture.size(),
-                        texture,
-                    },
-                );
-                self.image_errors.remove(&reference_index);
-            }
-            Err(message) => {
-                self.resource_approvals.approve(reference_index);
-                self.image_errors.insert(reference_index, message);
+        let markdown_path = local.path().clone();
+        let target = reference.target().to_owned();
+        let repaint = context.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        if thread::Builder::new()
+            .name(format!("festerm-markdown-image-{reference_index}"))
+            .spawn(move || {
+                let _ = sender.send(read_local_image(&markdown_path, &target));
+                repaint.request_repaint();
+            })
+            .is_ok()
+        {
+            self.resource_approvals.approve(reference_index);
+            self.image_errors.remove(&reference_index);
+            self.pending_image_loads
+                .insert(reference_index, PendingImageLoad { receiver });
+        } else {
+            self.resource_approvals.approve(reference_index);
+            self.image_errors.insert(
+                reference_index,
+                "A background image loader could not be started.".to_owned(),
+            );
+        }
+    }
+
+    fn poll_background_work(&mut self, context: &egui::Context) {
+        let mut finished = Vec::new();
+        for (&reference_index, pending) in &self.pending_image_loads {
+            match pending.receiver.try_recv() {
+                Ok(result) => {
+                    match result {
+                        Ok(image) => {
+                            let texture = context.load_texture(
+                                format!("markdown-image-{}-{}", self.title, reference_index),
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            self.loaded_images.insert(
+                                reference_index,
+                                LoadedImage {
+                                    size: texture.size(),
+                                    texture,
+                                },
+                            );
+                            self.image_errors.remove(&reference_index);
+                        }
+                        Err(message) => {
+                            self.image_errors.insert(reference_index, message);
+                        }
+                    }
+                    finished.push(reference_index);
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    self.image_errors.insert(
+                        reference_index,
+                        "The background image loader stopped unexpectedly.".to_owned(),
+                    );
+                    finished.push(reference_index);
+                }
             }
         }
+        for reference_index in finished {
+            self.pending_image_loads.remove(&reference_index);
+        }
+    }
+
+    fn move_outline_selection(&mut self, delta: isize) {
+        let Some(document) = self.document.as_ref() else {
+            return;
+        };
+        if document.headings().is_empty() {
+            return;
+        }
+        let current = self.outline_selected.unwrap_or(0) as isize;
+        let next = (current + delta).clamp(0, document.headings().len() as isize - 1) as usize;
+        self.outline_selected = Some(next);
     }
 
     fn consume_shortcuts(&mut self, context: &egui::Context, tab_id: TabId) -> Option<AppCommand> {
@@ -565,6 +655,27 @@ impl MarkdownViewerTab {
         }
         if context.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
             return Some(AppCommand::OpenMarkdownFind);
+        }
+        if self.outline_keyboard_focus {
+            if context
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
+            {
+                self.move_outline_selection(1);
+                return None;
+            }
+            if context
+                .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
+            {
+                self.move_outline_selection(-1);
+                return None;
+            }
+            if context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                if let Some(index) = self.outline_selected {
+                    self.pending_scroll = Some(PendingScroll::Heading(index));
+                }
+                return None;
+            }
         }
         if self.find.is_open() && context.input(|input| input.key_pressed(egui::Key::Enter)) {
             return Some(AppCommand::NavigateMarkdownFind {
@@ -646,11 +757,16 @@ impl MarkdownViewerTab {
                 let mut query = self.find.query().to_owned();
                 let response = ui.add_sized(
                     vec2(220.0, 24.0),
-                    egui::TextEdit::singleline(&mut query).hint_text("Find"),
+                    egui::TextEdit::singleline(&mut query)
+                        .id(egui::Id::new("markdown-find-query"))
+                        .hint_text("Find"),
                 );
                 response.widget_info(|| {
                     WidgetInfo::labeled(WidgetType::TextEdit, true, "Find Markdown")
                 });
+                if self.find.take_focus_request() {
+                    response.request_focus();
+                }
                 if response.changed() {
                     if let Some(document) = &self.document {
                         self.find.set_query(document, query);
@@ -671,69 +787,6 @@ impl MarkdownViewerTab {
             });
         }
         command
-    }
-
-    fn show_document(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
-        ui.horizontal(|ui| {
-            if self.outline_open {
-                egui::Frame::new()
-                    .fill(theme::SURFACE_TAB_INACTIVE)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(OUTLINE_WIDTH);
-                        icon_label(ui, Icon::Outline, "Outline");
-                        ui.add_space(6.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("markdown-outline")
-                            .show(ui, |ui| {
-                                for (index, heading) in document.headings().iter().enumerate() {
-                                    let selected = self.outline_selected == Some(index);
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(
-                                            (heading.level().saturating_sub(1) as f32) * 12.0,
-                                        );
-                                        let response =
-                                            ui.selectable_label(selected, heading.text());
-                                        response.widget_info(|| {
-                                            WidgetInfo::labeled(
-                                                WidgetType::Button,
-                                                true,
-                                                format!(
-                                                    "Heading level {}: {}",
-                                                    heading.level(),
-                                                    heading.text()
-                                                ),
-                                            )
-                                        });
-                                        if response.clicked() {
-                                            self.outline_selected = Some(index);
-                                            self.pending_scroll =
-                                                Some(PendingScroll::Heading(index));
-                                        }
-                                    });
-                                }
-                            });
-                    });
-                ui.add_space(12.0);
-            }
-            egui::ScrollArea::vertical()
-                .id_salt("markdown-document")
-                .show(ui, |ui| {
-                    ui.set_max_width(READING_WIDTH.min(ui.available_width()));
-                    match self.mode {
-                        MarkdownViewerMode::Preview => {
-                            for block in document.blocks() {
-                                self.render_block(ui, block, document);
-                                ui.add_space(10.0);
-                            }
-                        }
-                        MarkdownViewerMode::Source => {
-                            self.render_source(ui, document);
-                        }
-                    }
-                });
-        });
     }
 
     fn show_error(
@@ -795,18 +848,114 @@ impl MarkdownViewerTab {
         });
     }
 
+    fn current_anchor(&self) -> ScrollAnchor {
+        if let (Some(document), Some(current)) = (&self.document, self.find.current_match()) {
+            return scroll_anchor_for_offset(document, current.span().start().byte_offset());
+        }
+        if let (Some(document), Some(index)) = (&self.document, self.outline_selected) {
+            if let Some(heading) = document.headings().get(index) {
+                return scroll_anchor_for_offset(document, heading.section_start_byte());
+            }
+        }
+        self.document
+            .as_ref()
+            .map(|document| scroll_anchor_for_offset(document, 0))
+            .unwrap_or_else(ScrollAnchor::top)
+    }
+}
+
+struct MarkdownRenderState<'a> {
+    mode: MarkdownViewerMode,
+    outline_open: bool,
+    outline_selected: &'a mut Option<usize>,
+    find: &'a MarkdownFindState,
+    resource_approvals: &'a ResourceApprovalState,
+    loaded_images: &'a BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &'a BTreeMap<usize, PendingImageLoad>,
+    image_errors: &'a BTreeMap<usize, String>,
+    pending_scroll: &'a mut Option<PendingScroll>,
+    line_heading_indices: &'a [Option<usize>],
+    outline_keyboard_focus: &'a mut bool,
+}
+
+impl MarkdownRenderState<'_> {
+    fn show_document(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
+        ui.horizontal(|ui| {
+            if self.outline_open {
+                egui::Frame::new()
+                    .fill(theme::SURFACE_TAB_INACTIVE)
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(OUTLINE_WIDTH);
+                        icon_label(ui, Icon::Outline, "Outline");
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("markdown-outline")
+                            .show(ui, |ui| {
+                                for (index, heading) in document.headings().iter().enumerate() {
+                                    let selected = *self.outline_selected == Some(index);
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(
+                                            (heading.level().saturating_sub(1) as f32) * 12.0,
+                                        );
+                                        let response =
+                                            ui.selectable_label(selected, heading.text());
+                                        response.widget_info(|| {
+                                            WidgetInfo::labeled(
+                                                WidgetType::Button,
+                                                true,
+                                                format!(
+                                                    "Heading level {}: {}",
+                                                    heading.level(),
+                                                    heading.text()
+                                                ),
+                                            )
+                                        });
+                                        if response.clicked() {
+                                            *self.outline_selected = Some(index);
+                                            *self.pending_scroll =
+                                                Some(PendingScroll::Heading(index));
+                                            *self.outline_keyboard_focus = true;
+                                        }
+                                    });
+                                }
+                            });
+                    });
+                ui.add_space(12.0);
+            }
+            egui::ScrollArea::vertical()
+                .id_salt("markdown-document")
+                .show(ui, |ui| {
+                    ui.set_max_width(READING_WIDTH.min(ui.available_width()));
+                    match self.mode {
+                        MarkdownViewerMode::Preview => {
+                            for block in document.blocks() {
+                                self.render_block(ui, block, document);
+                                ui.add_space(10.0);
+                            }
+                        }
+                        MarkdownViewerMode::Source => {
+                            self.render_source(ui, document);
+                        }
+                    }
+                });
+        });
+    }
+
     fn render_block(&mut self, ui: &mut egui::Ui, block: &Block, document: &MarkdownDocument) {
         match block {
             Block::Paragraph(block) => render_text_block(
                 ui,
                 block,
                 document,
-                &self.find,
-                &self.resource_approvals,
-                &self.loaded_images,
-                &self.image_errors,
-                &mut self.pending_scroll,
-                &mut self.outline_selected,
+                self.find,
+                self.resource_approvals,
+                self.loaded_images,
+                self.pending_image_loads,
+                self.image_errors,
+                self.pending_scroll,
+                self.outline_selected,
             ),
             Block::Heading(block) => self.render_heading_block(ui, block, document),
             Block::BlockQuote(block) => {
@@ -844,11 +993,11 @@ impl MarkdownViewerTab {
             _ => 16.0,
         };
         let heading_index = block.heading_index();
-        let selected = self.outline_selected == Some(heading_index);
+        let selected = *self.outline_selected == Some(heading_index);
         let mut job = inline_layout_job(
             block.inlines(),
             document,
-            &self.find,
+            self.find,
             FontId::proportional(size),
             false,
         );
@@ -865,24 +1014,19 @@ impl MarkdownViewerTab {
                 format!("Heading level {}: {}", block.level(), block.plain_text()),
             )
         });
-        if matches!(self.pending_scroll, Some(PendingScroll::Heading(index)) if index == heading_index)
+        if matches!(*self.pending_scroll, Some(PendingScroll::Heading(index)) if index == heading_index)
         {
             response.scroll_to_me(Some(Align::Center));
-            self.pending_scroll = None;
+            *self.pending_scroll = None;
         }
         if response.clicked() {
-            self.outline_selected = Some(heading_index);
+            *self.outline_selected = Some(heading_index);
+            *self.outline_keyboard_focus = false;
         }
         if let Some(current) = self.find.current_match() {
             if overlaps(block.span(), current.span()) {
-                self.outline_selected = document
-                    .nearest_heading_at_byte(current.span().start().byte_offset())
-                    .and_then(|heading| {
-                        document
-                            .headings()
-                            .iter()
-                            .position(|candidate| candidate == heading)
-                    });
+                *self.outline_selected =
+                    document.nearest_heading_index_at_byte(current.span().start().byte_offset());
             }
         }
     }
@@ -891,19 +1035,13 @@ impl MarkdownViewerTab {
         for (index, item) in block.items().iter().enumerate() {
             ui.horizontal_top(|ui| {
                 match item.task_state() {
-                    Some(TaskState::Checked) => {
-                        ui.label("☑");
-                    }
-                    Some(TaskState::Unchecked) => {
-                        ui.label("☐");
-                    }
+                    Some(TaskState::Checked) => ui.label("☑"),
+                    Some(TaskState::Unchecked) => ui.label("☐"),
                     None => match block.kind() {
-                        ListKind::Bullet => {
-                            ui.label("•");
-                        }
+                        ListKind::Bullet => ui.label("•"),
                         ListKind::Ordered { first_item_number } => {
                             let number = first_item_number + index as u64;
-                            ui.label(format!("{number}."));
+                            ui.label(format!("{number}."))
                         }
                     },
                 };
@@ -936,7 +1074,7 @@ impl MarkdownViewerTab {
                                     let mut job = inline_layout_job(
                                         cell.inlines(),
                                         document,
-                                        &self.find,
+                                        self.find,
                                         FontId::proportional(14.0),
                                         row.is_header(),
                                     );
@@ -977,17 +1115,27 @@ impl MarkdownViewerTab {
             .inner_margin(egui::Margin::same(8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(block.language().unwrap_or("text")).small().monospace().color(theme::TEXT_SECONDARY));
+                    ui.label(
+                        RichText::new(block.language().unwrap_or("text"))
+                            .small()
+                            .monospace()
+                            .color(theme::TEXT_SECONDARY),
+                    );
                     if ui.small_button("Copy").clicked() {
                         ui.ctx().copy_text(block.code_text().to_owned());
                     }
                 });
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     for line in block.highlighted_lines() {
-                        let response = ui.add(egui::Label::new(highlighted_line_job(line)).selectable(true).wrap());
-                        if matches!(self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target)) {
+                        let response = ui.add(
+                            egui::Label::new(highlighted_line_job(line))
+                                .selectable(true)
+                                .wrap(),
+                        );
+                        if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
+                        {
                             response.scroll_to_me(Some(Align::Center));
-                            self.pending_scroll = None;
+                            *self.pending_scroll = None;
                         }
                     }
                 });
@@ -1016,39 +1164,30 @@ impl MarkdownViewerTab {
             .inner_margin(egui::Margin::same(8))
             .show(ui, |ui| {
                 let mut line_start = 0usize;
-                for line in document.source_text().split_inclusive('\n') {
+                for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let span = document
                         .source_span(line_start..line_start + line.len())
                         .unwrap_or_else(|| document.source_span(0..0).expect("empty span"));
-                    let response = ui.add(egui::Label::new(source_line_job(line, span, &self.find)).selectable(true).wrap());
-                    if matches!(self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(span, target)) {
+                    let response = ui.add(
+                        egui::Label::new(source_line_job(line, span, self.find))
+                            .selectable(true)
+                            .wrap(),
+                    );
+                    if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(span, target))
+                    {
                         response.scroll_to_me(Some(Align::Center));
-                        self.pending_scroll = None;
+                        *self.pending_scroll = None;
                     }
-                    if let Some(index) = heading_index_for_line(document, span.start().byte_offset()) {
-                        if matches!(self.pending_scroll, Some(PendingScroll::Heading(target)) if target == index) {
+                    if let Some(index) = self.line_heading_indices.get(line_index).copied().flatten() {
+                        if matches!(*self.pending_scroll, Some(PendingScroll::Heading(target)) if target == index)
+                        {
                             response.scroll_to_me(Some(Align::Center));
-                            self.pending_scroll = None;
+                            *self.pending_scroll = None;
                         }
                     }
                     line_start += line.len();
                 }
             });
-    }
-
-    fn current_anchor(&self) -> ScrollAnchor {
-        if let (Some(document), Some(current)) = (&self.document, self.find.current_match()) {
-            return scroll_anchor_for_offset(document, current.span().start().byte_offset());
-        }
-        if let (Some(document), Some(index)) = (&self.document, self.outline_selected) {
-            if let Some(heading) = document.headings().get(index) {
-                return scroll_anchor_for_offset(document, heading.section_start_byte());
-            }
-        }
-        self.document
-            .as_ref()
-            .map(|document| scroll_anchor_for_offset(document, 0))
-            .unwrap_or_else(ScrollAnchor::top)
     }
 }
 
@@ -1057,14 +1196,7 @@ fn pending_scroll_for_anchor(document: &MarkdownDocument, anchor: ScrollAnchor) 
 }
 
 pub fn scroll_anchor_for_offset(document: &MarkdownDocument, byte_offset: usize) -> ScrollAnchor {
-    let heading_index = document
-        .nearest_heading_at_byte(byte_offset)
-        .and_then(|heading| {
-            document
-                .headings()
-                .iter()
-                .position(|candidate| candidate == heading)
-        });
+    let heading_index = document.nearest_heading_index_at_byte(byte_offset);
     let (section_start, section_end) = heading_index
         .and_then(|index| document.headings().get(index))
         .map(|heading| (heading.section_start_byte(), heading.section_end_byte()))
@@ -1180,6 +1312,7 @@ fn render_text_block(
     find: &MarkdownFindState,
     approvals: &ResourceApprovalState,
     loaded_images: &BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &BTreeMap<usize, PendingImageLoad>,
     image_errors: &BTreeMap<usize, String>,
     pending_scroll: &mut Option<PendingScroll>,
     outline_selected: &mut Option<usize>,
@@ -1193,6 +1326,7 @@ fn render_text_block(
                 find,
                 approvals,
                 loaded_images,
+                pending_image_loads,
                 image_errors,
                 FontId::proportional(15.0),
                 false,
@@ -1217,6 +1351,7 @@ fn render_inline_flow(
     find: &MarkdownFindState,
     approvals: &ResourceApprovalState,
     loaded_images: &BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &BTreeMap<usize, PendingImageLoad>,
     image_errors: &BTreeMap<usize, String>,
     font: FontId,
     strong: bool,
@@ -1262,6 +1397,7 @@ fn render_inline_flow(
                 find,
                 approvals,
                 loaded_images,
+                pending_image_loads,
                 image_errors,
                 FontId::proportional(font.size),
                 strong,
@@ -1275,6 +1411,7 @@ fn render_inline_flow(
                 find,
                 approvals,
                 loaded_images,
+                pending_image_loads,
                 image_errors,
                 font.clone(),
                 true,
@@ -1289,6 +1426,7 @@ fn render_inline_flow(
                     find,
                     approvals,
                     loaded_images,
+                    pending_image_loads,
                     image_errors,
                     font.clone(),
                     strong,
@@ -1315,6 +1453,7 @@ fn render_inline_flow(
                     document,
                     approvals,
                     loaded_images,
+                    pending_image_loads,
                     image_errors,
                     pending_scroll,
                 );
@@ -1349,6 +1488,7 @@ fn render_struck_inline_flow(
     find: &MarkdownFindState,
     approvals: &ResourceApprovalState,
     loaded_images: &BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &BTreeMap<usize, PendingImageLoad>,
     image_errors: &BTreeMap<usize, String>,
     font: FontId,
     strong: bool,
@@ -1384,6 +1524,7 @@ fn render_struck_inline_flow(
                 find,
                 approvals,
                 loaded_images,
+                pending_image_loads,
                 image_errors,
                 font.clone(),
                 strong,
@@ -1471,12 +1612,14 @@ fn render_link(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_image(
     ui: &mut egui::Ui,
     image: &ImageInline,
     document: &MarkdownDocument,
     approvals: &ResourceApprovalState,
     loaded_images: &BTreeMap<usize, LoadedImage>,
+    pending_image_loads: &BTreeMap<usize, PendingImageLoad>,
     image_errors: &BTreeMap<usize, String>,
     pending_scroll: &mut Option<PendingScroll>,
 ) {
@@ -1500,6 +1643,12 @@ fn render_image(
                         .max_width(320.0)
                         .max_height(240.0)
                         .fit_to_exact_size(size.min(vec2(320.0, 240.0))),
+                );
+            } else if pending_image_loads.contains_key(&image.reference_index()) {
+                ui.label(
+                    RichText::new("Loading local image…")
+                        .small()
+                        .color(theme::TEXT_SECONDARY),
                 );
             } else {
                 ui.label(RichText::new(resource_placeholder_action(reference.class())).small());
@@ -1869,15 +2018,31 @@ fn overlap_with_relative_range(
         .then(|| (start - container.byte_range().start)..(end - container.byte_range().start))
 }
 
-fn heading_index_for_line(document: &MarkdownDocument, byte_offset: usize) -> Option<usize> {
-    document
-        .nearest_heading_at_byte(byte_offset)
-        .and_then(|heading| {
-            document
-                .headings()
-                .iter()
-                .position(|candidate| candidate == heading)
-        })
+fn build_line_heading_index_lookup(document: &MarkdownDocument) -> Vec<Option<usize>> {
+    let headings = document.headings();
+    let mut lookup = Vec::with_capacity(document.line_count());
+    let mut heading_index = 0usize;
+    let mut active_heading = None;
+    let mut line_start = 0usize;
+    for line in document.source_text().split_inclusive('\n') {
+        while heading_index < headings.len()
+            && line_start >= headings[heading_index].section_end_byte()
+        {
+            heading_index += 1;
+        }
+        if heading_index < headings.len()
+            && line_start >= headings[heading_index].section_start_byte()
+            && line_start < headings[heading_index].section_end_byte()
+        {
+            active_heading = Some(heading_index);
+        }
+        lookup.push(active_heading);
+        line_start += line.len();
+    }
+    if document.source_text().is_empty() {
+        lookup.push(None);
+    }
+    lookup
 }
 
 fn resource_class_label(class: ResourceReferenceClass) -> &'static str {
@@ -1981,6 +2146,14 @@ mod tests {
     }
 
     #[test]
+    fn opening_find_requests_query_focus() {
+        let mut state = MarkdownFindState::default();
+        state.open();
+        assert!(state.take_focus_request());
+        assert!(!state.take_focus_request());
+    }
+
+    #[test]
     fn same_source_reload_preserves_current_match_when_possible() {
         let document = document("alpha beta alpha beta");
         let mut state = MarkdownFindState::default();
@@ -1998,6 +2171,15 @@ mod tests {
         let anchor = scroll_anchor_for_offset(&document, offset);
         assert_eq!(anchor.heading_index, Some(1));
         assert_eq!(byte_offset_for_anchor(&document, anchor), offset);
+    }
+
+    #[test]
+    fn source_mode_uses_precomputed_heading_lookup_per_line() {
+        let document = document("# One\nalpha\n# Two\nbeta\n");
+        assert_eq!(
+            build_line_heading_index_lookup(&document),
+            vec![Some(0), Some(0), Some(1), Some(1)]
+        );
     }
 
     #[test]

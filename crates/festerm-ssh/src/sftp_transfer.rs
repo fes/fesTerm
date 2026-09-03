@@ -555,6 +555,7 @@ struct TransferItem {
     skipped_conflicts: usize,
     root_state: TransferRootState,
     pending_resolution: Option<SftpCollisionResolution>,
+    active_collision: Option<SftpCollisionId>,
 }
 
 enum TransferRootState {
@@ -859,6 +860,7 @@ impl WorkerState {
                             skipped_conflicts: 0,
                             root_state: TransferRootState::Pending,
                             pending_resolution: None,
+                            active_collision: None,
                         },
                     );
                 }
@@ -893,9 +895,11 @@ impl WorkerState {
             }
             WorkerCommand::ResolveCollision(resolution) => {
                 if let Some(transfer_id) = self.collisions.remove(&resolution.collision_id) {
-                    if let Some(item) = self.items.get_mut(&transfer_id) {
+                    let batch_id = if let Some(item) = self.items.get_mut(&transfer_id) {
+                        item.active_collision = None;
                         item.pending_resolution = Some(resolution.clone());
                         item.state = SftpTransferState::Queued;
+                        let batch_id = item.batch_id;
                         if matches!(
                             resolution.scope,
                             SftpCollisionScope::RemainingConflictsInBatch
@@ -905,16 +909,14 @@ impl WorkerState {
                             }
                         }
                         self.ready.push_back(transfer_id);
-                    }
+                        batch_id
+                    } else {
+                        return;
+                    };
                     if matches!(
                         resolution.scope,
                         SftpCollisionScope::RemainingConflictsInBatch
                     ) {
-                        let batch_id = self
-                            .items
-                            .get(&transfer_id)
-                            .map(|item| item.batch_id)
-                            .expect("resolved transfer should still exist");
                         let paused = self
                             .items
                             .values()
@@ -935,6 +937,7 @@ impl WorkerState {
                         for (item_id, collision_id) in paused {
                             self.collisions.remove(&collision_id);
                             if let Some(item) = self.items.get_mut(&item_id) {
+                                item.active_collision = None;
                                 item.pending_resolution = Some(SftpCollisionResolution {
                                     collision_id,
                                     decision: resolution.decision,
@@ -1088,6 +1091,7 @@ impl WorkerState {
                     )?;
                     let item = self.items.get_mut(&transfer_id).expect("item exists");
                     item.state = SftpTransferState::AwaitingCollision(collision.id);
+                    item.active_collision = Some(collision.id);
                     item.root_state = TransferRootState::WaitingCollision(Box::new(
                         PendingCollision::RootDirectory {
                             collision: collision.clone(),
@@ -1133,6 +1137,7 @@ impl WorkerState {
                 )?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.state = SftpTransferState::AwaitingCollision(collision.id);
+                item.active_collision = Some(collision.id);
                 item.root_state =
                     TransferRootState::WaitingCollision(Box::new(PendingCollision::File {
                         collision: collision.clone(),
@@ -1179,7 +1184,13 @@ impl WorkerState {
             let snapshot = backend.read_directory(&source_directory).await?;
             let mut child_directories = Vec::new();
             for entry in snapshot.entries {
+                if matches!(source_directory, SftpPath::Remote(_))
+                    && matches!(destination_root, SftpPath::Local(_))
+                {
+                    validate_remote_directory_entry_name(&entry.name)?;
+                }
                 let child_destination = destination_directory.join_child(&entry.name);
+                ensure_local_child_within_root(destination_root, &child_destination)?;
                 if entry.file_type == SftpEntryType::Directory {
                     units.push_back(TransferUnit::EnsureDirectory {
                         destination: child_destination.clone(),
@@ -1494,6 +1505,7 @@ impl WorkerState {
                             )?;
                             let item = self.items.get_mut(&transfer_id).expect("item exists");
                             item.state = SftpTransferState::AwaitingCollision(collision.id);
+                            item.active_collision = Some(collision.id);
                             item.root_state = TransferRootState::WaitingCollision(Box::new(
                                 PendingCollision::File {
                                     collision: collision.clone(),
@@ -1559,6 +1571,7 @@ impl WorkerState {
                                 let _ = cleanup_temp_destination(backend, &temp_destination).await;
                                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                                 item.state = SftpTransferState::AwaitingCollision(collision.id);
+                                item.active_collision = Some(collision.id);
                                 item.root_state = TransferRootState::WaitingCollision(Box::new(
                                     PendingCollision::File {
                                         collision: collision.clone(),
@@ -1710,7 +1723,7 @@ impl WorkerState {
         transfer_id: SftpTransferId,
         event_sender: &UnboundedSender<SftpTransferEvent>,
     ) {
-        if let Some(item) = self.items.remove(&transfer_id) {
+        if let Some(item) = self.remove_item(transfer_id) {
             let _ = event_sender.send(SftpTransferEvent::ItemCompleted {
                 batch_id: item.batch_id,
                 transfer_id,
@@ -1730,7 +1743,7 @@ impl WorkerState {
         reason: String,
         event_sender: &UnboundedSender<SftpTransferEvent>,
     ) {
-        if let Some(item) = self.items.remove(&transfer_id) {
+        if let Some(item) = self.remove_item(transfer_id) {
             let _ = event_sender.send(SftpTransferEvent::ItemFailed {
                 batch_id: item.batch_id,
                 transfer_id,
@@ -1746,7 +1759,7 @@ impl WorkerState {
         transfer_id: SftpTransferId,
         event_sender: &UnboundedSender<SftpTransferEvent>,
     ) {
-        if let Some(item) = self.items.remove(&transfer_id) {
+        if let Some(item) = self.remove_item(transfer_id) {
             let _ = event_sender.send(SftpTransferEvent::ItemCancelled {
                 batch_id: item.batch_id,
                 transfer_id,
@@ -1763,7 +1776,7 @@ impl WorkerState {
         transfer_id: SftpTransferId,
         event_sender: &UnboundedSender<SftpTransferEvent>,
     ) {
-        if let Some(item) = self.items.remove(&transfer_id) {
+        if let Some(item) = self.remove_item(transfer_id) {
             let _ = event_sender.send(SftpTransferEvent::ItemSkipped {
                 batch_id: item.batch_id,
                 transfer_id,
@@ -1785,6 +1798,18 @@ impl WorkerState {
                 let _ = event_sender.send(SftpTransferEvent::BatchFinished { batch_id });
             }
         }
+    }
+
+    fn remove_item(&mut self, transfer_id: SftpTransferId) -> Option<TransferItem> {
+        let item = self.items.remove(&transfer_id)?;
+        self.ready.retain(|queued_id| *queued_id != transfer_id);
+        if let Some(collision_id) = item.active_collision {
+            self.collisions.remove(&collision_id);
+        } else {
+            self.collisions
+                .retain(|_, mapped_id| *mapped_id != transfer_id);
+        }
+        Some(item)
     }
 }
 
@@ -1840,6 +1865,37 @@ async fn normalize_requested_destination<B: TransferBackend>(
         }
     }
     Ok(destination.clone())
+}
+
+fn validate_remote_directory_entry_name(name: &str) -> Result<(), SftpSessionError> {
+    if name.is_empty() || matches!(name, "." | "..") || name.contains('/') || name.contains('\\') {
+        return Err(SftpSessionError::LocalOperationFailed {
+            operation: "plan recursive download",
+            path: name.to_owned(),
+            reason: "remote directory entry name is not safe for a local destination".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_local_child_within_root(
+    destination_root: &SftpPath,
+    candidate: &SftpPath,
+) -> Result<(), SftpSessionError> {
+    let (SftpPath::Local(root), SftpPath::Local(candidate)) = (destination_root, candidate) else {
+        return Ok(());
+    };
+    if candidate.starts_with(root) {
+        return Ok(());
+    }
+    Err(SftpSessionError::LocalOperationFailed {
+        operation: "plan recursive download",
+        path: display_path(candidate),
+        reason: format!(
+            "resolved destination escaped the requested local root {}",
+            display_path(root)
+        ),
+    })
 }
 
 fn split_name_for_copy(name: String) -> (String, Option<String>) {
@@ -2028,6 +2084,56 @@ mod tests {
                 })?;
                 Ok(total)
             })
+        }
+    }
+
+    struct SnapshotBackend {
+        snapshots: HashMap<String, SftpDirectorySnapshot>,
+    }
+
+    impl TransferBackend for SnapshotBackend {
+        fn metadata<'a>(
+            &'a mut self,
+            _path: &'a SftpPath,
+        ) -> BackendFuture<'a, Option<SftpPathMetadata>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn read_directory<'a>(
+            &'a mut self,
+            path: &'a SftpPath,
+        ) -> BackendFuture<'a, SftpDirectorySnapshot> {
+            Box::pin(async move {
+                self.snapshots
+                    .get(&path.display())
+                    .cloned()
+                    .ok_or_else(|| missing_source_error(path))
+            })
+        }
+
+        fn create_directory<'a>(&'a mut self, _path: &'a SftpPath) -> BackendFuture<'a, ()> {
+            Box::pin(async { unreachable!("planning test should not create directories") })
+        }
+
+        fn remove_file<'a>(&'a mut self, _path: &'a SftpPath) -> BackendFuture<'a, ()> {
+            Box::pin(async { unreachable!("planning test should not remove files") })
+        }
+
+        fn rename<'a>(
+            &'a mut self,
+            _source: &'a SftpPath,
+            _destination: &'a SftpPath,
+        ) -> BackendFuture<'a, ()> {
+            Box::pin(async { unreachable!("planning test should not rename files") })
+        }
+
+        fn copy_file<'a>(
+            &'a mut self,
+            _source: &'a SftpPath,
+            _destination: &'a SftpPath,
+            _on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
+        ) -> CopyFuture<'a> {
+            Box::pin(async { unreachable!("planning test should not copy files") })
         }
     }
 
@@ -2508,5 +2614,124 @@ mod tests {
         );
 
         stdfs::remove_dir_all(root).expect("could not clean merge fixtures");
+    }
+
+    #[test]
+    fn recursive_download_rejects_malicious_remote_entry_names() {
+        let root = unique_test_directory("reject-malicious-download-paths");
+        let destination = root.join("downloads");
+        let source_root = SftpPathMetadata {
+            path: SftpPath::remote("/remote/source"),
+            file_type: SftpEntryType::Directory,
+            size: None,
+            modified_at: None,
+            permissions: None,
+        };
+        for entry_name in ["/tmp/escape.txt", "../escape.txt", ".."] {
+            let mut backend = SnapshotBackend {
+                snapshots: HashMap::from([(
+                    source_root.path.display(),
+                    SftpDirectorySnapshot {
+                        location: SftpLocation::Remote,
+                        path: source_root.path.clone(),
+                        loaded_at: SystemTime::now(),
+                        entries: vec![SftpDirectoryItem {
+                            name: entry_name.to_owned(),
+                            path: SftpPath::remote(format!("/remote/source/{entry_name}")),
+                            file_type: SftpEntryType::File,
+                            size: Some(5),
+                            modified_at: None,
+                            permissions: None,
+                        }],
+                    },
+                )]),
+            };
+            let error = test_runtime().block_on(WorkerState::default().build_directory_plan(
+                &source_root,
+                &SftpPath::local(destination.clone()),
+                false,
+                &mut backend,
+            ));
+            let error = match error {
+                Ok(_) => panic!("malicious remote entry name should be rejected"),
+                Err(error) => error,
+            };
+            assert!(
+                error.to_string().contains("not safe") || error.to_string().contains("escaped"),
+                "unexpected error for {entry_name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolving_remaining_conflicts_after_cancelling_a_paused_item_does_not_panic() {
+        let root = unique_test_directory("cancel-then-resolve-collision");
+        let local = root.join("local");
+        let remote = root.join("remote");
+        recreate_directory(&local);
+        recreate_directory(&remote);
+        stdfs::write(local.join("first.txt"), b"new first").expect("could not write first source");
+        stdfs::write(local.join("second.txt"), b"new second")
+            .expect("could not write second source");
+        stdfs::write(remote.join("first.txt"), b"old first").expect("could not seed first target");
+        stdfs::write(remote.join("second.txt"), b"old second")
+            .expect("could not seed second target");
+
+        test_runtime().block_on(async {
+            let (command_sender, mut receiver, _snapshot) = spawn_worker(TestBackend {
+                delay_per_chunk_ms: 0,
+            })
+            .await;
+            let batch = queue_batch(
+                &command_sender,
+                vec![
+                    upload_request(&local.join("first.txt"), &remote),
+                    upload_request(&local.join("second.txt"), &remote),
+                ],
+            );
+
+            let (_, first_collision) = next_collision(&mut receiver).await;
+            command_sender
+                .send(WorkerCommand::CancelTransfer(first_collision.transfer_id))
+                .expect("paused colliding item should cancel");
+
+            let second_collision = loop {
+                match receiver.recv().await {
+                    Some(SftpTransferEvent::ItemCancelled { transfer_id, .. })
+                        if transfer_id == first_collision.transfer_id => {}
+                    Some(SftpTransferEvent::Collision(collision))
+                        if collision.transfer_id == batch.transfer_ids[1] =>
+                    {
+                        break collision;
+                    }
+                    Some(_) => {}
+                    None => panic!("worker stopped before the remaining collision resolved"),
+                }
+            };
+            command_sender
+                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                    collision_id: second_collision.id,
+                    decision: SftpCollisionDecision::Skip,
+                    scope: SftpCollisionScope::RemainingConflictsInBatch,
+                }))
+                .expect("remaining collision should resolve");
+            let events = collect_until_batch_finished(&mut receiver, batch.batch_id).await;
+            assert!(events.iter().any(|event| matches!(
+                event,
+                SftpTransferEvent::ItemSkipped { transfer_id, .. }
+                    if *transfer_id == second_collision.transfer_id
+            )));
+        });
+
+        assert_eq!(
+            stdfs::read(remote.join("first.txt")).expect("first target should remain"),
+            b"old first"
+        );
+        assert_eq!(
+            stdfs::read(remote.join("second.txt")).expect("second target should remain"),
+            b"old second"
+        );
+
+        stdfs::remove_dir_all(root).expect("could not clean cancel/resolve fixtures");
     }
 }

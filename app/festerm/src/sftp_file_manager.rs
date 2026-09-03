@@ -3,7 +3,7 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver},
+    sync::mpsc::{self, Receiver, Sender},
     thread,
     time::SystemTime,
 };
@@ -233,6 +233,11 @@ pub(crate) struct SftpPaneState {
     pub(crate) details: Option<String>,
     pub(crate) editing_path: bool,
     pub(crate) path_text: String,
+    pub(crate) path_focus_requested: bool,
+    pub(crate) filter_focus_requested: bool,
+    pub(crate) pending_request_id: u64,
+    entry_name_keys: Vec<String>,
+    visible_entries_cache: Option<Vec<SftpDirectoryItem>>,
 }
 
 impl SftpPaneState {
@@ -256,28 +261,93 @@ impl SftpPaneState {
             details: None,
             editing_path: false,
             path_text,
+            path_focus_requested: false,
+            filter_focus_requested: false,
+            pending_request_id: 0,
+            entry_name_keys: Vec::new(),
+            visible_entries_cache: None,
         }
     }
 
-    fn selected_items(&self) -> Vec<SftpDirectoryItem> {
-        self.sorted_filtered_entries()
-            .into_iter()
-            .filter(|item| self.selected_paths.contains(&path_key(&item.path)))
+    fn selected_items(&mut self) -> Vec<SftpDirectoryItem> {
+        let selected_paths = self.selected_paths.clone();
+        self.visible_entries()
+            .iter()
+            .filter(|item| selected_paths.contains(&path_key(&item.path)))
+            .cloned()
             .collect()
     }
 
-    fn sorted_filtered_entries(&self) -> Vec<SftpDirectoryItem> {
-        let mut entries = self
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.entries.clone())
-            .unwrap_or_default();
-        if !self.filter.trim().is_empty() {
-            let filter = self.filter.to_lowercase();
-            entries.retain(|item| item.name.to_lowercase().contains(&filter));
+    fn visible_entries(&mut self) -> &[SftpDirectoryItem] {
+        if self.visible_entries_cache.is_none() {
+            let filter = self.filter.trim().to_ascii_lowercase();
+            let mut indices = self
+                .snapshot
+                .as_ref()
+                .map(|snapshot| {
+                    snapshot
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| {
+                            filter.is_empty()
+                                || self.entry_name_keys[*index].contains(filter.as_str())
+                        })
+                        .map(|(index, _)| index)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if let Some(snapshot) = &self.snapshot {
+                indices.sort_by(|left, right| {
+                    compare_items_with_keys(
+                        &snapshot.entries[*left],
+                        &self.entry_name_keys[*left],
+                        &snapshot.entries[*right],
+                        &self.entry_name_keys[*right],
+                        self.sort,
+                    )
+                });
+                self.visible_entries_cache = Some(
+                    indices
+                        .into_iter()
+                        .map(|index| snapshot.entries[index].clone())
+                        .collect(),
+                );
+            } else {
+                self.visible_entries_cache = Some(Vec::new());
+            }
         }
-        entries.sort_by(|left, right| compare_items(left, right, self.sort));
-        entries
+        self.visible_entries_cache
+            .as_deref()
+            .expect("visible entry cache was just populated")
+    }
+
+    fn invalidate_visible_entries(&mut self) {
+        self.visible_entries_cache = None;
+    }
+
+    fn set_filter(&mut self, filter: String) {
+        if self.filter != filter {
+            self.filter = filter;
+            self.invalidate_visible_entries();
+            self.retain_existing_selection();
+        }
+    }
+
+    fn clear_filter(&mut self) {
+        self.set_filter(String::new());
+    }
+
+    fn set_sort(&mut self, column: SftpSortColumn) {
+        if self.sort.column == column {
+            self.sort.descending = !self.sort.descending;
+        } else {
+            self.sort = SftpSortState {
+                column,
+                descending: false,
+            };
+        }
+        self.invalidate_visible_entries();
     }
 
     fn select_single(&mut self, path: &SftpPath) {
@@ -304,6 +374,18 @@ impl SftpPaneState {
         self.path_text = snapshot.path.display();
         self.snapshot = Some(snapshot);
         self.directory_metadata = metadata;
+        self.entry_name_keys = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .map(|entry| entry.name.to_ascii_lowercase())
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.invalidate_visible_entries();
         self.loading = false;
         self.stale = false;
         self.error = None;
@@ -338,6 +420,87 @@ impl SftpPaneState {
         self.details = Some(details);
         self.current_path = self.previous_valid_path.clone();
         self.path_text = self.current_path.display();
+    }
+
+    fn visible_index_for_key(&mut self, key: &str) -> Option<usize> {
+        self.visible_entries()
+            .iter()
+            .position(|entry| path_key(&entry.path) == key)
+    }
+
+    fn move_cursor(&mut self, delta: isize, extend: bool) -> Option<SftpDirectoryItem> {
+        let entries = self.visible_entries().to_vec();
+        if entries.is_empty() {
+            return None;
+        }
+        let current = self
+            .cursor_path
+            .as_deref()
+            .and_then(|key| {
+                entries
+                    .iter()
+                    .position(|entry| path_key(&entry.path).as_str() == key)
+            })
+            .unwrap_or(0) as isize;
+        let next = (current + delta).clamp(0, entries.len() as isize - 1) as usize;
+        let key = path_key(&entries[next].path);
+        let previous_cursor = self.cursor_path.clone();
+        self.cursor_path = Some(key.clone());
+        if extend {
+            let anchor_key = self
+                .selected_anchor
+                .clone()
+                .or(previous_cursor)
+                .unwrap_or_else(|| key.clone());
+            self.selected_anchor = Some(anchor_key.clone());
+            let anchor_index = self.visible_index_for_key(&anchor_key).unwrap_or(next);
+            let start = anchor_index.min(next);
+            let end = anchor_index.max(next);
+            self.selected_paths = entries[start..=end]
+                .iter()
+                .map(|entry| path_key(&entry.path))
+                .collect();
+        } else {
+            self.select_single(&entries[next].path);
+        }
+        Some(entries[next].clone())
+    }
+
+    fn toggle_cursor_selection(&mut self) -> Option<SftpDirectoryItem> {
+        let entries = self.visible_entries().to_vec();
+        let current = self
+            .cursor_path
+            .as_deref()
+            .and_then(|key| {
+                entries
+                    .iter()
+                    .position(|entry| path_key(&entry.path).as_str() == key)
+            })
+            .unwrap_or(0);
+        let item = entries.get(current)?.clone();
+        let key = path_key(&item.path);
+        if !self.selected_paths.remove(&key) {
+            self.selected_paths.insert(key.clone());
+        }
+        self.selected_anchor = Some(key.clone());
+        self.cursor_path = Some(key);
+        Some(item)
+    }
+
+    fn activate_cursor(&mut self) -> Option<SftpDirectoryItem> {
+        let entries = self.visible_entries().to_vec();
+        let current = self
+            .cursor_path
+            .as_deref()
+            .and_then(|key| {
+                entries
+                    .iter()
+                    .position(|entry| path_key(&entry.path).as_str() == key)
+            })
+            .unwrap_or(0);
+        let item = entries.get(current)?.clone();
+        self.select_single(&item.path);
+        Some(item)
     }
 
     fn is_writable(&self) -> bool {
@@ -379,6 +542,7 @@ pub(crate) struct TransferHistoryItem {
     pub(crate) bytes_transferred: u64,
     pub(crate) total_bytes: Option<u64>,
     pub(crate) details: Option<String>,
+    pub(crate) pending_collision: Option<SftpCollision>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -407,6 +571,7 @@ impl TransferDrawerState {
             bytes_transferred: 0,
             total_bytes: None,
             details: None,
+            pending_collision: None,
         });
         self.items
             .last_mut()
@@ -465,6 +630,9 @@ pub(crate) struct SftpFileManagerTab {
     pub(crate) collision_dialog: Option<SftpCollisionDialogState>,
     command_sender: tokio::sync::mpsc::UnboundedSender<WorkerCommand>,
     event_receiver: Receiver<WorkerEvent>,
+    event_sender: Sender<WorkerEvent>,
+    repaint: egui::Context,
+    next_local_request_id: u64,
 }
 
 impl SftpFileManagerTab {
@@ -476,23 +644,13 @@ impl SftpFileManagerTab {
         pane_order: SftpPaneOrderPreference,
         context: &egui::Context,
     ) -> Self {
-        let local_snapshot = read_local_snapshot(&local_directory).ok();
-        let local_metadata = local_snapshot.as_ref().map(|snapshot| SftpPathMetadata {
-            path: snapshot.path.clone(),
-            file_type: SftpEntryType::Directory,
-            size: None,
-            modified_at: None,
-            permissions: None,
-        });
-        let mut local_pane = SftpPaneState::new(SftpPath::local(local_directory));
-        if let Some(snapshot) = local_snapshot {
-            local_pane.set_snapshot(snapshot, local_metadata);
-        }
+        let local_pane = SftpPaneState::new(SftpPath::local(local_directory));
         let remote_pane = SftpPaneState::new(SftpPath::remote("/"));
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (event_sender, event_receiver) = mpsc::channel();
         let repaint = context.clone();
         let launch_target = target.clone();
+        let worker_event_sender = event_sender.clone();
         thread::Builder::new()
             .name(format!("festerm-gui-sftp-{}", target.label))
             .spawn(move || {
@@ -506,7 +664,7 @@ impl SftpFileManagerTab {
                         authentication,
                         known_host_fingerprint,
                         command_receiver,
-                        event_sender,
+                        worker_event_sender,
                         repaint,
                     )
                     .await;
@@ -514,7 +672,7 @@ impl SftpFileManagerTab {
             })
             .expect("could not spawn GUI SFTP worker thread");
 
-        Self {
+        let mut tab = Self {
             label: target.label.clone(),
             profile_identifier: target.profile_id.clone(),
             launch_target: target,
@@ -528,7 +686,13 @@ impl SftpFileManagerTab {
             collision_dialog: None,
             command_sender,
             event_receiver,
-        }
+            event_sender,
+            repaint: context.clone(),
+            next_local_request_id: 1,
+        };
+        let initial_local = tab.local_pane.current_path.clone();
+        load_path(&mut tab, PaneFocus::Local, initial_local, false);
+        tab
     }
 
     pub(crate) fn poll(&mut self) {
@@ -615,7 +779,6 @@ impl SftpFileManagerTab {
     }
 
     fn show_pane(&mut self, ui: &mut Ui, focus: PaneFocus) {
-        let mut pane = pane_ref(self, focus).clone();
         let identity = match focus {
             PaneFocus::Local => "LOCAL · This computer".to_owned(),
             PaneFocus::Remote => format!(
@@ -629,25 +792,28 @@ impl SftpFileManagerTab {
         let mut request_refresh = false;
         let mut request_open: Option<SftpDirectoryItem> = None;
         let mut request_navigate_text = false;
+        let mut request_breadcrumb: Option<SftpPath> = None;
+        let mut focused_this_pane = false;
+        let remote_state = match focus {
+            PaneFocus::Local => None,
+            PaneFocus::Remote => Some(match &self.connection_state {
+                SftpConnectionState::Ready => "Connected",
+                SftpConnectionState::Connecting => "Connecting…",
+                SftpConnectionState::Failed { .. } => "Connection failed",
+                SftpConnectionState::Disconnected { .. } => "Disconnected",
+            }),
+        };
         let frame = egui::Frame::group(ui.style()).fill(if self.focused_pane == focus {
             theme::SURFACE_TAB_ACTIVE
         } else {
             theme::SURFACE_TAB_INACTIVE
         });
         frame.show(ui, |ui| {
+            let pane = pane_mut(self, focus);
             ui.vertical(|ui| {
-                let state = match focus {
-                    PaneFocus::Local => None,
-                    PaneFocus::Remote => Some(match &self.connection_state {
-                        SftpConnectionState::Ready => "Connected",
-                        SftpConnectionState::Connecting => "Connecting…",
-                        SftpConnectionState::Failed { .. } => "Connection failed",
-                        SftpConnectionState::Disconnected { .. } => "Disconnected",
-                    }),
-                };
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(identity).strong());
-                    if let Some(state) = state {
+                    if let Some(state) = remote_state {
                         ui.label(RichText::new(state).small().color(theme::TEXT_SECONDARY));
                     }
                 });
@@ -670,19 +836,36 @@ impl SftpFileManagerTab {
                 if pane.editing_path {
                     let response = ui.add(
                         TextEdit::singleline(&mut pane.path_text)
+                            .id(path_field_id(focus))
                             .hint_text("Enter path")
                             .desired_width(f32::INFINITY),
                     );
+                    if pane.path_focus_requested {
+                        response.request_focus();
+                        pane.path_focus_requested = false;
+                    }
                     if response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                         pane.editing_path = false;
                         request_navigate_text = true;
                     }
                 } else {
-                    let response = ui.add(
-                        egui::Label::new(pane.current_path.display())
-                            .truncate()
-                            .sense(Sense::click()),
-                    );
+                    let response = ui
+                        .horizontal_wrapped(|ui| {
+                            for (index, segment) in breadcrumb_segments(&pane.current_path)
+                                .into_iter()
+                                .enumerate()
+                            {
+                                if index > 0 {
+                                    ui.label("›");
+                                }
+                                if segment.current {
+                                    ui.label(RichText::new(segment.label).strong());
+                                } else if ui.button(segment.label).clicked() {
+                                    request_breadcrumb = Some(segment.path);
+                                }
+                            }
+                        })
+                        .response;
                     response.widget_info(|| {
                         WidgetInfo::labeled(
                             WidgetType::Button,
@@ -692,6 +875,7 @@ impl SftpFileManagerTab {
                     });
                     if response.double_clicked() {
                         pane.editing_path = true;
+                        pane.path_focus_requested = true;
                     }
                 }
                 ui.add_space(6.0);
@@ -699,13 +883,19 @@ impl SftpFileManagerTab {
                     "Filter this {} folder",
                     focus.label().to_lowercase()
                 ));
+                let mut filter_text = pane.filter.clone();
                 let filter_response = ui.add(
-                    TextEdit::singleline(&mut pane.filter)
+                    TextEdit::singleline(&mut filter_text)
+                        .id(filter_field_id(focus))
                         .desired_width(f32::INFINITY)
                         .hint_text("Type to filter this folder"),
                 );
+                if pane.filter_focus_requested {
+                    filter_response.request_focus();
+                    pane.filter_focus_requested = false;
+                }
                 if filter_response.changed() {
-                    pane.retain_existing_selection();
+                    pane.set_filter(filter_text);
                 }
                 ui.add_space(6.0);
                 if pane.loading {
@@ -719,7 +909,7 @@ impl SftpFileManagerTab {
                     }
                     ui.add_space(6.0);
                 }
-                let entries = pane.sorted_filtered_entries();
+                let entries = pane.visible_entries().to_vec();
                 if entries.is_empty() {
                     if pane
                         .snapshot
@@ -730,7 +920,7 @@ impl SftpFileManagerTab {
                     } else {
                         ui.label(format!("No items match \"{}\".", pane.filter));
                         if ui.button("Clear filter").clicked() {
-                            pane.filter.clear();
+                            pane.clear_filter();
                         }
                     }
                     return;
@@ -752,14 +942,7 @@ impl SftpFileManagerTab {
                             ""
                         };
                         if ui.button(format!("{title}{suffix}")).clicked() {
-                            if pane.sort.column == column {
-                                pane.sort.descending = !pane.sort.descending;
-                            } else {
-                                pane.sort = SftpSortState {
-                                    column,
-                                    descending: false,
-                                };
-                            }
+                            pane.set_sort(column);
                         }
                     }
                 });
@@ -767,7 +950,7 @@ impl SftpFileManagerTab {
                 ScrollArea::vertical()
                     .id_salt(("sftp-pane", focus))
                     .show(ui, |ui| {
-                        for item in entries {
+                        for item in entries.iter().cloned() {
                             let key = path_key(&item.path);
                             let selected = pane.selected_paths.contains(&key);
                             let response = ui
@@ -790,13 +973,35 @@ impl SftpFileManagerTab {
                                 )
                             });
                             if response.clicked() {
-                                self.focused_pane = focus;
+                                focused_this_pane = true;
                                 if ui.input(|input| input.modifiers.shift) {
-                                    pane.selected_paths.insert(key.clone());
+                                    let anchor_key = pane
+                                        .selected_anchor
+                                        .clone()
+                                        .or_else(|| pane.cursor_path.clone())
+                                        .unwrap_or_else(|| key.clone());
+                                    let anchor_index = entries
+                                        .iter()
+                                        .position(|candidate| {
+                                            path_key(&candidate.path) == anchor_key
+                                        })
+                                        .unwrap_or_default();
+                                    let current_index = entries
+                                        .iter()
+                                        .position(|candidate| path_key(&candidate.path) == key)
+                                        .unwrap_or(anchor_index);
+                                    let start = anchor_index.min(current_index);
+                                    let end = anchor_index.max(current_index);
+                                    pane.selected_paths = entries[start..=end]
+                                        .iter()
+                                        .map(|candidate| path_key(&candidate.path))
+                                        .collect();
+                                    pane.selected_anchor = Some(anchor_key);
                                 } else if ui.input(|input| input.modifiers.command) {
                                     if !pane.selected_paths.remove(&key) {
                                         pane.selected_paths.insert(key.clone());
                                     }
+                                    pane.selected_anchor = Some(key.clone());
                                 } else {
                                     pane.select_single(&item.path);
                                 }
@@ -809,7 +1014,9 @@ impl SftpFileManagerTab {
                     });
             });
         });
-        *pane_mut(self, focus) = pane;
+        if focused_this_pane {
+            self.focused_pane = focus;
+        }
         if request_back {
             self.navigate_history(focus, -1);
         }
@@ -824,6 +1031,9 @@ impl SftpFileManagerTab {
         }
         if request_navigate_text {
             self.navigate_to_text(focus);
+        }
+        if let Some(path) = request_breadcrumb {
+            load_path(self, focus, path, true);
         }
         if let Some(item) = request_open {
             self.open_item(focus, &item);
@@ -921,6 +1131,18 @@ impl SftpFileManagerTab {
                     ui.label(RichText::new(details).small().color(theme::TEXT_MUTED));
                 }
                 ui.horizontal(|ui| {
+                    if matches!(item.state, SftpTransferState::AwaitingCollision(_))
+                        && item.pending_collision.is_some()
+                        && ui.button("Resolve…").clicked()
+                    {
+                        self.collision_dialog = Some(SftpCollisionDialogState {
+                            collision: item
+                                .pending_collision
+                                .clone()
+                                .expect("checked pending collision"),
+                            apply_to_all: false,
+                        });
+                    }
                     if matches!(
                         item.state,
                         SftpTransferState::Queued
@@ -1028,6 +1250,10 @@ impl SftpFileManagerTab {
         }
         let command = ctx.input(|input| input.modifiers.command);
         let alt = ctx.input(|input| input.modifiers.alt);
+        let shift = ctx.input(|input| input.modifiers.shift);
+        let editing_path = self.focused_pane_ref().editing_path;
+        let filter_focused =
+            ctx.memory(|memory| memory.has_focus(filter_field_id(self.focused_pane)));
         if ctx.input(|input| input.key_pressed(Key::Tab)) {
             self.focused_pane = self.focused_pane.opposite();
         }
@@ -1035,10 +1261,14 @@ impl SftpFileManagerTab {
             self.queue_transfer(self.focused_pane);
         }
         if command && ctx.input(|input| input.key_pressed(Key::F)) {
-            self.focused_pane_mut().editing_path = false;
+            let pane = self.focused_pane_mut();
+            pane.editing_path = false;
+            pane.filter_focus_requested = true;
         }
         if command && ctx.input(|input| input.key_pressed(Key::L)) {
-            self.focused_pane_mut().editing_path = true;
+            let pane = self.focused_pane_mut();
+            pane.editing_path = true;
+            pane.path_focus_requested = true;
         }
         if command && ctx.input(|input| input.key_pressed(Key::R)) {
             self.refresh_pane(self.focused_pane);
@@ -1052,13 +1282,29 @@ impl SftpFileManagerTab {
         if alt && ctx.input(|input| input.key_pressed(Key::ArrowLeft)) {
             self.navigate_history(self.focused_pane, -1);
         }
+        if !editing_path && !filter_focused {
+            if ctx.input(|input| input.key_pressed(Key::ArrowDown)) {
+                let _ = self.focused_pane_mut().move_cursor(1, shift);
+            }
+            if ctx.input(|input| input.key_pressed(Key::ArrowUp)) {
+                let _ = self.focused_pane_mut().move_cursor(-1, shift);
+            }
+            if ctx.input(|input| input.key_pressed(Key::Space)) {
+                let _ = self.focused_pane_mut().toggle_cursor_selection();
+            }
+            if !command && ctx.input(|input| input.key_pressed(Key::Enter)) {
+                if let Some(item) = self.focused_pane_mut().activate_cursor() {
+                    self.open_item(self.focused_pane, &item);
+                }
+            }
+        }
         if ctx.input(|input| input.key_pressed(Key::Escape)) {
             if self.focused_pane_mut().editing_path {
                 let pane = self.focused_pane_mut();
                 pane.editing_path = false;
                 pane.path_text = pane.current_path.display();
             } else if !self.focused_pane_ref().filter.is_empty() {
-                self.focused_pane_mut().filter.clear();
+                self.focused_pane_mut().clear_filter();
             } else {
                 self.focused_pane_mut().clear_selection();
             }
@@ -1140,20 +1386,31 @@ impl SftpFileManagerTab {
     }
 
     fn queue_transfer(&mut self, source_focus: PaneFocus) {
-        let (source, destination) = match source_focus {
-            PaneFocus::Local => (&self.local_pane, &self.remote_pane),
-            PaneFocus::Remote => (&self.remote_pane, &self.local_pane),
+        let destination_path = match source_focus {
+            PaneFocus::Local => self.remote_pane.current_path.clone(),
+            PaneFocus::Remote => self.local_pane.current_path.clone(),
         };
-        let action = transfer_action(source_focus, source, destination, &self.connection_state);
+        let action = match source_focus {
+            PaneFocus::Local => transfer_action(
+                source_focus,
+                &self.local_pane,
+                &self.remote_pane,
+                &self.connection_state,
+            ),
+            PaneFocus::Remote => transfer_action(
+                source_focus,
+                &self.remote_pane,
+                &self.local_pane,
+                &self.connection_state,
+            ),
+        };
         if !action.enabled {
             return;
         }
-        let requests = source
+        let requests = pane_mut(self, source_focus)
             .selected_items()
             .into_iter()
-            .filter_map(|item| {
-                SftpTransferRequest::new(item.path, destination.current_path.clone()).ok()
-            })
+            .filter_map(|item| SftpTransferRequest::new(item.path, destination_path.clone()).ok())
             .collect::<Vec<_>>();
         if !requests.is_empty() {
             let _ = self.command_sender.send(WorkerCommand::Enqueue(requests));
@@ -1171,6 +1428,28 @@ impl SftpFileManagerTab {
                     .set_snapshot(remote_directory, remote_metadata);
                 self.remote_pane
                     .push_history(self.remote_pane.current_path.clone());
+            }
+            WorkerEvent::LocalDirectoryLoaded {
+                focus,
+                request_id,
+                snapshot,
+                metadata,
+            } => {
+                let pane = pane_mut(self, focus);
+                if pane.pending_request_id == request_id {
+                    pane.set_snapshot(snapshot, metadata);
+                }
+            }
+            WorkerEvent::LocalDirectoryFailed {
+                focus,
+                request_id,
+                summary,
+                details,
+            } => {
+                let pane = pane_mut(self, focus);
+                if pane.pending_request_id == request_id {
+                    pane.set_error(summary, details);
+                }
             }
             WorkerEvent::RemoteDirectoryLoaded { snapshot, metadata } => {
                 self.connection_state = SftpConnectionState::Ready;
@@ -1203,6 +1482,7 @@ impl SftpFileManagerTab {
                 let item = self.transfer_drawer.upsert(transfer_id, request);
                 item.state = SftpTransferState::Running;
                 item.destination = Some(destination);
+                item.pending_collision = None;
             }
             SftpTransferEvent::ItemProgress {
                 transfer_id,
@@ -1222,6 +1502,15 @@ impl SftpFileManagerTab {
                 }
             }
             SftpTransferEvent::Collision(collision) => {
+                if let Some(item) = self
+                    .transfer_drawer
+                    .items
+                    .iter_mut()
+                    .find(|item| item.transfer_id == collision.transfer_id)
+                {
+                    item.pending_collision = Some(collision.clone());
+                    item.state = SftpTransferState::AwaitingCollision(collision.id);
+                }
                 self.collision_dialog = Some(SftpCollisionDialogState {
                     collision,
                     apply_to_all: false,
@@ -1256,6 +1545,7 @@ impl SftpFileManagerTab {
                     item.destination = Some(destination);
                     item.bytes_transferred = bytes_transferred;
                     item.total_bytes = total_bytes;
+                    item.pending_collision = None;
                 }
             }
             SftpTransferEvent::ItemFailed {
@@ -1275,6 +1565,7 @@ impl SftpFileManagerTab {
                     };
                     item.destination = destination;
                     item.details = Some(reason);
+                    item.pending_collision = None;
                 }
             }
             SftpTransferEvent::ItemCancelled {
@@ -1294,6 +1585,7 @@ impl SftpFileManagerTab {
                     item.destination = destination;
                     item.bytes_transferred = bytes_transferred;
                     item.total_bytes = total_bytes;
+                    item.pending_collision = None;
                 }
             }
             SftpTransferEvent::ItemSkipped {
@@ -1309,6 +1601,7 @@ impl SftpFileManagerTab {
                 {
                     item.state = SftpTransferState::Skipped;
                     item.destination = destination;
+                    item.pending_collision = None;
                 }
             }
         }
@@ -1329,6 +1622,18 @@ enum WorkerEvent {
     Connected {
         remote_directory: SftpDirectorySnapshot,
         remote_metadata: Option<SftpPathMetadata>,
+    },
+    LocalDirectoryLoaded {
+        focus: PaneFocus,
+        request_id: u64,
+        snapshot: SftpDirectorySnapshot,
+        metadata: Option<SftpPathMetadata>,
+    },
+    LocalDirectoryFailed {
+        focus: PaneFocus,
+        request_id: u64,
+        summary: String,
+        details: String,
     },
     RemoteDirectoryLoaded {
         snapshot: SftpDirectorySnapshot,
@@ -1534,26 +1839,66 @@ fn pane_mut(tab: &mut SftpFileManagerTab, focus: PaneFocus) -> &mut SftpPaneStat
 }
 
 fn load_path(tab: &mut SftpFileManagerTab, focus: PaneFocus, path: SftpPath, push_history: bool) {
-    let pane = pane_mut(tab, focus);
-    pane.loading = true;
-    pane.error = None;
-    pane.details = None;
-    pane.path_text = path.display();
-    pane.current_path = path.clone();
-    if push_history {
-        pane.push_history(path.clone());
+    {
+        let pane = pane_mut(tab, focus);
+        pane.loading = true;
+        pane.error = None;
+        pane.details = None;
+        pane.path_text = path.display();
+        pane.current_path = path.clone();
+        if push_history {
+            pane.push_history(path.clone());
+        }
     }
     match focus {
-        PaneFocus::Local => match local_snapshot_and_metadata(&path) {
-            Ok((snapshot, metadata)) => pane.set_snapshot(snapshot, metadata),
-            Err(error) => pane.set_error("Could not load the local folder.".to_owned(), error),
-        },
+        PaneFocus::Local => {
+            tab.next_local_request_id += 1;
+            let request_id = tab.next_local_request_id;
+            pane_mut(tab, focus).pending_request_id = request_id;
+            spawn_local_load(
+                tab.event_sender.clone(),
+                tab.repaint.clone(),
+                focus,
+                request_id,
+                path,
+            );
+        }
         PaneFocus::Remote => {
             if let SftpPath::Remote(path) = path {
                 let _ = tab.command_sender.send(WorkerCommand::LoadRemote { path });
             }
         }
     }
+}
+
+fn spawn_local_load(
+    event_sender: Sender<WorkerEvent>,
+    repaint: egui::Context,
+    focus: PaneFocus,
+    request_id: u64,
+    path: SftpPath,
+) {
+    thread::Builder::new()
+        .name(format!("festerm-gui-sftp-local-{request_id}"))
+        .spawn(move || {
+            let event = match local_snapshot_and_metadata(&path) {
+                Ok((snapshot, metadata)) => WorkerEvent::LocalDirectoryLoaded {
+                    focus,
+                    request_id,
+                    snapshot,
+                    metadata,
+                },
+                Err(error) => WorkerEvent::LocalDirectoryFailed {
+                    focus,
+                    request_id,
+                    summary: "Could not load the local folder.".to_owned(),
+                    details: error,
+                },
+            };
+            let _ = event_sender.send(event);
+            repaint.request_repaint();
+        })
+        .expect("could not spawn GUI SFTP local loader thread");
 }
 
 fn local_snapshot_and_metadata(
@@ -1657,9 +2002,26 @@ pub(crate) fn transfer_action(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn compare_items(
     left: &SftpDirectoryItem,
     right: &SftpDirectoryItem,
+    sort: SftpSortState,
+) -> Ordering {
+    compare_items_with_keys(
+        left,
+        &left.name.to_ascii_lowercase(),
+        right,
+        &right.name.to_ascii_lowercase(),
+        sort,
+    )
+}
+
+fn compare_items_with_keys(
+    left: &SftpDirectoryItem,
+    left_name_key: &str,
+    right: &SftpDirectoryItem,
+    right_name_key: &str,
     sort: SftpSortState,
 ) -> Ordering {
     let folders_first = folder_rank(left.file_type).cmp(&folder_rank(right.file_type));
@@ -1667,18 +2029,18 @@ pub(crate) fn compare_items(
         return folders_first;
     }
     let ordering = match sort.column {
-        SftpSortColumn::Name => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
+        SftpSortColumn::Name => left_name_key.cmp(right_name_key),
         SftpSortColumn::Size => left
             .size
             .cmp(&right.size)
-            .then_with(|| left.name.cmp(&right.name)),
+            .then_with(|| left_name_key.cmp(right_name_key)),
         SftpSortColumn::Modified => left
             .modified_at
             .cmp(&right.modified_at)
-            .then_with(|| left.name.cmp(&right.name)),
+            .then_with(|| left_name_key.cmp(right_name_key)),
         SftpSortColumn::Type => type_label(left.file_type)
             .cmp(type_label(right.file_type))
-            .then_with(|| left.name.cmp(&right.name)),
+            .then_with(|| left_name_key.cmp(right_name_key)),
     };
     if sort.descending {
         ordering.reverse()
@@ -1781,6 +2143,91 @@ fn path_key(path: &SftpPath) -> String {
     }
 }
 
+fn filter_field_id(focus: PaneFocus) -> egui::Id {
+    egui::Id::new(("sftp-pane-filter", focus))
+}
+
+fn path_field_id(focus: PaneFocus) -> egui::Id {
+    egui::Id::new(("sftp-pane-path", focus))
+}
+
+struct BreadcrumbSegment {
+    label: String,
+    path: SftpPath,
+    current: bool,
+}
+
+fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
+    match path {
+        SftpPath::Remote(path) => {
+            let trimmed = path.trim_end_matches('/');
+            let mut segments = vec![BreadcrumbSegment {
+                label: "/".to_owned(),
+                path: SftpPath::remote("/"),
+                current: trimmed.is_empty() || trimmed == "/",
+            }];
+            if trimmed.is_empty() || trimmed == "/" {
+                return segments;
+            }
+            let mut current = String::new();
+            for segment in trimmed.trim_start_matches('/').split('/') {
+                current.push('/');
+                current.push_str(segment);
+                segments.push(BreadcrumbSegment {
+                    label: segment.to_owned(),
+                    path: SftpPath::remote(current.clone()),
+                    current: current == trimmed,
+                });
+            }
+            segments
+        }
+        SftpPath::Local(path) => {
+            let mut segments = Vec::new();
+            let mut current = PathBuf::new();
+            for component in path.components() {
+                use std::path::Component;
+                match component {
+                    Component::Prefix(prefix) => {
+                        current.push(prefix.as_os_str());
+                        segments.push(BreadcrumbSegment {
+                            label: prefix.as_os_str().to_string_lossy().into_owned(),
+                            path: SftpPath::local(current.clone()),
+                            current: false,
+                        });
+                    }
+                    Component::RootDir => {
+                        current.push(Path::new("/"));
+                        segments.push(BreadcrumbSegment {
+                            label: "/".to_owned(),
+                            path: SftpPath::local(current.clone()),
+                            current: path.parent().is_none(),
+                        });
+                    }
+                    Component::Normal(part) => {
+                        current.push(part);
+                        segments.push(BreadcrumbSegment {
+                            label: part.to_string_lossy().into_owned(),
+                            path: SftpPath::local(current.clone()),
+                            current: current == *path,
+                        });
+                    }
+                    Component::CurDir | Component::ParentDir => {}
+                }
+            }
+            if segments.is_empty() {
+                segments.push(BreadcrumbSegment {
+                    label: path.display().to_string(),
+                    path: SftpPath::local(path.clone()),
+                    current: true,
+                });
+            } else if let Some(last) = segments.last_mut() {
+                last.current = true;
+            }
+            segments
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1799,18 +2246,21 @@ mod tests {
     #[test]
     fn sort_and_filter_keep_folders_first() {
         let mut pane = SftpPaneState::new(SftpPath::local("/tmp"));
-        pane.snapshot = Some(SftpDirectorySnapshot {
-            location: SftpLocation::Local,
-            path: SftpPath::local("/tmp"),
-            loaded_at: SystemTime::now(),
-            entries: vec![
-                item("zeta.txt", SftpEntryType::File, Some(4)),
-                item("alpha", SftpEntryType::Directory, None),
-                item("beta.txt", SftpEntryType::File, Some(2)),
-            ],
-        });
-        pane.filter = "ta".to_owned();
-        let entries = pane.sorted_filtered_entries();
+        pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: SftpLocation::Local,
+                path: SftpPath::local("/tmp"),
+                loaded_at: SystemTime::now(),
+                entries: vec![
+                    item("zeta.txt", SftpEntryType::File, Some(4)),
+                    item("alpha", SftpEntryType::Directory, None),
+                    item("beta.txt", SftpEntryType::File, Some(2)),
+                ],
+            },
+            None,
+        );
+        pane.set_filter("ta".to_owned());
+        let entries = pane.visible_entries();
         assert_eq!(
             entries
                 .iter()
@@ -1818,12 +2268,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["beta.txt", "zeta.txt"]
         );
-        pane.filter.clear();
-        let entries = pane.sorted_filtered_entries();
+        pane.clear_filter();
+        let entries = pane.visible_entries();
         assert_eq!(
             entries.first().map(|entry| entry.name.as_str()),
             Some("alpha")
         );
+    }
+
+    #[test]
+    fn breadcrumb_segments_expose_clickable_ancestors() {
+        let remote = breadcrumb_segments(&SftpPath::remote("/srv/releases/2026.09"));
+        assert_eq!(
+            remote
+                .iter()
+                .map(|segment| segment.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/", "srv", "releases", "2026.09"]
+        );
+        assert!(remote.last().is_some_and(|segment| segment.current));
+    }
+
+    #[test]
+    fn arrow_selection_extends_contiguous_range() {
+        let mut pane = SftpPaneState::new(SftpPath::local("/tmp"));
+        pane.set_snapshot(
+            SftpDirectorySnapshot {
+                location: SftpLocation::Local,
+                path: SftpPath::local("/tmp"),
+                loaded_at: SystemTime::now(),
+                entries: vec![
+                    item("alpha", SftpEntryType::File, Some(1)),
+                    item("beta", SftpEntryType::File, Some(1)),
+                    item("gamma", SftpEntryType::File, Some(1)),
+                ],
+            },
+            None,
+        );
+        pane.select_single(&SftpPath::local("alpha"));
+        let _ = pane.move_cursor(1, true);
+        assert_eq!(pane.selected_paths.len(), 2);
+        assert!(pane
+            .selected_paths
+            .contains(&path_key(&SftpPath::local("alpha"))));
+        assert!(pane
+            .selected_paths
+            .contains(&path_key(&SftpPath::local("beta"))));
     }
 
     #[test]
