@@ -1,6 +1,7 @@
 //! Native SSH transport policy and bounded `russh` session lifecycle.
 
 mod sftp;
+mod sftp_transfer;
 
 use std::{
     collections::VecDeque,
@@ -29,6 +30,13 @@ use zeroize::Zeroize;
 pub use sftp::{
     parse_sftp_command, SftpCommand, SftpCommandOutcome, SftpCommandParseError, SftpDirectoryEntry,
     SftpEntryType, SftpSession, SftpSessionError,
+};
+pub use sftp_transfer::{
+    SftpCollision, SftpCollisionDecision, SftpCollisionId, SftpCollisionResolution,
+    SftpCollisionScope, SftpDirectoryItem, SftpDirectorySnapshot, SftpLocation, SftpPath,
+    SftpPathMetadata, SftpQueuedTransferBatch, SftpTransferBatchId, SftpTransferDirection,
+    SftpTransferEvent, SftpTransferId, SftpTransferItemSnapshot, SftpTransferManager,
+    SftpTransferManagerError, SftpTransferQueueSnapshot, SftpTransferRequest, SftpTransferState,
 };
 
 /// Canonical SSH destination identity used for trust decisions.

@@ -1,8 +1,12 @@
 use std::{
     env, fmt,
     path::{Component, Path, PathBuf},
+    time::SystemTime,
 };
 
+use crate::sftp_transfer::{
+    SftpDirectoryItem, SftpDirectorySnapshot, SftpLocation, SftpPath, SftpPathMetadata,
+};
 use russh_sftp::{
     client::SftpSession as RusshSftpSession,
     protocol::{FileType as RusshSftpFileType, OpenFlags},
@@ -430,6 +434,53 @@ impl SftpSession {
         &self.local_working_directory
     }
 
+    /// Captures a sortable snapshot of the current local working directory.
+    pub async fn current_local_directory_snapshot(
+        &self,
+    ) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+        read_local_directory_snapshot(&self.local_working_directory).await
+    }
+
+    /// Captures a sortable snapshot of `path` on the local filesystem.
+    pub async fn local_directory_snapshot(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+        read_local_directory_snapshot(path.as_ref()).await
+    }
+
+    /// Captures a sortable snapshot of the current remote working directory or
+    /// an explicit remote directory path.
+    pub async fn remote_directory_snapshot(
+        &mut self,
+        path: Option<&str>,
+    ) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+        self.ensure_open()?;
+        let resolved = match path {
+            Some(path) => resolve_remote_path(&self.remote_working_directory, path)?,
+            None => self.remote_working_directory.clone(),
+        };
+        self.remote_directory_snapshot_exact(&resolved).await
+    }
+
+    /// Reads local metadata without requiring a transfer queue.
+    pub async fn local_path_metadata(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<SftpPathMetadata>, SftpSessionError> {
+        read_local_path_metadata(path.as_ref()).await
+    }
+
+    /// Reads remote metadata without requiring a transfer queue.
+    pub async fn remote_path_metadata(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<SftpPathMetadata>, SftpSessionError> {
+        self.ensure_open()?;
+        let resolved = resolve_remote_path(&self.remote_working_directory, path)?;
+        self.remote_path_metadata_exact(&resolved).await
+    }
+
     /// Closes the SFTP subsystem channel cleanly.
     pub async fn close(&mut self) -> Result<SftpCommandOutcome, SftpSessionError> {
         if !self.closed {
@@ -788,6 +839,206 @@ impl SftpSession {
             Ok(())
         }
     }
+
+    pub(crate) async fn remote_path_metadata_exact(
+        &mut self,
+        path: &str,
+    ) -> Result<Option<SftpPathMetadata>, SftpSessionError> {
+        self.ensure_open()?;
+        match self.client.metadata(path.to_owned()).await {
+            Ok(metadata) => Ok(Some(remote_path_metadata(path, metadata))),
+            Err(error) if is_remote_not_found(&error) => Ok(None),
+            Err(error) => Err(remote_error("inspect path", path, error)),
+        }
+    }
+
+    pub(crate) async fn remote_directory_snapshot_exact(
+        &mut self,
+        path: &str,
+    ) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+        self.ensure_open()?;
+        let metadata = self
+            .client
+            .metadata(path.to_owned())
+            .await
+            .map_err(|error| remote_error("list path", path, error))?;
+        if !metadata.is_dir() {
+            return Err(SftpSessionError::RemotePathNotDirectory {
+                path: path.to_owned(),
+            });
+        }
+
+        let mut entries = self
+            .client
+            .read_dir(path.to_owned())
+            .await
+            .map_err(|error| remote_error("list path", path, error))?
+            .map(|entry| remote_directory_item(entry.file_name(), entry.path(), entry.metadata()))
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
+
+        Ok(SftpDirectorySnapshot {
+            location: SftpLocation::Remote,
+            path: SftpPath::remote(path.to_owned()),
+            loaded_at: SystemTime::now(),
+            entries,
+        })
+    }
+
+    pub(crate) async fn create_remote_directory_exact(
+        &mut self,
+        path: &str,
+    ) -> Result<(), SftpSessionError> {
+        self.ensure_open()?;
+        self.client
+            .create_dir(path.to_owned())
+            .await
+            .map_err(|error| remote_error("create directory", path, error))
+    }
+
+    pub(crate) async fn remove_remote_file_exact(
+        &mut self,
+        path: &str,
+    ) -> Result<(), SftpSessionError> {
+        self.ensure_open()?;
+        self.client
+            .remove_file(path.to_owned())
+            .await
+            .map_err(|error| remote_error("remove file", path, error))
+    }
+
+    pub(crate) async fn rename_remote_path_exact(
+        &mut self,
+        source: &str,
+        destination: &str,
+    ) -> Result<(), SftpSessionError> {
+        self.ensure_open()?;
+        self.client
+            .rename(source.to_owned(), destination.to_owned())
+            .await
+            .map_err(|error| SftpSessionError::RemotePairOperationFailed {
+                operation: "rename",
+                source: source.to_owned(),
+                destination: destination.to_owned(),
+                reason: error.to_string(),
+            })
+    }
+
+    pub(crate) async fn upload_local_file_exact<F>(
+        &mut self,
+        local_path: &Path,
+        remote_path: &str,
+        on_progress: &mut F,
+    ) -> Result<u64, SftpSessionError>
+    where
+        F: FnMut(u64) -> Result<(), SftpSessionError>,
+    {
+        self.ensure_open()?;
+        let mut local_file = OpenOptions::new()
+            .read(true)
+            .open(local_path)
+            .await
+            .map_err(|error| local_error("open source file", local_path, error))?;
+        let mut remote_file = self
+            .client
+            .open_with_flags(
+                remote_path.to_owned(),
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|error| remote_error("upload", remote_path, error))?;
+
+        let transfer_result = async {
+            let mut total = 0_u64;
+            let mut buffer = vec![0_u8; TRANSFER_CHUNK_BYTES];
+            loop {
+                let read = local_file
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|error| local_error("read source file", local_path, error))?;
+                if read == 0 {
+                    break;
+                }
+                remote_file
+                    .write_all(&buffer[..read])
+                    .await
+                    .map_err(|error| remote_error("upload", remote_path, error))?;
+                total += read as u64;
+                on_progress(total)?;
+            }
+            remote_file
+                .shutdown()
+                .await
+                .map_err(|error| remote_error("finalize upload", remote_path, error))?;
+            Ok(total)
+        }
+        .await;
+
+        match transfer_result {
+            Ok(byte_count) => Ok(byte_count),
+            Err(error) => {
+                let _ = self.client.remove_file(remote_path.to_owned()).await;
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) async fn download_remote_file_exact<F>(
+        &mut self,
+        remote_path: &str,
+        local_path: &Path,
+        on_progress: &mut F,
+    ) -> Result<u64, SftpSessionError>
+    where
+        F: FnMut(u64) -> Result<(), SftpSessionError>,
+    {
+        self.ensure_open()?;
+        let mut remote_file = self
+            .client
+            .open(remote_path.to_owned())
+            .await
+            .map_err(|error| remote_error("download", remote_path, error))?;
+        let mut local_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(local_path)
+            .await
+            .map_err(|error| local_error("create destination file", local_path, error))?;
+
+        let transfer_result = async {
+            let mut total = 0_u64;
+            let mut buffer = vec![0_u8; TRANSFER_CHUNK_BYTES];
+            loop {
+                let read = remote_file
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|error| remote_error("download", remote_path, error))?;
+                if read == 0 {
+                    break;
+                }
+                local_file
+                    .write_all(&buffer[..read])
+                    .await
+                    .map_err(|error| local_error("write destination file", local_path, error))?;
+                total += read as u64;
+                on_progress(total)?;
+            }
+            local_file
+                .flush()
+                .await
+                .map_err(|error| local_error("flush destination file", local_path, error))?;
+            Ok(total)
+        }
+        .await;
+
+        match transfer_result {
+            Ok(byte_count) => Ok(byte_count),
+            Err(error) => {
+                let _ = fs::remove_file(local_path).await;
+                Err(error)
+            }
+        }
+    }
 }
 
 /// Parses one line of text-mode SFTP input.
@@ -987,7 +1238,7 @@ fn tokenize_command_line(line: &str) -> Result<Vec<String>, SftpCommandParseErro
     }
 }
 
-fn resolve_remote_path(base: &str, input: &str) -> Result<String, SftpSessionError> {
+pub(crate) fn resolve_remote_path(base: &str, input: &str) -> Result<String, SftpSessionError> {
     let input = input.trim();
     if input.is_empty() {
         return Err(SftpSessionError::EmptyRemotePath);
@@ -1002,7 +1253,7 @@ fn resolve_remote_path(base: &str, input: &str) -> Result<String, SftpSessionErr
     Ok(normalize_remote_path(&candidate))
 }
 
-fn normalize_remote_path(path: &str) -> String {
+pub(crate) fn normalize_remote_path(path: &str) -> String {
     let absolute = path.starts_with('/');
     let mut components = Vec::new();
     for component in path.split('/') {
@@ -1027,7 +1278,7 @@ fn normalize_remote_path(path: &str) -> String {
     }
 }
 
-fn resolve_local_path(base: &Path, input: &str) -> Result<PathBuf, SftpSessionError> {
+pub(crate) fn resolve_local_path(base: &Path, input: &str) -> Result<PathBuf, SftpSessionError> {
     let input = input.trim();
     if input.is_empty() {
         return Err(SftpSessionError::EmptyLocalPath);
@@ -1041,7 +1292,7 @@ fn resolve_local_path(base: &Path, input: &str) -> Result<PathBuf, SftpSessionEr
     Ok(normalize_local_path(candidate))
 }
 
-fn normalize_local_path(path: PathBuf) -> PathBuf {
+pub(crate) fn normalize_local_path(path: PathBuf) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -1088,7 +1339,7 @@ async fn ensure_local_destination_absent(path: &Path) -> Result<(), SftpSessionE
     }
 }
 
-fn remote_file_name(path: &str) -> Result<&str, SftpSessionError> {
+pub(crate) fn remote_file_name(path: &str) -> Result<&str, SftpSessionError> {
     let trimmed = path.trim_end_matches('/');
     let name = trimmed
         .rsplit('/')
@@ -1104,7 +1355,7 @@ fn remote_file_name(path: &str) -> Result<&str, SftpSessionError> {
     Ok(name)
 }
 
-fn local_file_name(path: &Path) -> Result<&str, SftpSessionError> {
+pub(crate) fn local_file_name(path: &Path) -> Result<&str, SftpSessionError> {
     path.file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| SftpSessionError::MissingFileName {
@@ -1112,11 +1363,11 @@ fn local_file_name(path: &Path) -> Result<&str, SftpSessionError> {
         })
 }
 
-fn join_path_segment(base: &Path, segment: &str) -> PathBuf {
+pub(crate) fn join_path_segment(base: &Path, segment: &str) -> PathBuf {
     normalize_local_path(base.join(segment))
 }
 
-fn join_remote_path(base: &str, segment: &str) -> String {
+pub(crate) fn join_remote_path(base: &str, segment: &str) -> String {
     if base == "/" {
         format!("/{segment}")
     } else {
@@ -1124,11 +1375,15 @@ fn join_remote_path(base: &str, segment: &str) -> String {
     }
 }
 
-fn display_path(path: &Path) -> String {
+pub(crate) fn display_path(path: &Path) -> String {
     path.display().to_string()
 }
 
-fn local_error(operation: &'static str, path: &Path, error: impl fmt::Display) -> SftpSessionError {
+pub(crate) fn local_error(
+    operation: &'static str,
+    path: &Path,
+    error: impl fmt::Display,
+) -> SftpSessionError {
     SftpSessionError::LocalOperationFailed {
         operation,
         path: display_path(path),
@@ -1136,11 +1391,162 @@ fn local_error(operation: &'static str, path: &Path, error: impl fmt::Display) -
     }
 }
 
-fn remote_error(operation: &'static str, path: &str, error: impl fmt::Display) -> SftpSessionError {
+pub(crate) fn remote_error(
+    operation: &'static str,
+    path: &str,
+    error: impl fmt::Display,
+) -> SftpSessionError {
     SftpSessionError::RemoteOperationFailed {
         operation,
         path: path.to_owned(),
         reason: error.to_string(),
+    }
+}
+
+pub(crate) fn is_remote_not_found(error: &russh_sftp::client::error::Error) -> bool {
+    matches!(
+        error,
+        russh_sftp::client::error::Error::Status(status)
+            if status.status_code == russh_sftp::protocol::StatusCode::NoSuchFile
+    )
+}
+
+pub(crate) fn local_permissions(metadata: &std::fs::Metadata) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        Some(metadata.permissions().mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+
+pub(crate) async fn read_local_path_metadata(
+    path: &Path,
+) -> Result<Option<SftpPathMetadata>, SftpSessionError> {
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(Some(local_path_metadata(path, &metadata))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(local_error("inspect path", path, error)),
+    }
+}
+
+pub(crate) async fn read_local_directory_snapshot(
+    path: &Path,
+) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+    let canonical = fs::canonicalize(path).await.map_err(|error| {
+        SftpSessionError::LocalDirectoryUnavailable {
+            path: display_path(path),
+            reason: error.to_string(),
+        }
+    })?;
+    let metadata = fs::metadata(&canonical).await.map_err(|error| {
+        SftpSessionError::LocalDirectoryUnavailable {
+            path: display_path(&canonical),
+            reason: error.to_string(),
+        }
+    })?;
+    if !metadata.is_dir() {
+        return Err(SftpSessionError::LocalPathNotDirectory {
+            path: display_path(&canonical),
+        });
+    }
+
+    let mut directory = fs::read_dir(&canonical)
+        .await
+        .map_err(|error| local_error("list directory", &canonical, error))?;
+    let mut entries = Vec::new();
+    while let Some(entry) = directory
+        .next_entry()
+        .await
+        .map_err(|error| local_error("list directory", &canonical, error))?
+    {
+        let entry_path = entry.path();
+        let metadata = fs::symlink_metadata(&entry_path)
+            .await
+            .map_err(|error| local_error("inspect path", &entry_path, error))?;
+        entries.push(local_directory_item(
+            entry.file_name().to_string_lossy().into_owned(),
+            &entry_path,
+            &metadata,
+        ));
+    }
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+
+    Ok(SftpDirectorySnapshot {
+        location: SftpLocation::Local,
+        path: SftpPath::local(canonical),
+        loaded_at: SystemTime::now(),
+        entries,
+    })
+}
+
+fn local_directory_item(
+    name: String,
+    path: &Path,
+    metadata: &std::fs::Metadata,
+) -> SftpDirectoryItem {
+    SftpDirectoryItem {
+        name,
+        path: SftpPath::local(path.to_path_buf()),
+        file_type: local_entry_type(metadata.file_type()),
+        size: Some(metadata.len()),
+        modified_at: metadata.modified().ok(),
+        permissions: local_permissions(metadata),
+    }
+}
+
+fn local_path_metadata(path: &Path, metadata: &std::fs::Metadata) -> SftpPathMetadata {
+    SftpPathMetadata {
+        path: SftpPath::local(path.to_path_buf()),
+        file_type: local_entry_type(metadata.file_type()),
+        size: Some(metadata.len()),
+        modified_at: metadata.modified().ok(),
+        permissions: local_permissions(metadata),
+    }
+}
+
+fn local_entry_type(file_type: std::fs::FileType) -> SftpEntryType {
+    if file_type.is_dir() {
+        SftpEntryType::Directory
+    } else if file_type.is_symlink() {
+        SftpEntryType::Symlink
+    } else if file_type.is_file() {
+        SftpEntryType::File
+    } else {
+        SftpEntryType::Other
+    }
+}
+
+pub(crate) fn remote_directory_item(
+    name: String,
+    path: String,
+    metadata: russh_sftp::protocol::FileAttributes,
+) -> SftpDirectoryItem {
+    SftpDirectoryItem {
+        name,
+        path: SftpPath::remote(path),
+        file_type: metadata.file_type().into(),
+        size: metadata.size,
+        modified_at: metadata.modified().ok(),
+        permissions: metadata.permissions,
+    }
+}
+
+pub(crate) fn remote_path_metadata(
+    path: &str,
+    metadata: russh_sftp::protocol::FileAttributes,
+) -> SftpPathMetadata {
+    SftpPathMetadata {
+        path: SftpPath::remote(path.to_owned()),
+        file_type: metadata.file_type().into(),
+        size: metadata.size,
+        modified_at: metadata.modified().ok(),
+        permissions: metadata.permissions,
     }
 }
 

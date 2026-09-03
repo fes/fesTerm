@@ -187,6 +187,28 @@ local session persistence remains experimental and unvalidated as a supported
 capability until `CP-11` and that security review are complete and the ADR is
 formally accepted or the shipped scope is narrowed.
 
+## September 2026 GUI SFTP backend groundwork
+
+ADR 0029's first implementation slice stayed deliberately below the egui UI:
+`festerm-ssh` now exposes one unified local/remote directory snapshot model,
+plus a queued GUI-transfer backend that emits typed progress, refresh, and
+collision events instead of transcript text. The additive API reuses
+`SftpSession`'s existing path resolution, single-file `get`/`put` safety, and
+overwrite refusal rather than creating a second transport path beside ADR
+0028's text-mode SFTP tab.
+
+The hard part was not opening another subsystem channel; it was making folder
+copy semantics explicit enough that a future two-pane UI can stay safe by
+construction. The new backend plans recursive directory copies, pauses on
+collisions with typed Replace/Skip/Keep Both/Merge folders decisions, keeps
+batch-scoped “apply to all” memory out of persisted settings, and copies
+through temporary sibling names so cancelled or failed file transfers do not
+silently leave partially committed destinations. Deterministic unit coverage
+now exercises local snapshots, multi-item queue progress, cancellation,
+collision naming, batch scoping, and merge-with-descendant-collision
+behavior; an ignored OpenSSH interop test extends the existing live SFTP
+harness to verify remote snapshot metadata when Docker validation is available.
+
 ## August 2026 Windows rendering slowness: from suspicion to the real bottleneck
 
 A user report — "fesTerm on Windows is pretty slow to render compared to
