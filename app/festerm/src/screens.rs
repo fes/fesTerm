@@ -11,8 +11,9 @@ use std::path::PathBuf;
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
-    SshPortForwardDirection, SshProfileConfiguration, TerminalFontPreference,
+    Profile, RemoteProfileKind, ScrollSpeedPreference, ScrollbackLimitPreference,
+    SftpPaneOrderPreference, SshPortForwardDirection, SshProfileConfiguration,
+    TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -448,6 +449,7 @@ struct SshLauncherForm {
     saved_profile_id: Option<String>,
     saved_profile_has_credential: bool,
     durable_session: DurableSessionDraft,
+    sftp_gui_mode: bool,
     remember_password: bool,
     feedback: Option<String>,
     /// Set whenever the form is (re)opened so the Username field can claim
@@ -473,6 +475,7 @@ impl Default for SshLauncherForm {
             saved_profile_id: None,
             saved_profile_has_credential: false,
             durable_session: DurableSessionDraft::default(),
+            sftp_gui_mode: true,
             remember_password: false,
             feedback: None,
             focus_username: false,
@@ -504,6 +507,11 @@ impl SshLauncherForm {
         self.prefill_from_profile(profile);
         self.saved_profile_id = Some(profile.identifier().to_owned());
         self.saved_profile_has_credential = profile.credential_reference().is_some();
+    }
+
+    fn prefill_restored_sftp_profile(&mut self, profile: &SshProfileConfiguration) {
+        self.prefill_saved_profile(profile);
+        self.sftp_gui_mode = false;
     }
 
     fn connection_profile(&self) -> Result<SshConnectionProfile, String> {
@@ -575,6 +583,20 @@ impl SshLauncherForm {
 
     /// Converts the transient form into the application's typed SFTP command.
     fn submit_sftp(&mut self) -> Result<AppCommand, String> {
+        if self.sftp_gui_mode {
+            let profile = self.connection_profile()?;
+            return Ok(AppCommand::OpenSftpFileManager {
+                target: crate::sftp_file_manager::SftpFileManagerLaunchTarget {
+                    label: format!("{}@{}", self.username, self.host),
+                    username: self.username.clone(),
+                    host: profile.identity().host().to_owned(),
+                    port: profile.identity().port(),
+                    profile_id: None,
+                    stored_credential_kind: None,
+                    known_host_persisted: false,
+                },
+            });
+        }
         let password = std::mem::take(&mut self.password);
         let private_key = std::mem::take(&mut self.private_key);
         let key_passphrase = std::mem::take(&mut self.key_passphrase);
@@ -1012,6 +1034,8 @@ fn show_sftp_quick_connect(
         })
         .inner;
     ui.add_space(8.0);
+    ui.checkbox(&mut form.sftp_gui_mode, "Use graphical file manager");
+    ui.add_space(8.0);
     if ui.button("Connect").clicked() || submit_with_enter {
         match form.submit_quick_connect_sftp() {
             Ok(command) => {
@@ -1331,6 +1355,30 @@ fn show_sftp_form(
             ssh_text_edit(ui, tab_id, "port", "Port", &mut form.port, false, false);
 
             ui.add_space(10.0);
+            ui.checkbox(&mut form.sftp_gui_mode, "Use graphical file manager");
+            if form.sftp_gui_mode {
+                ssh_paragraph(
+                    ui,
+                    "Opens the two-pane SFTP browser. Turn this off to use terminal commands.",
+                );
+                ui.add_space(12.0);
+                if ui.button("Open SFTP file manager").clicked() {
+                    match form.submit_sftp() {
+                        Ok(command) => {
+                            form.feedback = None;
+                            result = Some(command);
+                        }
+                        Err(feedback) => form.feedback = Some(feedback),
+                    }
+                }
+                if let Some(feedback) = &form.feedback {
+                    ui.add_space(4.0);
+                    ui.colored_label(theme::STATUS_ERROR, feedback);
+                }
+                return;
+            }
+
+            ui.add_space(10.0);
             ssh_section_heading(ui, "Authentication");
             ui.horizontal(|ui| {
                 ui.radio_value(
@@ -1516,6 +1564,7 @@ pub fn show_launcher(
         profiles
             .iter()
             .filter_map(Profile::as_ssh)
+            .filter(|profile| profile.profile_kind() == RemoteProfileKind::Ssh)
             .map(|profile| LauncherItem {
                 label: profile.identifier().to_owned(),
                 description: format!(
@@ -1533,12 +1582,25 @@ pub fn show_launcher(
             .filter_map(Profile::as_ssh)
             .map(|profile| LauncherItem {
                 label: profile.identifier().to_owned(),
-                description: format!(
-                    "Saved SSH profile · SFTP · {}@{}:{}",
-                    profile.username(),
-                    profile.host(),
-                    profile.port()
-                ),
+                description: match profile.profile_kind() {
+                    RemoteProfileKind::Ssh => format!(
+                        "Saved SSH profile · SFTP · {}@{}:{}",
+                        profile.username(),
+                        profile.host(),
+                        profile.port()
+                    ),
+                    RemoteProfileKind::Sftp => format!(
+                        "Saved SFTP profile · {} · {}@{}:{}",
+                        if profile.sftp_gui_mode() {
+                            "graphical"
+                        } else {
+                            "terminal"
+                        },
+                        profile.username(),
+                        profile.host(),
+                        profile.port()
+                    ),
+                },
                 kind: LauncherItemKind::SftpProfile(profile.identifier()),
             }),
     );
@@ -2012,7 +2074,7 @@ pub fn show_sftp_authentication_required(
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
     if !state.sftp_profile_prefilled {
-        state.sftp.prefill_saved_profile(profile);
+        state.sftp.prefill_restored_sftp_profile(profile);
         state.sftp_profile_prefilled = true;
     }
 
@@ -2920,7 +2982,10 @@ fn profile_summary(profile: &Profile) -> (&'static str, String, String) {
             ("Local", local.identifier().to_owned(), description)
         }
         Profile::Ssh(ssh) => (
-            "SSH",
+            match ssh.profile_kind() {
+                RemoteProfileKind::Ssh => "SSH",
+                RemoteProfileKind::Sftp => "SFTP",
+            },
             ssh.identifier().to_owned(),
             format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
         ),
@@ -3038,6 +3103,8 @@ struct SshProfileDraft {
     port: String,
     username: String,
     port_forwards: Vec<SshPortForwardDraft>,
+    profile_kind: RemoteProfileKind,
+    sftp_gui_mode: bool,
     /// Which credential kind the editor's authentication section is
     /// currently showing entry fields for. Independent of
     /// `stored_credential_kind`, which reflects what is actually saved —
@@ -3078,6 +3145,8 @@ impl Default for SshProfileDraft {
             port: SshLauncherForm::DEFAULT_PORT.to_string(),
             username: String::new(),
             port_forwards: Vec::new(),
+            profile_kind: RemoteProfileKind::Ssh,
+            sftp_gui_mode: true,
             auth_method: SshAuthenticationMethod::Password,
             password: String::new(),
             private_key: String::new(),
@@ -3091,6 +3160,13 @@ impl Default for SshProfileDraft {
 }
 
 impl SshProfileDraft {
+    fn new_sftp() -> Self {
+        Self {
+            profile_kind: RemoteProfileKind::Sftp,
+            ..Self::default()
+        }
+    }
+
     fn from_profile(ssh: &SshProfileConfiguration) -> Self {
         let stored_credential_kind = ssh.credential_kind();
         Self {
@@ -3104,6 +3180,8 @@ impl SshProfileDraft {
                 .iter()
                 .map(SshPortForwardDraft::from_configuration)
                 .collect(),
+            profile_kind: ssh.profile_kind(),
+            sftp_gui_mode: ssh.sftp_gui_mode(),
             auth_method: match stored_credential_kind {
                 CredentialKind::Password => SshAuthenticationMethod::Password,
                 CredentialKind::PrivateKey => SshAuthenticationMethod::PrivateKey,
@@ -3129,28 +3207,38 @@ impl SshProfileDraft {
             .iter()
             .map(SshPortForwardDraft::build)
             .collect::<Result<Vec<_>, _>>()?;
-        let profile = Profile::ssh(
-            self.name.trim(),
-            self.host.trim(),
-            port,
-            self.username.trim(),
-            "xterm-256color",
-            80,
-            24,
-        )
+        let profile = match self.profile_kind {
+            RemoteProfileKind::Ssh => Profile::ssh(
+                self.name.trim(),
+                self.host.trim(),
+                port,
+                self.username.trim(),
+                "xterm-256color",
+                80,
+                24,
+            ),
+            RemoteProfileKind::Sftp => Profile::sftp(
+                self.name.trim(),
+                self.host.trim(),
+                port,
+                self.username.trim(),
+                self.sftp_gui_mode,
+            ),
+        }
         .map_err(|error| error.to_string())?;
         let profile = match profile {
-            Profile::Ssh(ssh) => Profile::Ssh(
+            Profile::Ssh(ssh) if self.profile_kind == RemoteProfileKind::Ssh => Profile::Ssh(
                 ssh.with_port_forwards(port_forwards)
                     .map_err(|error| error.to_string())?,
             ),
+            Profile::Ssh(ssh) => Profile::Ssh(ssh),
             Profile::Local(_) | Profile::Serial(_) => unreachable!("Profile::ssh returns SSH"),
         };
-        let profile = match self.durable_session.persistence()? {
-            Some(persistence) => profile
+        let profile = match (self.profile_kind, self.durable_session.persistence()?) {
+            (RemoteProfileKind::Ssh, Some(persistence)) => profile
                 .with_persistence(persistence.provider(), persistence.session_name())
                 .map_err(|error| error.to_string()),
-            None => Ok(profile),
+            (RemoteProfileKind::Ssh, None) | (RemoteProfileKind::Sftp, _) => Ok(profile),
         }?;
         if let Some(existing_profile) = existing_profile {
             if let Some(reference) = existing_profile.credential_reference() {
@@ -3505,7 +3593,7 @@ pub fn show_profiles(
             ui.vertical(|ui| {
                 ui.add_space(24.0);
                 ui.heading("Profiles");
-                ui.label("Reusable local shell and SSH launch definitions.");
+                ui.label("Reusable local shell, SSH, SFTP, and serial launch definitions.");
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("New Local Profile").clicked() {
@@ -3514,6 +3602,10 @@ pub fn show_profiles(
                     }
                     if ui.button("New SSH Profile").clicked() {
                         next_mode = Some(ProfilesScreenMode::EditSsh(SshProfileDraft::default()));
+                    }
+                    if ui.button("New SFTP Profile").clicked() {
+                        next_mode =
+                            Some(ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp()));
                     }
                     if ui.button("New Serial Profile").clicked() {
                         next_mode =
@@ -3565,6 +3657,13 @@ pub fn show_profiles(
                                 Profile::Local(_) => AppCommand::StartConfiguredLocalProfile {
                                     profile_id: name.clone(),
                                 },
+                                Profile::Ssh(ssh)
+                                    if ssh.profile_kind() == RemoteProfileKind::Sftp =>
+                                {
+                                    AppCommand::StartConfiguredSftpProfile {
+                                        profile_id: name.clone(),
+                                    }
+                                }
                                 Profile::Ssh(_) => AppCommand::StartConfiguredSshProfile {
                                     profile_id: name.clone(),
                                 },
@@ -3573,7 +3672,11 @@ pub fn show_profiles(
                                 },
                             });
                         }
-                        if matches!(profile, Profile::Ssh(_))
+                        if matches!(
+                            profile,
+                            Profile::Ssh(ssh)
+                                if ssh.profile_kind() == RemoteProfileKind::Ssh
+                        )
                             && ui.button("Open SFTP").clicked()
                         {
                             command = Some(AppCommand::OpenConfiguredSftpFileManagerProfile {
@@ -3755,10 +3858,11 @@ pub fn show_profiles(
         ProfilesScreenMode::EditSsh(draft) => {
             ui.vertical(|ui| {
                 ui.add_space(24.0);
-                ui.heading(if draft.original_id.is_some() {
-                    "Edit SSH Profile"
-                } else {
-                    "New SSH Profile"
+                ui.heading(match (draft.profile_kind, draft.original_id.is_some()) {
+                    (RemoteProfileKind::Ssh, true) => "Edit SSH Profile",
+                    (RemoteProfileKind::Ssh, false) => "New SSH Profile",
+                    (RemoteProfileKind::Sftp, true) => "Edit SFTP Profile",
+                    (RemoteProfileKind::Sftp, false) => "New SFTP Profile",
                 });
                 ui.add_space(16.0);
                 egui::Frame::new()
@@ -3848,102 +3952,116 @@ pub fn show_profiles(
                                 );
                                 profile_text_edit(ui, tab_id, "host", "Host", &mut draft.host);
                                 profile_text_edit(ui, tab_id, "port", "Port", &mut draft.port);
-                                ui.add_space(10.0);
-                                ssh_section_heading(ui, "Durable session");
-                                show_durable_session_controls(
-                                    ui,
-                                    tab_id,
-                                    &mut draft.durable_session,
-                                    DurableSessionTarget::Remote,
-                                    false,
-                                );
-                                ui.add_space(10.0);
-                                ssh_section_heading(ui, "Port forwards");
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(
-                                            "New rows start on 127.0.0.1 and apply on future connects.",
-                                        )
-                                        .size(11.0)
-                                        .color(theme::TEXT_SECONDARY),
+                                if draft.profile_kind == RemoteProfileKind::Sftp {
+                                    ui.add_space(10.0);
+                                    ui.checkbox(
+                                        &mut draft.sftp_gui_mode,
+                                        "Use graphical file manager",
                                     );
-                                    if ui.button("Add port forward").clicked() {
-                                        draft.port_forwards.push(SshPortForwardDraft::default());
+                                    ssh_paragraph(
+                                        ui,
+                                        "On by default. Turn this off to launch the terminal SFTP command surface.",
+                                    );
+                                } else {
+                                    ui.add_space(10.0);
+                                    ssh_section_heading(ui, "Durable session");
+                                    show_durable_session_controls(
+                                        ui,
+                                        tab_id,
+                                        &mut draft.durable_session,
+                                        DurableSessionTarget::Remote,
+                                        false,
+                                    );
+                                    ui.add_space(10.0);
+                                    ssh_section_heading(ui, "Port forwards");
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(
+                                                "New rows start on 127.0.0.1 and apply on future connects.",
+                                            )
+                                            .size(11.0)
+                                            .color(theme::TEXT_SECONDARY),
+                                        );
+                                        if ui.button("Add port forward").clicked() {
+                                            draft.port_forwards.push(SshPortForwardDraft::default());
+                                        }
+                                    });
+                                    let mut remove_forward = None;
+                                    for (index, forward) in
+                                        draft.port_forwards.iter_mut().enumerate()
+                                    {
+                                        ui.add_space(8.0);
+                                        egui::Frame::new()
+                                            .fill(theme::SURFACE_TAB_ACTIVE)
+                                            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                            .corner_radius(6.0)
+                                            .inner_margin(egui::Margin::same(12))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "Forward {}",
+                                                            index + 1
+                                                        ))
+                                                        .color(theme::TEXT_SECONDARY),
+                                                    );
+                                                    if ui
+                                                        .button(format!(
+                                                            "Remove forward {}",
+                                                            index + 1
+                                                        ))
+                                                        .clicked()
+                                                    {
+                                                        remove_forward = Some(index);
+                                                    }
+                                                });
+                                                ui.add_space(4.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.label("Direction");
+                                                    ui.radio_value(
+                                                        &mut forward.direction,
+                                                        SshPortForwardDirection::Local,
+                                                        "Local",
+                                                    );
+                                                    ui.radio_value(
+                                                        &mut forward.direction,
+                                                        SshPortForwardDirection::Remote,
+                                                        "Remote",
+                                                    );
+                                                });
+                                                profile_text_edit_with_id(
+                                                    ui,
+                                                    tab_id,
+                                                    ("ssh_port_forward_bind_host", index),
+                                                    "Bind host",
+                                                    &mut forward.bind_host,
+                                                );
+                                                profile_text_edit_with_id(
+                                                    ui,
+                                                    tab_id,
+                                                    ("ssh_port_forward_bind_port", index),
+                                                    "Bind port",
+                                                    &mut forward.bind_port,
+                                                );
+                                                profile_text_edit_with_id(
+                                                    ui,
+                                                    tab_id,
+                                                    ("ssh_port_forward_destination_host", index),
+                                                    "Destination host",
+                                                    &mut forward.destination_host,
+                                                );
+                                                profile_text_edit_with_id(
+                                                    ui,
+                                                    tab_id,
+                                                    ("ssh_port_forward_destination_port", index),
+                                                    "Destination port",
+                                                    &mut forward.destination_port,
+                                                );
+                                            });
                                     }
-                                });
-                                let mut remove_forward = None;
-                                for (index, forward) in draft.port_forwards.iter_mut().enumerate() {
-                                    ui.add_space(8.0);
-                                    egui::Frame::new()
-                                        .fill(theme::SURFACE_TAB_ACTIVE)
-                                        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-                                        .corner_radius(6.0)
-                                        .inner_margin(egui::Margin::same(12))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "Forward {}",
-                                                        index + 1
-                                                    ))
-                                                    .color(theme::TEXT_SECONDARY),
-                                                );
-                                                if ui
-                                                    .button(format!(
-                                                        "Remove forward {}",
-                                                        index + 1
-                                                    ))
-                                                    .clicked()
-                                                {
-                                                    remove_forward = Some(index);
-                                                }
-                                            });
-                                            ui.add_space(4.0);
-                                            ui.horizontal(|ui| {
-                                                ui.label("Direction");
-                                                ui.radio_value(
-                                                    &mut forward.direction,
-                                                    SshPortForwardDirection::Local,
-                                                    "Local",
-                                                );
-                                                ui.radio_value(
-                                                    &mut forward.direction,
-                                                    SshPortForwardDirection::Remote,
-                                                    "Remote",
-                                                );
-                                            });
-                                            profile_text_edit_with_id(
-                                                ui,
-                                                tab_id,
-                                                ("ssh_port_forward_bind_host", index),
-                                                "Bind host",
-                                                &mut forward.bind_host,
-                                            );
-                                            profile_text_edit_with_id(
-                                                ui,
-                                                tab_id,
-                                                ("ssh_port_forward_bind_port", index),
-                                                "Bind port",
-                                                &mut forward.bind_port,
-                                            );
-                                            profile_text_edit_with_id(
-                                                ui,
-                                                tab_id,
-                                                ("ssh_port_forward_destination_host", index),
-                                                "Destination host",
-                                                &mut forward.destination_host,
-                                            );
-                                            profile_text_edit_with_id(
-                                                ui,
-                                                tab_id,
-                                                ("ssh_port_forward_destination_port", index),
-                                                "Destination port",
-                                                &mut forward.destination_port,
-                                            );
-                                        });
-                                }
-                                if let Some(index) = remove_forward {
-                                    draft.port_forwards.remove(index);
+                                    if let Some(index) = remove_forward {
+                                        draft.port_forwards.remove(index);
+                                    }
                                 }
                                 if let Some(profile_id) = draft.original_id.clone() {
                                     ui.add_space(10.0);
@@ -4923,7 +5041,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_connect_with_no_password_starts_an_interactive_sftp_session() {
+    fn terminal_sftp_quick_connect_with_no_password_starts_an_interactive_session() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4935,6 +5053,8 @@ mod tests {
             .get_by_label("user@host")
             .type_text("fes@10.1.2.3:2222");
         harness.run();
+        harness.get_by_label("Use graphical file manager").click();
+        harness.run();
         harness.get_by_label("Connect").click();
         harness.run();
 
@@ -4944,7 +5064,7 @@ mod tests {
             ..
         }) = harness.state().command.as_ref()
         else {
-            panic!("a valid SFTP quick-connect destination must start an interactive SFTP session");
+            panic!("terminal SFTP quick connect must start an interactive SFTP session");
         };
         assert_eq!(profile.username(), "fes");
         assert_eq!(profile.identity().host(), "10.1.2.3");
@@ -6818,5 +6938,75 @@ mod tests {
                 "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports"
             )
             .is_some());
+    }
+
+    #[test]
+    fn sftp_launcher_defaults_to_gui_mode_and_can_use_terminal_mode() {
+        let mut form = SshLauncherForm {
+            quick_connect: "deploy@sftp.example.test".to_owned(),
+            ..SshLauncherForm::default()
+        };
+
+        assert!(matches!(
+            form.submit_quick_connect_sftp().unwrap(),
+            AppCommand::OpenSftpFileManager { .. }
+        ));
+
+        form.sftp_gui_mode = false;
+        assert!(matches!(
+            form.submit_quick_connect_sftp().unwrap(),
+            AppCommand::StartSftpSession { .. }
+        ));
+    }
+
+    #[test]
+    fn restored_terminal_sftp_surface_preserves_terminal_mode() {
+        let profile = Profile::sftp("files", "sftp.example.test", 22, "deploy", true).unwrap();
+        let mut form = SshLauncherForm::default();
+        form.prefill_restored_sftp_profile(profile.as_ssh().unwrap());
+
+        assert!(!form.sftp_gui_mode);
+        assert!(matches!(
+            form.submit_sftp().unwrap(),
+            AppCommand::StartSftpSession { .. }
+        ));
+    }
+
+    #[test]
+    fn profiles_surface_creates_reusable_terminal_sftp_profiles() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        harness.run();
+
+        harness.get_by_label("New SFTP Profile").click();
+        harness.run();
+        assert!(harness.query_by_label("New SFTP Profile").is_some());
+        assert!(harness
+            .query_by_label("Use graphical file manager")
+            .is_some());
+
+        for (label, value) in [
+            ("Name", "files"),
+            ("Username", "deploy"),
+            ("Host", "sftp.example.test"),
+        ] {
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+        harness.get_by_label("Use graphical file manager").click();
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile { profile }) = harness.state().command.as_ref() else {
+            panic!("saving the SFTP profile must return a SaveProfile command");
+        };
+        let sftp = profile
+            .as_ssh()
+            .expect("SFTP reuses SSH transport metadata");
+        assert_eq!(sftp.profile_kind(), RemoteProfileKind::Sftp);
+        assert!(!sftp.sftp_gui_mode());
     }
 }

@@ -470,3 +470,17 @@ infrastructure or a hardware-evidence campaign):
    default 64 MiB scrollback limit on each supported platform") once
    Windows/Linux data exists to set one credibly, rather than picking a
    number based on macOS-only evidence.
+
+## September 2026: reusable SFTP destinations and interaction regressions
+
+SFTP had two disconnected entry points: saved SSH profiles could be reused
+indirectly, while the dedicated SFTP launcher always opened the terminal
+transcript. Profiles now support an explicit SFTP identity with a default-on
+graphical-file-manager choice, while preserving terminal mode and legacy SSH
+profile behavior through the shared secret-free SSH transport metadata.
+
+The same pass fixed two interaction regressions at their routing boundaries.
+Precision-wheel point deltas now accumulate fractional terminal rows instead
+of forcing every inertial tail event to move at least one row, and the command
+palette's Markdown picker now returns through the composition root so a chosen
+file actually opens or focuses its viewer.

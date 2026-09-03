@@ -230,11 +230,24 @@ struct ScrollbarGeometry {
 /// would be indistinguishable from `Normal` on devices that emit many small
 /// wheel events per swipe (e.g. a trackpad), since each individual event's
 /// scaled row count would otherwise get floored back up to `1`.
-fn scaled_scroll_rows(raw_rows: usize, multiplier: f32, carry: &mut f32) -> usize {
-    let scaled = (raw_rows as f32) * multiplier.max(0.0) + *carry;
+fn scaled_scroll_rows(raw_rows: f32, multiplier: f32, carry: &mut f32) -> usize {
+    let scaled = raw_rows.max(0.0) * multiplier.max(0.0) + *carry;
     let rows = scaled.floor().max(0.0) as usize;
     *carry = scaled - scaled.floor();
     rows
+}
+
+fn wheel_delta_rows(
+    unit: egui::MouseWheelUnit,
+    delta_y: f32,
+    cell_height: f32,
+    page_rows: usize,
+) -> f32 {
+    match unit {
+        egui::MouseWheelUnit::Point => delta_y.abs() / cell_height,
+        egui::MouseWheelUnit::Line => delta_y.abs(),
+        egui::MouseWheelUnit::Page => delta_y.abs() * page_rows as f32,
+    }
 }
 
 fn scrollbar_geometry(
@@ -649,15 +662,7 @@ impl TerminalView {
                     } if terminal_hovered
                         && (!mouse_reporting || modifiers.shift || over_scrollbar) =>
                     {
-                        let raw_rows = match unit {
-                            egui::MouseWheelUnit::Point => {
-                                ((delta.y.abs() / metrics.height).ceil() as usize).max(1)
-                            }
-                            egui::MouseWheelUnit::Line => delta.y.abs().ceil() as usize,
-                            egui::MouseWheelUnit::Page => {
-                                (delta.y.abs().ceil() as usize).saturating_mul(page_rows)
-                            }
-                        };
+                        let raw_rows = wheel_delta_rows(*unit, delta.y, metrics.height, page_rows);
                         // Accumulate the fractional row this event didn't
                         // quite earn (e.g. a 0.1x "Very slow" clickstop)
                         // into the next same-direction event instead of
@@ -1263,33 +1268,60 @@ mod history_overlay_tests {
         let mut carry = 0.0f32;
         let mut total_rows = 0usize;
         for _ in 0..10 {
-            total_rows += scaled_scroll_rows(1, 0.1, &mut carry);
+            total_rows += scaled_scroll_rows(1.0, 0.1, &mut carry);
         }
         assert_eq!(total_rows, 1);
 
         // The next nine events should still produce nothing (0.1 * 10 == 1
         // exactly lands the carry back at 0.0, restarting the cycle).
         for _ in 0..9 {
-            assert_eq!(scaled_scroll_rows(1, 0.1, &mut carry), 0);
+            assert_eq!(scaled_scroll_rows(1.0, 0.1, &mut carry), 0);
         }
-        assert_eq!(scaled_scroll_rows(1, 0.1, &mut carry), 1);
+        assert_eq!(scaled_scroll_rows(1.0, 0.1, &mut carry), 1);
     }
 
     #[test]
     fn scaled_scroll_rows_at_normal_multiplier_moves_every_event_immediately() {
         let mut carry = 0.0f32;
-        assert_eq!(scaled_scroll_rows(3, 1.0, &mut carry), 3);
+        assert_eq!(scaled_scroll_rows(3.0, 1.0, &mut carry), 3);
         assert_eq!(carry, 0.0);
-        assert_eq!(scaled_scroll_rows(1, 1.0, &mut carry), 1);
+        assert_eq!(scaled_scroll_rows(1.0, 1.0, &mut carry), 1);
     }
 
     #[test]
     fn scaled_scroll_rows_at_fast_multiplier_still_moves_every_event() {
         let mut carry = 0.0f32;
-        assert_eq!(scaled_scroll_rows(1, 1.75, &mut carry), 1);
+        assert_eq!(scaled_scroll_rows(1.0, 1.75, &mut carry), 1);
         assert!((carry - 0.75).abs() < 1e-6);
-        assert_eq!(scaled_scroll_rows(1, 1.75, &mut carry), 2);
+        assert_eq!(scaled_scroll_rows(1.0, 1.75, &mut carry), 2);
         assert!((carry - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sub_row_point_wheel_tail_does_not_force_a_delayed_jump() {
+        let mut carry = 0.0f32;
+        for expected_carry in [0.25, 0.5, 0.75] {
+            assert_eq!(scaled_scroll_rows(0.25, 1.0, &mut carry), 0);
+            assert!((carry - expected_carry).abs() < 1e-6);
+        }
+        assert_eq!(scaled_scroll_rows(0.25, 1.0, &mut carry), 1);
+        assert_eq!(carry, 0.0);
+    }
+
+    #[test]
+    fn wheel_units_preserve_fractional_movement_before_accumulation() {
+        assert_eq!(
+            wheel_delta_rows(egui::MouseWheelUnit::Point, 4.0, 16.0, 20),
+            0.25
+        );
+        assert_eq!(
+            wheel_delta_rows(egui::MouseWheelUnit::Line, 0.25, 16.0, 20),
+            0.25
+        );
+        assert_eq!(
+            wheel_delta_rows(egui::MouseWheelUnit::Page, 0.5, 16.0, 20),
+            10.0
+        );
     }
 
     #[test]

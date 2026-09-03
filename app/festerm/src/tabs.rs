@@ -1276,7 +1276,6 @@ pub enum AppCommand {
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
-    OpenMarkdownFilePicker,
     OpenLocalMarkdownFile {
         path: PathBuf,
     },
@@ -2238,7 +2237,6 @@ impl AppState {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
-            AppCommand::OpenMarkdownFilePicker => {}
             AppCommand::OpenLocalMarkdownFile { path } => self.open_local_markdown(path),
             AppCommand::OpenExternalLink { target } => {
                 if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
@@ -2710,7 +2708,11 @@ impl AppState {
         ));
     }
 
-    fn open_sftp_file_manager(&mut self, target: SftpFileManagerLaunchTarget) {
+    fn open_sftp_file_manager(&mut self, mut target: SftpFileManagerLaunchTarget) {
+        target.known_host_persisted = self
+            .configuration
+            .known_host_fingerprint(&target.host, target.port)
+            .is_some();
         self.workspace_dirty = true;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
             if matches!(tab.content, TabContent::Launcher) {
