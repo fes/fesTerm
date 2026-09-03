@@ -1,0 +1,15 @@
+[package]
+name = "festerm-markdown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Bounded Markdown loading and document projection for fesTerm."
+
+[dependencies]
+pulldown-cmark = { version = "0.13.4", default-features = false }
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+
+[lints]
+workspace = true
