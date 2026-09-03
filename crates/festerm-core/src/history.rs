@@ -419,6 +419,14 @@ impl Scrollback {
     /// accounted row-index storage move. Narrower rows can require more
     /// row-index capacity, so the caller re-applies the bound after splitting
     /// the live-screen tail back out.
+    ///
+    /// Rewrapping can change the total physical-row count (narrower widths
+    /// wrap more rows, wider widths wrap fewer), so `screen_row_origin` is
+    /// advanced by the same delta here to keep
+    /// `content_row_origin + total_physical_rows() == screen_row_origin`
+    /// continuously intact rather than only after the caller later calls
+    /// `split_off_tail` - some callers (see `BufferState::reflowed`) query
+    /// row counts between this call and that one.
     pub(crate) fn reflow(&mut self, columns: usize) {
         let mut cursor = self.content_row_origin;
         for (line, start) in self.lines.iter_mut().zip(self.line_row_starts.iter_mut()) {
@@ -431,6 +439,7 @@ impl Scrollback {
             *start = cursor;
             cursor = cursor.saturating_add(line.physical_rows as u64);
         }
+        self.screen_row_origin = cursor;
     }
 
     pub(crate) fn lines(&self) -> impl ExactSizeIterator<Item = &LogicalLine> {
@@ -438,8 +447,35 @@ impl Scrollback {
     }
 
     /// Total physical rows across every retained logical line.
+    ///
+    /// Derived in `O(1)` from `screen_row_origin - content_row_origin`
+    /// rather than summing every retained line's `physical_rows`. This is
+    /// sound because every mutation path in this module (`push_row`,
+    /// `evict_complete_lines`, the oversized-line front-trim in
+    /// `enforce_limit`, `split_off_tail`, `reflow`, `clear`) maintains the
+    /// invariant `content_row_origin + total_physical_rows() ==
+    /// screen_row_origin` (see `enforce_limit`'s doc comment) by advancing
+    /// `content_row_origin` exactly once per row actually removed from
+    /// `lines`. This method used to scan every retained line on every call;
+    /// since the render path queries it once or more per visible cell, that
+    /// made rendering a scrolled view into a large scrollback (e.g. after a
+    /// `dir /s` on a big tree) cost `O(rows_visible * total_retained_lines)`
+    /// per frame - the debug assertion below cross-checks against the slow
+    /// definition so any future mutation path that violates the invariant
+    /// fails loudly in tests rather than silently drifting.
     pub(crate) fn total_physical_rows(&self) -> usize {
-        self.lines.iter().map(|line| line.physical_rows).sum()
+        let fast = self
+            .screen_row_origin
+            .saturating_sub(self.content_row_origin) as usize;
+        debug_assert_eq!(
+            fast,
+            self.lines
+                .iter()
+                .map(|line| line.physical_rows)
+                .sum::<usize>(),
+            "content_row_origin + total_physical_rows() must equal screen_row_origin"
+        );
+        fast
     }
 
     /// Finds the index into `self.lines`/`self.line_row_starts` of the line
@@ -604,9 +640,16 @@ impl Scrollback {
         segments.reverse();
         let rows = segments.into_iter().flatten().collect();
         self.enforce_limit();
+        // `total_physical_rows()` derives its result from
+        // `screen_row_origin - content_row_origin`, so it can't be used to
+        // recompute `screen_row_origin` itself here without circularity:
+        // this loop just removed trailing rows from `lines` without moving
+        // `content_row_origin` (which only tracks the front/oldest side),
+        // so the new true row count must come from a fresh scan.
+        let true_physical_rows: usize = self.lines.iter().map(|line| line.physical_rows).sum();
         self.screen_row_origin = self
             .content_row_origin
-            .saturating_add(self.total_physical_rows() as u64);
+            .saturating_add(true_physical_rows as u64);
         rows
     }
 
@@ -674,7 +717,7 @@ impl Scrollback {
             limit_bytes: self.limit_bytes,
             charged_bytes: self.charged_bytes,
             logical_lines: self.lines.len(),
-            physical_rows: self.lines.iter().map(|line| line.physical_rows).sum(),
+            physical_rows: self.total_physical_rows(),
             content_row_origin: self.content_row_origin,
             screen_row_origin: self.screen_row_origin,
             evicted_lines: self.evicted_lines,
