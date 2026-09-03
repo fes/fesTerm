@@ -1,5 +1,7 @@
 //! Native SSH transport policy and bounded `russh` session lifecycle.
 
+mod sftp;
+
 use std::{
     collections::VecDeque,
     fmt,
@@ -22,6 +24,11 @@ use festerm_session::{
 };
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroize;
+
+pub use sftp::{
+    parse_sftp_command, SftpCommand, SftpCommandOutcome, SftpCommandParseError, SftpDirectoryEntry,
+    SftpEntryType, SftpSession, SftpSessionError,
+};
 
 /// Canonical SSH destination identity used for trust decisions.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
