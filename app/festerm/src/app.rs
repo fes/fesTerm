@@ -749,10 +749,12 @@ impl FesTermApp {
         }
     }
 
-    fn open_markdown_file_picker(&mut self, context: &egui::Context) {
-        let picked = rfd::FileDialog::new()
-            .add_filter("Markdown", &["md", "markdown"])
-            .pick_file();
+    fn open_markdown_file_picker_with(
+        &mut self,
+        context: &egui::Context,
+        pick_file: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) {
+        let picked = pick_file();
         if let Some(path) = picked {
             self.state
                 .dispatch(AppCommand::OpenLocalMarkdownFile { path }, context);
@@ -1550,12 +1552,22 @@ impl FesTermApp {
     }
 
     fn start_configured_sftp_profile(&mut self, profile_id: String, context: &egui::Context) {
-        let has_credential = self
+        let Some(profile) = self
             .state
             .configuration()
             .profile(&profile_id)
             .and_then(Profile::as_ssh)
-            .is_some_and(|profile| profile.credential_reference().is_some());
+        else {
+            return;
+        };
+        if profile.sftp_gui_mode() {
+            self.state.dispatch(
+                AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id },
+                context,
+            );
+            return;
+        }
+        let has_credential = profile.credential_reference().is_some();
         if has_credential {
             self.start_stored_sftp_profile(profile_id, context);
         } else {
@@ -2295,13 +2307,24 @@ impl FesTermApp {
     /// Applies a selected command-palette item id, translating it back into
     /// the same `AppCommand` path used by chrome gestures and shortcuts.
     fn dispatch_palette_selection(&mut self, id: u64, context: &egui::Context) {
+        self.dispatch_palette_selection_with_picker(id, context, || {
+            rfd::FileDialog::new()
+                .add_filter("Markdown", &["md", "markdown"])
+                .pick_file()
+        });
+    }
+
+    fn dispatch_palette_selection_with_picker(
+        &mut self,
+        id: u64,
+        context: &egui::Context,
+        pick_markdown_file: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) {
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
         match id {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
-            17 => self
-                .state
-                .dispatch(AppCommand::OpenMarkdownFilePicker, context),
+            17 => self.open_markdown_file_picker_with(context, pick_markdown_file),
             18 => self.state.dispatch(AppCommand::ReloadMarkdown, context),
             19 => self
                 .state
@@ -4286,9 +4309,6 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
-                AppCommand::OpenMarkdownFilePicker => {
-                    self.open_markdown_file_picker(&ui.ctx().clone());
-                }
                 AppCommand::OpenLocalMarkdownFile { path } => {
                     let context = ui.ctx().clone();
                     self.state
@@ -5421,6 +5441,45 @@ mod tests {
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let items = app.palette_items();
         assert!(items.iter().any(|item| item.label == "Open Markdown File…"));
+    }
+
+    #[test]
+    fn markdown_palette_picker_selection_opens_the_selected_file() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.dispatch_palette_selection_with_picker(17, &context, || {
+            Some(std::path::PathBuf::from("/docs/readme.md"))
+        });
+
+        let items = app.palette_items();
+        assert!(items.iter().any(|item| item.label == "Reload Markdown"));
+    }
+
+    #[test]
+    fn saved_sftp_profile_launches_its_configured_surface_mode() {
+        let context = egui::Context::default();
+        for (gui_mode, expected_gui_surface) in [(true, true), (false, false)] {
+            let configuration = Configuration::new(vec![festerm_config::Profile::sftp(
+                "files",
+                "sftp.example.test",
+                22,
+                "deploy",
+                gui_mode,
+            )
+            .unwrap()])
+            .unwrap();
+            let mut app = FesTermApp::for_test_with_configuration(configuration);
+
+            app.start_configured_sftp_profile("files".to_owned(), &context);
+
+            assert_eq!(
+                app.state.tabs().iter().any(|tab| matches!(
+                    tab.content,
+                    TabContent::SftpFileManagerAuthenticationRequired(_)
+                )),
+                expected_gui_surface
+            );
+        }
     }
 
     #[test]

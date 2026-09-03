@@ -17,7 +17,8 @@ Entry points:
 
 - **Live SSH session:** command palette and Session Inspector action, **Open SFTP**.
 - **Saved SSH profile:** Profiles row context action, **Open SFTP**, using the ordinary host-key and authentication flows before showing files.
-- **Launcher:** an implemented SSH profile may expose **Open SFTP** as a secondary action. No empty SFTP category or disabled promise appears before the capability exists.
+- **Saved SFTP profile:** Profiles can create and save a reusable destination. Its **Use graphical file manager** option is on by default; turning it off launches the terminal SFTP command surface.
+- **Launcher:** saved SFTP profiles launch in their configured mode. Ordinary SSH profiles may also expose **Open SFTP** as a secondary action.
 
 The SFTP surface uses the requested two-pane file-manager model. **Local is left; Remote is right by default.** This matches the established convention of graphical FTP clients, gives left-to-right upload a natural reading direction, and keeps the lower-risk local filesystem as the stable starting context. A global Settings preference, **SFTP pane order: Local left / Remote left**, should swap the visual order because two-pane habits are unusually strong. Commands and accessibility names always say Local/Remote rather than Left/Right, so behavior remains stable when swapped.
 

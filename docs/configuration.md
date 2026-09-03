@@ -67,6 +67,15 @@ credential_kind = "password"
 provider = "tmux"
 session_name = "main"
 
+[[profiles]]
+kind = "ssh"
+id = "release-files"
+profile_kind = "sftp"
+host = "files.example"
+port = 22
+username = "alice"
+sftp_gui_mode = false
+
 [[known_hosts]]
 host = "build.example"
 port = 2200
@@ -130,6 +139,12 @@ SSH defaults are port `22`, terminal type `xterm-256color`, and an initial
 size of `80` columns by `24` rows. Persistent session names are 1-64 bytes and
 may contain only ASCII letters, digits, `-`, `_`, or `.`.
 
+Saved SFTP destinations reuse the SSH transport shape with
+`profile_kind = "sftp"`. They appear as reusable SFTP profiles rather than
+shell profiles. `sftp_gui_mode` defaults to `true`; set it to `false` to open
+the terminal SFTP command surface instead. SFTP profiles cannot configure
+durable shell sessions or SSH port forwards.
+
 ## Workspace metadata
 
 `workspace_enabled` defaults to `false`. When it is `false`, `[workspace]`
@@ -145,7 +160,9 @@ one of these exact strict shapes:
 | `launcher` | `id` | The Launcher application surface; no session. |
 | `settings` | `id` | The Settings application surface; no session. |
 | `local_session` | `id`, `profile_id` | A session launched from an existing `local` profile; ordinary profiles start fresh while durable providers may attach or create by name. |
-| `ssh_session` | `id`, `profile_id` | An authentication-required surface for an existing `ssh` profile. |
+| `ssh_session` | `id`, `profile_id` | An authentication-required shell surface for an existing ordinary SSH profile. |
+| `sftp_session` | `id`, `profile_id` | An authentication-required terminal SFTP surface for an existing SSH or SFTP profile. |
+| `sftp_file_manager` | `id`, `profile_id` | An authentication-required graphical SFTP surface for an existing SSH or SFTP profile. |
 
 `profile_id` must name an existing profile, and the tab kind must match that
 profile's kind. Tab IDs must be unique. If `focused_tab_id` is present, it

@@ -485,6 +485,14 @@ const fn is_false(value: &bool) -> bool {
     !*value
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+const fn is_true(value: &bool) -> bool {
+    *value
+}
+
 /// User-adjustable interface preferences that apply immediately in the UI and
 /// are intended to be saved automatically as they change
 /// (`docs/gui-design.md` "Wrapping must remain user-configurable"). Unlike
@@ -1223,14 +1231,18 @@ impl WorkspaceTab {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Local)
             }
             Self::SshSession(tab) => {
-                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
+                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::SshShell)
             }
-            Self::SftpSession(tab) => {
-                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
-            }
-            Self::SftpFileManager(tab) => {
-                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
-            }
+            Self::SftpSession(tab) => validate_session_profile(
+                profiles,
+                tab.profile_id(),
+                ExpectedProfileKind::SftpTransport,
+            ),
+            Self::SftpFileManager(tab) => validate_session_profile(
+                profiles,
+                tab.profile_id(),
+                ExpectedProfileKind::SftpTransport,
+            ),
             Self::SerialSession(tab) => {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Serial)
             }
@@ -1318,7 +1330,8 @@ fn validate_tab_identifier(identifier: &str) -> Result<(), ConfigError> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ExpectedProfileKind {
     Local,
-    Ssh,
+    SshShell,
+    SftpTransport,
     Serial,
 }
 
@@ -1339,7 +1352,14 @@ fn validate_session_profile(
     let kind_matches = matches!(
         (expected, profile),
         (ExpectedProfileKind::Local, Profile::Local(_))
-            | (ExpectedProfileKind::Ssh, Profile::Ssh(_))
+            | (
+                ExpectedProfileKind::SshShell,
+                Profile::Ssh(SshProfileConfiguration {
+                    profile_kind: RemoteProfileKind::Ssh,
+                    ..
+                })
+            )
+            | (ExpectedProfileKind::SftpTransport, Profile::Ssh(_))
             | (ExpectedProfileKind::Serial, Profile::Serial(_))
     );
     if kind_matches {
@@ -1404,6 +1424,18 @@ pub enum Profile {
     Serial(SerialProfileConfiguration),
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteProfileKind {
+    #[default]
+    Ssh,
+    Sftp,
+}
+
+fn is_default_remote_profile_kind(kind: &RemoteProfileKind) -> bool {
+    *kind == RemoteProfileKind::default()
+}
+
 impl Profile {
     /// Creates a local-shell profile with direct executable arguments.
     pub fn local(
@@ -1445,6 +1477,35 @@ impl Profile {
             credential_kind: CredentialKind::default(),
             persistence: None,
             port_forwards: Vec::new(),
+            profile_kind: RemoteProfileKind::Ssh,
+            sftp_gui_mode: true,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    /// Creates an SFTP profile using the shared SSH transport metadata.
+    pub fn sftp(
+        identifier: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        username: impl Into<String>,
+        gui_mode: bool,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::Ssh(SshProfileConfiguration {
+            id: identifier.into(),
+            host: host.into(),
+            port,
+            username: username.into(),
+            terminal_type: default_terminal_type(),
+            initial_columns: default_columns(),
+            initial_rows: default_rows(),
+            credential_id: None,
+            credential_kind: CredentialKind::default(),
+            persistence: None,
+            port_forwards: Vec::new(),
+            profile_kind: RemoteProfileKind::Sftp,
+            sftp_gui_mode: gui_mode,
         });
         profile.validate()?;
         Ok(profile)
@@ -1895,6 +1956,10 @@ pub struct SshProfileConfiguration {
     persistence: Option<PersistenceConfiguration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     port_forwards: Vec<SshPortForwardConfiguration>,
+    #[serde(default, skip_serializing_if = "is_default_remote_profile_kind")]
+    profile_kind: RemoteProfileKind,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    sftp_gui_mode: bool,
 }
 
 fn is_default_credential_kind(kind: &CredentialKind) -> bool {
@@ -1962,6 +2027,17 @@ impl SshProfileConfiguration {
         &self.port_forwards
     }
 
+    /// Distinguishes ordinary shell profiles from saved SFTP destinations.
+    pub const fn profile_kind(&self) -> RemoteProfileKind {
+        self.profile_kind
+    }
+
+    /// Whether SFTP launches use the graphical file manager instead of the
+    /// terminal transcript.
+    pub const fn sftp_gui_mode(&self) -> bool {
+        self.sftp_gui_mode
+    }
+
     /// Converts safe metadata into the SSH backend's connection profile.
     pub fn to_connection_profile(&self) -> Result<SshConnectionProfile, ConfigError> {
         let size = TerminalSize::new(self.initial_columns, self.initial_rows)
@@ -2018,6 +2094,11 @@ impl SshProfileConfiguration {
         }
         self.to_connection_profile().map(|_| ())?;
         self.session_strategy().map(|_| ())?;
+        if self.profile_kind == RemoteProfileKind::Sftp
+            && (self.persistence.is_some() || !self.port_forwards.is_empty())
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
+        }
         let mut bindings = HashSet::with_capacity(self.port_forwards.len());
         for forward in &self.port_forwards {
             forward.validate()?;
@@ -3650,6 +3731,32 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
     }
 
     #[test]
+    fn sftp_profiles_restore_only_into_sftp_workspace_surfaces() {
+        let profile = Profile::sftp("files", "sftp.example.test", 22, "deploy", true).unwrap();
+        let ssh_workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::ssh_session("remote", "files").unwrap()],
+            Some("remote".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            Configuration::new_with_workspace(vec![profile.clone()], ssh_workspace)
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::WorkspaceProfileKindMismatch
+        );
+
+        let sftp_workspace = WorkspaceConfiguration::new(
+            vec![
+                WorkspaceTab::sftp_file_manager("files-gui", "files").unwrap(),
+                WorkspaceTab::sftp_session("files-terminal", "files").unwrap(),
+            ],
+            Some("files-gui".to_owned()),
+        )
+        .unwrap();
+        assert!(Configuration::new_with_workspace(vec![profile], sftp_workspace).is_ok());
+    }
+
+    #[test]
     fn workspace_replacement_preserves_profiles_and_validates_references() {
         let configuration =
             Configuration::new(vec![
@@ -4355,6 +4462,73 @@ credential_id = "{CREDENTIAL_REFERENCE}"
         assert!(multiple_document.contains("direction = \"local\""));
         assert!(multiple_document.contains("direction = \"remote\""));
         assert_eq!(Configuration::parse(&multiple_document).unwrap(), multiple);
+    }
+
+    #[test]
+    fn sftp_profiles_round_trip_gui_and_terminal_launch_modes() {
+        for gui_mode in [true, false] {
+            let configuration = Configuration::new(vec![Profile::sftp(
+                "files",
+                "sftp.example.test",
+                22,
+                "deploy",
+                gui_mode,
+            )
+            .unwrap()])
+            .unwrap();
+            let document = configuration.to_toml().unwrap();
+            let loaded = Configuration::parse(&document).unwrap();
+            let sftp = loaded.profiles()[0].as_ssh().unwrap();
+
+            assert_eq!(sftp.profile_kind(), RemoteProfileKind::Sftp);
+            assert_eq!(sftp.sftp_gui_mode(), gui_mode);
+            assert!(document.contains("profile_kind = \"sftp\""));
+            assert_eq!(
+                document.contains("sftp_gui_mode = false"),
+                !gui_mode,
+                "default GUI mode should be omitted while terminal mode is persisted"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_ssh_profiles_default_to_ssh_with_gui_sftp_launches() {
+        let configuration = Configuration::parse(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "legacy"
+host = "ssh.example.test"
+username = "deploy"
+"#,
+        )
+        .unwrap();
+        let ssh = configuration.profiles()[0].as_ssh().unwrap();
+
+        assert_eq!(ssh.profile_kind(), RemoteProfileKind::Ssh);
+        assert!(ssh.sftp_gui_mode());
+    }
+
+    #[test]
+    fn sftp_profiles_reject_ssh_only_persistence_and_port_forwards() {
+        let profile = Profile::sftp("files", "sftp.example.test", 22, "deploy", true).unwrap();
+        assert!(profile
+            .clone()
+            .with_persistence(PersistenceProviderKind::Tmux, "files")
+            .is_err());
+        let forward = ssh_port_forward(
+            SshPortForwardDirection::Local,
+            "127.0.0.1",
+            8080,
+            "app.internal",
+            80,
+        );
+        let Profile::Ssh(sftp) = profile else {
+            unreachable!("Profile::sftp returns SSH transport metadata");
+        };
+        assert!(sftp.with_port_forwards(vec![forward]).is_err());
     }
 
     #[test]
