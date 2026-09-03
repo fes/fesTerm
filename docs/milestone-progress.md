@@ -364,3 +364,87 @@ coverage, physical multi-monitor and mixed-DPI behavior, hardware performance,
 peripherals, broad accessibility comprehension, and visual/usability polish
 remain visible rolling release evidence instead of holding M6 open
 indefinitely. `tack` remains with fesTerm-owned terminfo in M10.
+
+## September 2026: formalizing M9's benchmark-evidence completion criterion
+
+M9's roadmap completion criteria require "Benchmarks establish agreed
+responsiveness and memory budgets near the configured limit on Windows,
+macOS, and Linux." Two perf-focused passes on `main` produced real,
+measured Criterion evidence, but only from this macOS development host, and
+only run manually/locally — this section records that evidence honestly
+against the stated criterion rather than letting it stand implicitly
+satisfied.
+
+### What the Criterion suites cover
+
+- `festerm-core`'s `sustained_output` benchmark (`crates/festerm-core/benches/sustained_output.rs`):
+  `sustained_output/{plain_ascii,styled_utf8}` (steady-state ingest
+  throughput) and `resize_reflow/representative_scrollback_sequence` (reflow
+  cost across a resize sequence at a fixed, modest scrollback depth).
+- `festerm-ui-egui`'s `interaction_rendering` benchmark
+  (`crates/festerm-ui-egui/benches/interaction_rendering.rs`): `scrolling`,
+  `selection`, `rendering`, and `emoji_rendering` groups, covering the
+  interactive paths a real drag/scroll/select session exercises.
+
+### Fixes landed against this evidence (this macOS host only)
+
+- **PR #96** — `Scrollback::stats()` was an O(n) full rescan on every
+  content-row lookup; fixed to O(1). Measured **-97.2%** on the `scrolling`
+  benchmark's scroll-into-history case.
+- **PR #97** — `BufferState::reflowed()` unconditionally cloned the entire
+  scrollback on every resize call (even pure-height resizes needing no
+  rewrap), and `Scrollback::split_off_tail()` did an O(n) rescan to
+  recompute `screen_row_origin`. Fixed via `mem::replace` and an O(1)
+  subtraction respectively. Measured (ad hoc, at a realistic ~17.7k-row
+  worst-case scrollback depth, well above the 2,000-line depth the official
+  benchmark seeds): height-only resize **24.98ms → 0.48ms (~52x)**,
+  column-changing resize **24.39ms → 6.43ms (~3.8x)**. The official
+  `resize_reflow` Criterion benchmark (2,000 seeded lines) improved
+  **-97.7%** (1.795ms → 0.593ms) from the first fix alone; the second fix
+  added a further **-6.3%** at 200k-line scale with no measurable change at
+  the official 2,000-line scale (expected — the removed rescan was cheap at
+  that depth).
+- Selection-during-scroll and an ASCII ingest fast-path were both profiled
+  and found not to need a fix: selection highlighting is already O(1) per
+  cell at paint time, and per-byte parser dispatch is not the ingest
+  bottleneck (the dominant remaining cost is `Terminal::print()`'s per-cell
+  grid write, not parser state-machine overhead) — documented as a finding,
+  not actioned, since batching `print()` itself would be a materially larger
+  and riskier change touching grapheme/wrap invariants for an unproven win.
+
+### Honest gap against the completion criterion
+
+- **Platform coverage: macOS only.** Every measurement above ran on this
+  single macOS development host. No Windows or Linux hardware/VM run has
+  produced comparable numbers, so "near the configured limit on Windows,
+  macOS, and Linux" is only one-third satisfied.
+- **No CI benchmark job.** `.github/workflows/ci.yml` runs `cargo fmt`,
+  `cargo test`, and `cargo clippy` per OS in its `quality` matrix, but no
+  job runs `cargo bench` on any platform — Criterion evidence is entirely
+  manual/local today, with no regression trend tracked over time and no
+  enforcement that a future change can't silently regress these numbers.
+- **No agreed numeric budget.** The roadmap language ("agreed responsiveness
+  and memory budgets") implies a target threshold to compare against, not
+  just "faster than before." No such threshold has been recorded anywhere in
+  `ROADMAP.md`, this file, or an ADR.
+
+### Recommendation
+
+Do not mark M9's benchmark completion criterion Accepted on the strength of
+this section alone. Two concrete follow-ups would close the remaining gap,
+tracked as future work rather than attempted in this pass (this session's
+scope was fixing measured regressions, not standing up new CI
+infrastructure or a hardware-evidence campaign):
+
+1. Add a **non-blocking, informational** CI job (e.g. `cargo bench
+   --no-run` to at least confirm the benchmarks keep compiling on every
+   platform, optionally `cargo bench -- --quick` on a schedule rather than
+   every PR, given Criterion's runtime and shared-runner timing noise) for
+   `ubuntu-latest` and `windows-latest`, mirroring the existing `quality`
+   matrix. This should not gate merges — CI runner performance variance
+   makes a hard pass/fail threshold unreliable — but it would at least
+   produce comparable Windows/Linux numbers over time instead of zero data.
+2. Record an explicit numeric budget (e.g. "N ms resize-reflow at the
+   default 64 MiB scrollback limit on each supported platform") once
+   Windows/Linux data exists to set one credibly, rather than picking a
+   number based on macOS-only evidence.
