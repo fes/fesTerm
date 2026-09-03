@@ -593,6 +593,67 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_click_stays_clear_of_selection_even_while_output_streams_between_press_and_release()
+    {
+        // #94: heavy/streaming PTY output arriving between a press and its
+        // release must not turn an ordinary click (the on-screen cell never
+        // actually moves) into a stray one-cell selection. A regression
+        // reintroduced this by having the no-drag check compare absolute
+        // scrollback rows instead of the grid-relative cell the pointer
+        // pressed and released at - absolute rows shift as new lines arrive
+        // even though the stationary on-screen cell's row index never does.
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("headless frame records grid geometry");
+
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // Simulate heavy output arriving while the button is held, with no
+        // pointer movement at all: enough newlines to scroll the live
+        // screen and advance every on-screen row's absolute scrollback
+        // index well past what it was at press time.
+        for line in 0..200 {
+            harness
+                .state_mut()
+                .terminal
+                .ingest(format!("line-{line:04}\r\n").as_bytes());
+        }
+        harness.run();
+
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        assert!(
+            harness.state().view.selection().range().is_none(),
+            "a click with no pointer movement must never leave a selection behind, \
+             regardless of output arriving while the button was held"
+        );
+    }
+
+    #[test]
     fn terminal_view_preserves_selected_text_across_primary_reflow() {
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 120.0))
