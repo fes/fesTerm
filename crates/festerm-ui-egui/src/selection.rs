@@ -55,9 +55,19 @@ impl Selection {
     /// released position never differed from the press position) collapses
     /// to no selection at all, rather than leaving a single highlighted
     /// character behind — selection should only ever result from a drag.
+    ///
+    /// This deliberately compares the grid-relative `anchor`/`head` (each
+    /// row `0..rows`, updated fresh from every event's own on-screen
+    /// position) rather than `content_anchor`/`content_head` (absolute
+    /// scrollback rows). While the pointer hasn't actually moved, heavy PTY
+    /// output arriving between press and release advances the absolute row
+    /// a stationary on-screen cell maps to - comparing content positions
+    /// would then see a "moved" endpoint and wrongly treat an ordinary
+    /// click during heavy output as a drag, leaving a stray one-cell
+    /// selection behind for a click that never left its starting cell.
     pub fn finish(&mut self) {
         self.active = false;
-        if self.content_anchor == self.content_head {
+        if self.anchor == self.head {
             self.clear();
         }
     }
