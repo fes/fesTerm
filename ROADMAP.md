@@ -311,8 +311,10 @@ shell rather than restoring remote process state.
 Persistent profiles, trust storage, key-file references, and OpenSSH-config
 import UI are M8 configuration/secure-storage work. Cross-platform SSH-agent
 adapters and their consent/fixture policy are deferred to
-[#40](https://github.com/fes/fesTerm/issues/40); port, X11, and agent
-forwarding, SFTP, and SSH certificates remain separate future capabilities.
+[#40](https://github.com/fes/fesTerm/issues/40); local/remote port forwarding
+and SFTP now have ADRs (ADR 0027 / ADR 0028) and are in active development,
+while X11 forwarding, SSH-agent forwarding, and SSH certificates remain
+separate future capabilities.
 
 ### Outcome
 
