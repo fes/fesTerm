@@ -6,8 +6,8 @@ use std::time::Instant;
 use festerm_core::{Dimensions, Terminal};
 use festerm_session::{
     FlowDirection, HostKeyPrompt, PasswordPrompt, Session, SessionError, SessionEvent,
-    SessionLifecycle, SessionSendError, SessionTryReceiveError, TerminalSize,
-    DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    SessionLifecycle, SessionSendError, SessionTryReceiveError, SshPortForwardRuntime,
+    TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use festerm_ui_egui::{
     EncodedInputSink, InputRoute, InputSinkDiagnostics, TERMINAL_RESIZE_DEBOUNCE,
@@ -333,6 +333,7 @@ pub struct SessionController<S: Session> {
     last_backpressure: Option<FlowDirection>,
     host_key_prompt: Option<HostKeyPrompt>,
     password_prompt: Option<PasswordPrompt>,
+    port_forwards: Vec<SshPortForwardRuntime>,
     last_resize: Option<TerminalSize>,
     resize_probe: ResizeProbe,
     /// Whether any resize has ever been requested for this controller. The
@@ -383,6 +384,7 @@ impl<S: Session> SessionController<S> {
             last_backpressure: None,
             host_key_prompt: None,
             password_prompt: None,
+            port_forwards: Vec::new(),
             last_resize: None,
             resize_probe: ResizeProbe::default(),
             has_requested_resize: false,
@@ -412,6 +414,7 @@ impl<S: Session> SessionController<S> {
             last_backpressure: None,
             host_key_prompt: None,
             password_prompt: None,
+            port_forwards: Vec::new(),
             last_resize: None,
             resize_probe: ResizeProbe::default(),
             has_requested_resize: false,
@@ -478,6 +481,12 @@ impl<S: Session> SessionController<S> {
     /// Returns the current interactive password decision request, if any.
     pub fn password_prompt(&self) -> Option<&PasswordPrompt> {
         self.password_prompt.as_ref()
+    }
+
+    /// The most recent SSH port-forward snapshot emitted by the worker.
+    /// Non-SSH sessions retain the empty default.
+    pub fn port_forwards(&self) -> &[SshPortForwardRuntime] {
+        &self.port_forwards
     }
 
     /// Clears `prompt` only when it is still the current password request.
@@ -553,6 +562,9 @@ impl<S: Session> SessionController<S> {
         match event {
             SessionEvent::Lifecycle(lifecycle) => {
                 tracing::info!(target: "festerm::session", ?lifecycle, "session lifecycle");
+                if !matches!(lifecycle, SessionLifecycle::Running) {
+                    self.port_forwards.clear();
+                }
                 self.last_lifecycle = Some(lifecycle);
             }
             SessionEvent::ResizeApplied(size) => {
@@ -579,7 +591,9 @@ impl<S: Session> SessionController<S> {
             SessionEvent::PasswordRequested(prompt) => {
                 self.password_prompt = Some(prompt);
             }
-            SessionEvent::PortForwardsUpdated(_) => {}
+            SessionEvent::PortForwardsUpdated(forwards) => {
+                self.port_forwards = forwards;
+            }
             SessionEvent::Error(error) => self.record_session_error(error),
             SessionEvent::Output(_) => {}
         }
@@ -988,9 +1002,10 @@ No commands are executed until a session can be created.\r\n"
 #[cfg(test)]
 pub(crate) mod fake {
     use super::*;
+    use festerm_ssh::{SshPortForwardRequestError, SshPortForwardSpec};
     use std::{
         collections::VecDeque,
-        sync::{Mutex, MutexGuard},
+        sync::{Arc, Mutex, MutexGuard},
     };
 
     pub struct FakeSession {
@@ -1065,6 +1080,171 @@ pub(crate) mod fake {
             self.events()
                 .pop_front()
                 .ok_or(SessionTryReceiveError::Empty)
+        }
+
+        fn shutdown(
+            &self,
+            _timeout: Duration,
+        ) -> Result<festerm_session::ShutdownResult, festerm_session::ShutdownError> {
+            Ok(festerm_session::ShutdownResult::Stopped)
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum FakeSshOperation {
+        Add {
+            direction: festerm_session::SshPortForwardDirection,
+            bind_host: String,
+            bind_port: u16,
+            destination_host: String,
+            destination_port: u16,
+        },
+        Remove {
+            direction: festerm_session::SshPortForwardDirection,
+            bind_host: String,
+            bind_port: u16,
+        },
+        Query,
+    }
+
+    struct FakeSshSessionInner {
+        id: festerm_session::SessionId,
+        lifecycle: Mutex<SessionLifecycle>,
+        events: Mutex<VecDeque<SessionEvent>>,
+        operations: Mutex<Vec<FakeSshOperation>>,
+    }
+
+    #[derive(Clone)]
+    pub struct FakeSshSession {
+        inner: Arc<FakeSshSessionInner>,
+    }
+
+    impl FakeSshSession {
+        pub fn new(events: impl IntoIterator<Item = SessionEvent>) -> Self {
+            Self {
+                inner: Arc::new(FakeSshSessionInner {
+                    id: festerm_session::SessionId::next(),
+                    lifecycle: Mutex::new(SessionLifecycle::Running),
+                    events: Mutex::new(events.into_iter().collect()),
+                    operations: Mutex::new(Vec::new()),
+                }),
+            }
+        }
+
+        pub fn operations(&self) -> Vec<FakeSshOperation> {
+            self.inner
+                .operations
+                .lock()
+                .expect("fake ssh operations lock")
+                .clone()
+        }
+
+        pub fn push_event(&self, event: SessionEvent) {
+            if let SessionEvent::Lifecycle(lifecycle) = &event {
+                *self
+                    .inner
+                    .lifecycle
+                    .lock()
+                    .expect("fake ssh lifecycle lock") = lifecycle.clone();
+            }
+            self.inner
+                .events
+                .lock()
+                .expect("fake ssh event lock")
+                .push_back(event);
+        }
+
+        pub fn try_add_port_forward(
+            &self,
+            forward: impl SshPortForwardSpec,
+        ) -> Result<(), SshPortForwardRequestError> {
+            self.inner
+                .operations
+                .lock()
+                .expect("fake ssh operations lock")
+                .push(FakeSshOperation::Add {
+                    direction: forward.direction(),
+                    bind_host: forward.bind_host().to_owned(),
+                    bind_port: forward.bind_port(),
+                    destination_host: forward.destination_host().to_owned(),
+                    destination_port: forward.destination_port(),
+                });
+            Ok(())
+        }
+
+        pub fn try_remove_port_forward(
+            &self,
+            direction: festerm_session::SshPortForwardDirection,
+            bind_host: impl Into<String>,
+            bind_port: u16,
+        ) -> Result<(), SshPortForwardRequestError> {
+            self.inner
+                .operations
+                .lock()
+                .expect("fake ssh operations lock")
+                .push(FakeSshOperation::Remove {
+                    direction,
+                    bind_host: bind_host.into(),
+                    bind_port,
+                });
+            Ok(())
+        }
+
+        pub fn try_query_port_forwards(&self) -> Result<(), SshPortForwardRequestError> {
+            self.inner
+                .operations
+                .lock()
+                .expect("fake ssh operations lock")
+                .push(FakeSshOperation::Query);
+            Ok(())
+        }
+    }
+
+    impl Session for FakeSshSession {
+        fn id(&self) -> festerm_session::SessionId {
+            self.inner.id
+        }
+
+        fn lifecycle(&self) -> SessionLifecycle {
+            self.inner
+                .lifecycle
+                .lock()
+                .expect("fake ssh lifecycle lock")
+                .clone()
+        }
+
+        fn metrics(&self) -> SessionMetrics {
+            SessionMetrics::default()
+        }
+
+        fn try_send_input(&self, _bytes: &[u8]) -> Result<(), SessionSendError> {
+            Ok(())
+        }
+
+        fn try_resize(&self, _size: TerminalSize) -> Result<(), SessionSendError> {
+            Ok(())
+        }
+
+        fn try_shutdown(&self) -> Result<(), SessionSendError> {
+            Ok(())
+        }
+
+        fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+            let event = self
+                .inner
+                .events
+                .lock()
+                .expect("fake ssh event lock")
+                .pop_front()
+                .ok_or(SessionTryReceiveError::Empty)?;
+            if let SessionEvent::Lifecycle(lifecycle) = &event {
+                *self
+                    .inner
+                    .lifecycle
+                    .lock()
+                    .expect("fake ssh lifecycle lock") = lifecycle.clone();
+            }
+            Ok(event)
         }
 
         fn shutdown(
@@ -1343,6 +1523,61 @@ mod tests {
 
         assert!(controller.clear_password_prompt(&prompt));
         assert!(controller.password_prompt().is_none());
+    }
+
+    #[test]
+    fn port_forward_snapshots_cross_the_session_boundary_without_terminal_output() {
+        let session = FakeSession::new([SessionEvent::PortForwardsUpdated(vec![
+            SshPortForwardRuntime::new(
+                festerm_session::SshPortForwardDirection::Local,
+                "127.0.0.1",
+                15432,
+                "db.internal",
+                5432,
+                festerm_session::SshPortForwardSource::Profile,
+                festerm_session::SshPortForwardState::Active,
+                None,
+            ),
+        ])]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        assert!(controller.port_forwards().is_empty());
+        assert!(!controller.pump_events(&mut terminal));
+        assert_eq!(controller.port_forwards().len(), 1);
+        assert!(terminal
+            .row_text(0)
+            .is_some_and(|row| row.trim().is_empty()));
+    }
+
+    #[test]
+    fn disconnecting_clears_the_retained_port_forward_snapshot() {
+        let session = FakeSession::new([
+            SessionEvent::PortForwardsUpdated(vec![SshPortForwardRuntime::new(
+                festerm_session::SshPortForwardDirection::Remote,
+                "127.0.0.1",
+                18080,
+                "127.0.0.1",
+                8080,
+                festerm_session::SshPortForwardSource::Ephemeral,
+                festerm_session::SshPortForwardState::Failed,
+                Some("remote bind denied".to_owned()),
+            )]),
+            SessionEvent::Lifecycle(SessionLifecycle::Disconnected(
+                festerm_session::SessionError::new(
+                    festerm_session::SessionErrorKind::Spawn,
+                    "network lost",
+                ),
+            )),
+        ]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        controller.pump_events(&mut terminal);
+
+        assert!(controller.port_forwards().is_empty());
     }
 
     #[test]

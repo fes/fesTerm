@@ -6,6 +6,8 @@
 //! and own no session or tab policy themselves; `AppState::dispatch` remains
 //! the single command-handling path.
 
+use std::path::{Path, PathBuf};
+
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
@@ -26,9 +28,11 @@ use crate::tabs::{AppCommand, PasswordToStore, PrivateKeyToStore, TabId};
 enum LauncherItemKind<'a> {
     LocalDefault,
     NewSsh,
+    NewSftp,
     NewSerial,
     LocalProfile(&'a str),
     SshProfile(&'a str),
+    SftpProfile(&'a str),
     SerialProfile(&'a str),
     ResumeSession(&'a str),
 }
@@ -44,10 +48,12 @@ impl LauncherItem<'_> {
         match self.kind {
             LauncherItemKind::LocalDefault
             | LauncherItemKind::NewSsh
+            | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
             | LauncherItemKind::ResumeSession(_) => None,
             LauncherItemKind::LocalProfile(id)
             | LauncherItemKind::SshProfile(id)
+            | LauncherItemKind::SftpProfile(id)
             | LauncherItemKind::SerialProfile(id) => Some(id),
         }
     }
@@ -55,7 +61,10 @@ impl LauncherItem<'_> {
     fn remote(&self) -> bool {
         matches!(
             self.kind,
-            LauncherItemKind::NewSsh | LauncherItemKind::SshProfile(_)
+            LauncherItemKind::NewSsh
+                | LauncherItemKind::NewSftp
+                | LauncherItemKind::SshProfile(_)
+                | LauncherItemKind::SftpProfile(_)
         )
     }
 
@@ -64,6 +73,9 @@ impl LauncherItem<'_> {
             LauncherItemKind::LocalDefault => AppCommand::StartLocalSession,
             LauncherItemKind::NewSsh => {
                 unreachable!("the New SSH Connection item opens the SSH form, not an AppCommand")
+            }
+            LauncherItemKind::NewSftp => {
+                unreachable!("the New SFTP Connection item opens the SFTP form, not an AppCommand")
             }
             LauncherItemKind::NewSerial => {
                 unreachable!(
@@ -74,6 +86,9 @@ impl LauncherItem<'_> {
                 profile_id: profile_id.to_owned(),
             },
             LauncherItemKind::SshProfile(profile_id) => AppCommand::StartConfiguredSshProfile {
+                profile_id: profile_id.to_owned(),
+            },
+            LauncherItemKind::SftpProfile(profile_id) => AppCommand::StartConfiguredSftpProfile {
                 profile_id: profile_id.to_owned(),
             },
             LauncherItemKind::SerialProfile(profile_id) => {
@@ -112,6 +127,9 @@ fn handle_launcher_item_response(
         if matches!(item.kind, LauncherItemKind::NewSsh) {
             state.ssh_open = true;
             state.ssh.focus_username = true;
+        } else if matches!(item.kind, LauncherItemKind::NewSftp) {
+            state.sftp_open = true;
+            state.sftp.focus_username = true;
         } else if matches!(item.kind, LauncherItemKind::NewSerial) {
             state.serial_open = true;
         } else {
@@ -480,14 +498,7 @@ impl SshLauncherForm {
         self.saved_profile_has_credential = profile.credential_reference().is_some();
     }
 
-    /// Converts the transient form into the application's typed SSH command.
-    ///
-    /// Taking every secret first ensures each submit attempt removes it from UI
-    /// state, including attempts rejected by non-secret input validation.
-    fn submit(&mut self) -> Result<AppCommand, String> {
-        let password = std::mem::take(&mut self.password);
-        let private_key = std::mem::take(&mut self.private_key);
-        let key_passphrase = std::mem::take(&mut self.key_passphrase);
+    fn connection_profile(&self) -> Result<SshConnectionProfile, String> {
         let port = if self.port.trim().is_empty() {
             Self::DEFAULT_PORT
         } else {
@@ -499,13 +510,24 @@ impl SshLauncherForm {
         let identity = HostIdentity::new(&self.host, port).map_err(|error| error.to_string())?;
         let initial_size =
             TerminalSize::new(80, 24).expect("the launcher default terminal size is valid");
-        let profile = SshConnectionProfile::new(
+        SshConnectionProfile::new(
             identity,
             self.username.clone(),
             SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
             initial_size,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())
+    }
+
+    /// Converts the transient form into the application's typed SSH command.
+    ///
+    /// Taking every secret first ensures each submit attempt removes it from UI
+    /// state, including attempts rejected by non-secret input validation.
+    fn submit(&mut self) -> Result<AppCommand, String> {
+        let password = std::mem::take(&mut self.password);
+        let private_key = std::mem::take(&mut self.private_key);
+        let key_passphrase = std::mem::take(&mut self.key_passphrase);
+        let profile = self.connection_profile()?;
         let options = self.session_options()?;
 
         match self.authentication_method {
@@ -543,6 +565,44 @@ impl SshLauncherForm {
         }
     }
 
+    /// Converts the transient form into the application's typed SFTP command.
+    fn submit_sftp(&mut self) -> Result<AppCommand, String> {
+        let password = std::mem::take(&mut self.password);
+        let private_key = std::mem::take(&mut self.private_key);
+        let key_passphrase = std::mem::take(&mut self.key_passphrase);
+        let profile = self.connection_profile()?;
+
+        match self.authentication_method {
+            SshAuthenticationMethod::Password
+                if self.remember_password
+                    && self.saved_profile_id.is_some()
+                    && !password.is_empty() =>
+            {
+                Ok(AppCommand::StoreSftpPassword {
+                    profile_id: self
+                        .saved_profile_id
+                        .clone()
+                        .expect("saved profile was checked above"),
+                    password: PasswordToStore::new(password),
+                })
+            }
+            SshAuthenticationMethod::Password if password.is_empty() => {
+                Ok(AppCommand::StartSftpSession {
+                    profile,
+                    authentication: SshAuthentication::interactive(),
+                })
+            }
+            SshAuthenticationMethod::Password => Ok(AppCommand::StartSftpSession {
+                profile,
+                authentication: SshAuthentication::password(password),
+            }),
+            SshAuthenticationMethod::PrivateKey => Ok(AppCommand::StartSftpSession {
+                profile,
+                authentication: Self::parse_private_key(private_key, key_passphrase)?,
+            }),
+        }
+    }
+
     /// Parses `quick_connect` ("user@host" or "user@host:port") into the
     /// same `host`/`port`/`username` fields the advanced form edits
     /// directly, then submits through the same `submit()` path with no
@@ -554,6 +614,13 @@ impl SshLauncherForm {
         self.password.clear();
         self.authentication_method = SshAuthenticationMethod::Password;
         self.submit()
+    }
+
+    fn submit_quick_connect_sftp(&mut self) -> Result<AppCommand, String> {
+        self.parse_quick_connect()?;
+        self.password.clear();
+        self.authentication_method = SshAuthenticationMethod::Password;
+        self.submit_sftp()
     }
 
     /// See `quick_connect`'s doc comment for the notation this accepts.
@@ -686,6 +753,9 @@ struct LauncherState {
     ssh_open: bool,
     ssh: SshLauncherForm,
     ssh_profile_prefilled: bool,
+    sftp_open: bool,
+    sftp: SshLauncherForm,
+    sftp_profile_prefilled: bool,
     serial_open: bool,
     serial: SerialLauncherForm,
 }
@@ -882,6 +952,60 @@ fn show_ssh_quick_connect(
     ui.add_space(8.0);
     if ui.button("Connect").clicked() || submit_with_enter {
         match form.submit_quick_connect() {
+            Ok(command) => {
+                form.feedback = None;
+                result = Some(command);
+            }
+            Err(feedback) => form.feedback = Some(feedback),
+        }
+    }
+    if let Some(feedback) = &form.feedback {
+        ui.add_space(4.0);
+        ui.colored_label(theme::STATUS_ERROR, feedback);
+    }
+    ui.add_space(10.0);
+    let mut show_advanced = form.advanced_open;
+    if ui
+        .checkbox(&mut show_advanced, "Show advanced settings")
+        .changed()
+        && show_advanced
+    {
+        form.open_advanced_settings();
+    }
+    result
+}
+
+fn show_sftp_quick_connect(
+    ui: &mut Ui,
+    tab_id: TabId,
+    form: &mut SshLauncherForm,
+    focus_quick_connect: bool,
+) -> Option<AppCommand> {
+    let mut result = None;
+    ssh_section_heading(ui, "Quick Connect");
+    let submit_with_enter = ui
+        .horizontal(|ui| {
+            ui.add_space(2.0);
+            let label = ui.add(
+                egui::Label::new(egui::RichText::new("user@host").color(theme::TEXT_SECONDARY))
+                    .selectable(false),
+            );
+            let field = ui.add(
+                TextEdit::singleline(&mut form.quick_connect)
+                    .id_salt(("launcher_sftp", tab_id, "quick_connect"))
+                    .hint_text("example@169.254.1.1")
+                    .desired_width(220.0),
+            );
+            if focus_quick_connect {
+                field.request_focus();
+            }
+            let field = field.labelled_by(label.id);
+            field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        })
+        .inner;
+    ui.add_space(8.0);
+    if ui.button("Connect").clicked() || submit_with_enter {
+        match form.submit_quick_connect_sftp() {
             Ok(command) => {
                 form.feedback = None;
                 result = Some(command);
@@ -1155,6 +1279,154 @@ fn show_ssh_form(
     result
 }
 
+fn show_sftp_form(
+    ui: &mut Ui,
+    tab_id: TabId,
+    form: &mut SshLauncherForm,
+    native_store_available: bool,
+) -> Option<AppCommand> {
+    ui.add_space(16.0);
+    let mut result = None;
+    let focus_username = form.focus_username;
+    form.focus_username = false;
+    egui::Frame::new()
+        .fill(theme::SURFACE_TAB_INACTIVE)
+        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(340.0);
+            if !form.advanced_open {
+                result = show_sftp_quick_connect(ui, tab_id, form, focus_username);
+                return;
+            }
+            let mut show_advanced = form.advanced_open;
+            if ui
+                .checkbox(&mut show_advanced, "Show advanced settings")
+                .changed()
+                && !show_advanced
+            {
+                form.close_advanced_settings();
+            }
+            ui.add_space(10.0);
+            ssh_section_heading(ui, "Connection");
+            ssh_text_edit(
+                ui,
+                tab_id,
+                "username",
+                "Username",
+                &mut form.username,
+                false,
+                focus_username,
+            );
+            ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false, false);
+            ssh_text_edit(ui, tab_id, "port", "Port", &mut form.port, false, false);
+
+            ui.add_space(10.0);
+            ssh_section_heading(ui, "Authentication");
+            ui.horizontal(|ui| {
+                ui.radio_value(
+                    &mut form.authentication_method,
+                    SshAuthenticationMethod::Password,
+                    "Password authentication",
+                );
+                ui.radio_value(
+                    &mut form.authentication_method,
+                    SshAuthenticationMethod::PrivateKey,
+                    "Private-key authentication",
+                );
+            });
+            ui.add_space(4.0);
+            let submit_with_enter = match form.authentication_method {
+                SshAuthenticationMethod::Password => {
+                    let submit = ssh_text_edit(
+                        ui,
+                        tab_id,
+                        "password",
+                        "Password",
+                        &mut form.password,
+                        true,
+                        false,
+                    )
+                    .lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    ui.add_space(4.0);
+                    if form.saved_profile_id.is_some() {
+                        ui.checkbox(
+                            &mut form.remember_password,
+                            "Remember this password in native secure storage",
+                        );
+                    } else {
+                        ssh_paragraph(ui, "Saving a password requires a saved profile.");
+                    }
+                    if form.saved_profile_has_credential {
+                        ui.add_space(4.0);
+                        if ui
+                            .add_enabled(
+                                native_store_available,
+                                egui::Button::new("Use stored password"),
+                            )
+                            .clicked()
+                        {
+                            result = form.saved_profile_id.as_ref().map(|profile_id| {
+                                AppCommand::StartStoredPasswordSftpProfile {
+                                    profile_id: profile_id.clone(),
+                                }
+                            });
+                        }
+                        if !native_store_available {
+                            ssh_paragraph(ui, "Native secure storage is unavailable.");
+                        }
+                    }
+                    submit
+                }
+                SshAuthenticationMethod::PrivateKey => {
+                    ssh_multiline_secret_text_edit(
+                        ui,
+                        tab_id,
+                        "private_key",
+                        "OpenSSH private key",
+                        &mut form.private_key,
+                    );
+                    ssh_paragraph(ui, "The key is kept in memory only, never saved.");
+                    ssh_text_edit(
+                        ui,
+                        tab_id,
+                        "key_passphrase",
+                        "Key passphrase (optional)",
+                        &mut form.key_passphrase,
+                        true,
+                        false,
+                    )
+                    .lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                }
+            };
+
+            if result.is_none() {
+                ui.add_space(12.0);
+                let submit_label = match form.authentication_method {
+                    SshAuthenticationMethod::Password => "Connect with password",
+                    SshAuthenticationMethod::PrivateKey => "Connect with private key",
+                };
+                if ui.button(submit_label).clicked() || submit_with_enter {
+                    match form.submit_sftp() {
+                        Ok(command) => {
+                            form.feedback = None;
+                            result = Some(command);
+                        }
+                        Err(feedback) => form.feedback = Some(feedback),
+                    }
+                }
+                if let Some(feedback) = &form.feedback {
+                    ui.add_space(4.0);
+                    ui.colored_label(theme::STATUS_ERROR, feedback);
+                }
+            }
+        });
+    result
+}
+
 /// Renders the session launcher content and returns any dispatched command.
 ///
 /// `docs/gui-design.md` ("Session Launcher"): fast, compact, and usable
@@ -1192,6 +1464,11 @@ pub fn show_launcher(
             label: "SSH".to_owned(),
             description: "Connect to a remote host".to_owned(),
             kind: LauncherItemKind::NewSsh,
+        },
+        LauncherItem {
+            label: "SFTP".to_owned(),
+            description: "Transfer files over SSH".to_owned(),
+            kind: LauncherItemKind::NewSftp,
         },
         LauncherItem {
             label: "Serial".to_owned(),
@@ -1240,6 +1517,21 @@ pub fn show_launcher(
                     profile.port()
                 ),
                 kind: LauncherItemKind::SshProfile(profile.identifier()),
+            }),
+    );
+    items.extend(
+        profiles
+            .iter()
+            .filter_map(Profile::as_ssh)
+            .map(|profile| LauncherItem {
+                label: format!("{} (SFTP)", profile.identifier()),
+                description: format!(
+                    "Saved SFTP destination · {}@{}:{}",
+                    profile.username(),
+                    profile.host(),
+                    profile.port()
+                ),
+                kind: LauncherItemKind::SftpProfile(profile.identifier()),
             }),
     );
     items.extend(
@@ -1294,6 +1586,44 @@ pub fn show_launcher(
         });
         if back_clicked {
             state.ssh_open = false;
+        }
+        ui.data_mut(|data| data.insert_temp(state_id, state));
+        return command;
+    }
+
+    if state.sftp_open {
+        let mut command = None;
+        let mut back_clicked = false;
+        show_bounded_content_scroll(ui, (tab_id, "sftp_connection_surface"), |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(34.0);
+                    ui.vertical(|ui| {
+                        if ssh_back_button(ui).clicked() {
+                            back_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("Connect with SFTP")
+                                .size(24.0)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new("Enter connection details.")
+                                .size(11.0)
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        if !back_clicked {
+                            command =
+                                show_sftp_form(ui, tab_id, &mut state.sftp, native_store_available);
+                        }
+                    });
+                });
+            });
+        });
+        if back_clicked {
+            state.sftp_open = false;
         }
         ui.data_mut(|data| data.insert_temp(state_id, state));
         return command;
@@ -1610,6 +1940,9 @@ pub fn show_launcher(
         if matches!(items[state.selected].kind, LauncherItemKind::NewSsh) {
             state.ssh_open = true;
             state.ssh.focus_username = true;
+        } else if matches!(items[state.selected].kind, LauncherItemKind::NewSftp) {
+            state.sftp_open = true;
+            state.sftp.focus_username = true;
         } else if matches!(items[state.selected].kind, LauncherItemKind::NewSerial) {
             state.serial_open = true;
         } else {
@@ -1654,6 +1987,42 @@ pub fn show_ssh_authentication_required(
                  below to connect; no prior connection, credential, or host trust was restored.",
             );
             show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available)
+        })
+        .inner;
+
+    ui.data_mut(|data| data.insert_temp(state_id, state));
+    command
+}
+
+/// Renders a restored SFTP workspace tab without creating a transport.
+pub fn show_sftp_authentication_required(
+    ui: &mut Ui,
+    tab_id: TabId,
+    profile: &SshProfileConfiguration,
+    native_store_available: bool,
+) -> Option<AppCommand> {
+    let state_id = launcher_state_id(tab_id);
+    let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
+    if !state.sftp_profile_prefilled {
+        state.sftp.prefill_saved_profile(profile);
+        state.sftp_profile_prefilled = true;
+    }
+
+    let command = ui
+        .vertical(|ui| {
+            ui.add_space(24.0);
+            ui.heading("SFTP authentication required");
+            ui.label(format!(
+                "Restored SFTP destination: {}@{}:{}",
+                profile.username(),
+                profile.host(),
+                profile.port()
+            ));
+            ui.label(
+                "This workspace restored destination metadata only. Enter fresh authentication \
+                 below to connect; no prior connection, credential, or host trust was restored.",
+            );
+            show_sftp_form(ui, tab_id, &mut state.sftp, native_store_available)
         })
         .inner;
 
@@ -1813,7 +2182,7 @@ pub fn show_ssh_live_password_prompt(
 /// they change; there is no separate explicit save step for them. Returns
 /// commands for Settings actions; the application composition root owns
 /// configuration I/O and applies successful replacements to `AppState`.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct SettingsViewModel {
     pub chip_layout: ChipLayout,
     pub status_bar_visible: bool,
@@ -1829,6 +2198,18 @@ pub struct SettingsViewModel {
     pub compact_launcher_grid: bool,
     pub pulse_new_output_dot: bool,
     pub show_resumable_sessions: bool,
+    pub default_sftp_local_directory: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct SettingsState {
+    default_sftp_local_directory: String,
+    synced_value: Option<String>,
+    feedback: Option<String>,
+}
+
+fn settings_sftp_directory_field_id(ui: &Ui) -> egui::Id {
+    ui.make_persistent_id("settings_default_sftp_local_directory")
 }
 
 pub fn show_settings(
@@ -1852,7 +2233,18 @@ pub fn show_settings(
         compact_launcher_grid,
         pulse_new_output_dot,
         show_resumable_sessions,
+        default_sftp_local_directory,
     } = settings;
+    let state_id = ui.id().with("settings_state");
+    let field_id = settings_sftp_directory_field_id(ui);
+    let mut state = ui.data(|data| data.get_temp::<SettingsState>(state_id).unwrap_or_default());
+    let model_value = default_sftp_local_directory.unwrap_or_default();
+    let field_focused = ui.memory(|memory| memory.has_focus(field_id));
+    if state.synced_value.as_deref() != Some(model_value.as_str()) && !field_focused {
+        state.default_sftp_local_directory = model_value.clone();
+        state.synced_value = Some(model_value);
+        state.feedback = None;
+    }
     let mut command = None;
     ui.horizontal(|ui| {
         ui.add_space(26.0);
@@ -2179,10 +2571,74 @@ pub fn show_settings(
                                 command = Some(AppCommand::ToggleQuickSwitchOverlay);
                             }
                         });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "SFTP", |ui| {
+                            ui.horizontal_top(|ui| {
+                                let mut label_id = None;
+                                ui.vertical(|ui| {
+                                    ui.set_max_width((ui.available_width() - 190.0).max(0.0));
+                                    let label = ui.label(
+                                        egui::RichText::new("Default local SFTP directory")
+                                            .color(theme::TEXT_PRIMARY),
+                                    );
+                                    label_id = Some(label.id);
+                                    ssh_paragraph(
+                                        ui,
+                                        "Starting local directory for new SFTP tabs. \
+                                         Changing it updates only future sessions; `lcd` \
+                                         affects the live session only.",
+                                    );
+                                });
+                                ui.add_space(16.0);
+                                ui.vertical(|ui| {
+                                    let response = ui.add(
+                                        TextEdit::singleline(
+                                            &mut state.default_sftp_local_directory,
+                                        )
+                                        .id(field_id)
+                                        .hint_text("Path to existing local directory")
+                                        .desired_width(180.0),
+                                    );
+                                    let response = response
+                                        .labelled_by(label_id.expect("label should be rendered"));
+                                    let submitted = response.lost_focus()
+                                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                                    if submitted || ui.button("Apply").clicked() {
+                                        let trimmed = state.default_sftp_local_directory.trim();
+                                        if trimmed.is_empty() {
+                                            state.feedback = None;
+                                            command =
+                                                Some(AppCommand::SetDefaultSftpLocalDirectory(
+                                                    None,
+                                                ));
+                                        } else if Path::new(trimmed).is_dir() {
+                                            state.feedback = None;
+                                            command = Some(
+                                                AppCommand::SetDefaultSftpLocalDirectory(Some(
+                                                    PathBuf::from(trimmed),
+                                                )),
+                                            );
+                                        } else {
+                                            state.feedback = Some(
+                                                "Default local SFTP directory must exist and be a directory."
+                                                    .to_owned(),
+                                            );
+                                        }
+                                    }
+                                });
+                            });
+                            if let Some(feedback) = &state.feedback {
+                                ui.add_space(6.0);
+                                ui.colored_label(theme::STATUS_ERROR, feedback);
+                            }
+                        });
                     });
                 });
         });
     });
+    ui.data_mut(|data| data.insert_temp(state_id, state));
     command
 }
 
@@ -3823,6 +4279,7 @@ mod tests {
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
+                            default_sftp_local_directory: None,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -3943,6 +4400,50 @@ mod tests {
             harness.state().command,
             Some(AppCommand::ToggleCompactLauncherGrid)
         ));
+    }
+
+    #[test]
+    fn settings_accept_existing_default_sftp_local_directory() {
+        let mut harness = settings_harness();
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        harness.run();
+
+        harness.get_by_label("Default local SFTP directory").focus();
+        harness
+            .get_by_label("Default local SFTP directory")
+            .type_text(directory.to_string_lossy().as_ref());
+        harness.run();
+        harness.get_by_label("Apply").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command.as_ref(),
+            Some(AppCommand::SetDefaultSftpLocalDirectory(Some(path))) if path == &directory
+        ));
+    }
+
+    #[test]
+    fn settings_reject_missing_default_sftp_local_directory() {
+        let mut harness = settings_harness();
+        let missing = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("does-not-exist-default-sftp-local-directory");
+        harness.run();
+
+        harness.get_by_label("Default local SFTP directory").focus();
+        harness
+            .get_by_label("Default local SFTP directory")
+            .type_text(missing.to_string_lossy().as_ref());
+        harness.run();
+        harness.get_by_label("Apply").click();
+        harness.run();
+
+        assert!(
+            harness
+                .query_by_label("Default local SFTP directory must exist and be a directory.")
+                .is_some(),
+            "invalid directories must show inline validation feedback"
+        );
+        assert!(harness.state().command.is_none());
     }
 
     #[test]
@@ -4162,6 +4663,7 @@ mod tests {
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
+                            default_sftp_local_directory: None,
                         },
                         "Cmd+Shift+P",
                         "Cmd+Shift+S",
@@ -4377,6 +4879,54 @@ mod tests {
         assert_eq!(profile.username(), "fes");
         assert_eq!(profile.identity().host(), "10.1.2.3");
         assert_eq!(profile.identity().port(), 22);
+    }
+
+    #[test]
+    fn sftp_launcher_defaults_to_quick_connect_not_the_advanced_form() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SFTP — Transfer files over SSH")
+            .click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("user@host").is_some(),
+            "a freshly opened SFTP launcher must show the Quick Connect field"
+        );
+        assert!(
+            harness.query_by_label("Username").is_none(),
+            "the advanced form must stay hidden until 'Show advanced settings' is checked"
+        );
+    }
+
+    #[test]
+    fn quick_connect_with_no_password_starts_an_interactive_sftp_session() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SFTP — Transfer files over SSH")
+            .click();
+        harness.run();
+
+        harness
+            .get_by_label("user@host")
+            .type_text("fes@10.1.2.3:2222");
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+
+        let Some(AppCommand::StartSftpSession {
+            profile,
+            authentication: SshAuthentication::Interactive,
+            ..
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("a valid SFTP quick-connect destination must start an interactive SFTP session");
+        };
+        assert_eq!(profile.username(), "fes");
+        assert_eq!(profile.identity().host(), "10.1.2.3");
+        assert_eq!(profile.identity().port(), 2222);
     }
 
     #[test]
@@ -4870,6 +5420,8 @@ mod tests {
         harness.run();
         harness.key_press(egui::Key::ArrowDown);
         harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
         harness.key_press(egui::Key::Enter);
         harness.run();
 
@@ -4967,7 +5519,7 @@ mod tests {
         // into -- or past -- the bottom status bar instead of the list
         // staying above it (or scrolling, once there's too much content to
         // fit).
-        let profiles: Vec<Profile> = (0..2)
+        let profiles: Vec<Profile> = (0..1)
             .map(|i| {
                 Profile::ssh(
                     format!("host-{i}"),
@@ -5012,18 +5564,18 @@ mod tests {
                 .expect("status bar panel state should be recorded")
                 .outer_rect
                 .top();
-        let last_edit_rect = harness.get_by_label("Edit host-1").rect();
+        let last_edit_rect = harness.get_by_label("Edit host-0").rect();
         assert!(
             last_edit_rect.max.y <= status_bar_top,
             "saved profile edit icons must stay above the status bar rather than overlapping it"
         );
 
-        harness.get_by_label("Edit host-1").click();
+        harness.get_by_label("Edit host-0").click();
         harness.run();
         assert!(matches!(
             harness.state().command,
             Some(AppCommand::OpenProfileEditor { ref identifier })
-                if identifier == "host-1"
+                if identifier == "host-0"
         ));
     }
 

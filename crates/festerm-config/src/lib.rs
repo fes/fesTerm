@@ -98,7 +98,7 @@ impl Configuration {
     /// accidentally discard profiles while enabling workspace persistence.
     pub fn with_workspace(&self, workspace: WorkspaceConfiguration) -> Result<Self, ConfigError> {
         let mut replacement = Self::new_with_workspace(self.profiles.clone(), workspace)?;
-        replacement.settings = self.settings;
+        replacement.settings = self.settings.clone();
         replacement.known_hosts = self.known_hosts.clone();
         replacement.validate()?;
         Ok(replacement)
@@ -311,8 +311,8 @@ impl Configuration {
     }
 
     /// Returns the current user-adjustable interface preferences.
-    pub const fn interface_settings(&self) -> InterfaceSettings {
-        self.settings
+    pub fn interface_settings(&self) -> &InterfaceSettings {
+        &self.settings
     }
 
     /// Returns an empty, valid configuration document.
@@ -433,6 +433,7 @@ impl Configuration {
                 return Err(ConfigError::new(ConfigErrorKind::DuplicateKnownHost));
             }
         }
+        self.settings.validate()?;
         match (self.workspace_enabled, &self.workspace) {
             (false, None) => Ok(()),
             (false, Some(_)) => Err(ConfigError::new(
@@ -490,7 +491,7 @@ const fn is_false(value: &bool) -> bool {
 /// profiles and workspace metadata, there is deliberately no separate
 /// explicit save step for this slice: Settings applies each change live and
 /// the application persists the same replacement immediately afterward.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceSettings {
     #[serde(default)]
@@ -561,6 +562,11 @@ pub struct InterfaceSettings {
     /// exactly as it does today.
     #[serde(default, skip_serializing_if = "is_false")]
     show_resumable_sessions: bool,
+    /// The default starting local directory for new SFTP sessions. When
+    /// present it must resolve to an existing local directory so SFTP tabs
+    /// never start with a broken `lpwd` baseline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_sftp_local_directory: Option<String>,
 }
 
 impl InterfaceSettings {
@@ -581,6 +587,7 @@ impl InterfaceSettings {
         compact_launcher_grid: false,
         pulse_new_output_dot: false,
         show_resumable_sessions: false,
+        default_sftp_local_directory: None,
     };
 
     pub const fn new(
@@ -605,6 +612,7 @@ impl InterfaceSettings {
             compact_launcher_grid: false,
             pulse_new_output_dot: false,
             show_resumable_sessions: false,
+            default_sftp_local_directory: None,
         }
     }
 
@@ -670,64 +678,84 @@ impl InterfaceSettings {
         self
     }
 
-    pub const fn chip_layout(self) -> ChipLayoutPreference {
+    /// Sets the default starting local directory for new SFTP sessions.
+    pub fn with_default_sftp_local_directory(
+        mut self,
+        default_sftp_local_directory: Option<String>,
+    ) -> Self {
+        self.default_sftp_local_directory = default_sftp_local_directory;
+        self
+    }
+
+    pub const fn chip_layout(&self) -> ChipLayoutPreference {
         self.chip_layout
     }
 
-    pub const fn status_bar_visible(self) -> bool {
+    pub const fn status_bar_visible(&self) -> bool {
         self.status_bar_visible
     }
 
-    pub const fn show_session_details(self) -> bool {
+    pub const fn show_session_details(&self) -> bool {
         self.show_session_details
     }
 
-    pub const fn confirm_session_close(self) -> bool {
+    pub const fn confirm_session_close(&self) -> bool {
         self.confirm_session_close
     }
 
-    pub const fn restore_workspace(self) -> bool {
+    pub const fn restore_workspace(&self) -> bool {
         self.restore_workspace
     }
 
-    pub const fn terminal_font(self) -> TerminalFontPreference {
+    pub const fn terminal_font(&self) -> TerminalFontPreference {
         self.terminal_font
     }
 
-    pub const fn terminal_ligatures(self) -> bool {
+    pub const fn terminal_ligatures(&self) -> bool {
         self.terminal_ligatures
     }
 
-    pub const fn emoji_presentation(self) -> EmojiPresentationPreference {
+    pub const fn emoji_presentation(&self) -> EmojiPresentationPreference {
         self.emoji_presentation
     }
 
-    pub const fn scroll_speed(self) -> ScrollSpeedPreference {
+    pub const fn scroll_speed(&self) -> ScrollSpeedPreference {
         self.scroll_speed
     }
 
-    pub const fn scrollback_limit(self) -> ScrollbackLimitPreference {
+    pub const fn scrollback_limit(&self) -> ScrollbackLimitPreference {
         self.scrollback_limit
     }
 
-    pub const fn quick_switch_overlay(self) -> bool {
+    pub const fn quick_switch_overlay(&self) -> bool {
         self.quick_switch_overlay
     }
 
-    pub const fn compact_launcher_grid(self) -> bool {
+    pub const fn compact_launcher_grid(&self) -> bool {
         self.compact_launcher_grid
     }
 
-    pub const fn pulse_new_output_dot(self) -> bool {
+    pub const fn pulse_new_output_dot(&self) -> bool {
         self.pulse_new_output_dot
     }
 
-    pub const fn show_resumable_sessions(self) -> bool {
+    pub const fn show_resumable_sessions(&self) -> bool {
         self.show_resumable_sessions
+    }
+
+    pub fn default_sftp_local_directory(&self) -> Option<&Path> {
+        self.default_sftp_local_directory.as_deref().map(Path::new)
     }
 
     fn is_default(&self) -> bool {
         *self == Self::DEFAULT
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if let Some(directory) = &self.default_sftp_local_directory {
+            validate_existing_directory_setting(directory)?;
+        }
+        Ok(())
     }
 }
 
@@ -1018,6 +1046,8 @@ pub enum WorkspaceTab {
     LocalSession(SessionTabConfiguration),
     /// An SSH session recreated from an SSH profile.
     SshSession(SessionTabConfiguration),
+    /// An SFTP session recreated from an SSH profile.
+    SftpSession(SessionTabConfiguration),
     /// A serial session recreated from a serial profile.
     SerialSession(SessionTabConfiguration),
 }
@@ -1076,6 +1106,19 @@ impl WorkspaceTab {
         Ok(tab)
     }
 
+    /// Creates an SFTP-session tab which will reference an SSH profile.
+    pub fn sftp_session(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::SftpSession(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
     /// Creates a serial-session tab which will reference a serial profile.
     pub fn serial_session(
         identifier: impl Into<String>,
@@ -1095,18 +1138,20 @@ impl WorkspaceTab {
             Self::Launcher(tab) => tab.identifier(),
             Self::Settings(tab) => tab.identifier(),
             Self::Profiles(tab) => tab.identifier(),
-            Self::LocalSession(tab) | Self::SshSession(tab) | Self::SerialSession(tab) => {
-                tab.identifier()
-            }
+            Self::LocalSession(tab)
+            | Self::SshSession(tab)
+            | Self::SftpSession(tab)
+            | Self::SerialSession(tab) => tab.identifier(),
         }
     }
 
     /// Returns the referenced profile identifier for session tabs.
     pub fn profile_id(&self) -> Option<&str> {
         match self {
-            Self::LocalSession(tab) | Self::SshSession(tab) | Self::SerialSession(tab) => {
-                Some(tab.profile_id())
-            }
+            Self::LocalSession(tab)
+            | Self::SshSession(tab)
+            | Self::SftpSession(tab)
+            | Self::SerialSession(tab) => Some(tab.profile_id()),
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => None,
         }
     }
@@ -1116,9 +1161,10 @@ impl WorkspaceTab {
             Self::Launcher(tab) => validate_tab_identifier(tab.identifier()),
             Self::Settings(tab) => validate_tab_identifier(tab.identifier()),
             Self::Profiles(tab) => validate_tab_identifier(tab.identifier()),
-            Self::LocalSession(tab) | Self::SshSession(tab) | Self::SerialSession(tab) => {
-                tab.validate()
-            }
+            Self::LocalSession(tab)
+            | Self::SshSession(tab)
+            | Self::SftpSession(tab)
+            | Self::SerialSession(tab) => tab.validate(),
         }
     }
 
@@ -1128,6 +1174,9 @@ impl WorkspaceTab {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Local)
             }
             Self::SshSession(tab) => {
+                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
+            }
+            Self::SftpSession(tab) => {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
             }
             Self::SerialSession(tab) => {
@@ -2296,6 +2345,19 @@ fn contains_control_character(value: &str) -> bool {
     value.chars().any(char::is_control)
 }
 
+fn validate_existing_directory_setting(path: &str) -> Result<(), ConfigError> {
+    if path.is_empty()
+        || contains_control_character(path)
+        || contains_secret_bearing_value(path)
+        || fs::metadata(path)
+            .map(|metadata| !metadata.is_dir())
+            .unwrap_or(true)
+    {
+        return Err(ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings));
+    }
+    Ok(())
+}
+
 fn reject_secret_material(document: &str) -> Result<(), ConfigError> {
     let value: toml::Value = toml::from_str(document).map_err(parse_error)?;
     inspect_document_for_secret_material(&value)
@@ -2473,6 +2535,7 @@ pub enum ConfigErrorKind {
     UnknownFocusedWorkspaceTab,
     InvalidKnownHost,
     DuplicateKnownHost,
+    InvalidInterfaceSettings,
     Serialization,
 }
 
@@ -2591,6 +2654,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::DuplicateKnownHost => {
                 formatter.write_str("known_hosts[] entries must be unique per host:port")
             }
+            ConfigErrorKind::InvalidInterfaceSettings => formatter.write_str(
+                "interface settings must use existing local directories for default_sftp_local_directory and safe values for every other field",
+            ),
             ConfigErrorKind::Serialization => {
                 formatter.write_str("configuration could not be serialized")
             }
@@ -3506,10 +3572,11 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
                 WorkspaceTab::launcher("launcher").unwrap(),
                 WorkspaceTab::local_session("local-tab", "local").unwrap(),
                 WorkspaceTab::ssh_session("ssh-tab", "remote").unwrap(),
+                WorkspaceTab::sftp_session("sftp-tab", "remote").unwrap(),
                 WorkspaceTab::settings("settings").unwrap(),
                 WorkspaceTab::profiles("profiles").unwrap(),
             ],
-            Some("ssh-tab".to_owned()),
+            Some("sftp-tab".to_owned()),
         )
         .unwrap();
         let configuration = Configuration::new_with_workspace(
@@ -3532,6 +3599,7 @@ credential_id = "550e8400-e29b-41d4-a716-446655440000"
 
         let serialized = configuration.to_toml().unwrap();
         assert!(serialized.contains("workspace_enabled = true"));
+        assert!(serialized.contains("kind = \"sftp_session\""));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
     }
 
@@ -4616,7 +4684,7 @@ schema_version = 99
 
         assert!(!serialized.contains("[settings]"));
         assert_eq!(
-            configuration.interface_settings(),
+            configuration.interface_settings().clone(),
             InterfaceSettings::DEFAULT
         );
     }
@@ -4638,9 +4706,60 @@ schema_version = 99
         assert!(serialized.contains("[settings]"));
         assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
         assert_eq!(
-            configuration.interface_settings(),
+            configuration.interface_settings().clone(),
             InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true, false, true)
         );
+    }
+
+    #[test]
+    fn default_sftp_local_directory_round_trips_through_toml() {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("crate directory exists")
+            .display()
+            .to_string();
+        let settings = InterfaceSettings::new(
+            ChipLayoutPreference::SingleRowScroll,
+            true,
+            true,
+            true,
+            false,
+        )
+        .with_default_sftp_local_directory(Some(directory.clone()));
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings.clone())
+            .expect("existing SFTP directory is valid");
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("default_sftp_local_directory"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        assert_eq!(
+            configuration
+                .interface_settings()
+                .default_sftp_local_directory()
+                .map(|path| path.display().to_string()),
+            Some(directory)
+        );
+    }
+
+    #[test]
+    fn missing_default_sftp_local_directory_is_rejected() {
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("does-not-exist-default-sftp-local-directory");
+        let configuration = Configuration::empty().with_interface_settings(
+            InterfaceSettings::new(
+                ChipLayoutPreference::SingleRowScroll,
+                true,
+                true,
+                true,
+                false,
+            )
+            .with_default_sftp_local_directory(Some(missing.display().to_string())),
+        );
+
+        let error = configuration.expect_err("missing SFTP directories must be rejected");
+        assert_eq!(error.kind(), ConfigErrorKind::InvalidInterfaceSettings);
     }
 
     #[test]
@@ -4650,7 +4769,7 @@ schema_version = 99
         let configuration = Configuration::parse(document).unwrap();
 
         assert_eq!(
-            configuration.interface_settings(),
+            configuration.interface_settings().clone(),
             InterfaceSettings::DEFAULT
         );
     }
@@ -4678,7 +4797,7 @@ schema_version = 99
         let settings = InterfaceSettings::DEFAULT
             .with_terminal_typography(TerminalFontPreference::IosevkaTerm, true);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4688,7 +4807,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
         assert!(Configuration::parse(
@@ -4702,7 +4822,7 @@ schema_version = 99
         let settings = InterfaceSettings::DEFAULT
             .with_emoji_presentation(EmojiPresentationPreference::Monochrome);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4711,7 +4831,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
         assert!(Configuration::parse(
@@ -4725,7 +4846,7 @@ schema_version = 99
         // Feature request #67.
         let settings = InterfaceSettings::DEFAULT.with_scroll_speed(ScrollSpeedPreference::Fast);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4734,7 +4855,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
 
@@ -4770,7 +4892,7 @@ schema_version = 99
         let settings =
             InterfaceSettings::DEFAULT.with_scrollback_limit(ScrollbackLimitPreference::MiB16);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4779,7 +4901,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
         assert_eq!(
@@ -4812,7 +4935,7 @@ schema_version = 99
         // Feature request #69.
         let settings = InterfaceSettings::DEFAULT.with_quick_switch_overlay(true);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4821,7 +4944,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
 
@@ -4848,7 +4972,7 @@ schema_version = 99
         // Feature request #64.
         let settings = InterfaceSettings::DEFAULT.with_compact_launcher_grid(true);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4857,7 +4981,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
 
@@ -4884,7 +5009,7 @@ schema_version = 99
         // Feature request #68.
         let settings = InterfaceSettings::DEFAULT.with_pulse_new_output_dot(true);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4893,7 +5018,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
 
@@ -4920,7 +5046,7 @@ schema_version = 99
         // Feature request #70.
         let settings = InterfaceSettings::DEFAULT.with_show_resumable_sessions(true);
         let configuration = Configuration::empty()
-            .with_interface_settings(settings)
+            .with_interface_settings(settings.clone())
             .unwrap();
 
         let serialized = configuration.to_toml().unwrap();
@@ -4929,7 +5055,8 @@ schema_version = 99
         assert_eq!(
             Configuration::parse(&serialized)
                 .unwrap()
-                .interface_settings(),
+                .interface_settings()
+                .clone(),
             settings
         );
 
@@ -4978,7 +5105,7 @@ schema_version = 99
         let replacement = configuration.with_workspace(workspace).unwrap();
 
         assert_eq!(
-            replacement.interface_settings(),
+            replacement.interface_settings().clone(),
             InterfaceSettings::new(ChipLayoutPreference::Wrap, false, true, false, true)
         );
     }
@@ -5009,8 +5136,8 @@ schema_version = 99
         // Turning off workspace persistence must not also discard unrelated
         // settings/profile state.
         assert_eq!(
-            cleared.interface_settings(),
-            configuration.interface_settings()
+            cleared.interface_settings().clone(),
+            configuration.interface_settings().clone()
         );
     }
 

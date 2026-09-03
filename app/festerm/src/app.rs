@@ -10,13 +10,17 @@ use std::{
 use eframe::egui;
 use festerm_config::{
     Configuration, EmojiPresentationPreference, InterfaceSettings, Profile, SerialDataBits,
-    SerialFlowControl, SerialParity, SerialStopBits, TerminalFontPreference,
+    SerialFlowControl, SerialParity, SerialStopBits,
+    SshPortForwardDirection as ConfigPortForwardDirection, TerminalFontPreference,
 };
 use festerm_pty::LocalProfile;
 #[cfg(test)]
 use festerm_secret_store::MemorySecretStore;
 use festerm_secret_store::{native_store, SecretStore, SecretStoreError};
-use festerm_session::HostKeyPrompt;
+use festerm_session::{
+    HostKeyPrompt, SshPortForwardDirection, SshPortForwardRuntime, SshPortForwardSource,
+    SshPortForwardState,
+};
 use festerm_ui_egui::chrome::{self, ChipId, ChipStatus, ChipViewModel, ChromeAction};
 use festerm_ui_egui::overlay::{self, OverlayAction};
 use festerm_ui_egui::palette::{self, PaletteItem, PaletteState};
@@ -29,9 +33,9 @@ use crate::configuration_startup::{
 use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
 use crate::native_smoke::NativeWindowSmoke;
 use crate::overlay_state::{
-    CloseConsequence, OverlayState, PendingCloseConfirmation, PendingFileDropConfirmation,
-    PendingPasswordStore, PendingPasteConfirmation, PendingQuitConfirmation,
-    PendingSettingsResetConfirmation,
+    CloseConsequence, LivePortForwardManager, OverlayState, PendingCloseConfirmation,
+    PendingFileDropConfirmation, PendingPasswordStore, PendingPasteConfirmation,
+    PendingQuitConfirmation, PendingSettingsResetConfirmation, StoredCredentialLaunch,
 };
 use crate::screens;
 use crate::tabs::{
@@ -73,6 +77,7 @@ enum ApplicationShortcut {
     ClearTerminal,
     ResetTerminal,
     ToggleFocusMode,
+    PortForwardManager,
     /// Terminal-content search (`docs/gui-design.md` "Terminal-content
     /// search"). `Ctrl+Shift+F` on Windows/Linux; macOS uses plain `Cmd+F`
     /// since `Cmd+Shift+F` is already `ToggleFocusMode` there.
@@ -162,6 +167,14 @@ impl ApplicationShortcut {
                     egui::Key::F11
                 },
             )),
+            Self::PortForwardManager => Some((
+                if cfg!(target_os = "macos") {
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT
+                } else {
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
+                },
+                egui::Key::M,
+            )),
             Self::Find => Some((
                 if cfg!(target_os = "macos") {
                     egui::Modifiers::COMMAND
@@ -199,6 +212,8 @@ impl ApplicationShortcut {
             Self::ResetTerminal => Some("Ctrl+Shift+R"),
             Self::ToggleFocusMode if cfg!(target_os = "macos") => Some("\u{2318}+Shift+F"),
             Self::ToggleFocusMode => Some("Ctrl+Shift+F11"),
+            Self::PortForwardManager if cfg!(target_os = "macos") => Some("\u{2318}+Shift+M"),
+            Self::PortForwardManager => Some("Ctrl+Shift+M"),
             Self::Find if cfg!(target_os = "macos") => Some("\u{2318}+F"),
             Self::Find => Some("Ctrl+Shift+F"),
         }
@@ -649,7 +664,9 @@ impl FesTermApp {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
             TabContent::Profiles => "Close Profiles",
-            TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => "Close Session",
+            TabContent::SshAuthenticationRequired(_)
+            | TabContent::SftpAuthenticationRequired(_)
+            | TabContent::Session(_) => "Close Session",
         };
         self.native_menu.update(
             close_label,
@@ -681,7 +698,10 @@ impl FesTermApp {
                                 InspectorTransport::Local { .. } => {
                                     CloseConsequence::TerminateLocalProcess
                                 }
-                                InspectorTransport::Ssh { .. } => CloseConsequence::DisconnectSsh,
+                                InspectorTransport::Ssh { .. }
+                                | InspectorTransport::Sftp { .. } => {
+                                    CloseConsequence::DisconnectSsh
+                                }
                                 InspectorTransport::Serial { .. } => {
                                     CloseConsequence::TerminateLocalProcess
                                 }
@@ -789,6 +809,7 @@ impl FesTermApp {
                         (&session.inspector_transport, pending.consequence),
                         (InspectorTransport::Local { persistence: None }, CloseConsequence::TerminateLocalProcess)
                             | (InspectorTransport::Ssh { .. }, CloseConsequence::DisconnectSsh)
+                            | (InspectorTransport::Sftp { .. }, CloseConsequence::DisconnectSsh)
                             | (InspectorTransport::Serial { .. }, CloseConsequence::TerminateLocalProcess)
                     ))
             });
@@ -1491,6 +1512,21 @@ impl FesTermApp {
         }
     }
 
+    fn start_configured_sftp_profile(&mut self, profile_id: String, context: &egui::Context) {
+        let has_credential = self
+            .state
+            .configuration()
+            .profile(&profile_id)
+            .and_then(Profile::as_ssh)
+            .is_some_and(|profile| profile.credential_reference().is_some());
+        if has_credential {
+            self.start_stored_sftp_profile(profile_id, context);
+        } else {
+            self.state
+                .start_configured_sftp_profile_interactive(&profile_id, context);
+        }
+    }
+
     fn start_stored_password_profile_with_options(
         &mut self,
         profile_id: String,
@@ -1517,19 +1553,37 @@ impl FesTermApp {
         }
     }
 
+    fn start_stored_sftp_profile(&mut self, profile_id: String, context: &egui::Context) {
+        let Ok(store) = self.secret_store.as_ref() else {
+            self.secure_storage_feedback = self
+                .secret_store
+                .as_ref()
+                .err()
+                .copied()
+                .map(secret_store_message);
+            return;
+        };
+        if !self
+            .state
+            .start_stored_password_sftp_profile(&profile_id, Arc::clone(store), context)
+        {
+            self.secure_storage_feedback =
+                Some("This saved SFTP destination has no stored password. Enter and remember a password first.");
+        }
+    }
+
     fn store_password_for_profile(
         &mut self,
         profile_id: String,
         password: crate::tabs::PasswordToStore,
-        options: festerm_ssh::SshSessionOptions,
-        launch_after_store: bool,
+        _options: festerm_ssh::SshSessionOptions,
+        launch_after_store: Option<StoredCredentialLaunch>,
         context: &egui::Context,
     ) {
         self.store_credential_for_profile(
             profile_id,
             festerm_config::CredentialKind::Password,
             move || password.into_secret_bytes(),
-            options,
             launch_after_store,
             context,
         );
@@ -1539,15 +1593,14 @@ impl FesTermApp {
         &mut self,
         profile_id: String,
         private_key: crate::tabs::PrivateKeyToStore,
-        options: festerm_ssh::SshSessionOptions,
-        launch_after_store: bool,
+        _options: festerm_ssh::SshSessionOptions,
+        launch_after_store: Option<StoredCredentialLaunch>,
         context: &egui::Context,
     ) {
         self.store_credential_for_profile(
             profile_id,
             festerm_config::CredentialKind::PrivateKey,
             move || private_key.into_secret_bytes(),
-            options,
             launch_after_store,
             context,
         );
@@ -1563,8 +1616,7 @@ impl FesTermApp {
         profile_id: String,
         credential_kind: festerm_config::CredentialKind,
         make_secret: impl FnOnce() -> festerm_secret_store::SecretBytes + Send + 'static,
-        options: festerm_ssh::SshSessionOptions,
-        launch_after_store: bool,
+        launch_after_store: Option<StoredCredentialLaunch>,
         context: &egui::Context,
     ) {
         let Ok(store) = self.secret_store.as_ref() else {
@@ -1594,7 +1646,6 @@ impl FesTermApp {
                 self.overlays.pending_password_store = Some(PendingPasswordStore {
                     receiver,
                     profile_id,
-                    options,
                     store,
                     launch_after_store,
                     credential_kind,
@@ -1646,12 +1697,19 @@ impl FesTermApp {
                         },
                         None => Some("SSH credential saved in native secure storage."),
                     };
-                    if pending.launch_after_store {
-                        self.start_stored_password_profile_with_options(
-                            pending.profile_id,
-                            pending.options,
-                            context,
-                        );
+                    if let Some(launch) = pending.launch_after_store {
+                        match launch {
+                            StoredCredentialLaunch::Ssh(options) => {
+                                self.start_stored_password_profile_with_options(
+                                    pending.profile_id,
+                                    options,
+                                    context,
+                                );
+                            }
+                            StoredCredentialLaunch::Sftp => {
+                                self.start_stored_sftp_profile(pending.profile_id, context);
+                            }
+                        }
                     }
                 } else {
                     let cleanup = pending.store.delete(&reference);
@@ -1902,6 +1960,7 @@ impl FesTermApp {
         const COPY: u64 = 13;
         const PASTE: u64 = 14;
         const FIND_IN_TERMINAL: u64 = 15;
+        const PORT_FORWARD_MANAGER: u64 = 16;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -2010,6 +2069,19 @@ impl FesTermApp {
                     shortcut_label: None,
                 },
                 PaletteItem {
+                    id: PORT_FORWARD_MANAGER,
+                    label: if self.port_forward_manager_open_for_active_tab() {
+                        "Hide Port Forward Manager".to_owned()
+                    } else {
+                        "Manage Port Forwards…".to_owned()
+                    },
+                    hint: ApplicationShortcut::PortForwardManager
+                        .label()
+                        .map(str::to_owned),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
                     hint: ApplicationShortcut::ResetTerminal
@@ -2028,6 +2100,11 @@ impl FesTermApp {
                     shortcut_label: None,
                 },
             ]);
+            if let TabContent::Session(session) = &self.state.active_tab().content {
+                if !session.live_port_forwarding_available() {
+                    items.retain(|item| item.id != PORT_FORWARD_MANAGER);
+                }
+            }
         }
         items.push(PaletteItem {
             id: CLOSE_ACTIVE_TAB,
@@ -2035,9 +2112,9 @@ impl FesTermApp {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
                 TabContent::Profiles => "Close Profiles".to_owned(),
-                TabContent::SshAuthenticationRequired(_) | TabContent::Session(_) => {
-                    "Close Session…".to_owned()
-                }
+                TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::Session(_) => "Close Session…".to_owned(),
             },
             hint: ApplicationShortcut::CloseActiveSurface
                 .label()
@@ -2058,10 +2135,19 @@ impl FesTermApp {
                         tab.profile.port()
                     )),
                 ),
+                TabContent::SftpAuthenticationRequired(tab) => (
+                    tab.profile.identifier().to_owned(),
+                    Some(format!(
+                        "SFTP authentication required · {}:{}",
+                        tab.profile.host(),
+                        tab.profile.port()
+                    )),
+                ),
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
-                    let hint = (!dynamic_title.is_empty())
-                        .then(|| dynamic_title.to_owned())
+                    let hint = session
+                        .dynamic_secondary()
+                        .or_else(|| (!dynamic_title.is_empty()).then(|| dynamic_title.to_owned()))
                         .or_else(|| session.launch_secondary.clone());
                     (session.label.clone(), hint)
                 }
@@ -2119,6 +2205,7 @@ impl FesTermApp {
             13 => self.copy_active_selection(context),
             14 => self.paste_into_active_session(context),
             15 => self.open_terminal_search(context),
+            16 => self.toggle_port_forward_manager(context),
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -2196,6 +2283,8 @@ impl FesTermApp {
             && ApplicationShortcut::ResetTerminal.consume(ctx);
         let toggle_focus_mode = matches!(self.state.active_tab().content, TabContent::Session(_))
             && ApplicationShortcut::ToggleFocusMode.consume(ctx);
+        let open_port_forward_manager = matches!(&self.state.active_tab().content, TabContent::Session(session) if session.live_port_forwarding_available())
+            && ApplicationShortcut::PortForwardManager.consume(ctx);
         let open_find = matches!(self.state.active_tab().content, TabContent::Session(_))
             && ApplicationShortcut::Find.consume(ctx);
 
@@ -2235,6 +2324,9 @@ impl FesTermApp {
         }
         if toggle_focus_mode {
             self.toggle_focus_mode(ctx);
+        }
+        if open_port_forward_manager {
+            self.toggle_port_forward_manager(ctx);
         }
         if open_find {
             self.open_terminal_search(ctx);
@@ -2628,6 +2720,408 @@ impl FesTermApp {
         context.request_repaint();
     }
 
+    fn sync_port_forward_manager(&mut self) {
+        let Some(manager) = self.overlays.port_forward_manager.as_ref() else {
+            return;
+        };
+        let active = self.state.active();
+        let keep_open = manager.tab == active
+            && matches!(
+                self.state.active_tab().content,
+                TabContent::Session(ref session) if session.is_ssh_session()
+            );
+        if !keep_open {
+            self.overlays.port_forward_manager = None;
+        }
+    }
+
+    fn port_forward_manager_open_for_active_tab(&self) -> bool {
+        self.overlays
+            .port_forward_manager
+            .as_ref()
+            .is_some_and(|manager| manager.tab == self.state.active())
+    }
+
+    fn close_port_forward_manager(&mut self, context: &egui::Context) {
+        if self.overlays.port_forward_manager.take().is_some() {
+            self.restore_active_terminal_focus();
+            context.request_repaint();
+        }
+    }
+
+    fn open_port_forward_manager(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        let Some(session) = self.state.session_tab_mut(active) else {
+            return;
+        };
+        let available = session.live_port_forwarding_available();
+        let search_open = session.search.is_open();
+        if !available {
+            return;
+        }
+        if search_open {
+            self.close_terminal_search(context);
+        }
+        let query_result = self
+            .state
+            .session_tab_mut(active)
+            .expect("active session tab still exists")
+            .query_port_forwards();
+        let mut manager = LivePortForwardManager::new(active);
+        if let Err(error) = query_result {
+            manager.error = Some(error.to_string());
+        }
+        self.overlays.port_forward_manager = Some(manager);
+        context.request_repaint();
+    }
+
+    fn toggle_port_forward_manager(&mut self, context: &egui::Context) {
+        if self.port_forward_manager_open_for_active_tab() {
+            self.close_port_forward_manager(context);
+        } else {
+            self.open_port_forward_manager(context);
+        }
+    }
+
+    fn port_forward_direction_label(direction: SshPortForwardDirection) -> &'static str {
+        match direction {
+            SshPortForwardDirection::Local => "Local",
+            SshPortForwardDirection::Remote => "Remote",
+        }
+    }
+
+    fn port_forward_source_label(source: SshPortForwardSource) -> &'static str {
+        match source {
+            SshPortForwardSource::Profile => "Profile",
+            SshPortForwardSource::Ephemeral => "Ephemeral",
+        }
+    }
+
+    fn port_forward_state_label(state: SshPortForwardState) -> &'static str {
+        match state {
+            SshPortForwardState::Active => "Active",
+            SshPortForwardState::Failed => "Failed",
+        }
+    }
+
+    fn port_forward_count_label(count: usize) -> Option<String> {
+        (count > 0).then(|| {
+            if count == 1 {
+                "1 active forward".to_owned()
+            } else {
+                format!("{count} active forwards")
+            }
+        })
+    }
+
+    fn show_port_forward_manager(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+        let Some(manager) = self.overlays.port_forward_manager.as_mut() else {
+            return;
+        };
+        let Some(session) = self.state.session_tab_mut(manager.tab) else {
+            self.overlays.port_forward_manager = None;
+            return;
+        };
+        let available = session.live_port_forwarding_available();
+        let forwards = session.port_forwards().to_vec();
+        let mut close_requested = false;
+        let mut add_requested = false;
+        let mut remove_requested: Option<SshPortForwardRuntime> = None;
+        let width = (content_rect.width() - 32.0).clamp(360.0, 520.0);
+        let height = (content_rect.height() - 24.0).clamp(280.0, 520.0);
+        let area_pos = egui::pos2(
+            content_rect.center().x - width / 2.0,
+            (content_rect.top() + 12.0).max(content_rect.center().y - height / 2.0),
+        );
+
+        egui::Area::new(egui::Id::new(("port_forward_manager", manager.tab)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(area_pos)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::same(14))
+                    .show(ui, |ui| {
+                        ui.set_width(width);
+                        ui.set_max_width(width);
+                        ui.set_max_height(height);
+                        ui.horizontal(|ui| {
+                            ui.heading("Port Forward Manager");
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Close").clicked() {
+                                        close_requested = true;
+                                    }
+                                },
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new(
+                                "Live-only SSH forwards for this tab. Overlay-added mappings never change the saved profile.",
+                            )
+                            .small()
+                            .color(theme::TEXT_SECONDARY),
+                        );
+                        if let Some(error) = &manager.error {
+                            ui.add_space(6.0);
+                            ui.colored_label(theme::STATUS_ERROR, error);
+                        }
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("CURRENT FORWARDS")
+                                .size(10.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        ui.add_space(4.0);
+                        if !available {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Port forwarding is available only while this SSH session is connected.",
+                                )
+                                .color(theme::TEXT_SECONDARY),
+                            );
+                        } else if forwards.is_empty() {
+                            ui.label(
+                                egui::RichText::new("No live port forwards yet.")
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        } else {
+                            egui::ScrollArea::vertical()
+                                .id_salt(("port_forward_manager_list", manager.tab))
+                                .max_height((height * 0.45).max(140.0))
+                                .show(ui, |ui| {
+                                    for (index, forward) in forwards.iter().enumerate() {
+                                        if index > 0 {
+                                            ui.add_space(8.0);
+                                        }
+                                        egui::Frame::new()
+                                            .fill(theme::SURFACE_TAB_ACTIVE)
+                                            .stroke(egui::Stroke::new(
+                                                1.0,
+                                                theme::BORDER_SUBTLE,
+                                            ))
+                                            .corner_radius(6.0)
+                                            .inner_margin(egui::Margin::same(12))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(
+                                                            Self::port_forward_direction_label(
+                                                                forward.direction(),
+                                                            ),
+                                                        )
+                                                        .strong(),
+                                                    );
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "{}:{}",
+                                                            forward.bind_host(),
+                                                            forward.bind_port()
+                                                        ))
+                                                        .color(theme::TEXT_SECONDARY),
+                                                    );
+                                                    ui.label("→");
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "{}:{}",
+                                                            forward.destination_host(),
+                                                            forward.destination_port()
+                                                        ))
+                                                        .color(theme::TEXT_SECONDARY),
+                                                    );
+                                                    ui.with_layout(
+                                                        egui::Layout::right_to_left(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            if ui
+                                                                .button(format!(
+                                                                    "Remove forward {}:{}",
+                                                                    forward.bind_host(),
+                                                                    forward.bind_port()
+                                                                ))
+                                                                .clicked()
+                                                            {
+                                                                remove_requested =
+                                                                    Some(forward.clone());
+                                                            }
+                                                        },
+                                                    );
+                                                });
+                                                ui.add_space(4.0);
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(
+                                                            Self::port_forward_source_label(
+                                                                forward.source(),
+                                                            ),
+                                                        )
+                                                        .size(11.0)
+                                                        .color(theme::TEXT_MUTED),
+                                                    );
+                                                    let state_color = match forward.state() {
+                                                        SshPortForwardState::Active => {
+                                                            theme::STATUS_RUNNING
+                                                        }
+                                                        SshPortForwardState::Failed => {
+                                                            theme::STATUS_ERROR
+                                                        }
+                                                    };
+                                                    ui.colored_label(
+                                                        state_color,
+                                                        Self::port_forward_state_label(
+                                                            forward.state(),
+                                                        ),
+                                                    );
+                                                    if let Some(reason) = forward.failure_reason() {
+                                                        ui.label(
+                                                            egui::RichText::new(reason)
+                                                                .size(11.0)
+                                                                .color(theme::TEXT_SECONDARY),
+                                                        );
+                                                    }
+                                                });
+                                            });
+                                    }
+                                });
+                        }
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("ADD LIVE FORWARD")
+                                .size(10.0)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "New rows default to loopback (127.0.0.1). Edit the bind host explicitly to widen exposure.",
+                            )
+                            .size(11.0)
+                            .color(theme::TEXT_SECONDARY),
+                        );
+                        ui.add_space(8.0);
+                        ui.add_enabled_ui(available, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Direction");
+                                ui.radio_value(
+                                    &mut manager.draft.direction,
+                                    ConfigPortForwardDirection::Local,
+                                    "Local",
+                                );
+                                ui.radio_value(
+                                    &mut manager.draft.direction,
+                                    ConfigPortForwardDirection::Remote,
+                                    "Remote",
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                let label = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new("Bind host")
+                                            .color(theme::TEXT_SECONDARY),
+                                    )
+                                    .selectable(false),
+                                );
+                                let field = ui.add(
+                                    egui::TextEdit::singleline(&mut manager.draft.bind_host)
+                                        .id_salt(("port_forward_bind_host", manager.tab))
+                                        .desired_width(180.0),
+                                );
+                                let field = field.labelled_by(label.id);
+                                if manager.request_focus {
+                                    field.request_focus();
+                                    manager.request_focus = false;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                let label = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new("Bind port")
+                                            .color(theme::TEXT_SECONDARY),
+                                    )
+                                    .selectable(false),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut manager.draft.bind_port)
+                                        .id_salt(("port_forward_bind_port", manager.tab))
+                                        .desired_width(120.0),
+                                )
+                                .labelled_by(label.id);
+                            });
+                            ui.horizontal(|ui| {
+                                let label = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new("Destination host")
+                                            .color(theme::TEXT_SECONDARY),
+                                    )
+                                    .selectable(false),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut manager.draft.destination_host,
+                                    )
+                                    .id_salt(("port_forward_destination_host", manager.tab))
+                                    .desired_width(180.0),
+                                )
+                                .labelled_by(label.id);
+                            });
+                            ui.horizontal(|ui| {
+                                let label = ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new("Destination port")
+                                            .color(theme::TEXT_SECONDARY),
+                                    )
+                                    .selectable(false),
+                                );
+                                ui.add(
+                                    egui::TextEdit::singleline(
+                                        &mut manager.draft.destination_port,
+                                    )
+                                    .id_salt(("port_forward_destination_port", manager.tab))
+                                    .desired_width(120.0),
+                                )
+                                .labelled_by(label.id);
+                            });
+                            ui.add_space(6.0);
+                            if ui.button("Add live forward").clicked() {
+                                add_requested = true;
+                            }
+                        });
+                    });
+            });
+
+        if close_requested {
+            self.close_port_forward_manager(ctx);
+            return;
+        }
+        if let Some(forward) = remove_requested {
+            manager.error = session
+                .remove_port_forward(
+                    forward.direction(),
+                    forward.bind_host(),
+                    forward.bind_port(),
+                )
+                .err()
+                .map(|error| error.to_string());
+            ctx.request_repaint();
+        }
+        if add_requested {
+            match manager.draft.build() {
+                Ok(forward) => match session.add_port_forward(&forward) {
+                    Ok(()) => {
+                        manager.error = None;
+                        manager.draft.reset();
+                    }
+                    Err(error) => manager.error = Some(error.to_string()),
+                },
+                Err(error) => manager.error = Some(error),
+            }
+            ctx.request_repaint();
+        }
+    }
+
     /// Renders the find bar as a foreground overlay above the terminal
     /// viewport (`content_rect`) without altering `CentralPanel` layout or
     /// grid dimensions.
@@ -2755,10 +3249,23 @@ impl FesTermApp {
                         )),
                         ChipStatus::Neutral,
                     ),
+                    TabContent::SftpAuthenticationRequired(tab) => (
+                        tab.profile.identifier().to_owned(),
+                        Some(format!(
+                            "SFTP authentication required · {}:{}",
+                            tab.profile.host(),
+                            tab.profile.port()
+                        )),
+                        ChipStatus::Neutral,
+                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
-                        let secondary = (!dynamic_title.is_empty())
-                            .then(|| Self::display_secondary(dynamic_title))
+                        let secondary = session
+                            .dynamic_secondary()
+                            .or_else(|| {
+                                (!dynamic_title.is_empty())
+                                    .then(|| Self::display_secondary(dynamic_title))
+                            })
                             .or_else(|| session.launch_secondary.clone());
                         (session.label.clone(), secondary, session.chip_status())
                     }
@@ -2828,6 +3335,15 @@ impl FesTermApp {
                 host,
                 port: *port,
             },
+            InspectorTransport::Sftp {
+                username,
+                host,
+                port,
+            } => TransportFacts::Sftp {
+                username,
+                host,
+                port: *port,
+            },
             InspectorTransport::Serial {
                 device,
                 baud_rate,
@@ -2857,11 +3373,13 @@ impl FesTermApp {
             }),
             InspectorTransport::Local { .. }
             | InspectorTransport::Ssh { .. }
+            | InspectorTransport::Sftp { .. }
             | InspectorTransport::Serial { .. } => None,
         };
         let type_label = match session.inspector_transport {
             InspectorTransport::Local { .. } => "Local shell",
             InspectorTransport::Ssh { .. } => "SSH",
+            InspectorTransport::Sftp { .. } => "SFTP",
             InspectorTransport::Serial { .. } => "Serial",
         };
         let state_message = match chip_status {
@@ -2871,6 +3389,9 @@ impl FesTermApp {
                 }
                 InspectorTransport::Ssh { .. } => {
                     "The SSH session could not start. Review Diagnostics for the failure detail."
+                }
+                InspectorTransport::Sftp { .. } => {
+                    "The SFTP session could not start. Review Diagnostics for the failure detail."
                 }
                 InspectorTransport::Serial { .. } => {
                     "The serial session could not start. Review Diagnostics for the failure detail."
@@ -2916,13 +3437,14 @@ impl FesTermApp {
     /// Application surfaces keep the same 24 px geometry with empty content.
     fn show_status_bar(&self, ui: &mut egui::Ui) {
         let show_session_details = self.state.show_session_details();
-        let (dimensions, system, status, status_label, detail) =
+        let (dimensions, system, status, status_label, detail, port_forwards) =
             match &self.state.active_tab().content {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
-                | TabContent::SshAuthenticationRequired(_) => {
-                    (None, None, ChipStatus::Neutral, "", None)
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_) => {
+                    (None, None, ChipStatus::Neutral, "", None, None)
                 }
                 TabContent::Session(session) => {
                     let status = session.chip_status();
@@ -2934,8 +3456,12 @@ impl FesTermApp {
                     let detail = (!show_session_details)
                         .then(|| {
                             let dynamic_title = session.terminal.title();
-                            (!dynamic_title.is_empty())
-                                .then(|| Self::display_secondary(dynamic_title))
+                            session
+                                .dynamic_secondary()
+                                .or_else(|| {
+                                    (!dynamic_title.is_empty())
+                                        .then(|| Self::display_secondary(dynamic_title))
+                                })
                                 .or_else(|| session.launch_secondary.clone())
                         })
                         .flatten();
@@ -2945,6 +3471,7 @@ impl FesTermApp {
                         status,
                         session.status_bar_label(),
                         detail,
+                        Self::port_forward_count_label(session.active_port_forward_count()),
                     )
                 }
             };
@@ -2961,6 +3488,7 @@ impl FesTermApp {
                         status,
                         status_label,
                         detail: detail.as_deref(),
+                        port_forwards: port_forwards.as_deref(),
                     },
                 );
             });
@@ -3262,6 +3790,7 @@ impl FesTermApp {
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         self.update_native_menu();
+        self.sync_port_forward_manager();
         if self.focus_mode && !matches!(self.state.active_tab().content, TabContent::Session(_)) {
             self.focus_mode = false;
         }
@@ -3282,6 +3811,8 @@ impl FesTermApp {
                 || self.overlays.pending_file_drop.is_some()
                 || self.overlays.pending_settings_reset.is_some()
                 || self.overlays.pending_quit.is_some());
+        let port_forward_manager_escape =
+            escape_pressed && self.overlays.port_forward_manager.is_some();
         let about_escape = escape_pressed && self.overlays.about_open;
 
         if !self.focus_mode {
@@ -3417,6 +3948,10 @@ impl FesTermApp {
                             compact_launcher_grid: self.state.compact_launcher_grid(),
                             pulse_new_output_dot: self.state.pulse_new_output_dot(),
                             show_resumable_sessions: self.state.show_resumable_sessions(),
+                            default_sftp_local_directory: self
+                                .state
+                                .default_sftp_local_directory()
+                                .map(|path| path.to_string_lossy().into_owned()),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()
@@ -3437,6 +3972,14 @@ impl FesTermApp {
                 }
                 TabContent::SshAuthenticationRequired(tab) => {
                     screen_command = screens::show_ssh_authentication_required(
+                        ui,
+                        active_tab_id,
+                        &tab.profile,
+                        native_store_available,
+                    );
+                }
+                TabContent::SftpAuthenticationRequired(tab) => {
+                    screen_command = screens::show_sftp_authentication_required(
                         ui,
                         active_tab_id,
                         &tab.profile,
@@ -3537,6 +4080,9 @@ impl FesTermApp {
                 AppCommand::StartConfiguredSshProfile { profile_id } => {
                     self.start_configured_ssh_profile(profile_id, &ui.ctx().clone());
                 }
+                AppCommand::StartConfiguredSftpProfile { profile_id } => {
+                    self.start_configured_sftp_profile(profile_id, &ui.ctx().clone());
+                }
                 AppCommand::StoreSshPassword {
                     profile_id,
                     password,
@@ -3544,8 +4090,21 @@ impl FesTermApp {
                 } => self.store_password_for_profile(
                     profile_id,
                     password,
-                    options,
-                    true,
+                    festerm_ssh::SshSessionOptions::new(),
+                    Some(StoredCredentialLaunch::Ssh(options)),
+                    &ui.ctx().clone(),
+                ),
+                AppCommand::StartStoredPasswordSftpProfile { profile_id } => {
+                    self.start_stored_sftp_profile(profile_id, &ui.ctx().clone());
+                }
+                AppCommand::StoreSftpPassword {
+                    profile_id,
+                    password,
+                } => self.store_password_for_profile(
+                    profile_id,
+                    password,
+                    festerm_ssh::SshSessionOptions::new(),
+                    Some(StoredCredentialLaunch::Sftp),
                     &ui.ctx().clone(),
                 ),
                 AppCommand::StoreProfilePassword {
@@ -3555,7 +4114,7 @@ impl FesTermApp {
                     profile_id,
                     password,
                     festerm_ssh::SshSessionOptions::new(),
-                    false,
+                    None,
                     &ui.ctx().clone(),
                 ),
                 AppCommand::StoreProfilePrivateKey {
@@ -3565,7 +4124,7 @@ impl FesTermApp {
                     profile_id,
                     private_key,
                     festerm_ssh::SshSessionOptions::new(),
-                    false,
+                    None,
                     &ui.ctx().clone(),
                 ),
                 AppCommand::SaveProfile { profile } => self.save_profile(profile),
@@ -3581,7 +4140,8 @@ impl FesTermApp {
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::SetScrollSpeed(_)
-                | AppCommand::SetScrollbackLimit(_)) => {
+                | AppCommand::SetScrollbackLimit(_)
+                | AppCommand::SetDefaultSftpLocalDirectory(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     self.persist_interface_settings();
@@ -3644,6 +4204,7 @@ impl FesTermApp {
             }
         }
 
+        self.sync_port_forward_manager();
         if self.overlays.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_quit.is_some() {
@@ -3654,6 +4215,12 @@ impl FesTermApp {
             self.show_file_drop_confirmation(ui.ctx(), confirmation_escape);
         } else {
             self.show_paste_confirmation(ui.ctx(), confirmation_escape);
+        }
+
+        if port_forward_manager_escape {
+            self.close_port_forward_manager(ui.ctx());
+        } else {
+            self.show_port_forward_manager(ui.ctx(), content_rect);
         }
 
         self.show_about(ui.ctx(), about_escape);
@@ -3715,6 +4282,20 @@ impl FesTermApp {
         let mut app = Self::for_test_with_configuration(Configuration::empty());
         app.state = state;
         (app, tab)
+    }
+
+    fn for_test_with_fake_ssh_session(
+        events: impl IntoIterator<Item = festerm_session::SessionEvent>,
+    ) -> (Self, TabId, crate::session_controller::fake::FakeSshSession) {
+        let mut app = Self::for_test_with_configuration(Configuration::empty());
+        let session = crate::session_controller::fake::FakeSshSession::new(events);
+        let tab = app.state.replace_active_with_test_ssh_session(
+            session.clone(),
+            "test-user",
+            "ssh.example.test",
+            22,
+        );
+        (app, tab, session)
     }
 }
 
@@ -4225,6 +4806,248 @@ mod tests {
         const FIND_IN_TERMINAL: u64 = 15;
         app.dispatch_palette_selection(FIND_IN_TERMINAL, &context);
         assert!(app.state.session_tab_mut(tab).unwrap().search.is_open());
+    }
+
+    fn sample_port_forwards() -> Vec<SshPortForwardRuntime> {
+        vec![
+            SshPortForwardRuntime::new(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                15432,
+                "db.internal",
+                5432,
+                SshPortForwardSource::Profile,
+                SshPortForwardState::Active,
+                None,
+            ),
+            SshPortForwardRuntime::new(
+                SshPortForwardDirection::Remote,
+                "127.0.0.1",
+                18080,
+                "127.0.0.1",
+                8080,
+                SshPortForwardSource::Ephemeral,
+                SshPortForwardState::Failed,
+                Some("remote bind denied".to_owned()),
+            ),
+        ]
+    }
+
+    #[test]
+    fn opening_the_port_forward_manager_shows_an_empty_state() {
+        let context = egui::Context::default();
+        let (mut app, _tab, session) = FesTermApp::for_test_with_fake_ssh_session([]);
+
+        app.open_port_forward_manager(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        assert!(harness.query_by_label("Port Forward Manager").is_some());
+        assert!(harness
+            .query_by_label("No live port forwards yet.")
+            .is_some());
+        assert_eq!(
+            session.operations(),
+            vec![crate::session_controller::fake::FakeSshOperation::Query]
+        );
+    }
+
+    #[test]
+    fn port_forward_manager_renders_runtime_snapshots_and_failure_details() {
+        let context = egui::Context::default();
+        let (mut app, _tab, _session) = FesTermApp::for_test_with_fake_ssh_session([
+            festerm_session::SessionEvent::PortForwardsUpdated(sample_port_forwards()),
+        ]);
+        app.open_port_forward_manager(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        for label in [
+            "127.0.0.1:15432",
+            "db.internal:5432",
+            "Profile",
+            "Active",
+            "127.0.0.1:18080",
+            "127.0.0.1:8080",
+            "Ephemeral",
+            "Failed",
+            "remote bind denied",
+        ] {
+            assert!(
+                harness.query_by_label(label).is_some(),
+                "expected {label:?} in overlay"
+            );
+        }
+        assert!(harness.query_by_label("2 active forwards").is_none());
+        assert!(harness.query_by_label("1 active forward").is_some());
+    }
+
+    #[test]
+    fn port_forward_manager_submit_dispatches_an_add_request() {
+        let context = egui::Context::default();
+        let (mut app, _tab, session) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.open_port_forward_manager(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        {
+            let manager = harness
+                .state_mut()
+                .overlays
+                .port_forward_manager
+                .as_mut()
+                .expect("overlay should stay open");
+            manager.draft.bind_port = "15432".to_owned();
+            manager.draft.destination_host = "db.internal".to_owned();
+            manager.draft.destination_port = "5432".to_owned();
+        }
+        harness.run();
+        harness.get_by_label("Add live forward").click();
+        harness.run();
+
+        assert_eq!(
+            session.operations(),
+            vec![
+                crate::session_controller::fake::FakeSshOperation::Query,
+                crate::session_controller::fake::FakeSshOperation::Add {
+                    direction: SshPortForwardDirection::Local,
+                    bind_host: "127.0.0.1".to_owned(),
+                    bind_port: 15432,
+                    destination_host: "db.internal".to_owned(),
+                    destination_port: 5432,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn port_forward_manager_remove_dispatches_a_remove_request() {
+        let context = egui::Context::default();
+        let (mut app, _tab, session) = FesTermApp::for_test_with_fake_ssh_session([
+            festerm_session::SessionEvent::PortForwardsUpdated(vec![
+                sample_port_forwards()[0].clone()
+            ]),
+        ]);
+        app.open_port_forward_manager(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness
+            .get_by_label("Remove forward 127.0.0.1:15432")
+            .click();
+        harness.run();
+
+        assert_eq!(
+            session.operations(),
+            vec![
+                crate::session_controller::fake::FakeSshOperation::Query,
+                crate::session_controller::fake::FakeSshOperation::Remove {
+                    direction: SshPortForwardDirection::Local,
+                    bind_host: "127.0.0.1".to_owned(),
+                    bind_port: 15432,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn port_forward_manager_shortcut_and_palette_entry_open_the_overlay() {
+        let context = egui::Context::default();
+        let (app, _tab, _session) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.key_press_modifiers(
+            ApplicationShortcut::PortForwardManager.chord().unwrap().0,
+            ApplicationShortcut::PortForwardManager.chord().unwrap().1,
+        );
+        harness.run();
+        assert!(harness.query_by_label("Port Forward Manager").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Port Forward Manager").is_none());
+
+        let items = harness.state().palette_items();
+        assert!(items
+            .iter()
+            .any(|item| item.label == "Manage Port Forwards…"));
+        harness.state_mut().dispatch_palette_selection(16, &context);
+        harness.run();
+        assert!(harness.query_by_label("Port Forward Manager").is_some());
+    }
+
+    #[test]
+    fn port_forward_manager_is_gated_to_live_ssh_tabs_only() {
+        let context = egui::Context::default();
+        let (app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        let items = harness.state().palette_items();
+        assert!(
+            items
+                .iter()
+                .all(|item| item.label != "Manage Port Forwards…"),
+            "non-SSH tabs must not advertise the port-forward manager"
+        );
+        harness.key_press_modifiers(
+            ApplicationShortcut::PortForwardManager.chord().unwrap().0,
+            ApplicationShortcut::PortForwardManager.chord().unwrap().1,
+        );
+        harness.run();
+        assert!(harness.query_by_label("Port Forward Manager").is_none());
+    }
+
+    #[test]
+    fn disconnecting_clears_the_port_forward_manager_list() {
+        let context = egui::Context::default();
+        let (mut app, _tab, session) = FesTermApp::for_test_with_fake_ssh_session([
+            festerm_session::SessionEvent::PortForwardsUpdated(sample_port_forwards()),
+        ]);
+        app.open_port_forward_manager(&context);
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.query_by_label("127.0.0.1:15432").is_some());
+
+        session.push_event(festerm_session::SessionEvent::Lifecycle(
+            festerm_session::SessionLifecycle::Disconnected(festerm_session::SessionError::new(
+                festerm_session::SessionErrorKind::Spawn,
+                "network lost",
+            )),
+        ));
+        harness.run();
+
+        assert!(harness.query_by_label("127.0.0.1:15432").is_none());
+        assert!(harness
+            .query_by_label(
+                "Port forwarding is available only while this SSH session is connected."
+            )
+            .is_some());
     }
 
     #[test]
@@ -5090,7 +5913,11 @@ mod tests {
             festerm_ssh::SshSessionOptions::manual_recovery(
                 festerm_ssh::SessionStrategy::PlainShell,
             ),
-            true,
+            Some(StoredCredentialLaunch::Ssh(
+                festerm_ssh::SshSessionOptions::manual_recovery(
+                    festerm_ssh::SessionStrategy::PlainShell,
+                ),
+            )),
             &context,
         );
         harness.step();
@@ -5394,6 +6221,48 @@ mod tests {
             TabContent::SshAuthenticationRequired(_)
         ));
         assert_eq!(app.state.active(), app.state.tabs()[1].id);
+    }
+
+    #[test]
+    fn startup_workspace_restores_sftp_tabs_as_authentication_required_surfaces() {
+        let workspace = festerm_config::WorkspaceConfiguration::new(
+            vec![
+                festerm_config::WorkspaceTab::sftp_session("remote", "production")
+                    .expect("SFTP tab is valid"),
+            ],
+            Some("remote".to_owned()),
+        )
+        .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(
+            vec![festerm_config::Profile::ssh(
+                "production",
+                "ssh.example.test",
+                2200,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .expect("SSH profile is valid")],
+            workspace,
+        )
+        .expect("configuration is valid")
+        .with_interface_settings(InterfaceSettings::new(
+            festerm_config::ChipLayoutPreference::SingleRowScroll,
+            true,
+            true,
+            true,
+            true,
+        ))
+        .expect("configuration with restore_workspace enabled is valid");
+
+        let app = FesTermApp::with_configuration(&egui::Context::default(), configuration);
+
+        assert_eq!(app.state.tabs().len(), 1);
+        assert!(matches!(
+            app.state.tabs()[0].content,
+            TabContent::SftpAuthenticationRequired(_)
+        ));
     }
 
     #[test]
