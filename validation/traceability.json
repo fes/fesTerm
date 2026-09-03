@@ -11,6 +11,7 @@
     "docs/application-command-model.md",
     "docs/development-governance.md",
     "docs/gui-design.md",
+    "docs/markdown-viewer-design.md",
     "docs/ui-test-plan.md"
   ],
   "legacy_adrs_without_validation_impact": [
@@ -105,6 +106,27 @@
       "status": "partial",
       "prerequisites": [
         "saved-profile launcher coverage still targets unit/UI paths rather than a full end-to-end session launch"
+      ]
+    },
+    {
+      "id": "gui-sftp-launch",
+      "edges": [
+        "LAUNCH-10"
+      ],
+      "requirements": [
+        "docs/sftp-ui-design.md#product-decision"
+      ],
+      "decisions": [
+        "ADR-0029"
+      ],
+      "automated_tests": [
+        "configured_ssh_profiles_can_open_gui_sftp_authentication_surfaces",
+        "gui_sftp_workspace_restore_requires_fresh_authentication"
+      ],
+      "manual_scenarios": [],
+      "status": "partial",
+      "prerequisites": [
+        "current implementation re-prompts for credentials and requires persisted host trust instead of fully reusing live SSH auth/trust context"
       ]
     },
     {
@@ -772,6 +794,57 @@
       ]
     },
     {
+      "id": "gui-sftp-settings",
+      "edges": [
+        "SET-10"
+      ],
+      "requirements": [
+        "docs/sftp-ui-design.md#layout-and-navigation"
+      ],
+      "decisions": [
+        "ADR-0029"
+      ],
+      "automated_tests": [
+        "settings_sftp_pane_order_control_dispatches_the_selected_preference",
+        "interface_settings_parse_sftp_pane_order_additively",
+        "pane_order_preference_swaps_visual_sides_only"
+      ],
+      "manual_scenarios": [],
+      "status": "partial",
+      "prerequisites": [
+        "native/manual evidence for swapped-pane behavior with a live authenticated GUI SFTP tab is still pending"
+      ]
+    },
+    {
+      "id": "gui-sftp-file-manager",
+      "edges": [
+        "SFTPG-01",
+        "SFTPG-02",
+        "SFTPG-03",
+        "SFTPG-04"
+      ],
+      "requirements": [
+        "docs/sftp-ui-design.md#layout-and-navigation",
+        "docs/sftp-ui-design.md#transfer-behavior",
+        "docs/sftp-ui-design.md#collision-and-overwrite-policy"
+      ],
+      "decisions": [
+        "ADR-0029"
+      ],
+      "automated_tests": [
+        "sort_and_filter_keep_folders_first",
+        "pane_order_preference_swaps_visual_sides_only",
+        "transfer_action_requires_selection_connection_and_writable_destination",
+        "collision_resolution_wires_apply_to_all_scope",
+        "keyboard_shortcut_mapping_matches_expected_commands"
+      ],
+      "manual_scenarios": [],
+      "status": "partial",
+      "prerequisites": [
+        "drag/drop and remote-disconnect recovery still need native/manual evidence"
+      ]
+    },
+    {
       "id": "configuration-recovery",
       "edges": [
         "CONF-*"
@@ -1156,19 +1229,34 @@
     {
       "id": "markdown-viewing",
       "edges": [
+        "LAUNCH-11",
         "MD-*"
       ],
       "requirements": [
-        "docs/gui-design.md#approved-native-markdown-viewing"
+        "docs/gui-design.md#approved-native-markdown-viewing",
+        "docs/markdown-viewer-design.md"
       ],
-      "decisions": [],
-      "automated_tests": [],
+      "decisions": [
+        "ADR-0030"
+      ],
+      "automated_tests": [
+        "command_palette_always_offers_open_markdown_file",
+        "markdown_viewer_palette_items_follow_the_active_viewer",
+        "workspace_capture_omits_runtime_markdown_viewer_tabs",
+        "find_navigation_wraps_in_both_directions",
+        "same_source_reload_preserves_current_match_when_possible",
+        "mode_switch_anchor_round_trips_within_heading_section",
+        "resource_approval_is_per_reference_and_clears",
+        "markdown_source_errors_build_content_free_error_states",
+        "markdown_load_errors_build_content_free_error_states",
+        "local_load_errors_build_actionable_error_states"
+      ],
       "manual_scenarios": [
         "CP-06"
       ],
-      "status": "deferred",
+      "status": "partial",
       "prerequisites": [
-        "Complete Local, SSH, and Serial capabilities and UI; explicit product/security design decision"
+        "Remote SSH-backed Markdown preview still depends on the planned GUI SFTP browser surface from ADR-0029"
       ]
     }
   ]

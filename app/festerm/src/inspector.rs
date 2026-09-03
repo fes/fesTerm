@@ -52,6 +52,7 @@ pub struct InspectorContent<'a> {
     pub trust_fingerprint: Option<&'a str>,
     pub diagnostics: &'a str,
     pub reconnect_available: bool,
+    pub open_sftp_available: bool,
     /// The durable remote-session provider and name this SSH connection
     /// attaches to or creates, if any (ADR 0018). `None` for local sessions
     /// and for ordinary manual-recovery plain SSH shells; drives the
@@ -70,6 +71,7 @@ pub struct PersistentSessionFacts<'a> {
 pub enum InspectorAction {
     Close,
     Reconnect,
+    OpenSftp,
 }
 
 /// Computes the overlay bounds within the content viewport. Kept pure so
@@ -251,7 +253,7 @@ pub fn show(
                                 fact(ui, "Session name", persistence.session_name, true);
                             }
 
-                            if content.reconnect_available {
+                            if content.reconnect_available || content.open_sftp_available {
                                 section_heading(ui, "Actions");
                                 // ADR 0018: a plain shell only gets a fresh
                                 // transport ("Reconnect"); a durable-session
@@ -264,6 +266,9 @@ pub fn show(
                                 };
                                 if ui.button(label).clicked() {
                                     action = Some(InspectorAction::Reconnect);
+                                }
+                                if content.open_sftp_available && ui.button("Open SFTP").clicked() {
+                                    action = Some(InspectorAction::OpenSftp);
                                 }
                             }
 
@@ -352,6 +357,7 @@ mod tests {
             trust_fingerprint: None,
             diagnostics: "",
             reconnect_available: true,
+            open_sftp_available: true,
             persistent_session: None,
         }
     }

@@ -195,6 +195,24 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (8.5, 15.5),
             ]),
         ],
+        Icon::ExternalLink => &[
+            Primitive::Polyline(&[
+                (14.0, 5.0),
+                (19.0, 5.0),
+                (19.0, 10.0),
+            ]),
+            Primitive::Polyline(&[
+                (10.0, 14.0),
+                (19.0, 5.0),
+            ]),
+            Primitive::Polyline(&[
+                (19.0, 13.0),
+                (19.0, 19.0),
+                (5.0, 19.0),
+                (5.0, 5.0),
+                (11.0, 5.0),
+            ]),
+        ],
         Icon::HostKeyVerification => &[
             Primitive::Polyline(&[
                 (12.0, 3.0),
@@ -256,6 +274,29 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (17.0, 15.0),
             ]),
         ],
+        Icon::MarkdownDocument => &[
+            Primitive::Polyline(&[
+                (7.0, 3.0),
+                (14.0, 3.0),
+                (19.0, 8.0),
+                (19.0, 21.0),
+                (7.0, 21.0),
+                (7.0, 3.0),
+            ]),
+            Primitive::Polyline(&[
+                (14.0, 3.0),
+                (14.0, 8.0),
+                (19.0, 8.0),
+            ]),
+            Primitive::Polyline(&[
+                (10.0, 12.0),
+                (16.0, 12.0),
+            ]),
+            Primitive::Polyline(&[
+                (10.0, 16.0),
+                (16.0, 16.0),
+            ]),
+        ],
         Icon::Maximize => &[
             Primitive::Rectangle { x: 5.0, y: 5.0, width: 14.0, height: 14.0, radius: 1.0 },
         ],
@@ -283,6 +324,23 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
             Primitive::Polyline(&[
                 (16.0, 11.0),
                 (22.0, 11.0),
+            ]),
+        ],
+        Icon::Outline => &[
+            Primitive::Circle { x: 6.0, y: 7.0, radius: 1.0 },
+            Primitive::Circle { x: 6.0, y: 12.0, radius: 1.0 },
+            Primitive::Circle { x: 6.0, y: 17.0, radius: 1.0 },
+            Primitive::Polyline(&[
+                (10.0, 7.0),
+                (18.0, 7.0),
+            ]),
+            Primitive::Polyline(&[
+                (10.0, 12.0),
+                (16.0, 12.0),
+            ]),
+            Primitive::Polyline(&[
+                (10.0, 17.0),
+                (14.0, 17.0),
             ]),
         ],
         Icon::Overflow => &[
@@ -372,6 +430,20 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (16.6029, 17.7038),
                 (17.9, 15.5),
             ]),
+        ],
+        Icon::RenderedView => &[
+            Primitive::Polyline(&[
+                (3.0, 12.0),
+                (7.0, 8.5),
+                (12.0, 7.0),
+                (17.0, 8.5),
+                (21.0, 12.0),
+                (17.0, 15.5),
+                (12.0, 17.0),
+                (7.0, 15.5),
+                (3.0, 12.0),
+            ]),
+            Primitive::Circle { x: 12.0, y: 12.0, radius: 2.5 },
         ],
         Icon::Restore => &[
             Primitive::Polyline(&[
@@ -485,6 +557,22 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
             Primitive::Circle { x: 12.0, y: 7.0, radius: 2.0 },
             Primitive::Circle { x: 16.0, y: 12.0, radius: 2.0 },
             Primitive::Circle { x: 9.0, y: 17.0, radius: 2.0 },
+        ],
+        Icon::SourceView => &[
+            Primitive::Polyline(&[
+                (9.0, 7.0),
+                (5.0, 12.0),
+                (9.0, 17.0),
+            ]),
+            Primitive::Polyline(&[
+                (15.0, 7.0),
+                (19.0, 12.0),
+                (15.0, 17.0),
+            ]),
+            Primitive::Polyline(&[
+                (13.0, 5.0),
+                (11.0, 19.0),
+            ]),
         ],
         Icon::SshRemote => &[
             Primitive::Rectangle { x: 3.0, y: 4.0, width: 12.0, height: 12.0, radius: 2.0 },

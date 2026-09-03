@@ -9,12 +9,14 @@ mod configuration_startup;
 mod diagnostics;
 mod environment;
 mod inspector;
+mod markdown_viewer;
 mod native_smoke;
 mod overlay_state;
 mod port_forward_draft;
 mod screens;
 mod search;
 pub mod session_controller;
+mod sftp_file_manager;
 mod tabs;
 mod updates;
 

@@ -22,8 +22,8 @@ use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, EmojiPresentationPreference,
     InterfaceSettings, PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
-    ScrollbackLimitPreference, SshProfileConfiguration, TerminalFontPreference,
-    WorkspaceConfiguration, WorkspaceTab,
+    ScrollbackLimitPreference, SftpPaneOrderPreference, SshProfileConfiguration,
+    TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtySession};
@@ -47,7 +47,11 @@ use festerm_ui_egui::{
     TerminalView,
 };
 
+use crate::markdown_viewer::MarkdownViewerTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
+use crate::sftp_file_manager::{
+    SftpFileManagerAuthentication, SftpFileManagerLaunchTarget, SftpFileManagerTab,
+};
 
 /// Stable application-level tab identifier.
 ///
@@ -538,6 +542,12 @@ pub struct SshAuthenticationRequiredTab {
 /// authentication form instead of starting a transport.
 pub struct SftpAuthenticationRequiredTab {
     pub profile: SshProfileConfiguration,
+}
+
+/// A GUI SFTP file-manager launch surface that has destination metadata but no
+/// live authenticated subsystem yet.
+pub struct SftpFileManagerAuthenticationRequiredTab {
+    pub target: SftpFileManagerLaunchTarget,
 }
 
 /// Maximum number of in-connection password reprompts before falling back
@@ -1241,6 +1251,9 @@ pub enum TabContent {
     Profiles,
     SshAuthenticationRequired(SshAuthenticationRequiredTab),
     SftpAuthenticationRequired(SftpAuthenticationRequiredTab),
+    MarkdownViewer(Box<MarkdownViewerTab>),
+    SftpFileManagerAuthenticationRequired(SftpFileManagerAuthenticationRequiredTab),
+    SftpFileManager(Box<SftpFileManagerTab>),
     Session(Box<SessionTab>),
 }
 
@@ -1263,6 +1276,10 @@ pub enum AppCommand {
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
+    OpenMarkdownFilePicker,
+    OpenLocalMarkdownFile {
+        path: PathBuf,
+    },
     /// Opens an explicit terminal hyperlink after application-owned URL
     /// validation. Terminal presentation emits intent only.
     OpenExternalLink {
@@ -1298,6 +1315,16 @@ pub enum AppCommand {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
     },
+    /// Opens the GUI SFTP authentication surface for a destination.
+    OpenSftpFileManager {
+        target: SftpFileManagerLaunchTarget,
+    },
+    /// Starts a GUI SFTP file-manager tab from explicit destination metadata
+    /// and an explicit credential.
+    StartSftpFileManager {
+        target: SftpFileManagerLaunchTarget,
+        authentication: SftpFileManagerAuthentication,
+    },
     /// Starts an existing configured SSH profile by resolving its native
     /// stored password on the SSH worker. This command has no password value.
     StartStoredPasswordSshProfile {
@@ -1324,6 +1351,10 @@ pub enum AppCommand {
     StartConfiguredSftpProfile {
         profile_id: String,
     },
+    /// Opens the GUI SFTP authentication surface for a saved SSH profile.
+    OpenConfiguredSftpFileManagerProfile {
+        profile_id: String,
+    },
     /// Starts a serial session from explicitly supplied line settings. The
     /// Launcher's serial form validates input into a `LineSettings` value;
     /// this does not create a persisted profile.
@@ -1334,6 +1365,16 @@ pub enum AppCommand {
     /// `StartConfiguredLocalProfile`.
     StartConfiguredSerialProfile {
         profile_id: String,
+    },
+    ReloadMarkdown,
+    ToggleMarkdownPreviewSource,
+    ToggleMarkdownOutline,
+    OpenMarkdownFind,
+    NavigateMarkdownFind {
+        reverse: bool,
+    },
+    LoadMarkdownLocalImage {
+        reference_index: usize,
     },
     /// Requests that the composition root store a password for an existing
     /// configured SSH profile before starting it. The value is redacted from
@@ -1462,6 +1503,8 @@ pub enum AppCommand {
     ToggleShowResumableSessions,
     /// Sets or clears the default starting local directory for new SFTP sessions.
     SetDefaultSftpLocalDirectory(Option<PathBuf>),
+    /// Sets the visual left/right order for GUI SFTP panes.
+    SetSftpPaneOrder(SftpPaneOrderPreference),
     /// Resumes a locally running, unattached `festerm-sessiond` session by
     /// name, surfaced via the Launcher's "Resume" list (feature request
     /// #70). The composition root attaches to it and opens a new tab.
@@ -1615,6 +1658,8 @@ pub struct AppState {
     /// unattached `festerm-sessiond` sessions as one-click "Resume" entries
     /// (feature request #70).
     show_resumable_sessions: bool,
+    /// Visual left/right order for GUI SFTP panes.
+    sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
     default_sftp_local_directory: Option<PathBuf>,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
@@ -1662,6 +1707,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
@@ -1706,6 +1752,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
@@ -1767,6 +1814,30 @@ impl AppState {
                         profile: ssh.clone(),
                     })
                 }
+                WorkspaceTab::SftpFileManager(tab) => {
+                    let ssh = configuration
+                        .profile(tab.profile_id())
+                        .and_then(festerm_config::Profile::as_ssh)
+                        .expect("validated GUI SFTP workspace profile reference");
+                    TabContent::SftpFileManagerAuthenticationRequired(
+                        SftpFileManagerAuthenticationRequiredTab {
+                            target: SftpFileManagerLaunchTarget {
+                                label: ssh.identifier().to_owned(),
+                                username: ssh.username().to_owned(),
+                                host: ssh.host().to_owned(),
+                                port: ssh.port(),
+                                profile_id: Some(ssh.identifier().to_owned()),
+                                stored_credential_kind: ssh
+                                    .credential_reference()
+                                    .is_some()
+                                    .then_some(ssh.credential_kind()),
+                                known_host_persisted: configuration
+                                    .known_host_fingerprint(ssh.host(), ssh.port())
+                                    .is_some(),
+                            },
+                        },
+                    )
+                }
                 WorkspaceTab::SerialSession(tab) => {
                     let serial = configuration
                         .profile(tab.profile_id())
@@ -1807,6 +1878,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
@@ -1879,6 +1951,7 @@ impl AppState {
                 TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
                 TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
                 TabContent::Profiles => Some(WorkspaceTab::profiles(identifier.clone())?),
+                TabContent::MarkdownViewer(_) => None,
                 TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
                     identifier.clone(),
                     ssh.profile.identifier(),
@@ -1887,6 +1960,21 @@ impl AppState {
                     identifier.clone(),
                     sftp.profile.identifier(),
                 )?),
+                TabContent::SftpFileManagerAuthenticationRequired(tab) => tab
+                    .target
+                    .profile_id
+                    .as_deref()
+                    .map(|profile_id| {
+                        WorkspaceTab::sftp_file_manager(identifier.clone(), profile_id)
+                    })
+                    .transpose()?,
+                TabContent::SftpFileManager(tab) => tab
+                    .profile_identifier
+                    .as_deref()
+                    .map(|profile_id| {
+                        WorkspaceTab::sftp_file_manager(identifier.clone(), profile_id)
+                    })
+                    .transpose()?,
                 TabContent::Session(session) => session
                     .profile_identifier
                     .as_deref()
@@ -1988,6 +2076,10 @@ impl AppState {
         self.show_resumable_sessions
     }
 
+    pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
+        self.sftp_pane_order
+    }
+
     pub fn default_sftp_local_directory(&self) -> Option<&Path> {
         self.default_sftp_local_directory.as_deref()
     }
@@ -2011,6 +2103,7 @@ impl AppState {
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
         .with_show_resumable_sessions(self.show_resumable_sessions)
+        .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
             self.default_sftp_local_directory
                 .as_ref()
@@ -2034,6 +2127,23 @@ impl AppState {
             .expect("active tab id always refers to a live tab")
     }
 
+    pub fn session_tab(&self, id: TabId) -> Option<&SessionTab> {
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| match &tab.content {
+                TabContent::Session(session) => Some(session.as_ref()),
+                TabContent::Launcher
+                | TabContent::Settings
+                | TabContent::Profiles
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+                | TabContent::SftpFileManager(_)
+                | TabContent::MarkdownViewer(_) => None,
+            })
+    }
+
     pub fn session_tab_mut(&mut self, id: TabId) -> Option<&mut SessionTab> {
         self.tabs
             .iter_mut()
@@ -2043,8 +2153,11 @@ impl AppState {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
+                | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
-                | TabContent::SftpAuthenticationRequired(_) => None,
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+                | TabContent::SftpFileManager(_) => None,
             })
     }
 
@@ -2072,8 +2185,11 @@ impl AppState {
             TabContent::Launcher
             | TabContent::Settings
             | TabContent::Profiles
+            | TabContent::MarkdownViewer(_)
             | TabContent::SshAuthenticationRequired(_)
-            | TabContent::SftpAuthenticationRequired(_) => None,
+            | TabContent::SftpAuthenticationRequired(_)
+            | TabContent::SftpFileManagerAuthenticationRequired(_)
+            | TabContent::SftpFileManager(_) => None,
         })
     }
 
@@ -2089,8 +2205,11 @@ impl AppState {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
+                | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
-                | TabContent::SftpAuthenticationRequired(_) => None,
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+                | TabContent::SftpFileManager(_) => None,
             })
     }
 
@@ -2119,6 +2238,8 @@ impl AppState {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
+            AppCommand::OpenMarkdownFilePicker => {}
+            AppCommand::OpenLocalMarkdownFile { path } => self.open_local_markdown(path),
             AppCommand::OpenExternalLink { target } => {
                 if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
                 {
@@ -2140,6 +2261,11 @@ impl AppState {
                 profile,
                 authentication,
             } => self.execute_sftp_session(profile, authentication, None, context),
+            AppCommand::OpenSftpFileManager { target } => self.open_sftp_file_manager(target),
+            AppCommand::StartSftpFileManager {
+                target,
+                authentication,
+            } => self.start_sftp_file_manager(target, authentication, context),
             AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StartStoredPasswordSftpProfile { .. }
             | AppCommand::StoreSshPassword { .. }
@@ -2148,6 +2274,28 @@ impl AppState {
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
+            AppCommand::ReloadMarkdown => {
+                self.with_active_markdown_viewer(|viewer| viewer.reload())
+            }
+            AppCommand::ToggleMarkdownPreviewSource => {
+                self.with_active_markdown_viewer(|viewer| viewer.toggle_mode())
+            }
+            AppCommand::ToggleMarkdownOutline => {
+                self.with_active_markdown_viewer(|viewer| viewer.toggle_outline())
+            }
+            AppCommand::OpenMarkdownFind => {
+                self.with_active_markdown_viewer(|viewer| viewer.open_find())
+            }
+            AppCommand::NavigateMarkdownFind { reverse } => {
+                self.with_active_markdown_viewer(|viewer| viewer.advance_find(reverse))
+            }
+            AppCommand::LoadMarkdownLocalImage { reference_index } => self
+                .with_active_markdown_viewer(|viewer| {
+                    viewer.load_local_image(reference_index, context)
+                }),
+            AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id } => {
+                self.open_configured_sftp_file_manager_profile(&profile_id)
+            }
             AppCommand::StartSerialSession { settings } => {
                 self.start_serial_session(settings, context)
             }
@@ -2222,6 +2370,9 @@ impl AppState {
             AppCommand::SetDefaultSftpLocalDirectory(path) => {
                 self.default_sftp_local_directory = path;
             }
+            AppCommand::SetSftpPaneOrder(order) => {
+                self.sftp_pane_order = order;
+            }
             AppCommand::ResumeUnattachedSession { name } => {
                 self.start_resumed_session(&name, context);
             }
@@ -2241,6 +2392,7 @@ impl AppState {
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
                 self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
+                self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
             }
             // The composition root fully intercepts these before dispatch to
@@ -2256,6 +2408,13 @@ impl AppState {
         if !matches!(self.active_tab().content, TabContent::Session(_)) {
             self.inspector_open = false;
         }
+    }
+
+    fn with_active_markdown_viewer(&mut self, mut apply: impl FnMut(&mut MarkdownViewerTab)) {
+        let TabContent::MarkdownViewer(viewer) = &mut self.active_tab_mut().content else {
+            return;
+        };
+        apply(viewer);
     }
 
     fn open_launcher(&mut self) {
@@ -2316,6 +2475,24 @@ impl AppState {
         self.tabs.push(Tab {
             id,
             content: TabContent::Profiles,
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
+    }
+
+    fn open_local_markdown(&mut self, path: PathBuf) {
+        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::MarkdownViewer(viewer) if viewer.matches_local_path(&path) => Some(tab.id),
+            _ => None,
+        }) {
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return;
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(path))),
         });
         self.set_active(id);
         self.workspace_dirty = true;
@@ -2533,6 +2710,135 @@ impl AppState {
         ));
     }
 
+    fn open_sftp_file_manager(&mut self, target: SftpFileManagerLaunchTarget) {
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = TabContent::SftpFileManagerAuthenticationRequired(
+                    SftpFileManagerAuthenticationRequiredTab { target },
+                );
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::SftpFileManagerAuthenticationRequired(
+                SftpFileManagerAuthenticationRequiredTab { target },
+            ),
+        });
+        self.set_active(id);
+    }
+
+    fn open_configured_sftp_file_manager_profile(&mut self, profile_id: &str) {
+        if let Some(target) = self.sftp_file_manager_target_for_profile(profile_id) {
+            self.open_sftp_file_manager(target);
+        }
+    }
+
+    fn start_sftp_file_manager(
+        &mut self,
+        target: SftpFileManagerLaunchTarget,
+        authentication: SftpFileManagerAuthentication,
+        context: &egui::Context,
+    ) {
+        let known_host_fingerprint = self
+            .configuration
+            .known_host_fingerprint(&target.host, target.port)
+            .map(str::to_owned);
+        let Some(known_host_fingerprint) = known_host_fingerprint else {
+            self.open_sftp_file_manager(target);
+            return;
+        };
+        let local_directory = self
+            .default_sftp_local_directory
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("/"));
+        let tab = SftpFileManagerTab::new(
+            target,
+            authentication,
+            known_host_fingerprint,
+            local_directory,
+            self.sftp_pane_order,
+            context,
+        );
+        self.place_sftp_file_manager(tab);
+    }
+
+    fn sftp_file_manager_target_for_profile(
+        &self,
+        profile_id: &str,
+    ) -> Option<SftpFileManagerLaunchTarget> {
+        let ssh = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)?;
+        Some(SftpFileManagerLaunchTarget {
+            label: ssh.identifier().to_owned(),
+            username: ssh.username().to_owned(),
+            host: ssh.host().to_owned(),
+            port: ssh.port(),
+            profile_id: Some(ssh.identifier().to_owned()),
+            stored_credential_kind: ssh
+                .credential_reference()
+                .is_some()
+                .then_some(ssh.credential_kind()),
+            known_host_persisted: self
+                .configuration
+                .known_host_fingerprint(ssh.host(), ssh.port())
+                .is_some(),
+        })
+    }
+
+    pub(crate) fn sftp_file_manager_target_for_tab(
+        &self,
+        tab_id: TabId,
+    ) -> Option<SftpFileManagerLaunchTarget> {
+        let session = self.session_tab(tab_id)?;
+        let InspectorTransport::Ssh {
+            ref username,
+            ref host,
+            port,
+            ..
+        } = session.inspector_transport
+        else {
+            return None;
+        };
+        let (profile_id, stored_credential_kind) = session
+            .profile_identifier
+            .as_deref()
+            .and_then(|profile_id| {
+                self.configuration
+                    .profile(profile_id)
+                    .and_then(festerm_config::Profile::as_ssh)
+                    .map(|ssh| {
+                        (
+                            Some(ssh.identifier().to_owned()),
+                            ssh.credential_reference()
+                                .is_some()
+                                .then_some(ssh.credential_kind()),
+                        )
+                    })
+            })
+            .unwrap_or((None, None));
+        Some(SftpFileManagerLaunchTarget {
+            label: session
+                .profile_identifier
+                .clone()
+                .unwrap_or_else(|| format!("{username}@{host}")),
+            username: username.clone(),
+            host: host.clone(),
+            port,
+            profile_id,
+            stored_credential_kind,
+            known_host_persisted: self
+                .configuration
+                .known_host_fingerprint(host, port)
+                .is_some(),
+        })
+    }
+
     fn with_profile_port_forwards(
         options: SshSessionOptions,
         profile: &SshProfileConfiguration,
@@ -2658,6 +2964,7 @@ impl AppState {
                 TabContent::Launcher
                     | TabContent::SshAuthenticationRequired(_)
                     | TabContent::SftpAuthenticationRequired(_)
+                    | TabContent::SftpFileManagerAuthenticationRequired(_)
             ) {
                 tab.content = TabContent::Session(Box::new(session));
                 return;
@@ -2667,6 +2974,25 @@ impl AppState {
         self.tabs.push(Tab {
             id,
             content: TabContent::Session(Box::new(session)),
+        });
+        self.set_active(id);
+    }
+
+    fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(
+                tab.content,
+                TabContent::Launcher | TabContent::SftpFileManagerAuthenticationRequired(_)
+            ) {
+                tab.content = TabContent::SftpFileManager(Box::new(tab_content));
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::SftpFileManager(Box::new(tab_content)),
         });
         self.set_active(id);
     }
@@ -3214,6 +3540,83 @@ mod tests {
     }
 
     #[test]
+    fn gui_sftp_workspace_restore_requires_fresh_authentication() {
+        let context = egui::Context::default();
+        let workspace = WorkspaceConfiguration::new(
+            vec![
+                WorkspaceTab::sftp_file_manager("remote-files", "production")
+                    .expect("GUI SFTP tab is valid"),
+            ],
+            Some("remote-files".to_owned()),
+        )
+        .expect("workspace is valid");
+        let configuration = Configuration::new_with_workspace(
+            vec![festerm_config::Profile::ssh(
+                "production",
+                "ssh.example.test",
+                2200,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .expect("SSH profile is valid")],
+            workspace.clone(),
+        )
+        .expect("configuration is valid");
+
+        let mut state = AppState::with_restored_workspace(&context, configuration, &workspace);
+
+        let TabContent::SftpFileManagerAuthenticationRequired(tab) = &state.active_tab().content
+        else {
+            panic!("saved GUI SFTP metadata must restore an authentication-required surface");
+        };
+        assert_eq!(tab.target.profile_id.as_deref(), Some("production"));
+        assert_eq!(tab.target.host, "ssh.example.test");
+        assert_eq!(tab.target.port, 2200);
+        assert_eq!(tab.target.username, "deploy");
+        assert_eq!(
+            state.session_tabs_with_id_mut().count(),
+            0,
+            "the restored GUI SFTP surface starts no live network transport"
+        );
+    }
+
+    #[test]
+    fn configured_ssh_profiles_can_open_gui_sftp_authentication_surfaces() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("SSH profile is valid")])
+        .expect("configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+
+        state.dispatch(
+            AppCommand::OpenConfiguredSftpFileManagerProfile {
+                profile_id: "production".to_owned(),
+            },
+            &context,
+        );
+
+        let TabContent::SftpFileManagerAuthenticationRequired(tab) = &state.active_tab().content
+        else {
+            panic!("opening GUI SFTP should produce an authentication-required surface");
+        };
+        assert_eq!(tab.target.profile_id.as_deref(), Some("production"));
+        assert_eq!(tab.target.label, "production");
+        assert_eq!(tab.target.host, "ssh.example.test");
+        assert_eq!(tab.target.port, 2200);
+        assert_eq!(tab.target.username, "deploy");
+    }
+
+    #[test]
     fn workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions() {
         let context = egui::Context::default();
         let configuration = Configuration::new(vec![
@@ -3308,6 +3711,24 @@ mod tests {
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
         assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
         state.dispatch(AppCommand::CloseTab(state.active()), &context);
+    }
+
+    #[test]
+    fn workspace_capture_omits_runtime_markdown_viewer_tabs() {
+        let mut state = AppState::for_test();
+        state.tabs.push(Tab {
+            id: TabId::next(),
+            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(
+                PathBuf::from("/docs/readme.md"),
+            ))),
+        });
+        state.active = state.tabs[1].id;
+
+        let captured = state.capture_workspace_configuration().unwrap();
+        let workspace = captured.workspace().unwrap();
+
+        assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
+        assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
     }
 
     #[test]

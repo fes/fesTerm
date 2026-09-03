@@ -24,8 +24,9 @@ EXPECTED = {
     "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
     "copy", "diagnostics", "disconnect", "error", "host-key-verification",
     "edit", "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
-    "new-session", "overflow", "paste", "profile", "reconnect", "restore",
-    "search", "secret-storage", "serial", "session-inspector", "settings", "ssh-remote",
+    "external-link", "markdown-document", "new-session", "outline", "overflow", "paste",
+    "profile", "reconnect", "rendered-view", "restore", "search", "secret-storage",
+    "serial", "session-inspector", "settings", "source-view", "ssh-remote",
     "theme-appearance", "typography-font", "warning", "workspace",
 }
 ALLOWED_ELEMENTS = {"svg", "path", "rect", "circle", "line", "polyline"}

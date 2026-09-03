@@ -42,6 +42,11 @@ pub enum Icon {
     Back,
     Edit,
     Activate,
+    MarkdownDocument,
+    Outline,
+    RenderedView,
+    SourceView,
+    ExternalLink,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -179,8 +184,13 @@ mod tests {
             Icon::Back,
             Icon::Edit,
             Icon::Activate,
+            Icon::MarkdownDocument,
+            Icon::Outline,
+            Icon::RenderedView,
+            Icon::SourceView,
+            Icon::ExternalLink,
         ];
-        assert_eq!(icons.len(), 33);
+        assert_eq!(icons.len(), 38);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());
