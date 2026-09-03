@@ -378,3 +378,43 @@ change detection remains unimplemented on all three platforms, so detection
 of that specific case still relies on the automatic probe cadence and
 ordinary transport read/write failures. See issue #48 for the remaining
 network-change-detection scope.
+
+### Default liveness cadence policy for 0.1 (issue #55)
+
+The 60-second automatic cadence (`LIVENESS_PROBE_INTERVAL`) predated this
+decision as a plain implementation constant. Issue #55 asked that it not
+become an accidental permanent policy without answering its product
+questions explicitly:
+
+- **Enabled by default, yes.** Network-interface/route-change detection is
+  not implemented on any platform yet (#48), so for a genuinely idle session
+  (no user input, no wake event) the automatic cadence is currently the only
+  way a black-holed connection is ever noticed and moved to `Disconnected`.
+  Disabling it by default would regress detection latency to "next time the
+  user tries to type," with no compensating benefit.
+- **60 seconds, kept.** This is in the same range commonly used for
+  interactive SSH client keepalive (`ServerAliveInterval`-style) settings and
+  was judged to reasonably balance detection latency against periodic
+  network/NAT-keepalive traffic and desktop battery cost. No concrete
+  evidence surfaced during this review that a different value is needed.
+- **Non-configurable implementation constant, not a setting, for 0.1.**
+  Per this ADR's own constraint against exposing low-level keepalive knobs
+  without a concrete product requirement, and because a probe outcome never
+  grants permission to auto-reconnect regardless of cadence (so the product
+  risk of a fixed default is low), no global or per-profile setting was
+  added. Revisit if #48 lands reliable network-change detection on every
+  platform (which could reduce reliance on the automatic cadence), or if a
+  concrete battery/network complaint justifies one.
+- **Probe timeout (`LIVENESS_PROBE_TIMEOUT`, 8s) likewise stays an
+  implementation constant** for the same reasons, not a separate setting.
+- **Intentionally idle/battery-sensitive environments** are not special-cased
+  for 0.1: a single `russh` ping/keepalive global request once a minute has
+  negligible battery/network cost relative to the SSH connection already
+  being held open, so no separate low-power mode was added.
+
+This decision is covered by `liveness_probe_due` unit tests
+(`crates/festerm-ssh/src/lib.rs`) exercising both the automatic-deadline and
+on-demand-request paths against synthetic `Instant`s, including a case that
+models a disabled cadence (deadline far in the future) to confirm on-demand
+requests remain unaffected — without any test depending on a real
+minute-long sleep.
