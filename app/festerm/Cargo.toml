@@ -25,6 +25,7 @@ festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 image = "0.25"
 rfd = "0.15"
+tokio = { version = "1.17.0", default-features = false, features = ["rt", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 cargo-packager-updater = "0.2.3"

@@ -39,6 +39,7 @@ use crate::overlay_state::{
     PendingQuitConfirmation, PendingSettingsResetConfirmation, StoredCredentialLaunch,
 };
 use crate::screens;
+use crate::sftp_file_manager;
 use crate::tabs::{
     AppCommand, AppState, ExternalLinkTarget, HostKeyTrustDecision, InspectorTransport, TabContent,
     TabId,
@@ -690,6 +691,8 @@ impl FesTermApp {
             TabContent::MarkdownViewer(_) => "Close Markdown Viewer",
             TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_)
+            | TabContent::SftpFileManagerAuthenticationRequired(_)
+            | TabContent::SftpFileManager(_)
             | TabContent::Session(_) => "Close Session",
         };
         self.native_menu.update(
@@ -2000,6 +2003,7 @@ impl FesTermApp {
         const TOGGLE_MARKDOWN_MODE: u64 = 19;
         const FIND_IN_MARKDOWN: u64 = 20;
         const TOGGLE_MARKDOWN_OUTLINE: u64 = 21;
+        const OPEN_SFTP_FILE_MANAGER: u64 = 22;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -2150,6 +2154,17 @@ impl FesTermApp {
                 if !session.live_port_forwarding_available() {
                     items.retain(|item| item.id != PORT_FORWARD_MANAGER);
                 }
+                if matches!(session.inspector_transport, InspectorTransport::Ssh { .. }) {
+                    items.push(PaletteItem {
+                        id: OPEN_SFTP_FILE_MANAGER,
+                        label: "Open SFTP".to_owned(),
+                        hint: Some(
+                            "Open the GUI SFTP file manager for this SSH session".to_owned(),
+                        ),
+                        is_tab: false,
+                        shortcut_label: None,
+                    });
+                }
             }
         }
         if matches!(
@@ -2202,6 +2217,8 @@ impl FesTermApp {
                 TabContent::MarkdownViewer(_) => "Close Markdown Viewer".to_owned(),
                 TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+                | TabContent::SftpFileManager(_)
                 | TabContent::Session(_) => "Close Session…".to_owned(),
             },
             hint: ApplicationShortcut::CloseActiveSurface
@@ -2235,6 +2252,16 @@ impl FesTermApp {
                         tab.profile.port()
                     )),
                 ),
+                TabContent::SftpFileManagerAuthenticationRequired(tab) => (
+                    tab.target.label.clone(),
+                    Some(format!(
+                        "GUI SFTP authentication required · {}:{}",
+                        tab.target.host, tab.target.port
+                    )),
+                ),
+                TabContent::SftpFileManager(tab) => {
+                    (tab.label.clone(), Some("GUI SFTP file manager".to_owned()))
+                }
                 TabContent::Session(session) => {
                     let dynamic_title = session.terminal.title();
                     let hint = session
@@ -2309,6 +2336,13 @@ impl FesTermApp {
             14 => self.paste_into_active_session(context),
             15 => self.open_terminal_search(context),
             16 => self.toggle_port_forward_manager(context),
+            22 => {
+                let active = self.state.active();
+                if let Some(target) = self.state.sftp_file_manager_target_for_tab(active) {
+                    self.state
+                        .dispatch(AppCommand::OpenSftpFileManager { target }, context);
+                }
+            }
             id if id >= TAB_ACTIVATE_OFFSET => {
                 let chip_id = ChipId(id - TAB_ACTIVATE_OFFSET);
                 if let Some(target) = self.tab_id_for_chip(chip_id) {
@@ -3389,6 +3423,19 @@ impl FesTermApp {
                         )),
                         ChipStatus::Neutral,
                     ),
+                    TabContent::SftpFileManagerAuthenticationRequired(tab) => (
+                        tab.target.label.clone(),
+                        Some(format!(
+                            "GUI SFTP authentication required · {}:{}",
+                            tab.target.host, tab.target.port
+                        )),
+                        ChipStatus::Neutral,
+                    ),
+                    TabContent::SftpFileManager(tab) => (
+                        tab.label.clone(),
+                        Some("GUI SFTP file manager".to_owned()),
+                        ChipStatus::Neutral,
+                    ),
                     TabContent::Session(session) => {
                         let dynamic_title = session.terminal.title();
                         let secondary = session
@@ -3557,6 +3604,10 @@ impl FesTermApp {
                     .map(|prompt| prompt.sha256_fingerprint()),
                 diagnostics: &diagnostics,
                 reconnect_available: session.reconnect_available(),
+                open_sftp_available: matches!(
+                    session.inspector_transport,
+                    InspectorTransport::Ssh { .. }
+                ),
                 persistent_session,
             },
             close_requested,
@@ -3575,7 +3626,9 @@ impl FesTermApp {
                 | TabContent::Profiles
                 | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
-                | TabContent::SftpAuthenticationRequired(_) => {
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+                | TabContent::SftpFileManager(_) => {
                     (None, None, ChipStatus::Neutral, "", None, None)
                 }
                 TabContent::Session(session) => {
@@ -4043,6 +4096,7 @@ impl FesTermApp {
         let active_tab_id = self.state.active();
         let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
         let terminal_font_set = self.terminal_font_set();
+        let sftp_pane_order = self.state.sftp_pane_order();
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -4084,6 +4138,7 @@ impl FesTermApp {
                                 .state
                                 .default_sftp_local_directory()
                                 .map(|path| path.to_string_lossy().into_owned()),
+                            sftp_pane_order: self.state.sftp_pane_order(),
                         },
                         ApplicationShortcut::CommandPalette
                             .label()
@@ -4120,6 +4175,17 @@ impl FesTermApp {
                         &tab.profile,
                         native_store_available,
                     );
+                }
+                TabContent::SftpFileManagerAuthenticationRequired(tab) => {
+                    screen_command = sftp_file_manager::show_authentication_required(
+                        ui,
+                        active_tab_id,
+                        &tab.target,
+                    );
+                }
+                TabContent::SftpFileManager(tab) => {
+                    tab.set_pane_order(sftp_pane_order);
+                    tab.show(ui);
                 }
                 TabContent::Session(session) => {
                     session.view.set_font_set(terminal_font_set);
@@ -4209,6 +4275,13 @@ impl FesTermApp {
                 InspectorAction::Reconnect => self
                     .state
                     .dispatch(AppCommand::ReconnectSession(active_tab_id), &context),
+                InspectorAction::OpenSftp => {
+                    if let Some(target) = self.state.sftp_file_manager_target_for_tab(active_tab_id)
+                    {
+                        self.state
+                            .dispatch(AppCommand::OpenSftpFileManager { target }, &context);
+                    }
+                }
             }
         }
         if let Some(command) = screen_command {
@@ -4288,7 +4361,8 @@ impl FesTermApp {
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::SetScrollSpeed(_)
                 | AppCommand::SetScrollbackLimit(_)
-                | AppCommand::SetDefaultSftpLocalDirectory(_)) => {
+                | AppCommand::SetDefaultSftpLocalDirectory(_)
+                | AppCommand::SetSftpPaneOrder(_)) => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(command, &context);
                     self.persist_interface_settings();

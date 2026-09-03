@@ -562,6 +562,10 @@ pub struct InterfaceSettings {
     /// exactly as it does today.
     #[serde(default, skip_serializing_if = "is_false")]
     show_resumable_sessions: bool,
+    /// Whether the GUI SFTP file manager shows the Local or Remote pane on
+    /// the left. This is a global habit preference, not per-tab state.
+    #[serde(default, skip_serializing_if = "SftpPaneOrderPreference::is_default")]
+    sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions. When
     /// present it must resolve to an existing local directory so SFTP tabs
     /// never start with a broken `lpwd` baseline.
@@ -587,6 +591,7 @@ impl InterfaceSettings {
         compact_launcher_grid: false,
         pulse_new_output_dot: false,
         show_resumable_sessions: false,
+        sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         default_sftp_local_directory: None,
     };
 
@@ -612,6 +617,7 @@ impl InterfaceSettings {
             compact_launcher_grid: false,
             pulse_new_output_dot: false,
             show_resumable_sessions: false,
+            sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
             default_sftp_local_directory: None,
         }
     }
@@ -675,6 +681,12 @@ impl InterfaceSettings {
     /// request #70).
     pub const fn with_show_resumable_sessions(mut self, show_resumable_sessions: bool) -> Self {
         self.show_resumable_sessions = show_resumable_sessions;
+        self
+    }
+
+    /// Sets the visual left/right order for the GUI SFTP panes.
+    pub const fn with_sftp_pane_order(mut self, sftp_pane_order: SftpPaneOrderPreference) -> Self {
+        self.sftp_pane_order = sftp_pane_order;
         self
     }
 
@@ -743,6 +755,10 @@ impl InterfaceSettings {
         self.show_resumable_sessions
     }
 
+    pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
+        self.sftp_pane_order
+    }
+
     pub fn default_sftp_local_directory(&self) -> Option<&Path> {
         self.default_sftp_local_directory.as_deref().map(Path::new)
     }
@@ -809,6 +825,21 @@ pub enum ScrollSpeedPreference {
     Normal,
     Fast,
     VeryFast,
+}
+
+/// Global visual ordering preference for the GUI SFTP file manager panes.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SftpPaneOrderPreference {
+    #[default]
+    LocalLeft,
+    RemoteLeft,
+}
+
+impl SftpPaneOrderPreference {
+    const fn is_default(&self) -> bool {
+        matches!(self, Self::LocalLeft)
+    }
 }
 
 impl ScrollSpeedPreference {
@@ -1048,6 +1079,8 @@ pub enum WorkspaceTab {
     SshSession(SessionTabConfiguration),
     /// An SFTP session recreated from an SSH profile.
     SftpSession(SessionTabConfiguration),
+    /// A GUI SFTP file-manager tab recreated from an SSH profile.
+    SftpFileManager(SessionTabConfiguration),
     /// A serial session recreated from a serial profile.
     SerialSession(SessionTabConfiguration),
 }
@@ -1119,6 +1152,19 @@ impl WorkspaceTab {
         Ok(tab)
     }
 
+    /// Creates a GUI SFTP file-manager tab which will reference an SSH profile.
+    pub fn sftp_file_manager(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::SftpFileManager(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
     /// Creates a serial-session tab which will reference a serial profile.
     pub fn serial_session(
         identifier: impl Into<String>,
@@ -1141,6 +1187,7 @@ impl WorkspaceTab {
             Self::LocalSession(tab)
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
+            | Self::SftpFileManager(tab)
             | Self::SerialSession(tab) => tab.identifier(),
         }
     }
@@ -1151,6 +1198,7 @@ impl WorkspaceTab {
             Self::LocalSession(tab)
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
+            | Self::SftpFileManager(tab)
             | Self::SerialSession(tab) => Some(tab.profile_id()),
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => None,
         }
@@ -1164,6 +1212,7 @@ impl WorkspaceTab {
             Self::LocalSession(tab)
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
+            | Self::SftpFileManager(tab)
             | Self::SerialSession(tab) => tab.validate(),
         }
     }
@@ -1177,6 +1226,9 @@ impl WorkspaceTab {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
             }
             Self::SftpSession(tab) => {
+                validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
+            }
+            Self::SftpFileManager(tab) => {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Ssh)
             }
             Self::SerialSession(tab) => {
@@ -4759,6 +4811,24 @@ schema_version = 99
                 .interface_settings()
                 .default_sftp_local_directory(),
             Some(missing.as_path())
+        );
+    }
+
+    #[test]
+    fn interface_settings_parse_sftp_pane_order_additively() {
+        let settings =
+            InterfaceSettings::DEFAULT.with_sftp_pane_order(SftpPaneOrderPreference::RemoteLeft);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings.clone())
+            .expect("remote-left pane order is valid interface metadata");
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("sftp_pane_order"));
+        assert_eq!(Configuration::parse(&serialized).unwrap(), configuration);
+        assert_eq!(
+            configuration.interface_settings().sftp_pane_order(),
+            SftpPaneOrderPreference::RemoteLeft
         );
     }
 
