@@ -10,7 +10,7 @@ UsePAM no
 AllowUsers festerm
 X11Forwarding no
 AllowAgentForwarding no
-AllowTcpForwarding no
+AllowTcpForwarding yes
 PermitTunnel no
 GatewayPorts no
 UseDNS no

@@ -24,4 +24,10 @@ case "${FESTERM_OPENSSH_HOST_KEY_PROFILE:-default}" in
 esac
 unset FESTERM_OPENSSH_PASSWORD FESTERM_OPENSSH_HOST_KEY_PROFILE
 
+# Reserve 127.0.0.1:9000 inside the fixture for direct-tcpip/local-forward
+# smoke tests. Alpine's base BusyBox already provides `nc`, and `-lk` keeps
+# this deterministic echo listener alive across multiple forwarded connections
+# within the same container lifetime.
+nc -lk -s 127.0.0.1 -p 9000 -e /bin/cat &
+
 exec /usr/sbin/sshd -D -e -f "$sshd_config"
