@@ -31,6 +31,7 @@ use crate::configuration_startup::{
     ConfigurationReloader, ConfigurationStartupStatus, StartupConfiguration,
 };
 use crate::inspector::{InspectorAction, InspectorContent, TransportFacts};
+use crate::markdown_viewer::take_viewer_commands;
 use crate::native_smoke::NativeWindowSmoke;
 use crate::overlay_state::{
     CloseConsequence, LivePortForwardManager, OverlayState, PendingCloseConfirmation,
@@ -78,6 +79,10 @@ enum ApplicationShortcut {
     ResetTerminal,
     ToggleFocusMode,
     PortForwardManager,
+    MarkdownFind,
+    MarkdownReload,
+    MarkdownPreviewSource,
+    MarkdownOutline,
     /// Terminal-content search (`docs/gui-design.md` "Terminal-content
     /// search"). `Ctrl+Shift+F` on Windows/Linux; macOS uses plain `Cmd+F`
     /// since `Cmd+Shift+F` is already `ToggleFocusMode` there.
@@ -175,6 +180,16 @@ impl ApplicationShortcut {
                 },
                 egui::Key::M,
             )),
+            Self::MarkdownFind => Some((egui::Modifiers::COMMAND, egui::Key::F)),
+            Self::MarkdownReload => Some((egui::Modifiers::COMMAND, egui::Key::R)),
+            Self::MarkdownPreviewSource => Some((
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::V,
+            )),
+            Self::MarkdownOutline => Some((
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::O,
+            )),
             Self::Find => Some((
                 if cfg!(target_os = "macos") {
                     egui::Modifiers::COMMAND
@@ -214,6 +229,14 @@ impl ApplicationShortcut {
             Self::ToggleFocusMode => Some("Ctrl+Shift+F11"),
             Self::PortForwardManager if cfg!(target_os = "macos") => Some("\u{2318}+Shift+M"),
             Self::PortForwardManager => Some("Ctrl+Shift+M"),
+            Self::MarkdownFind if cfg!(target_os = "macos") => Some("\u{2318}+F"),
+            Self::MarkdownFind => Some("Ctrl+F"),
+            Self::MarkdownReload if cfg!(target_os = "macos") => Some("\u{2318}+R"),
+            Self::MarkdownReload => Some("Ctrl+R"),
+            Self::MarkdownPreviewSource if cfg!(target_os = "macos") => Some("\u{2318}+Shift+V"),
+            Self::MarkdownPreviewSource => Some("Ctrl+Shift+V"),
+            Self::MarkdownOutline if cfg!(target_os = "macos") => Some("\u{2318}+Shift+O"),
+            Self::MarkdownOutline => Some("Ctrl+Shift+O"),
             Self::Find if cfg!(target_os = "macos") => Some("\u{2318}+F"),
             Self::Find => Some("Ctrl+Shift+F"),
         }
@@ -664,6 +687,7 @@ impl FesTermApp {
             TabContent::Launcher => "Close Launcher",
             TabContent::Settings => "Close Settings",
             TabContent::Profiles => "Close Profiles",
+            TabContent::MarkdownViewer(_) => "Close Markdown Viewer",
             TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::Session(_) => "Close Session",
@@ -719,6 +743,16 @@ impl FesTermApp {
             self.overlays.pending_close = Some(confirmation);
         } else {
             self.state.dispatch(AppCommand::CloseTab(id), context);
+        }
+    }
+
+    fn open_markdown_file_picker(&mut self, context: &egui::Context) {
+        let picked = rfd::FileDialog::new()
+            .add_filter("Markdown", &["md", "markdown"])
+            .pick_file();
+        if let Some(path) = picked {
+            self.state
+                .dispatch(AppCommand::OpenLocalMarkdownFile { path }, context);
         }
     }
 
@@ -1961,6 +1995,11 @@ impl FesTermApp {
         const PASTE: u64 = 14;
         const FIND_IN_TERMINAL: u64 = 15;
         const PORT_FORWARD_MANAGER: u64 = 16;
+        const OPEN_MARKDOWN_FILE: u64 = 17;
+        const RELOAD_MARKDOWN: u64 = 18;
+        const TOGGLE_MARKDOWN_MODE: u64 = 19;
+        const FIND_IN_MARKDOWN: u64 = 20;
+        const TOGGLE_MARKDOWN_OUTLINE: u64 = 21;
         // Tab-scoped palette ids are offset well past the fixed action ids so
         // they never collide with a real `TabId::chip_id()` value.
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
@@ -1979,6 +2018,13 @@ impl FesTermApp {
                 hint: ApplicationShortcut::StartLocalShell
                     .label()
                     .map(str::to_owned),
+                is_tab: false,
+                shortcut_label: None,
+            },
+            PaletteItem {
+                id: OPEN_MARKDOWN_FILE,
+                label: "Open Markdown File…".to_owned(),
+                hint: None,
                 is_tab: false,
                 shortcut_label: None,
             },
@@ -2106,12 +2152,54 @@ impl FesTermApp {
                 }
             }
         }
+        if matches!(
+            self.state.active_tab().content,
+            TabContent::MarkdownViewer(_)
+        ) {
+            items.extend([
+                PaletteItem {
+                    id: RELOAD_MARKDOWN,
+                    label: "Reload Markdown".to_owned(),
+                    hint: ApplicationShortcut::MarkdownReload
+                        .label()
+                        .map(str::to_owned),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: TOGGLE_MARKDOWN_MODE,
+                    label: "Toggle Preview/Source".to_owned(),
+                    hint: ApplicationShortcut::MarkdownPreviewSource
+                        .label()
+                        .map(str::to_owned),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: FIND_IN_MARKDOWN,
+                    label: "Find in Markdown…".to_owned(),
+                    hint: ApplicationShortcut::MarkdownFind.label().map(str::to_owned),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+                PaletteItem {
+                    id: TOGGLE_MARKDOWN_OUTLINE,
+                    label: "Toggle Markdown Outline".to_owned(),
+                    hint: ApplicationShortcut::MarkdownOutline
+                        .label()
+                        .map(str::to_owned),
+                    is_tab: false,
+                    shortcut_label: None,
+                },
+            ]);
+        }
         items.push(PaletteItem {
             id: CLOSE_ACTIVE_TAB,
             label: match &self.state.active_tab().content {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
                 TabContent::Profiles => "Close Profiles".to_owned(),
+                TabContent::MarkdownViewer(_) => "Close Markdown Viewer".to_owned(),
                 TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::Session(_) => "Close Session…".to_owned(),
@@ -2127,6 +2215,10 @@ impl FesTermApp {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
                 TabContent::Profiles => ("Profiles".to_owned(), None),
+                TabContent::MarkdownViewer(tab) => (
+                    tab.title().to_owned(),
+                    Some(tab.chip_secondary().to_owned()),
+                ),
                 TabContent::SshAuthenticationRequired(tab) => (
                     tab.profile.identifier().to_owned(),
                     Some(format!(
@@ -2180,6 +2272,17 @@ impl FesTermApp {
         match id {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
+            17 => self
+                .state
+                .dispatch(AppCommand::OpenMarkdownFilePicker, context),
+            18 => self.state.dispatch(AppCommand::ReloadMarkdown, context),
+            19 => self
+                .state
+                .dispatch(AppCommand::ToggleMarkdownPreviewSource, context),
+            20 => self.state.dispatch(AppCommand::OpenMarkdownFind, context),
+            21 => self
+                .state
+                .dispatch(AppCommand::ToggleMarkdownOutline, context),
             4 => {
                 // The palette closes as its command is selected, so its text
                 // field is not a viable focus-restoration target.
@@ -2287,6 +2390,22 @@ impl FesTermApp {
             && ApplicationShortcut::PortForwardManager.consume(ctx);
         let open_find = matches!(self.state.active_tab().content, TabContent::Session(_))
             && ApplicationShortcut::Find.consume(ctx);
+        let markdown_find = matches!(
+            self.state.active_tab().content,
+            TabContent::MarkdownViewer(_)
+        ) && ApplicationShortcut::MarkdownFind.consume(ctx);
+        let markdown_reload = matches!(
+            self.state.active_tab().content,
+            TabContent::MarkdownViewer(_)
+        ) && ApplicationShortcut::MarkdownReload.consume(ctx);
+        let markdown_toggle_mode = matches!(
+            self.state.active_tab().content,
+            TabContent::MarkdownViewer(_)
+        ) && ApplicationShortcut::MarkdownPreviewSource.consume(ctx);
+        let markdown_toggle_outline = matches!(
+            self.state.active_tab().content,
+            TabContent::MarkdownViewer(_)
+        ) && ApplicationShortcut::MarkdownOutline.consume(ctx);
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
@@ -2330,6 +2449,19 @@ impl FesTermApp {
         }
         if open_find {
             self.open_terminal_search(ctx);
+        }
+        if markdown_find {
+            self.state.dispatch(AppCommand::OpenMarkdownFind, ctx);
+        }
+        if markdown_reload {
+            self.state.dispatch(AppCommand::ReloadMarkdown, ctx);
+        }
+        if markdown_toggle_mode {
+            self.state
+                .dispatch(AppCommand::ToggleMarkdownPreviewSource, ctx);
+        }
+        if markdown_toggle_outline {
+            self.state.dispatch(AppCommand::ToggleMarkdownOutline, ctx);
         }
     }
 
@@ -3234,6 +3366,11 @@ impl FesTermApp {
                         Some("Application".to_owned()),
                         ChipStatus::Neutral,
                     ),
+                    TabContent::MarkdownViewer(tab) => (
+                        tab.title().to_owned(),
+                        Some(tab.chip_secondary().to_owned()),
+                        ChipStatus::Neutral,
+                    ),
                     TabContent::SshAuthenticationRequired(tab) => (
                         tab.profile.identifier().to_owned(),
                         Some(format!(
@@ -3436,6 +3573,7 @@ impl FesTermApp {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
+                | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_) => {
                     (None, None, ChipStatus::Neutral, "", None, None)
@@ -3964,6 +4102,9 @@ impl FesTermApp {
                         pending_edit,
                     );
                 }
+                TabContent::MarkdownViewer(tab) => {
+                    screen_command = tab.show(ui, active_tab_id);
+                }
                 TabContent::SshAuthenticationRequired(tab) => {
                     screen_command = screens::show_ssh_authentication_required(
                         ui,
@@ -4027,6 +4168,10 @@ impl FesTermApp {
                 }
             }
         }
+        for command in take_viewer_commands(ui.ctx()) {
+            let context = ui.ctx().clone();
+            self.state.dispatch(command, &context);
+        }
         if search_escape {
             self.close_terminal_search(&ui.ctx().clone());
         }
@@ -4068,6 +4213,14 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                AppCommand::OpenMarkdownFilePicker => {
+                    self.open_markdown_file_picker(&ui.ctx().clone());
+                }
+                AppCommand::OpenLocalMarkdownFile { path } => {
+                    let context = ui.ctx().clone();
+                    self.state
+                        .dispatch(AppCommand::OpenLocalMarkdownFile { path }, &context);
+                }
                 AppCommand::StartStoredPasswordSshProfile { profile_id } => {
                     self.start_stored_password_profile(profile_id, &ui.ctx().clone());
                 }
@@ -5187,6 +5340,35 @@ mod tests {
             Some("About fesTerm"),
             "About fesTerm must sort after every tab and action entry"
         );
+    }
+
+    #[test]
+    fn command_palette_always_offers_open_markdown_file() {
+        let app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let items = app.palette_items();
+        assert!(items.iter().any(|item| item.label == "Open Markdown File…"));
+    }
+
+    #[test]
+    fn markdown_viewer_palette_items_follow_the_active_viewer() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: std::path::PathBuf::from("/docs/readme.md"),
+            },
+            &context,
+        );
+
+        let items = app.palette_items();
+        assert!(items.iter().any(|item| item.label == "Reload Markdown"));
+        assert!(items
+            .iter()
+            .any(|item| item.label == "Toggle Preview/Source"));
+        assert!(items.iter().any(|item| item.label == "Find in Markdown…"));
+        assert!(items
+            .iter()
+            .any(|item| item.label == "Toggle Markdown Outline"));
     }
 
     #[test]
