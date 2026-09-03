@@ -2072,7 +2072,11 @@ impl AppState {
         let strategy = profile
             .session_strategy()
             .unwrap_or(festerm_ssh::SessionStrategy::PlainShell);
-        let options = SshSessionOptions::manual_recovery(strategy);
+        let Ok(options) =
+            Self::with_profile_port_forwards(SshSessionOptions::manual_recovery(strategy), profile)
+        else {
+            return false;
+        };
         self.execute_ssh_session(
             connection_profile,
             SshAuthentication::interactive(),
@@ -2116,6 +2120,13 @@ impl AppState {
         ));
     }
 
+    fn with_profile_port_forwards(
+        options: SshSessionOptions,
+        profile: &SshProfileConfiguration,
+    ) -> Result<SshSessionOptions, festerm_ssh::SshPortForwardConfigurationError> {
+        options.with_profile_port_forwards(profile.port_forwards().iter())
+    }
+
     /// Resolves only profile metadata on the application path and hands the
     /// opaque credential source to `festerm-ssh`; secret retrieval remains
     /// in that transport's worker immediately before authentication. Uses
@@ -2148,6 +2159,9 @@ impl AppState {
             festerm_config::CredentialKind::PrivateKey => {
                 SshAuthentication::stored_private_key(store, reference)
             }
+        };
+        let Ok(options) = Self::with_profile_port_forwards(options, profile) else {
+            return false;
         };
         self.execute_ssh_session(connection_profile, authentication, options, context);
         true

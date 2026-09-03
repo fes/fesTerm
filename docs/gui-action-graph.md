@@ -103,6 +103,7 @@ stateDiagram-v2
 
     Sessions --> Palette: open command palette
     Sessions --> Inspector: open inspector
+    Sessions --> PortForwardManager: open Port Forward Manager
     Sessions --> Search: find in terminal [future]
     Sessions --> PasteConfirm: risky paste
     Sessions --> CloseConfirm: close live session
@@ -111,6 +112,7 @@ stateDiagram-v2
     Sessions --> Settings: open singleton Settings
     Palette --> Sessions: select session/command or Escape
     Inspector --> Sessions: Close, Escape, or consumed outside click
+    PortForwardManager --> Sessions: Close, Escape, or saved action
     Search --> Sessions: Escape clears query/highlights
     PasteConfirm --> Sessions: Cancel, invalidation, or confirmed Paste
     CloseConfirm --> Sessions: Cancel or target still exists
@@ -177,6 +179,9 @@ stateDiagram-v2
 | `SSH-03` | Disconnected → Reconnecting | Activate the Inspector's explicit Reconnect action (ADR 0018: plain SSH sessions never reconnect automatically). | Same chip/identity; internal bounded retry/backoff (`festerm-ssh::ReconnectPolicy`) is not user-visible as a distinct attempt/delay and has no separate cancel action yet; Close Session remains the only way to abandon a reconnect in progress. | Allow success (`SSH-04`) or exhaustion (`SSH-05`). | P,H,V,N,U; partial |
 | `SSH-04` | Reconnecting → K9 | Fixture reconnect succeeds. | New transport generation, modes reset, old history sealed with UI-owned noncopyable/nonsearchable boundary; current input targets only new generation; fesTerm never describes the new shell as restoring prior remote process state. | Disconnect/close; rebuild `K9`. | P,H,N; deferred boundary |
 | `SSH-05` | Reconnecting → Disconnected | Bounded retries are exhausted. | No empty generation boundary; Details and Reconnect/Close actions only. | Reconnect again or close. | P,H |
+| `SSH-06` | `K9 → PortForwardManager` | Open the live Port Forward Manager by shortcut or command palette. | The overlay is session-scoped, blocks terminal input while open, and lists both saved-profile and live-ephemeral forwards with direction, bind, destination, source, and current active/failed state. | Close or Escape to return to `K9`. | P,H,N,U; partial |
+| `SSH-07` | `PortForwardManager → PortForwardManager` | Add a validated local or remote forward with the loopback bind default left unchanged or deliberately widened. | The requested forward is applied only to the current live session; success makes it usable immediately, failure is surfaced per-mapping without claiming the whole SSH shell failed, and reconnect never silently reuses the mapping. | Remove it with `SSH-08`, or disconnect/close the session. | P,H,N,U; partial |
+| `SSH-08` | `PortForwardManager → PortForwardManager` | Remove an active live forward. | The live list updates immediately, new connections stop using the removed bind, saved-profile metadata remains unchanged, and a later reconnect still starts with no active forward state unless a fresh saved-profile launch reapplies it. | Re-add with `SSH-07`, or close the overlay with `SSH-06`. | P,H,N,U; partial |
 
 ## E. Serial lifecycle
 

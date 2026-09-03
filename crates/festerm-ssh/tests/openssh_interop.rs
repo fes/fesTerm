@@ -1,5 +1,7 @@
 use std::{
     env, fs,
+    future::Future,
+    io::Read,
     io::Write,
     process::{Command, Stdio},
     sync::Arc,
@@ -9,12 +11,14 @@ use std::{
 
 use festerm_session::{
     HostKeyPrompt, Session, SessionErrorKind, SessionEvent, SessionLifecycle, SessionOperation,
-    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult, TerminalSize,
+    SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
+    SshPortForwardDirection, SshPortForwardRuntime, SshPortForwardSource, SshPortForwardState,
+    TerminalSize,
 };
 use festerm_ssh::{
     HostIdentity, HostTrustDecision, PersistenceProvider, PersistentSessionName, ReconnectPolicy,
     RecoveryPolicy, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
-    SshLivenessCheckError, SshPrivateKey, SshSession, SshSessionOptions,
+    SshLivenessCheckError, SshPortForwardSpec, SshPrivateKey, SshSession, SshSessionOptions,
 };
 
 const MARKER: &[u8] = b"__FESTERM_OPENSSH_INTEROP_OK__";
@@ -98,6 +102,15 @@ fn marker_seen(output_tail: &mut Vec<u8>, bytes: &[u8], marker: &[u8]) -> bool {
 
 struct RawInteropClient {
     expected_fingerprint: Option<String>,
+    forwarded_tcpip_sender: Option<tokio::sync::mpsc::UnboundedSender<RawForwardedTcpIp>>,
+}
+
+struct RawForwardedTcpIp {
+    channel: russh::Channel<russh::client::Msg>,
+    connected_address: String,
+    connected_port: u32,
+    originator_address: String,
+    originator_port: u32,
 }
 
 impl russh::client::Handler for RawInteropClient {
@@ -117,6 +130,34 @@ impl russh::client::Handler for RawInteropClient {
             );
         }
         Ok(true)
+    }
+
+    fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        originator_address: &str,
+        originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let forwarded_tcpip_sender = self.forwarded_tcpip_sender.clone();
+        let connected_address = connected_address.to_owned();
+        let originator_address = originator_address.to_owned();
+        async move {
+            reply.accept().await;
+            if let Some(sender) = forwarded_tcpip_sender {
+                let _ = sender.send(RawForwardedTcpIp {
+                    channel,
+                    connected_address,
+                    connected_port,
+                    originator_address,
+                    originator_port,
+                });
+            }
+            Ok(())
+        }
     }
 }
 
@@ -142,6 +183,7 @@ fn raw_russh_runtime() -> tokio::runtime::Runtime {
 async fn connect_authenticated_raw_handle(
     configuration: &OpenSshConfiguration,
     expected_fingerprint: Option<&str>,
+    forwarded_tcpip_sender: Option<tokio::sync::mpsc::UnboundedSender<RawForwardedTcpIp>>,
     deadline: Instant,
 ) -> russh::client::Handle<RawInteropClient> {
     let config = Arc::new(russh::client::Config {
@@ -155,6 +197,7 @@ async fn connect_authenticated_raw_handle(
             (configuration.host.as_str(), configuration.port),
             RawInteropClient {
                 expected_fingerprint: expected_fingerprint.map(str::to_owned),
+                forwarded_tcpip_sender,
             },
         ),
     )
@@ -200,6 +243,234 @@ async fn shutdown_raw_handle(mut handle: russh::client::Handle<RawInteropClient>
         Ok(()) => {}
         Err(_) => panic!("raw russh OpenSSH handle did not shut down within the test timeout"),
     }
+}
+
+struct InteropPortForwardSpec {
+    direction: SshPortForwardDirection,
+    bind_host: &'static str,
+    bind_port: u16,
+    destination_host: &'static str,
+    destination_port: u16,
+}
+
+impl SshPortForwardSpec for InteropPortForwardSpec {
+    fn direction(&self) -> SshPortForwardDirection {
+        self.direction
+    }
+
+    fn bind_host(&self) -> &str {
+        self.bind_host
+    }
+
+    fn bind_port(&self) -> u16 {
+        self.bind_port
+    }
+
+    fn destination_host(&self) -> &str {
+        self.destination_host
+    }
+
+    fn destination_port(&self) -> u16 {
+        self.destination_port
+    }
+}
+
+fn unused_local_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .expect("could not reserve a loopback port for the interoperability test")
+        .local_addr()
+        .expect("reserved loopback address must be queryable")
+        .port()
+}
+
+fn wait_for_running_session(session: &SshSession, deadline: Instant) {
+    let resolver = session.host_key_decision_resolver();
+    let mut running = false;
+    while Instant::now() < deadline && !running {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => resolver
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .expect("could not accept the OpenSSH fixture host key"),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) => running = true,
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error before reaching Running",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before reaching Running");
+            }
+        }
+    }
+    assert!(
+        running,
+        "SSH session did not reach Running within the test timeout"
+    );
+}
+
+fn wait_for_port_forward_snapshot<F>(
+    session: &SshSession,
+    deadline: Instant,
+    predicate: F,
+) -> Vec<SshPortForwardRuntime>
+where
+    F: Fn(&[SshPortForwardRuntime]) -> bool,
+{
+    while Instant::now() < deadline {
+        match session.try_recv_event() {
+            Ok(SessionEvent::PortForwardsUpdated(forwards)) if predicate(&forwards) => {
+                return forwards;
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error while waiting for a port-forward snapshot",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed while waiting for a port-forward snapshot");
+            }
+        }
+    }
+    panic!("SSH session did not emit the expected port-forward snapshot within the test timeout");
+}
+
+fn connect_and_echo_local_forward(port: u16, payload: &[u8], deadline: Instant) {
+    let remaining = remaining_until(deadline, "connect to the local forwarded listener");
+    let mut stream = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        remaining.min(Duration::from_secs(2)),
+    )
+    .unwrap_or_else(|_| panic!("could not connect to the local forwarded listener on {port}"));
+    stream
+        .set_read_timeout(Some(remaining.min(Duration::from_secs(2))))
+        .expect("could not set the forwarded listener read timeout");
+    stream
+        .set_write_timeout(Some(remaining.min(Duration::from_secs(2))))
+        .expect("could not set the forwarded listener write timeout");
+    stream
+        .write_all(payload)
+        .expect("could not write to the local forwarded listener");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("could not half-close the local forwarded listener socket");
+    let mut echoed = Vec::new();
+    stream
+        .read_to_end(&mut echoed)
+        .expect("could not read the local forwarded echo payload");
+    assert_eq!(
+        echoed.as_slice(),
+        payload,
+        "the local forwarded listener did not echo the expected payload"
+    );
+}
+
+fn wait_for_local_connect_failure(port: u16, deadline: Instant) {
+    while Instant::now() < deadline {
+        match std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            Duration::from_millis(100),
+        ) {
+            Ok(stream) => {
+                drop(stream);
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return,
+        }
+    }
+    panic!("the local forwarded listener remained reachable past the test timeout");
+}
+
+fn wait_for_session_disconnected(session: &SshSession, deadline: Instant) {
+    while Instant::now() < deadline {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Disconnected(_))) => return,
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH session emitted a {:?} error before disconnect teardown completed",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session event stream closed before reaching Disconnected");
+            }
+        }
+    }
+    panic!("SSH session did not reach Disconnected within the test timeout");
+}
+
+fn docker_output_with_deadline(arguments: &[&str], operation: &str, deadline: Instant) -> String {
+    let mut child = Command::new("docker")
+        .args(arguments)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|_| panic!("could not invoke Docker to {operation}"));
+    loop {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("Docker did not {operation} within the test timeout");
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child
+                    .wait_with_output()
+                    .expect("could not collect Docker command output");
+                assert!(status.success(), "Docker could not {operation}");
+                return String::from_utf8(output.stdout).expect("Docker returned non-UTF-8 output");
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(_) => panic!("could not observe Docker progress while trying to {operation}"),
+        }
+    }
+}
+
+fn spawn_local_echo_server(deadline: Instant) -> (u16, thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .expect("could not bind a local echo server for remote forwarding");
+    listener
+        .set_nonblocking(true)
+        .expect("could not make the local echo server nonblocking");
+    let port = listener
+        .local_addr()
+        .expect("local echo server address must be queryable")
+        .port();
+    let handle = thread::spawn(move || {
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .expect("could not bound the local echo server read timeout");
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(2)))
+                        .expect("could not bound the local echo server write timeout");
+                    let mut bytes = Vec::new();
+                    stream
+                        .read_to_end(&mut bytes)
+                        .expect("could not read the remote-forward payload from the echo server");
+                    stream
+                        .write_all(&bytes)
+                        .expect("could not echo the remote-forward payload back to the client");
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => {
+                    panic!(
+                        "the local echo server failed before the remote-forward connection arrived"
+                    )
+                }
+            }
+        }
+        panic!("the remote-forwarded connection never reached the local echo server");
+    });
+    (port, handle)
 }
 
 #[test]
@@ -610,6 +881,7 @@ fn controlled_openssh_sftp_subsystem_smoke() {
         let handle = connect_authenticated_raw_handle(
             &configuration,
             expected_fingerprint.as_deref(),
+            None,
             deadline,
         )
         .await;
@@ -672,6 +944,7 @@ fn controlled_openssh_direct_tcpip_echo_smoke() {
         let handle = connect_authenticated_raw_handle(
             &configuration,
             expected_fingerprint.as_deref(),
+            None,
             deadline,
         )
         .await;
@@ -733,6 +1006,323 @@ fn controlled_openssh_direct_tcpip_echo_smoke() {
         );
         shutdown_raw_handle(handle).await;
     });
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_remote_tcpip_forward_smoke() {
+    const PAYLOAD: &[u8] = b"__FESTERM_OPENSSH_FORWARDED_TCPIP_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let expected_fingerprint = expected_host_fingerprint_from_environment();
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let (forwarded_sender, mut forwarded_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let handle = connect_authenticated_raw_handle(
+            &configuration,
+            expected_fingerprint.as_deref(),
+            Some(forwarded_sender),
+            deadline,
+        )
+        .await;
+        let remote_port = match tokio::time::timeout(
+            remaining_until(deadline, "request the raw tcpip-forward"),
+            handle.tcpip_forward("127.0.0.1", 0),
+        )
+        .await
+        {
+            Ok(Ok(port)) => port,
+            Ok(Err(_)) => panic!("the OpenSSH fixture rejected the raw tcpip-forward request"),
+            Err(_) => panic!("requesting the raw tcpip-forward timed out"),
+        };
+        assert!(
+            remote_port > 0,
+            "the OpenSSH fixture returned an invalid remote forwarded port"
+        );
+        let docker_status = Command::new("docker")
+            .args([
+                "exec",
+                &fixture.container_name,
+                "sh",
+                "-c",
+                &format!(
+                    "printf '{}' | nc -w 2 127.0.0.1 {}",
+                    std::str::from_utf8(PAYLOAD).expect("payload is valid UTF-8"),
+                    remote_port
+                ),
+            ])
+            .status()
+            .unwrap_or_else(|_| {
+                panic!("could not invoke Docker to connect to the raw remote forwarded port")
+            });
+        assert!(
+            docker_status.success(),
+            "Docker could not connect to the raw remote forwarded port inside the OpenSSH fixture"
+        );
+
+        let mut forwarded = match tokio::time::timeout(
+            remaining_until(deadline, "wait for the raw forwarded-tcpip channel"),
+            forwarded_receiver.recv(),
+        )
+        .await
+        {
+            Ok(Some(forwarded)) => forwarded,
+            Ok(None) => panic!("the raw forwarded-tcpip receiver closed unexpectedly"),
+            Err(_) => panic!("the OpenSSH fixture did not open a raw forwarded-tcpip channel"),
+        };
+        assert_eq!(forwarded.connected_address, "127.0.0.1");
+        assert_eq!(forwarded.connected_port, remote_port);
+        assert!(
+            !forwarded.originator_address.is_empty(),
+            "the raw forwarded-tcpip originator address should not be empty"
+        );
+        assert!(
+            forwarded.originator_port > 0,
+            "the raw forwarded-tcpip originator port should be nonzero"
+        );
+
+        let mut received = Vec::new();
+        while Instant::now() < deadline && received.len() < PAYLOAD.len() {
+            let wait = remaining_until(deadline, "read the raw forwarded-tcpip payload")
+                .min(Duration::from_millis(100));
+            match tokio::time::timeout(wait, forwarded.channel.wait()).await {
+                Ok(Some(russh::ChannelMsg::Data { data })) => {
+                    received.extend_from_slice(data.as_ref());
+                    assert!(
+                        received.len() <= PAYLOAD.len(),
+                        "the raw forwarded-tcpip channel returned unexpected extra bytes"
+                    );
+                }
+                Ok(Some(russh::ChannelMsg::Failure)) => {
+                    panic!("the raw forwarded-tcpip channel reported a failure")
+                }
+                Ok(Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close)) | Ok(None) => break,
+                Ok(Some(_)) | Err(_) => {}
+            }
+        }
+        assert_eq!(
+            received.as_slice(),
+            PAYLOAD,
+            "the raw forwarded-tcpip channel did not receive the expected payload"
+        );
+
+        match tokio::time::timeout(
+            remaining_until(deadline, "cancel the raw tcpip-forward"),
+            handle.cancel_tcpip_forward("127.0.0.1", remote_port),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => panic!("could not cancel the raw tcpip-forward request"),
+            Err(_) => panic!("canceling the raw tcpip-forward request timed out"),
+        }
+        shutdown_raw_handle(handle).await;
+    });
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn local_forward_bridges_bytes_bidirectionally() {
+    const PAYLOAD: &[u8] = b"__FESTERM_SSH_LOCAL_FORWARD_ECHO_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let local_port = unused_local_port();
+    let options = SshSessionOptions::new()
+        .with_profile_port_forwards([InteropPortForwardSpec {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1",
+            bind_port: local_port,
+            destination_host: "127.0.0.1",
+            destination_port: 9000,
+        }])
+        .expect("valid saved local forward must be accepted");
+    let session = SshSession::start_with_options(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+        options,
+    )
+    .expect("could not start the OpenSSH session with a saved local forward");
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+
+    wait_for_running_session(&session, deadline);
+    let forwards = wait_for_port_forward_snapshot(&session, deadline, |forwards| {
+        forwards.iter().any(|forward| {
+            forward.direction() == SshPortForwardDirection::Local
+                && forward.bind_host() == "127.0.0.1"
+                && forward.bind_port() == local_port
+                && forward.destination_host() == "127.0.0.1"
+                && forward.destination_port() == 9000
+                && forward.source() == SshPortForwardSource::Profile
+                && forward.state() == SshPortForwardState::Active
+        })
+    });
+    assert_eq!(forwards.len(), 1);
+    connect_and_echo_local_forward(local_port, PAYLOAD, deadline);
+
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("SSH session with a saved local forward did not shut down in time"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn live_ephemeral_forward_can_be_added_and_removed_mid_session() {
+    const PAYLOAD: &[u8] = b"__FESTERM_SSH_EPHEMERAL_FORWARD_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+    )
+    .expect("could not start the OpenSSH session for ephemeral forwarding");
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let local_port = unused_local_port();
+
+    wait_for_running_session(&session, deadline);
+    session
+        .try_add_port_forward(InteropPortForwardSpec {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1",
+            bind_port: local_port,
+            destination_host: "127.0.0.1",
+            destination_port: 9000,
+        })
+        .expect("could not add an ephemeral local SSH forward");
+    let _ = wait_for_port_forward_snapshot(&session, deadline, |forwards| {
+        forwards.iter().any(|forward| {
+            forward.direction() == SshPortForwardDirection::Local
+                && forward.bind_port() == local_port
+                && forward.source() == SshPortForwardSource::Ephemeral
+                && forward.state() == SshPortForwardState::Active
+        })
+    });
+    connect_and_echo_local_forward(local_port, PAYLOAD, deadline);
+
+    session
+        .try_remove_port_forward(SshPortForwardDirection::Local, "127.0.0.1", local_port)
+        .expect("could not remove the ephemeral local SSH forward");
+    let _ = wait_for_port_forward_snapshot(&session, deadline, |forwards| {
+        forwards.iter().all(|forward| {
+            !(forward.direction() == SshPortForwardDirection::Local
+                && forward.bind_port() == local_port)
+        })
+    });
+    wait_for_local_connect_failure(local_port, deadline);
+
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("SSH session with an ephemeral forward did not shut down in time"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn forwards_are_torn_down_cleanly_on_disconnect() {
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let local_port = unused_local_port();
+    let options = SshSessionOptions::new()
+        .with_profile_port_forwards([InteropPortForwardSpec {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1",
+            bind_port: local_port,
+            destination_host: "127.0.0.1",
+            destination_port: 9000,
+        }])
+        .expect("valid saved local forward must be accepted");
+    let session = SshSession::start_with_options(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+        options,
+    )
+    .expect("could not start the OpenSSH session for disconnect teardown");
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+
+    wait_for_running_session(&session, deadline);
+    let _ = wait_for_port_forward_snapshot(&session, deadline, |forwards| {
+        forwards.iter().any(|forward| {
+            forward.direction() == SshPortForwardDirection::Local
+                && forward.bind_port() == local_port
+                && forward.state() == SshPortForwardState::Active
+        })
+    });
+    fixture.sever_active_ssh_connection();
+    wait_for_session_disconnected(&session, deadline);
+    let rebound = std::net::TcpListener::bind(("127.0.0.1", local_port))
+        .expect("disconnect teardown did not release the local forwarded listener");
+    drop(rebound);
+
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("disconnected SSH session did not shut down in time"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn remote_forward_bridges_bytes_bidirectionally() {
+    const PAYLOAD: &str = "__FESTERM_SSH_REMOTE_FORWARD_ECHO_OK__";
+
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let fixture = DockerFixture::from_environment();
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password.clone()),
+    )
+    .expect("could not start the OpenSSH session for remote forwarding");
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let remote_port = unused_local_port();
+    let (local_echo_port, local_echo_server) = spawn_local_echo_server(deadline);
+
+    wait_for_running_session(&session, deadline);
+    session
+        .try_add_port_forward(InteropPortForwardSpec {
+            direction: SshPortForwardDirection::Remote,
+            bind_host: "127.0.0.1",
+            bind_port: remote_port,
+            destination_host: "127.0.0.1",
+            destination_port: local_echo_port,
+        })
+        .expect("could not add an ephemeral remote SSH forward");
+    let _ = wait_for_port_forward_snapshot(&session, deadline, |forwards| {
+        forwards.iter().any(|forward| {
+            forward.direction() == SshPortForwardDirection::Remote
+                && forward.bind_port() == remote_port
+                && forward.source() == SshPortForwardSource::Ephemeral
+                && forward.state() == SshPortForwardState::Active
+        })
+    });
+    let echoed = docker_output_with_deadline(
+        &[
+            "exec",
+            &fixture.container_name,
+            "sh",
+            "-c",
+            &format!("printf '{PAYLOAD}' | nc -w 2 127.0.0.1 {remote_port}"),
+        ],
+        "exercise the remote forwarded port",
+        deadline,
+    );
+    assert_eq!(
+        echoed, PAYLOAD,
+        "the remote forwarded port did not echo the expected payload"
+    );
+    local_echo_server
+        .join()
+        .expect("the local echo server thread panicked");
+
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("SSH session with a remote forward did not shut down in time"),
+    }
 }
 
 struct DockerFixture {

@@ -181,7 +181,7 @@
     {
       "id": "ssh-lifecycle",
       "edges": [
-        "SSH-*"
+        "SSH-0[1-5]"
       ],
       "requirements": [
         "docs/gui-design.md#ssh-session-creation",
@@ -204,6 +204,35 @@
       "status": "partial",
       "prerequisites": [
         "generation-boundary presentation remains incomplete"
+      ]
+    },
+    {
+      "id": "ssh-port-forwarding",
+      "edges": [
+        "SSH-06",
+        "SSH-07",
+        "SSH-08"
+      ],
+      "requirements": [
+        "docs/gui-design.md#ssh-session-creation",
+        "docs/gui-design.md#profile-editing"
+      ],
+      "decisions": [
+        "ADR-0018",
+        "ADR-0027"
+      ],
+      "automated_tests": [
+        "local_forward_bridges_bytes_bidirectionally",
+        "live_ephemeral_forward_can_be_added_and_removed_mid_session",
+        "forwards_are_torn_down_cleanly_on_disconnect",
+        "remote_forward_bridges_bytes_bidirectionally"
+      ],
+      "manual_scenarios": [
+        "TI-11"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "live Port Forward Manager overlay routing remains pending"
       ]
     },
     {

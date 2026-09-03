@@ -11,7 +11,7 @@ description = "Native SSH session transport and trust policy for fesTerm."
 festerm-session = { path = "../festerm-session" }
 festerm-secret-store = { path = "../festerm-secret-store" }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
-tokio = { version = "1.17.0", default-features = false, features = ["net", "rt", "sync", "time"] }
+tokio = { version = "1.17.0", default-features = false, features = ["io-util", "net", "rt", "sync", "time"] }
 zeroize = "1"
 
 [lints]

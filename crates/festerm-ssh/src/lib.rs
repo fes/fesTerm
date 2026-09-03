@@ -1,6 +1,7 @@
 //! Native SSH transport policy and bounded `russh` session lifecycle.
 
 use std::{
+    collections::VecDeque,
     fmt,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -16,8 +17,10 @@ use festerm_session::{
     noop_session_event_notifier, FlowDirection, Session, SessionError, SessionErrorKind,
     SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
     SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
+    SshPortForwardDirection, SshPortForwardRuntime, SshPortForwardSource, SshPortForwardState,
     TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
+use tokio::io::AsyncWriteExt;
 use zeroize::Zeroize;
 
 /// Canonical SSH destination identity used for trust decisions.
@@ -909,6 +912,7 @@ pub struct SshSessionOptions {
     strategy: SessionStrategy,
     recovery: RecoveryPolicy,
     known_host_fingerprint: Option<String>,
+    profile_port_forwards: Vec<RequestedSshPortForward>,
 }
 
 impl SshSessionOptions {
@@ -920,6 +924,7 @@ impl SshSessionOptions {
             strategy: SessionStrategy::PlainShell,
             recovery: RecoveryPolicy::Manual,
             known_host_fingerprint: None,
+            profile_port_forwards: Vec::new(),
         }
     }
 
@@ -938,6 +943,7 @@ impl SshSessionOptions {
             strategy,
             recovery,
             known_host_fingerprint: None,
+            profile_port_forwards: Vec::new(),
         })
     }
 
@@ -973,6 +979,27 @@ impl SshSessionOptions {
         self.known_host_fingerprint.as_deref()
     }
 
+    /// Attaches validated saved-profile port forwards for this fresh launch.
+    ///
+    /// These mappings apply only to the session's first successful
+    /// connection. A later reconnect does not silently reapply them.
+    pub fn with_profile_port_forwards<I>(
+        mut self,
+        port_forwards: I,
+    ) -> Result<Self, SshPortForwardConfigurationError>
+    where
+        I: IntoIterator,
+        I::Item: SshPortForwardSpec,
+    {
+        self.profile_port_forwards =
+            collect_requested_port_forwards(port_forwards, SshPortForwardSource::Profile)?;
+        Ok(self)
+    }
+
+    fn profile_port_forwards(&self) -> &[RequestedSshPortForward] {
+        &self.profile_port_forwards
+    }
+
     /// Builds options for `strategy` with manual-only recovery.
     ///
     /// Manual recovery is always valid for any [`SessionStrategy`] (ADR
@@ -986,8 +1013,178 @@ impl SshSessionOptions {
             strategy,
             recovery: RecoveryPolicy::Manual,
             known_host_fingerprint: None,
+            profile_port_forwards: Vec::new(),
         }
     }
+}
+
+/// Secret-free metadata that the SSH backend can consume as a port-forward request.
+///
+/// `festerm-config::SshPortForwardConfiguration` implements this trait so
+/// saved profile metadata can flow directly into `festerm-ssh` without
+/// duplicating the configuration struct.
+pub trait SshPortForwardSpec {
+    fn direction(&self) -> SshPortForwardDirection;
+    fn bind_host(&self) -> &str;
+    fn bind_port(&self) -> u16;
+    fn destination_host(&self) -> &str;
+    fn destination_port(&self) -> u16;
+}
+
+impl<T: SshPortForwardSpec + ?Sized> SshPortForwardSpec for &T {
+    fn direction(&self) -> SshPortForwardDirection {
+        (**self).direction()
+    }
+
+    fn bind_host(&self) -> &str {
+        (**self).bind_host()
+    }
+
+    fn bind_port(&self) -> u16 {
+        (**self).bind_port()
+    }
+
+    fn destination_host(&self) -> &str {
+        (**self).destination_host()
+    }
+
+    fn destination_port(&self) -> u16 {
+        (**self).destination_port()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshPortForwardConfigurationError {
+    EmptyHost,
+    ControlCharacter,
+    ZeroPort,
+    DuplicateBinding,
+}
+
+impl fmt::Display for SshPortForwardConfigurationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyHost => formatter.write_str("SSH port-forward host must not be empty"),
+            Self::ControlCharacter => {
+                formatter.write_str("SSH port-forward host must not contain control characters")
+            }
+            Self::ZeroPort => formatter.write_str("SSH port-forward port must not be zero"),
+            Self::DuplicateBinding => formatter.write_str(
+                "SSH port-forward bindings must not repeat the same direction and bind address",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SshPortForwardConfigurationError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshPortForwardRequestError {
+    NotRunning,
+    QueueFull,
+    Closed,
+    InvalidConfiguration(SshPortForwardConfigurationError),
+}
+
+impl fmt::Display for SshPortForwardRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotRunning => {
+                formatter.write_str("SSH port forwarding is only available while connected")
+            }
+            Self::QueueFull => formatter.write_str("SSH port-forward request queue is full"),
+            Self::Closed => {
+                formatter.write_str("SSH port-forward request was rejected: session closed")
+            }
+            Self::InvalidConfiguration(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for SshPortForwardRequestError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequestedSshPortForward {
+    direction: SshPortForwardDirection,
+    bind_host: String,
+    bind_port: u16,
+    destination_host: String,
+    destination_port: u16,
+    source: SshPortForwardSource,
+}
+
+impl RequestedSshPortForward {
+    fn runtime(
+        &self,
+        state: SshPortForwardState,
+        failure_reason: Option<String>,
+    ) -> SshPortForwardRuntime {
+        SshPortForwardRuntime::new(
+            self.direction,
+            self.bind_host.clone(),
+            self.bind_port,
+            self.destination_host.clone(),
+            self.destination_port,
+            self.source,
+            state,
+            failure_reason,
+        )
+    }
+}
+
+fn collect_requested_port_forwards<I>(
+    port_forwards: I,
+    source: SshPortForwardSource,
+) -> Result<Vec<RequestedSshPortForward>, SshPortForwardConfigurationError>
+where
+    I: IntoIterator,
+    I::Item: SshPortForwardSpec,
+{
+    let mut collected = Vec::new();
+    for forward in port_forwards {
+        let requested = requested_port_forward(forward, source)?;
+        if port_forward_bindings_collide(&collected, &requested) {
+            return Err(SshPortForwardConfigurationError::DuplicateBinding);
+        }
+        collected.push(requested);
+    }
+    Ok(collected)
+}
+
+fn requested_port_forward(
+    forward: impl SshPortForwardSpec,
+    source: SshPortForwardSource,
+) -> Result<RequestedSshPortForward, SshPortForwardConfigurationError> {
+    let bind_host = forward.bind_host().trim();
+    let destination_host = forward.destination_host().trim();
+    if bind_host.is_empty() || destination_host.is_empty() {
+        return Err(SshPortForwardConfigurationError::EmptyHost);
+    }
+    if bind_host.chars().any(char::is_control) || destination_host.chars().any(char::is_control) {
+        return Err(SshPortForwardConfigurationError::ControlCharacter);
+    }
+    if forward.bind_port() == 0 || forward.destination_port() == 0 {
+        return Err(SshPortForwardConfigurationError::ZeroPort);
+    }
+    Ok(RequestedSshPortForward {
+        direction: forward.direction(),
+        bind_host: bind_host.to_owned(),
+        bind_port: forward.bind_port(),
+        destination_host: destination_host.to_owned(),
+        destination_port: forward.destination_port(),
+        source,
+    })
+}
+
+fn port_forward_bindings_collide(
+    existing: &[RequestedSshPortForward],
+    candidate: &RequestedSshPortForward,
+) -> bool {
+    existing.iter().any(|forward| {
+        forward.direction == candidate.direction
+            && forward.bind_host == candidate.bind_host
+            && forward.bind_port == candidate.bind_port
+    })
 }
 
 /// A rejected nonblocking request to reconnect a live SSH session.
@@ -2319,9 +2516,20 @@ impl PasswordDecisionWaiter {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PortForwardBindingKey {
+    direction: SshPortForwardDirection,
+    bind_host: String,
+    bind_port: u16,
+}
+
 enum WorkerCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
+    ApplyPortForwards(Vec<RequestedSshPortForward>),
+    AddPortForward(RequestedSshPortForward),
+    RemovePortForward(PortForwardBindingKey),
+    QueryPortForwards,
     Reconnect,
     Shutdown,
 }
@@ -2732,6 +2940,64 @@ impl SshWorkerFoundation {
         Ok(())
     }
 
+    fn try_add_port_forward(
+        &self,
+        forward: RequestedSshPortForward,
+    ) -> Result<(), SshPortForwardRequestError> {
+        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+            return Err(SshPortForwardRequestError::NotRunning);
+        }
+        match self
+            .command_sender
+            .try_send(WorkerCommand::AddPortForward(forward))
+        {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(SshPortForwardRequestError::QueueFull),
+            Err(TrySendError::Disconnected(_)) => Err(SshPortForwardRequestError::Closed),
+        }
+    }
+
+    fn try_remove_port_forward(
+        &self,
+        direction: SshPortForwardDirection,
+        bind_host: impl Into<String>,
+        bind_port: u16,
+    ) -> Result<(), SshPortForwardRequestError> {
+        if !matches!(self.lifecycle(), SessionLifecycle::Running) {
+            return Err(SshPortForwardRequestError::NotRunning);
+        }
+        if bind_port == 0 {
+            return Err(SshPortForwardRequestError::InvalidConfiguration(
+                SshPortForwardConfigurationError::ZeroPort,
+            ));
+        }
+        match self
+            .command_sender
+            .try_send(WorkerCommand::RemovePortForward(PortForwardBindingKey {
+                direction,
+                bind_host: bind_host.into(),
+                bind_port,
+            })) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(SshPortForwardRequestError::QueueFull),
+            Err(TrySendError::Disconnected(_)) => Err(SshPortForwardRequestError::Closed),
+        }
+    }
+
+    fn try_query_port_forwards(&self) -> Result<(), SshPortForwardRequestError> {
+        if self.lifecycle().is_terminal() {
+            return Err(SshPortForwardRequestError::Closed);
+        }
+        match self
+            .command_sender
+            .try_send(WorkerCommand::QueryPortForwards)
+        {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(SshPortForwardRequestError::QueueFull),
+            Err(TrySendError::Disconnected(_)) => Err(SshPortForwardRequestError::Closed),
+        }
+    }
+
     fn try_send_command(
         &self,
         command: WorkerCommand,
@@ -3058,6 +3324,7 @@ impl SshSession {
         let password_gate = Arc::clone(&foundation.password_gate);
         let worker_host_key_gate = Arc::clone(&host_key_gate);
         let worker_password_gate = Arc::clone(&password_gate);
+        let profile_port_forwards = options.profile_port_forwards().to_vec();
         let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name(format!("festerm-ssh-{}", foundation.id()))
@@ -3074,6 +3341,7 @@ impl SshSession {
                             options.strategy(),
                             options.reconnect_policy(),
                             options.known_host_fingerprint().map(str::to_owned),
+                            profile_port_forwards,
                             shared,
                             command_receiver,
                             worker_host_key_gate,
@@ -3148,6 +3416,32 @@ impl SshSession {
         self.foundation.try_check_liveness()
     }
 
+    /// Adds one live-only SSH port forward to the current authenticated session.
+    pub fn try_add_port_forward(
+        &self,
+        forward: impl SshPortForwardSpec,
+    ) -> Result<(), SshPortForwardRequestError> {
+        let forward = requested_port_forward(forward, SshPortForwardSource::Ephemeral)
+            .map_err(SshPortForwardRequestError::InvalidConfiguration)?;
+        self.foundation.try_add_port_forward(forward)
+    }
+
+    /// Removes one active SSH port forward identified by its listening side and bind address.
+    pub fn try_remove_port_forward(
+        &self,
+        direction: SshPortForwardDirection,
+        bind_host: impl Into<String>,
+        bind_port: u16,
+    ) -> Result<(), SshPortForwardRequestError> {
+        self.foundation
+            .try_remove_port_forward(direction, bind_host, bind_port)
+    }
+
+    /// Requests a fresh snapshot of the worker's current SSH port-forward state.
+    pub fn try_query_port_forwards(&self) -> Result<(), SshPortForwardRequestError> {
+        self.foundation.try_query_port_forwards()
+    }
+
     fn await_completion(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
         let mut completion = self
             .completion
@@ -3181,6 +3475,54 @@ fn reconnect_request_is_available(lifecycle: &SessionLifecycle, request_pending:
         lifecycle,
         SessionLifecycle::Running | SessionLifecycle::Disconnected(_)
     ) && !request_pending
+}
+
+struct AcceptedLocalForwardConnection {
+    key: PortForwardBindingKey,
+    stream: tokio::net::TcpStream,
+    originator_address: String,
+    originator_port: u16,
+}
+
+struct ForwardedTcpIpConnection {
+    key: PortForwardBindingKey,
+    channel: russh::Channel<russh::client::Msg>,
+}
+
+enum ActivePortForwardHandle {
+    Inactive,
+    Local {
+        shutdown: tokio::sync::watch::Sender<bool>,
+        listener: tokio::task::JoinHandle<()>,
+    },
+    Remote {
+        shutdown: tokio::sync::watch::Sender<bool>,
+    },
+}
+
+impl ActivePortForwardHandle {
+    fn shutdown_receiver(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        match self {
+            Self::Local { shutdown, .. } | Self::Remote { shutdown } => Some(shutdown.subscribe()),
+            Self::Inactive => None,
+        }
+    }
+}
+
+struct ActivePortForward {
+    requested: RequestedSshPortForward,
+    runtime: SshPortForwardRuntime,
+    handle: ActivePortForwardHandle,
+}
+
+impl ActivePortForward {
+    fn key(&self) -> PortForwardBindingKey {
+        PortForwardBindingKey {
+            direction: self.requested.direction,
+            bind_host: self.requested.bind_host.clone(),
+            bind_port: self.requested.bind_port,
+        }
+    }
 }
 
 impl Session for SshSession {
@@ -3235,6 +3577,7 @@ struct SshClientHandler {
     shared: Arc<WorkerShared>,
     host_key_gate: Arc<HostKeyDecisionGate>,
     host_key_rejected: Arc<AtomicBool>,
+    forwarded_tcpip_sender: tokio::sync::mpsc::UnboundedSender<ForwardedTcpIpConnection>,
     /// A persistent-trust-store fingerprint already on file for this
     /// destination (ADR 0020), if any. An exact match is accepted silently,
     /// mirroring `ssh`'s own already-in-`known_hosts` behavior; any other
@@ -3282,6 +3625,29 @@ impl russh::client::Handler for SshClientHandler {
         }
         Ok(accepted)
     }
+
+    fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let forwarded_tcpip_sender = self.forwarded_tcpip_sender.clone();
+        let key = PortForwardBindingKey {
+            direction: SshPortForwardDirection::Remote,
+            bind_host: connected_address.to_owned(),
+            bind_port: connected_port.try_into().unwrap_or(u16::MAX),
+        };
+        async move {
+            reply.accept().await;
+            let _ = forwarded_tcpip_sender.send(ForwardedTcpIpConnection { key, channel });
+            Ok(())
+        }
+    }
 }
 
 /// Runs the worker's connection/reconnect loop for one session's lifetime.
@@ -3297,6 +3663,7 @@ async fn ssh_worker(
     strategy: SessionStrategy,
     reconnect_policy: Option<ReconnectPolicy>,
     known_host_fingerprint: Option<String>,
+    profile_port_forwards: Vec<RequestedSshPortForward>,
     shared: Arc<WorkerShared>,
     command_receiver: WorkerCommandReceiver,
     host_key_gate: Arc<HostKeyDecisionGate>,
@@ -3304,6 +3671,7 @@ async fn ssh_worker(
 ) -> Result<ShutdownResult, SessionError> {
     let authentication = authentication.into_worker_authentication();
     let mut planner = reconnect_policy.map(ReconnectPlanner::new);
+    let mut initial_profile_port_forwards = Some(profile_port_forwards);
     // Counts the *next* `establish_connection` attempt below as the Nth
     // attempt (1-based) directly following an explicit, user-initiated
     // reconnect (as opposed to the session's very first connection attempt,
@@ -3330,7 +3698,7 @@ async fn ssh_worker(
         )
         .await
         {
-            ConnectionAttempt::Established(handle, channel) => {
+            ConnectionAttempt::Established(handle, channel, forwarded_tcpip_receiver) => {
                 manual_recovery_attempts = 0;
                 if let Some(planner) = planner.as_mut() {
                     let _ = planner.connection_established();
@@ -3340,6 +3708,8 @@ async fn ssh_worker(
                 match run_authenticated_channel(
                     handle,
                     channel,
+                    forwarded_tcpip_receiver,
+                    initial_profile_port_forwards.take().unwrap_or_default(),
                     &command_receiver,
                     &shared,
                     &host_key_gate,
@@ -3535,6 +3905,7 @@ enum ConnectionAttempt {
     Established(
         russh::client::Handle<SshClientHandler>,
         russh::Channel<russh::client::Msg>,
+        tokio::sync::mpsc::UnboundedReceiver<ForwardedTcpIpConnection>,
     ),
     Retryable(ConnectionFailure, &'static str),
     Permanent(ConnectionFailure, &'static str),
@@ -3643,11 +4014,13 @@ async fn establish_connection(
         ..Default::default()
     });
     let host_key_rejected = Arc::new(AtomicBool::new(false));
+    let (forwarded_tcpip_sender, forwarded_tcpip_receiver) = tokio::sync::mpsc::unbounded_channel();
     let handler = SshClientHandler {
         identity: profile.identity.clone(),
         shared: Arc::clone(shared),
         host_key_gate: Arc::clone(host_key_gate),
         host_key_rejected: Arc::clone(&host_key_rejected),
+        forwarded_tcpip_sender,
         expected_fingerprint: known_host_fingerprint.map(str::to_owned),
     };
     let connection = russh::client::connect(
@@ -4048,7 +4421,7 @@ async fn establish_connection(
                 applied_size = latest_size;
                 shared.record_resize_applied(latest_size);
             }
-            ConnectionAttempt::Established(handle, channel)
+            ConnectionAttempt::Established(handle, channel, forwarded_tcpip_receiver)
         }
         ChannelRequestReply::Rejected => {
             ConnectionAttempt::Permanent(ConnectionFailure::Setup, "SSH shell request was rejected")
@@ -4249,8 +4622,10 @@ fn liveness_probe_due(
 }
 
 async fn run_authenticated_channel(
-    mut handle: russh::client::Handle<SshClientHandler>,
+    handle: russh::client::Handle<SshClientHandler>,
     mut channel: russh::Channel<russh::client::Msg>,
+    mut forwarded_tcpip_receiver: tokio::sync::mpsc::UnboundedReceiver<ForwardedTcpIpConnection>,
+    initial_profile_port_forwards: Vec<RequestedSshPortForward>,
     command_receiver: &WorkerCommandReceiver,
     shared: &Arc<WorkerShared>,
     host_key_gate: &Arc<HostKeyDecisionGate>,
@@ -4262,6 +4637,16 @@ async fn run_authenticated_channel(
     // change hook), which is checked on every tick regardless of this
     // deadline.
     let mut next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
+    let (local_forward_sender, mut local_forward_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut local_forward_receiver_closed = false;
+    let mut forwarded_tcpip_receiver_closed = false;
+    let mut active_port_forwards = Vec::new();
+    let mut pending_commands = VecDeque::new();
+    if !initial_profile_port_forwards.is_empty() {
+        pending_commands.push_back(WorkerCommand::ApplyPortForwards(
+            initial_profile_port_forwards,
+        ));
+    }
     loop {
         let probe_due = liveness_probe_due(
             tokio::time::Instant::now(),
@@ -4270,6 +4655,7 @@ async fn run_authenticated_channel(
         );
         if probe_due {
             if !probe_liveness(&handle).await {
+                teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
                 return RunningOutcome::ConnectionLost(
                     "SSH liveness probe did not receive a response",
                 );
@@ -4277,33 +4663,61 @@ async fn run_authenticated_channel(
             next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
         }
         tokio::select! {
-            result = &mut handle => match result {
-                Ok(()) | Err(_) => return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly"),
-            },
             message = channel.wait() => match message {
                 Some(russh::ChannelMsg::Data { data }) => emit_channel_output(shared, data.as_ref()),
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_exit_code(exit_status));
                 }
                 Some(russh::ChannelMsg::ExitSignal { .. }) => {
+                    teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_signal(0, "remote signal"));
                 }
                 Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
+                    teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
                     return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
                 }
                 Some(_) => {}
             },
+            accepted = local_forward_receiver.recv(), if !local_forward_receiver_closed => match accepted {
+                Some(accepted) => {
+                    handle_local_forward_connection(&handle, accepted, &active_port_forwards, shared).await;
+                }
+                None => local_forward_receiver_closed = true,
+            },
+            forwarded = forwarded_tcpip_receiver.recv(), if !forwarded_tcpip_receiver_closed => match forwarded {
+                Some(forwarded) => {
+                    handle_forwarded_tcpip_connection(forwarded, &active_port_forwards, shared).await;
+                }
+                None => forwarded_tcpip_receiver_closed = true,
+            },
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
-                match process_authenticated_commands(&mut channel, command_receiver, shared, host_key_gate).await {
+                match process_authenticated_commands(
+                    &handle,
+                    &mut channel,
+                    &mut pending_commands,
+                    &mut active_port_forwards,
+                    &local_forward_sender,
+                    command_receiver,
+                    shared,
+                    host_key_gate,
+                ).await {
                     Ok(AuthenticatedCommandOutcome::Continue) => {}
-                    Ok(AuthenticatedCommandOutcome::Shutdown) => return RunningOutcome::Shutdown(
-                        stop_handle(handle, shared).await.unwrap_or(ShutdownResult::Stopped)
-                    ),
+                    Ok(AuthenticatedCommandOutcome::Shutdown) => {
+                        teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                        return RunningOutcome::Shutdown(
+                            stop_handle(handle, shared).await.unwrap_or(ShutdownResult::Stopped)
+                        );
+                    }
                     Ok(AuthenticatedCommandOutcome::Reconnect) => {
+                        teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
                         let _ = stop_handle(handle, shared).await;
                         return RunningOutcome::ReconnectRequested;
                     }
-                    Err(_) => return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly"),
+                    Err(_) => {
+                        teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                        return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
+                    }
                 }
             }
         }
@@ -4316,8 +4730,13 @@ enum AuthenticatedCommandOutcome {
     Reconnect,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_authenticated_commands(
+    handle: &russh::client::Handle<SshClientHandler>,
     channel: &mut russh::Channel<russh::client::Msg>,
+    pending_commands: &mut VecDeque<WorkerCommand>,
+    active_port_forwards: &mut Vec<ActivePortForward>,
+    local_forward_sender: &tokio::sync::mpsc::UnboundedSender<AcceptedLocalForwardConnection>,
     command_receiver: &WorkerCommandReceiver,
     shared: &WorkerShared,
     host_key_gate: &HostKeyDecisionGate,
@@ -4328,7 +4747,12 @@ async fn process_authenticated_commands(
         return Ok(AuthenticatedCommandOutcome::Shutdown);
     }
     loop {
-        match command_receiver.try_recv() {
+        let command = if let Some(command) = pending_commands.pop_front() {
+            Ok(command)
+        } else {
+            command_receiver.try_recv()
+        };
+        match command {
             Ok(WorkerCommand::Input(bytes)) => {
                 let byte_count = bytes.len();
                 match wait_for_ssh_operation(
@@ -4371,6 +4795,34 @@ async fn process_authenticated_commands(
                     WorkerWait::Shutdown => return Ok(AuthenticatedCommandOutcome::Shutdown),
                 }
             }
+            Ok(WorkerCommand::ApplyPortForwards(port_forwards)) => {
+                for forward in port_forwards {
+                    apply_port_forward(
+                        handle,
+                        forward,
+                        active_port_forwards,
+                        local_forward_sender,
+                        shared,
+                    )
+                    .await;
+                }
+            }
+            Ok(WorkerCommand::AddPortForward(forward)) => {
+                apply_port_forward(
+                    handle,
+                    forward,
+                    active_port_forwards,
+                    local_forward_sender,
+                    shared,
+                )
+                .await;
+            }
+            Ok(WorkerCommand::RemovePortForward(key)) => {
+                remove_port_forward(handle, &key, active_port_forwards, shared).await;
+            }
+            Ok(WorkerCommand::QueryPortForwards) => {
+                emit_port_forward_snapshot(shared, active_port_forwards);
+            }
             Ok(WorkerCommand::Reconnect) => {
                 return Ok(AuthenticatedCommandOutcome::Reconnect);
             }
@@ -4381,6 +4833,346 @@ async fn process_authenticated_commands(
             }
             Err(TryRecvError::Empty) => return Ok(AuthenticatedCommandOutcome::Continue),
         }
+    }
+}
+
+fn emit_port_forward_snapshot(shared: &WorkerShared, active_port_forwards: &[ActivePortForward]) {
+    let snapshot = active_port_forwards
+        .iter()
+        .map(|forward| forward.runtime.clone())
+        .collect();
+    let _ = shared.try_emit(SessionEvent::PortForwardsUpdated(snapshot));
+}
+
+fn report_port_forward_error(shared: &WorkerShared, message: impl Into<String>) {
+    let _ = shared.try_emit(SessionEvent::Error(SessionError::new(
+        SessionErrorKind::Internal,
+        message,
+    )));
+}
+
+async fn apply_port_forward(
+    handle: &russh::client::Handle<SshClientHandler>,
+    requested: RequestedSshPortForward,
+    active_port_forwards: &mut Vec<ActivePortForward>,
+    local_forward_sender: &tokio::sync::mpsc::UnboundedSender<AcceptedLocalForwardConnection>,
+    shared: &WorkerShared,
+) {
+    if active_port_forwards.iter().any(|forward| {
+        forward.key()
+            == PortForwardBindingKey {
+                direction: requested.direction,
+                bind_host: requested.bind_host.clone(),
+                bind_port: requested.bind_port,
+            }
+    }) {
+        report_port_forward_error(
+            shared,
+            format!(
+                "SSH {} port forward on {}:{} already exists",
+                port_forward_direction_label(requested.direction),
+                requested.bind_host,
+                requested.bind_port,
+            ),
+        );
+        emit_port_forward_snapshot(shared, active_port_forwards);
+        return;
+    }
+
+    let runtime_result = match requested.direction {
+        SshPortForwardDirection::Local => {
+            start_local_port_forward(&requested, local_forward_sender.clone()).await
+        }
+        SshPortForwardDirection::Remote => start_remote_port_forward(handle, &requested).await,
+    };
+
+    let entry = match runtime_result {
+        Ok(handle) => ActivePortForward {
+            runtime: requested.runtime(SshPortForwardState::Active, None),
+            requested,
+            handle,
+        },
+        Err(reason) => ActivePortForward {
+            runtime: requested.runtime(SshPortForwardState::Failed, Some(reason)),
+            requested,
+            handle: ActivePortForwardHandle::Inactive,
+        },
+    };
+    active_port_forwards.push(entry);
+    emit_port_forward_snapshot(shared, active_port_forwards);
+}
+
+async fn start_local_port_forward(
+    requested: &RequestedSshPortForward,
+    local_forward_sender: tokio::sync::mpsc::UnboundedSender<AcceptedLocalForwardConnection>,
+) -> Result<ActivePortForwardHandle, String> {
+    let listener =
+        tokio::net::TcpListener::bind((requested.bind_host.as_str(), requested.bind_port))
+            .await
+            .map_err(|error| format!("could not bind local SSH port forward: {error}"))?;
+    let key = PortForwardBindingKey {
+        direction: requested.direction,
+        bind_host: requested.bind_host.clone(),
+        bind_port: requested.bind_port,
+    };
+    let (shutdown_sender, mut shutdown_receiver) = tokio::sync::watch::channel(false);
+    let listener = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                changed = shutdown_receiver.changed() => {
+                    if changed.is_err() || *shutdown_receiver.borrow() {
+                        break;
+                    }
+                }
+                accepted = listener.accept() => match accepted {
+                    Ok((stream, address)) => {
+                        if local_forward_sender.send(AcceptedLocalForwardConnection {
+                            key: key.clone(),
+                            stream,
+                            originator_address: address.ip().to_string(),
+                            originator_port: address.port(),
+                        }).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => tokio::time::sleep(COMMAND_POLL_INTERVAL).await,
+                }
+            }
+        }
+    });
+    Ok(ActivePortForwardHandle::Local {
+        shutdown: shutdown_sender,
+        listener,
+    })
+}
+
+async fn start_remote_port_forward(
+    handle: &russh::client::Handle<SshClientHandler>,
+    requested: &RequestedSshPortForward,
+) -> Result<ActivePortForwardHandle, String> {
+    match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        handle.tcpip_forward(requested.bind_host.clone(), u32::from(requested.bind_port)),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {
+            let (shutdown_sender, _) = tokio::sync::watch::channel(false);
+            Ok(ActivePortForwardHandle::Remote {
+                shutdown: shutdown_sender,
+            })
+        }
+        Ok(Err(error)) => Err(format!(
+            "could not request remote SSH port forward: {error}"
+        )),
+        Err(_) => Err("requesting the remote SSH port forward timed out".to_owned()),
+    }
+}
+
+async fn remove_port_forward(
+    handle: &russh::client::Handle<SshClientHandler>,
+    key: &PortForwardBindingKey,
+    active_port_forwards: &mut Vec<ActivePortForward>,
+    shared: &WorkerShared,
+) {
+    let Some(index) = active_port_forwards
+        .iter()
+        .position(|forward| forward.key() == *key)
+    else {
+        report_port_forward_error(
+            shared,
+            format!(
+                "SSH {} port forward on {}:{} does not exist",
+                port_forward_direction_label(key.direction),
+                key.bind_host,
+                key.bind_port,
+            ),
+        );
+        emit_port_forward_snapshot(shared, active_port_forwards);
+        return;
+    };
+    let forward = active_port_forwards.remove(index);
+    stop_active_port_forward(Some(handle), forward).await;
+    emit_port_forward_snapshot(shared, active_port_forwards);
+}
+
+async fn teardown_port_forwards(
+    handle: Option<&russh::client::Handle<SshClientHandler>>,
+    active_port_forwards: &mut Vec<ActivePortForward>,
+    shared: &WorkerShared,
+) {
+    while let Some(forward) = active_port_forwards.pop() {
+        stop_active_port_forward(handle, forward).await;
+    }
+    emit_port_forward_snapshot(shared, active_port_forwards);
+}
+
+async fn stop_active_port_forward(
+    handle: Option<&russh::client::Handle<SshClientHandler>>,
+    forward: ActivePortForward,
+) {
+    match forward.handle {
+        ActivePortForwardHandle::Inactive => {}
+        ActivePortForwardHandle::Local { shutdown, listener } => {
+            let _ = shutdown.send(true);
+            let _ = listener.await;
+        }
+        ActivePortForwardHandle::Remote { shutdown } => {
+            let _ = shutdown.send(true);
+            if let Some(handle) = handle {
+                let _ = tokio::time::timeout(
+                    CONNECT_TIMEOUT,
+                    handle.cancel_tcpip_forward(
+                        forward.requested.bind_host,
+                        u32::from(forward.requested.bind_port),
+                    ),
+                )
+                .await;
+            }
+        }
+    }
+}
+
+async fn handle_local_forward_connection(
+    handle: &russh::client::Handle<SshClientHandler>,
+    accepted: AcceptedLocalForwardConnection,
+    active_port_forwards: &[ActivePortForward],
+    shared: &WorkerShared,
+) {
+    let Some(forward) = active_port_forwards.iter().find(|forward| {
+        forward.runtime.state() == SshPortForwardState::Active && forward.key() == accepted.key
+    }) else {
+        return;
+    };
+    let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
+        return;
+    };
+    let channel = match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        handle.channel_open_direct_tcpip(
+            forward.requested.destination_host.clone(),
+            u32::from(forward.requested.destination_port),
+            accepted.originator_address,
+            u32::from(accepted.originator_port),
+        ),
+    )
+    .await
+    {
+        Ok(Ok(channel)) => channel,
+        Ok(Err(error)) => {
+            report_port_forward_error(
+                shared,
+                format!(
+                    "SSH local port forward {}:{} -> {}:{} could not open a channel: {error}",
+                    forward.requested.bind_host,
+                    forward.requested.bind_port,
+                    forward.requested.destination_host,
+                    forward.requested.destination_port,
+                ),
+            );
+            return;
+        }
+        Err(_) => {
+            report_port_forward_error(
+                shared,
+                format!(
+                    "SSH local port forward {}:{} -> {}:{} timed out while opening a channel",
+                    forward.requested.bind_host,
+                    forward.requested.bind_port,
+                    forward.requested.destination_host,
+                    forward.requested.destination_port,
+                ),
+            );
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        bridge_tcp_and_ssh(accepted.stream, channel, shutdown_receiver).await;
+    });
+}
+
+async fn handle_forwarded_tcpip_connection(
+    forwarded: ForwardedTcpIpConnection,
+    active_port_forwards: &[ActivePortForward],
+    shared: &WorkerShared,
+) {
+    let Some(forward) = active_port_forwards.iter().find(|forward| {
+        forward.runtime.state() == SshPortForwardState::Active && forward.key() == forwarded.key
+    }) else {
+        let _ = forwarded.channel.close().await;
+        return;
+    };
+    let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
+        let _ = forwarded.channel.close().await;
+        return;
+    };
+    let stream = match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio::net::TcpStream::connect((
+            forward.requested.destination_host.as_str(),
+            forward.requested.destination_port,
+        )),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(error)) => {
+            report_port_forward_error(
+                shared,
+                format!(
+                    "SSH remote port forward {}:{} -> {}:{} could not connect locally: {error}",
+                    forward.requested.bind_host,
+                    forward.requested.bind_port,
+                    forward.requested.destination_host,
+                    forward.requested.destination_port,
+                ),
+            );
+            let _ = forwarded.channel.close().await;
+            return;
+        }
+        Err(_) => {
+            report_port_forward_error(
+                shared,
+                format!(
+                    "SSH remote port forward {}:{} -> {}:{} timed out while connecting locally",
+                    forward.requested.bind_host,
+                    forward.requested.bind_port,
+                    forward.requested.destination_host,
+                    forward.requested.destination_port,
+                ),
+            );
+            let _ = forwarded.channel.close().await;
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        bridge_tcp_and_ssh(stream, forwarded.channel, shutdown_receiver).await;
+    });
+}
+
+async fn bridge_tcp_and_ssh(
+    stream: tokio::net::TcpStream,
+    channel: russh::Channel<russh::client::Msg>,
+    mut shutdown_receiver: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut stream = stream;
+    let mut channel_stream = channel.into_stream();
+    tokio::select! {
+        result = tokio::io::copy_bidirectional(&mut stream, &mut channel_stream) => {
+            let _ = result;
+        }
+        changed = shutdown_receiver.changed() => {
+            let _ = changed;
+        }
+    }
+    let _ = channel_stream.shutdown().await;
+    let _ = stream.shutdown().await;
+}
+
+fn port_forward_direction_label(direction: SshPortForwardDirection) -> &'static str {
+    match direction {
+        SshPortForwardDirection::Local => "local",
+        SshPortForwardDirection::Remote => "remote",
     }
 }
 
@@ -4417,6 +5209,14 @@ async fn wait_for_manual_recovery(
                 let _ = size.columns();
                 report_unsupported(shared, "SSH resize is not available");
             }
+            Ok(
+                WorkerCommand::ApplyPortForwards(_)
+                | WorkerCommand::AddPortForward(_)
+                | WorkerCommand::RemovePortForward(_)
+                | WorkerCommand::QueryPortForwards,
+            ) => {
+                report_unsupported(shared, "SSH port forwarding is not available");
+            }
             Ok(WorkerCommand::Reconnect) => {
                 shared.clear_reconnect_request();
                 return ManualRecoveryOutcome::Reconnect;
@@ -4451,6 +5251,12 @@ fn process_commands_before_running(
             Ok(WorkerCommand::Resize(size)) => {
                 shared.retain_pre_running_resize(size);
             }
+            Ok(
+                WorkerCommand::ApplyPortForwards(_)
+                | WorkerCommand::AddPortForward(_)
+                | WorkerCommand::RemovePortForward(_)
+                | WorkerCommand::QueryPortForwards,
+            ) => report_unsupported(shared, "SSH port forwarding is not available"),
             Ok(WorkerCommand::Reconnect) => {
                 shared.clear_reconnect_request();
                 report_unsupported(shared, "SSH reconnect is not available")
@@ -4797,6 +5603,37 @@ mod tests {
         SshPrivateKey::from_openssh(encoded.as_bytes()).expect("could not parse test SSH key")
     }
 
+    #[allow(dead_code)]
+    struct TestPortForwardSpec {
+        direction: SshPortForwardDirection,
+        bind_host: &'static str,
+        bind_port: u16,
+        destination_host: &'static str,
+        destination_port: u16,
+    }
+
+    impl SshPortForwardSpec for TestPortForwardSpec {
+        fn direction(&self) -> SshPortForwardDirection {
+            self.direction
+        }
+
+        fn bind_host(&self) -> &str {
+            self.bind_host
+        }
+
+        fn bind_port(&self) -> u16 {
+            self.bind_port
+        }
+
+        fn destination_host(&self) -> &str {
+            self.destination_host
+        }
+
+        fn destination_port(&self) -> u16 {
+            self.destination_port
+        }
+    }
+
     #[test]
     fn public_key_authentication_redacts_and_dispatches_the_parsed_key() {
         let private_key = generated_private_key();
@@ -4954,6 +5791,134 @@ mod tests {
             .expect("manual recovery is always valid")
             .reconnect_policy(),
             None
+        );
+    }
+
+    #[test]
+    fn profile_port_forwards_are_collected_with_profile_source() {
+        let options = SshSessionOptions::new()
+            .with_profile_port_forwards([
+                TestPortForwardSpec {
+                    direction: SshPortForwardDirection::Local,
+                    bind_host: "127.0.0.1",
+                    bind_port: 15432,
+                    destination_host: "db.internal",
+                    destination_port: 5432,
+                },
+                TestPortForwardSpec {
+                    direction: SshPortForwardDirection::Remote,
+                    bind_host: "127.0.0.1",
+                    bind_port: 18080,
+                    destination_host: "127.0.0.1",
+                    destination_port: 8080,
+                },
+            ])
+            .expect("valid profile port forwards must collect");
+
+        assert_eq!(options.profile_port_forwards().len(), 2);
+        assert_eq!(
+            options.profile_port_forwards()[0].runtime(SshPortForwardState::Active, None),
+            SshPortForwardRuntime::new(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                15432,
+                "db.internal",
+                5432,
+                SshPortForwardSource::Profile,
+                SshPortForwardState::Active,
+                None,
+            )
+        );
+        assert_eq!(
+            options.profile_port_forwards()[1].runtime(SshPortForwardState::Active, None),
+            SshPortForwardRuntime::new(
+                SshPortForwardDirection::Remote,
+                "127.0.0.1",
+                18080,
+                "127.0.0.1",
+                8080,
+                SshPortForwardSource::Profile,
+                SshPortForwardState::Active,
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_port_forward_bindings_are_rejected() {
+        let error = SshSessionOptions::new()
+            .with_profile_port_forwards([
+                TestPortForwardSpec {
+                    direction: SshPortForwardDirection::Local,
+                    bind_host: "127.0.0.1",
+                    bind_port: 19000,
+                    destination_host: "one.internal",
+                    destination_port: 9000,
+                },
+                TestPortForwardSpec {
+                    direction: SshPortForwardDirection::Local,
+                    bind_host: "127.0.0.1",
+                    bind_port: 19000,
+                    destination_host: "two.internal",
+                    destination_port: 9001,
+                },
+            ])
+            .expect_err("duplicate port-forward bindings must be rejected");
+
+        assert_eq!(error, SshPortForwardConfigurationError::DuplicateBinding);
+    }
+
+    #[test]
+    fn port_forward_request_validation_rejects_empty_and_zero_values() {
+        let empty_host = requested_port_forward(
+            TestPortForwardSpec {
+                direction: SshPortForwardDirection::Local,
+                bind_host: "",
+                bind_port: 19001,
+                destination_host: "127.0.0.1",
+                destination_port: 9000,
+            },
+            SshPortForwardSource::Ephemeral,
+        )
+        .expect_err("empty bind host must be rejected");
+        assert_eq!(empty_host, SshPortForwardConfigurationError::EmptyHost);
+
+        let zero_port = requested_port_forward(
+            TestPortForwardSpec {
+                direction: SshPortForwardDirection::Remote,
+                bind_host: "127.0.0.1",
+                bind_port: 19002,
+                destination_host: "127.0.0.1",
+                destination_port: 0,
+            },
+            SshPortForwardSource::Ephemeral,
+        )
+        .expect_err("zero destination port must be rejected");
+        assert_eq!(zero_port, SshPortForwardConfigurationError::ZeroPort);
+    }
+
+    #[test]
+    fn port_forward_live_requests_are_limited_to_running_sessions() {
+        let (worker, _receiver, _resolver, _) = SshWorkerFoundation::new(profile());
+        let forward = RequestedSshPortForward {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port: 19003,
+            destination_host: "127.0.0.1".to_owned(),
+            destination_port: 9000,
+            source: SshPortForwardSource::Ephemeral,
+        };
+
+        assert_eq!(
+            worker.try_add_port_forward(forward.clone()),
+            Err(SshPortForwardRequestError::NotRunning)
+        );
+        worker.set_running();
+        assert_eq!(worker.try_add_port_forward(forward), Ok(()));
+        worker.set_disconnected();
+        assert_eq!(
+            worker.try_remove_port_forward(SshPortForwardDirection::Local, "127.0.0.1", 19003,),
+            Err(SshPortForwardRequestError::NotRunning)
         );
     }
 
@@ -5943,6 +6908,7 @@ mod tests {
                 shared,
                 host_key_gate: gate,
                 host_key_rejected: Arc::new(AtomicBool::new(false)),
+                forwarded_tcpip_sender: tokio::sync::mpsc::unbounded_channel().0,
                 expected_fingerprint: None,
             };
             runtime
@@ -5985,6 +6951,7 @@ mod tests {
             shared,
             host_key_gate: gate,
             host_key_rejected: Arc::new(AtomicBool::new(false)),
+            forwarded_tcpip_sender: tokio::sync::mpsc::unbounded_channel().0,
             expected_fingerprint: Some(
                 "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ".to_owned(),
             ),
@@ -6032,6 +6999,7 @@ mod tests {
                 shared,
                 host_key_gate: gate,
                 host_key_rejected: Arc::new(AtomicBool::new(false)),
+                forwarded_tcpip_sender: tokio::sync::mpsc::unbounded_channel().0,
                 expected_fingerprint: Some("SHA256:previouslyTrustedButDifferent".to_owned()),
             };
             runtime

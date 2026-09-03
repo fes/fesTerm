@@ -349,6 +349,97 @@ impl PasswordPrompt {
     }
 }
 
+/// Which side of the SSH connection listens for a live port forward.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshPortForwardDirection {
+    Local,
+    Remote,
+}
+
+/// Whether a live SSH port forward came from a saved profile or a live-only request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshPortForwardSource {
+    Profile,
+    Ephemeral,
+}
+
+/// Current worker-owned runtime state for one SSH port forward.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshPortForwardState {
+    Active,
+    Failed,
+}
+
+/// Sanitized runtime details for one SSH port forward.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshPortForwardRuntime {
+    direction: SshPortForwardDirection,
+    bind_host: String,
+    bind_port: u16,
+    destination_host: String,
+    destination_port: u16,
+    source: SshPortForwardSource,
+    state: SshPortForwardState,
+    failure_reason: Option<String>,
+}
+
+impl SshPortForwardRuntime {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        direction: SshPortForwardDirection,
+        bind_host: impl Into<String>,
+        bind_port: u16,
+        destination_host: impl Into<String>,
+        destination_port: u16,
+        source: SshPortForwardSource,
+        state: SshPortForwardState,
+        failure_reason: Option<String>,
+    ) -> Self {
+        Self {
+            direction,
+            bind_host: bind_host.into(),
+            bind_port,
+            destination_host: destination_host.into(),
+            destination_port,
+            source,
+            state,
+            failure_reason,
+        }
+    }
+
+    pub const fn direction(&self) -> SshPortForwardDirection {
+        self.direction
+    }
+
+    pub fn bind_host(&self) -> &str {
+        &self.bind_host
+    }
+
+    pub const fn bind_port(&self) -> u16 {
+        self.bind_port
+    }
+
+    pub fn destination_host(&self) -> &str {
+        &self.destination_host
+    }
+
+    pub const fn destination_port(&self) -> u16 {
+        self.destination_port
+    }
+
+    pub const fn source(&self) -> SshPortForwardSource {
+        self.source
+    }
+
+    pub const fn state(&self) -> SshPortForwardState {
+        self.state
+    }
+
+    pub fn failure_reason(&self) -> Option<&str> {
+        self.failure_reason.as_deref()
+    }
+}
+
 /// Events emitted by a session backend for application coordination.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionEvent {
@@ -357,6 +448,7 @@ pub enum SessionEvent {
     HostKeyVerification(HostKeyPrompt),
     PasswordRequested(PasswordPrompt),
     ResizeApplied(TerminalSize),
+    PortForwardsUpdated(Vec<SshPortForwardRuntime>),
     Backpressure {
         direction: FlowDirection,
         queued: usize,
