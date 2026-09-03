@@ -2139,7 +2139,8 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::SftpFileManager(_) => None,
+                | TabContent::SftpFileManager(_)
+                | TabContent::MarkdownViewer(_) => None,
             })
     }
 

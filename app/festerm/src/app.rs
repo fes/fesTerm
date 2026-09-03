@@ -2336,7 +2336,7 @@ impl FesTermApp {
             14 => self.paste_into_active_session(context),
             15 => self.open_terminal_search(context),
             16 => self.toggle_port_forward_manager(context),
-            17 => {
+            22 => {
                 let active = self.state.active();
                 if let Some(target) = self.state.sftp_file_manager_target_for_tab(active) {
                     self.state
