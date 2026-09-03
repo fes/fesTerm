@@ -9,8 +9,8 @@
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SshProfileConfiguration,
-    TerminalFontPreference,
+    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SshPortForwardConfiguration,
+    SshPortForwardDirection, SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -2525,12 +2525,67 @@ impl LocalProfileDraft {
 }
 
 #[derive(Clone)]
+struct SshPortForwardDraft {
+    direction: SshPortForwardDirection,
+    bind_host: String,
+    bind_port: String,
+    destination_host: String,
+    destination_port: String,
+}
+
+impl Default for SshPortForwardDraft {
+    fn default() -> Self {
+        Self {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port: String::new(),
+            destination_host: String::new(),
+            destination_port: String::new(),
+        }
+    }
+}
+
+impl SshPortForwardDraft {
+    fn from_configuration(forward: &SshPortForwardConfiguration) -> Self {
+        Self {
+            direction: forward.direction(),
+            bind_host: forward.bind_host().to_owned(),
+            bind_port: forward.bind_port().to_string(),
+            destination_host: forward.destination_host().to_owned(),
+            destination_port: forward.destination_port().to_string(),
+        }
+    }
+
+    fn build(&self) -> Result<SshPortForwardConfiguration, String> {
+        let bind_port: u16 = self
+            .bind_port
+            .trim()
+            .parse()
+            .map_err(|_| "Bind port must be a number between 1 and 65535".to_owned())?;
+        let destination_port: u16 = self
+            .destination_port
+            .trim()
+            .parse()
+            .map_err(|_| "Destination port must be a number between 1 and 65535".to_owned())?;
+        SshPortForwardConfiguration::new(
+            self.direction,
+            self.bind_host.trim(),
+            bind_port,
+            self.destination_host.trim(),
+            destination_port,
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Clone)]
 struct SshProfileDraft {
     original_id: Option<String>,
     name: String,
     host: String,
     port: String,
     username: String,
+    port_forwards: Vec<SshPortForwardDraft>,
     /// Which credential kind the editor's authentication section is
     /// currently showing entry fields for. Independent of
     /// `stored_credential_kind`, which reflects what is actually saved —
@@ -2570,6 +2625,7 @@ impl Default for SshProfileDraft {
             host: String::new(),
             port: SshLauncherForm::DEFAULT_PORT.to_string(),
             username: String::new(),
+            port_forwards: Vec::new(),
             auth_method: SshAuthenticationMethod::Password,
             password: String::new(),
             private_key: String::new(),
@@ -2591,6 +2647,11 @@ impl SshProfileDraft {
             host: ssh.host().to_owned(),
             port: ssh.port().to_string(),
             username: ssh.username().to_owned(),
+            port_forwards: ssh
+                .port_forwards()
+                .iter()
+                .map(SshPortForwardDraft::from_configuration)
+                .collect(),
             auth_method: match stored_credential_kind {
                 CredentialKind::Password => SshAuthenticationMethod::Password,
                 CredentialKind::PrivateKey => SshAuthenticationMethod::PrivateKey,
@@ -2611,6 +2672,11 @@ impl SshProfileDraft {
             .trim()
             .parse()
             .map_err(|_| "SSH port must be a number between 1 and 65535".to_owned())?;
+        let port_forwards = self
+            .port_forwards
+            .iter()
+            .map(SshPortForwardDraft::build)
+            .collect::<Result<Vec<_>, _>>()?;
         let profile = Profile::ssh(
             self.name.trim(),
             self.host.trim(),
@@ -2621,6 +2687,13 @@ impl SshProfileDraft {
             24,
         )
         .map_err(|error| error.to_string())?;
+        let profile = match profile {
+            Profile::Ssh(ssh) => Profile::Ssh(
+                ssh.with_port_forwards(port_forwards)
+                    .map_err(|error| error.to_string())?,
+            ),
+            Profile::Local(_) | Profile::Serial(_) => unreachable!("Profile::ssh returns SSH"),
+        };
         let profile = match self.durable_session.persistence()? {
             Some(persistence) => profile
                 .with_persistence(persistence.provider(), persistence.session_name())
@@ -2804,6 +2877,16 @@ fn profile_text_edit(
     profile_text_edit_inner(ui, tab_id, field, label, value, false)
 }
 
+fn profile_text_edit_with_id(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: impl std::hash::Hash + std::fmt::Debug,
+    label: &str,
+    value: &mut String,
+) -> egui::Response {
+    profile_text_edit_inner(ui, tab_id, field, label, value, false)
+}
+
 fn profile_password_edit(
     ui: &mut Ui,
     tab_id: TabId,
@@ -2817,7 +2900,7 @@ fn profile_password_edit(
 fn profile_text_edit_inner(
     ui: &mut Ui,
     tab_id: TabId,
-    field: &'static str,
+    field: impl std::hash::Hash + std::fmt::Debug,
     label: &str,
     value: &mut String,
     password: bool,
@@ -3315,6 +3398,94 @@ pub fn show_profiles(
                                     DurableSessionTarget::Remote,
                                     false,
                                 );
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Port forwards");
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "New rows start on 127.0.0.1 and apply on future connects.",
+                                        )
+                                        .size(11.0)
+                                        .color(theme::TEXT_SECONDARY),
+                                    );
+                                    if ui.button("Add port forward").clicked() {
+                                        draft.port_forwards.push(SshPortForwardDraft::default());
+                                    }
+                                });
+                                let mut remove_forward = None;
+                                for (index, forward) in draft.port_forwards.iter_mut().enumerate() {
+                                    ui.add_space(8.0);
+                                    egui::Frame::new()
+                                        .fill(theme::SURFACE_TAB_ACTIVE)
+                                        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                        .corner_radius(6.0)
+                                        .inner_margin(egui::Margin::same(12))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "Forward {}",
+                                                        index + 1
+                                                    ))
+                                                    .color(theme::TEXT_SECONDARY),
+                                                );
+                                                if ui
+                                                    .button(format!(
+                                                        "Remove forward {}",
+                                                        index + 1
+                                                    ))
+                                                    .clicked()
+                                                {
+                                                    remove_forward = Some(index);
+                                                }
+                                            });
+                                            ui.add_space(4.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label("Direction");
+                                                ui.radio_value(
+                                                    &mut forward.direction,
+                                                    SshPortForwardDirection::Local,
+                                                    "Local",
+                                                );
+                                                ui.radio_value(
+                                                    &mut forward.direction,
+                                                    SshPortForwardDirection::Remote,
+                                                    "Remote",
+                                                );
+                                            });
+                                            profile_text_edit_with_id(
+                                                ui,
+                                                tab_id,
+                                                ("ssh_port_forward_bind_host", index),
+                                                "Bind host",
+                                                &mut forward.bind_host,
+                                            );
+                                            profile_text_edit_with_id(
+                                                ui,
+                                                tab_id,
+                                                ("ssh_port_forward_bind_port", index),
+                                                "Bind port",
+                                                &mut forward.bind_port,
+                                            );
+                                            profile_text_edit_with_id(
+                                                ui,
+                                                tab_id,
+                                                ("ssh_port_forward_destination_host", index),
+                                                "Destination host",
+                                                &mut forward.destination_host,
+                                            );
+                                            profile_text_edit_with_id(
+                                                ui,
+                                                tab_id,
+                                                ("ssh_port_forward_destination_port", index),
+                                                "Destination port",
+                                                &mut forward.destination_port,
+                                            );
+                                        });
+                                }
+                                if let Some(index) = remove_forward {
+                                    draft.port_forwards.remove(index);
+                                }
                                 if let Some(profile_id) = draft.original_id.clone() {
                                     ui.add_space(10.0);
                                     ssh_section_heading(ui, "Authentication");
@@ -5897,5 +6068,149 @@ mod tests {
                 .credential_kind(),
             CredentialKind::PrivateKey
         );
+    }
+
+    #[test]
+    fn ssh_profile_editor_adds_a_port_forward_and_saves_it_with_the_profile() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New SSH Profile").click();
+        harness.run();
+        for (label, value) in [
+            ("Name", "build-host"),
+            ("Username", "builder"),
+            ("Host", "ssh.example.test"),
+        ] {
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+        harness.get_by_label("Add port forward").click();
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Bind host").value().as_deref(),
+            Some("127.0.0.1")
+        );
+
+        for (label, value) in [
+            ("Bind port", "8080"),
+            ("Destination host", "app.internal"),
+            ("Destination port", "80"),
+        ] {
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile { profile }) = harness.state().command.as_ref() else {
+            panic!("saving the SSH profile must return a SaveProfile command");
+        };
+        let ssh = profile.as_ssh().expect("saved profile remains SSH");
+        assert_eq!(ssh.port_forwards().len(), 1);
+        let forward = &ssh.port_forwards()[0];
+        assert_eq!(forward.direction(), SshPortForwardDirection::Local);
+        assert_eq!(forward.bind_host(), "127.0.0.1");
+        assert_eq!(forward.bind_port(), 8080);
+        assert_eq!(forward.destination_host(), "app.internal");
+        assert_eq!(forward.destination_port(), 80);
+    }
+
+    #[test]
+    fn ssh_profile_editor_can_remove_a_saved_port_forward_before_saving() {
+        let profile = Profile::Ssh(
+            Profile::ssh(
+                "prod",
+                "ssh.example.test",
+                22,
+                "deploy",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap()
+            .as_ssh()
+            .unwrap()
+            .clone()
+            .with_port_forwards(vec![SshPortForwardConfiguration::new(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                8080,
+                "app.internal",
+                80,
+            )
+            .unwrap()])
+            .unwrap(),
+        );
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        harness.get_by_label("Edit").click();
+        harness.run();
+        assert!(harness.query_by_label("Remove forward 1").is_some());
+
+        harness.get_by_label("Remove forward 1").click();
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile { profile }) = harness.state().command.as_ref() else {
+            panic!("saving the SSH profile must return a SaveProfile command");
+        };
+        assert!(profile
+            .as_ssh()
+            .expect("saved profile remains SSH")
+            .port_forwards()
+            .is_empty());
+    }
+
+    #[test]
+    fn ssh_profile_editor_rejects_an_invalid_port_forward_without_saving() {
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+
+        harness.get_by_label("New SSH Profile").click();
+        harness.run();
+        for (label, value) in [
+            ("Name", "build-host"),
+            ("Username", "builder"),
+            ("Host", "ssh.example.test"),
+        ] {
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+        harness.get_by_label("Add port forward").click();
+        harness.run();
+        for (label, value) in [
+            ("Bind port", "0"),
+            ("Destination host", "app.internal"),
+            ("Destination port", "80"),
+        ] {
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert!(harness.state().command.is_none());
+        assert!(harness
+            .query_by_label(
+                "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports"
+            )
+            .is_some());
     }
 }

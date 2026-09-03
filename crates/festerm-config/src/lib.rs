@@ -1343,6 +1343,7 @@ impl Profile {
             credential_id: None,
             credential_kind: CredentialKind::default(),
             persistence: None,
+            port_forwards: Vec::new(),
         });
         profile.validate()?;
         Ok(profile)
@@ -1661,6 +1662,90 @@ pub enum CredentialKind {
     PrivateKey,
 }
 
+/// Which side of the SSH connection listens for a saved port forward.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshPortForwardDirection {
+    Local,
+    Remote,
+}
+
+/// Secret-free metadata for one saved SSH port-forward rule.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SshPortForwardConfiguration {
+    direction: SshPortForwardDirection,
+    bind_host: String,
+    bind_port: u16,
+    destination_host: String,
+    destination_port: u16,
+}
+
+impl SshPortForwardConfiguration {
+    /// Creates one validated saved SSH port-forward rule.
+    pub fn new(
+        direction: SshPortForwardDirection,
+        bind_host: impl Into<String>,
+        bind_port: u16,
+        destination_host: impl Into<String>,
+        destination_port: u16,
+    ) -> Result<Self, ConfigError> {
+        let forward = Self {
+            direction,
+            bind_host: bind_host.into(),
+            bind_port,
+            destination_host: destination_host.into(),
+            destination_port,
+        };
+        forward.validate()?;
+        Ok(forward)
+    }
+
+    /// Returns whether this is a local (`-L`) or remote (`-R`) forward.
+    pub const fn direction(&self) -> SshPortForwardDirection {
+        self.direction
+    }
+
+    /// Returns the listening host/interface for the forward.
+    pub fn bind_host(&self) -> &str {
+        &self.bind_host
+    }
+
+    /// Returns the listening port for the forward.
+    pub const fn bind_port(&self) -> u16 {
+        self.bind_port
+    }
+
+    /// Returns the target host reached after the SSH hop.
+    pub fn destination_host(&self) -> &str {
+        &self.destination_host
+    }
+
+    /// Returns the target port reached after the SSH hop.
+    pub const fn destination_port(&self) -> u16 {
+        self.destination_port
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.bind_host.is_empty()
+            || self.destination_host.is_empty()
+            || contains_control_character(&self.bind_host)
+            || contains_control_character(&self.destination_host)
+            || contains_secret_bearing_value(&self.bind_host)
+            || contains_secret_bearing_value(&self.destination_host)
+        {
+            return Err(ConfigError::new(
+                ConfigErrorKind::InvalidSshPortForwardConfiguration,
+            ));
+        }
+        HostIdentity::new(&self.bind_host, self.bind_port)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshPortForwardConfiguration))?;
+        HostIdentity::new(&self.destination_host, self.destination_port)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshPortForwardConfiguration))?;
+        Ok(())
+    }
+}
+
 /// Secret-free metadata for a native SSH connection.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1682,6 +1767,8 @@ pub struct SshProfileConfiguration {
     credential_kind: CredentialKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     persistence: Option<PersistenceConfiguration>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    port_forwards: Vec<SshPortForwardConfiguration>,
 }
 
 fn is_default_credential_kind(kind: &CredentialKind) -> bool {
@@ -1744,6 +1831,11 @@ impl SshProfileConfiguration {
         self.persistence.as_ref()
     }
 
+    /// Returns the saved SSH port-forward rules for future launches of this profile.
+    pub fn port_forwards(&self) -> &[SshPortForwardConfiguration] {
+        &self.port_forwards
+    }
+
     /// Converts safe metadata into the SSH backend's connection profile.
     pub fn to_connection_profile(&self) -> Result<SshConnectionProfile, ConfigError> {
         let size = TerminalSize::new(self.initial_columns, self.initial_rows)
@@ -1777,6 +1869,16 @@ impl SshProfileConfiguration {
             })
     }
 
+    /// Returns a validated replacement with a new saved port-forward list.
+    pub fn with_port_forwards(
+        mut self,
+        port_forwards: Vec<SshPortForwardConfiguration>,
+    ) -> Result<Self, ConfigError> {
+        self.port_forwards = port_forwards;
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         validate_identifier(&self.id)?;
         if self.host.contains("://")
@@ -1789,7 +1891,19 @@ impl SshProfileConfiguration {
             return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
         }
         self.to_connection_profile().map(|_| ())?;
-        self.session_strategy().map(|_| ())
+        self.session_strategy().map(|_| ())?;
+        let mut bindings = HashSet::with_capacity(self.port_forwards.len());
+        for forward in &self.port_forwards {
+            forward.validate()?;
+            let direction = match forward.direction {
+                SshPortForwardDirection::Local => "local",
+                SshPortForwardDirection::Remote => "remote",
+            };
+            if !bindings.insert((direction, forward.bind_host.as_str(), forward.bind_port)) {
+                return Err(ConfigError::new(ConfigErrorKind::DuplicateSshPortForward));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2315,6 +2429,8 @@ pub enum ConfigErrorKind {
     DuplicateProfileIdentifier,
     InvalidLocalProfile,
     InvalidSshProfile,
+    InvalidSshPortForwardConfiguration,
+    DuplicateSshPortForward,
     InvalidSerialProfile,
     InvalidPersistenceConfiguration,
     InvalidCredentialReference,
@@ -2392,6 +2508,12 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
+            ),
+            ConfigErrorKind::InvalidSshPortForwardConfiguration => formatter.write_str(
+                "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports",
+            ),
+            ConfigErrorKind::DuplicateSshPortForward => formatter.write_str(
+                "SSH port forwards must not repeat the same direction, bind host, and bind port within one profile",
             ),
             ConfigErrorKind::InvalidSerialProfile => formatter.write_str(
                 "serial profile metadata must contain a non-empty, control-character-free device identifier and a nonzero baud rate",
@@ -2818,6 +2940,42 @@ mod tests {
     use super::*;
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    fn ssh_port_forward(
+        direction: SshPortForwardDirection,
+        bind_host: &str,
+        bind_port: u16,
+        destination_host: &str,
+        destination_port: u16,
+    ) -> SshPortForwardConfiguration {
+        SshPortForwardConfiguration::new(
+            direction,
+            bind_host,
+            bind_port,
+            destination_host,
+            destination_port,
+        )
+        .expect("test SSH port forward is valid")
+    }
+
+    fn ssh_profile_with_port_forwards(port_forwards: Vec<SshPortForwardConfiguration>) -> Profile {
+        let ssh = Profile::ssh(
+            "forwarded",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .as_ssh()
+        .expect("profile remains SSH")
+        .clone()
+        .with_port_forwards(port_forwards)
+        .expect("test SSH port-forward list is valid");
+        Profile::Ssh(ssh)
+    }
 
     const COMPLETE_CONFIGURATION: &str = r#"
 schema_version = 1
@@ -4014,6 +4172,201 @@ credential_id = "{CREDENTIAL_REFERENCE}"
         );
         assert_eq!(local_persistence.session_name(), "editor");
         assert_eq!(loaded, configuration);
+    }
+
+    #[test]
+    fn ssh_profiles_with_zero_one_and_multiple_port_forwards_round_trip_through_toml() {
+        let empty = Configuration::new(vec![ssh_profile_with_port_forwards(Vec::new())]).unwrap();
+        let empty_document = empty.to_toml().unwrap();
+        assert!(!empty_document.contains("port_forwards"));
+        assert_eq!(Configuration::parse(&empty_document).unwrap(), empty);
+
+        let single = Configuration::new(vec![ssh_profile_with_port_forwards(vec![
+            ssh_port_forward(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                8080,
+                "app.internal",
+                80,
+            ),
+        ])])
+        .unwrap();
+        let single_document = single.to_toml().unwrap();
+        assert!(single_document.contains("direction = \"local\""));
+        assert_eq!(Configuration::parse(&single_document).unwrap(), single);
+
+        let multiple = Configuration::new(vec![ssh_profile_with_port_forwards(vec![
+            ssh_port_forward(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                15432,
+                "db.internal",
+                5432,
+            ),
+            ssh_port_forward(
+                SshPortForwardDirection::Remote,
+                "0.0.0.0",
+                10022,
+                "127.0.0.1",
+                22,
+            ),
+        ])])
+        .unwrap();
+        let multiple_document = multiple.to_toml().unwrap();
+        assert!(multiple_document.contains("direction = \"local\""));
+        assert!(multiple_document.contains("direction = \"remote\""));
+        assert_eq!(Configuration::parse(&multiple_document).unwrap(), multiple);
+    }
+
+    #[test]
+    fn legacy_ssh_profiles_without_port_forwards_parse_as_an_empty_list() {
+        let configuration = Configuration::parse(
+            r#"
+schema_version = 1
+
+[[profiles]]
+kind = "ssh"
+id = "legacy"
+host = "ssh.example.test"
+username = "deploy"
+"#,
+        )
+        .unwrap();
+
+        assert!(configuration.profiles()[0]
+            .as_ssh()
+            .unwrap()
+            .port_forwards()
+            .is_empty());
+    }
+
+    #[test]
+    fn duplicate_ssh_port_forward_bindings_are_rejected_within_one_profile() {
+        let duplicate = ssh_port_forward(
+            SshPortForwardDirection::Local,
+            "127.0.0.1",
+            8080,
+            "app.internal",
+            80,
+        );
+        let error = Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_port_forwards(vec![duplicate.clone(), duplicate])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ConfigErrorKind::DuplicateSshPortForward);
+    }
+
+    #[test]
+    fn same_bind_host_and_port_are_allowed_when_ssh_port_forward_directions_differ() {
+        let ssh = Profile::ssh(
+            "remote",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_port_forwards(vec![
+            ssh_port_forward(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                9000,
+                "service.internal",
+                9000,
+            ),
+            ssh_port_forward(
+                SshPortForwardDirection::Remote,
+                "127.0.0.1",
+                9000,
+                "127.0.0.1",
+                9000,
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(ssh.port_forwards().len(), 2);
+    }
+
+    #[test]
+    fn ssh_port_forwards_reject_zero_bind_and_destination_ports() {
+        for (bind_port, destination_port) in [(0, 80), (8080, 0)] {
+            let error = SshPortForwardConfiguration::new(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                bind_port,
+                "app.internal",
+                destination_port,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.kind(),
+                ConfigErrorKind::InvalidSshPortForwardConfiguration
+            );
+        }
+    }
+
+    #[test]
+    fn ssh_port_forwards_reject_empty_control_character_and_secret_bearing_hosts() {
+        for host in ["", "bad\nhost", "password:22"] {
+            let bind_error = SshPortForwardConfiguration::new(
+                SshPortForwardDirection::Local,
+                host,
+                8080,
+                "app.internal",
+                80,
+            )
+            .unwrap_err();
+            assert_eq!(
+                bind_error.kind(),
+                ConfigErrorKind::InvalidSshPortForwardConfiguration
+            );
+
+            let destination_error = SshPortForwardConfiguration::new(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                8080,
+                host,
+                80,
+            )
+            .unwrap_err();
+            assert_eq!(
+                destination_error.kind(),
+                ConfigErrorKind::InvalidSshPortForwardConfiguration
+            );
+        }
+    }
+
+    #[test]
+    fn schema_version_stays_one_when_an_ssh_profile_adds_port_forwards() {
+        let configuration = Configuration::new(vec![ssh_profile_with_port_forwards(vec![
+            ssh_port_forward(
+                SshPortForwardDirection::Local,
+                "127.0.0.1",
+                8080,
+                "app.internal",
+                80,
+            ),
+        ])])
+        .unwrap();
+
+        assert_eq!(configuration.schema_version(), 1);
     }
 
     #[test]
