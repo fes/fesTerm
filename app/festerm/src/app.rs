@@ -1172,26 +1172,60 @@ impl FesTermApp {
         }
     }
 
+    /// Shared automatic-save orchestration for the "workspace/configuration"
+    /// candidate seam (#53): every write-through path here computes a
+    /// validated replacement `Configuration`, asks the reloader to persist
+    /// it, and only commits that replacement into `self.state` if the write
+    /// actually succeeded (`ConfigurationStartupStatus::was_saved`) -
+    /// otherwise the in-memory configuration is left untouched and the
+    /// caller only learns about the failure via `self.configuration_status`.
+    ///
+    /// Centralizing this removes seven independently hand-written copies of
+    /// the same "commit only on success" check (previously each a
+    /// `matches!(status, ...)` written against a different specific success
+    /// variant) into one place, so a future ninth call site can't
+    /// accidentally omit the guard and commit an unsaved change. This is a
+    /// data/control-flow extraction only, scoped to the three fields it
+    /// already reads (`self.state`, `self.configuration_reloader`,
+    /// `self.configuration_status`); it does not become a new "manager"
+    /// type, matching the constraint in #53's issue body.
+    fn apply_configuration_save(
+        &mut self,
+        replacement: Result<festerm_config::Configuration, festerm_config::ConfigError>,
+        on_invalid: impl FnOnce(
+            crate::configuration_startup::ConfigurationLoadFailure,
+        ) -> ConfigurationStartupStatus,
+        save: impl FnOnce(
+            &crate::configuration_startup::ConfigurationReloader,
+            &festerm_config::Configuration,
+        ) -> ConfigurationStartupStatus,
+    ) {
+        let replacement = match replacement {
+            Ok(replacement) => replacement,
+            Err(_) => {
+                self.configuration_status =
+                    on_invalid(crate::configuration_startup::ConfigurationLoadFailure::Invalid);
+                return;
+            }
+        };
+        let status = save(&self.configuration_reloader, &replacement);
+        if status.was_saved() {
+            self.state.replace_configuration(replacement);
+        }
+        self.configuration_status = status;
+    }
+
     /// Captures a metadata-only workspace snapshot and saves it immediately
     /// (`docs/gui-design.md` "Configuration": open/closed tabs, their order,
     /// and the active tab autosave on every change - there is no manual
     /// Save action). The current configuration changes only after the
     /// atomic file replacement has succeeded.
     fn save_workspace(&mut self) {
-        let replacement = match self.state.capture_workspace_configuration() {
-            Ok(replacement) => replacement,
-            Err(_) => {
-                self.configuration_status = ConfigurationStartupStatus::WorkspaceSaveFailure(
-                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
-                );
-                return;
-            }
-        };
-        let status = self.configuration_reloader.save_workspace(&replacement);
-        if matches!(status, ConfigurationStartupStatus::WorkspaceSaved) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+        self.apply_configuration_save(
+            self.state.capture_workspace_configuration(),
+            ConfigurationStartupStatus::WorkspaceSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_workspace,
+        );
     }
 
     /// Scrubs any previously saved workspace snapshot from disk after the
@@ -1200,12 +1234,11 @@ impl FesTermApp {
     /// workspace can never fail validation - so this only reports a status
     /// if the write-through itself fails.
     fn clear_saved_workspace(&mut self) {
-        let replacement = self.state.configuration().without_workspace();
-        let status = self.configuration_reloader.save_workspace(&replacement);
-        if matches!(status, ConfigurationStartupStatus::WorkspaceSaved) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+        self.apply_configuration_save(
+            Ok(self.state.configuration().without_workspace()),
+            ConfigurationStartupStatus::WorkspaceSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_workspace,
+        );
     }
 
     /// Writes through the current chip-layout/status-bar preferences
@@ -1214,27 +1247,13 @@ impl FesTermApp {
     /// (`docs/gui-design.md` "apply immediately"); a failed write only means
     /// the change will not survive a restart.
     fn persist_interface_settings(&mut self) {
-        let replacement = match self
-            .state
-            .configuration()
-            .with_interface_settings(self.state.interface_settings())
-        {
-            Ok(replacement) => replacement,
-            Err(_) => {
-                self.configuration_status =
-                    ConfigurationStartupStatus::InterfaceSettingsSaveFailure(
-                        crate::configuration_startup::ConfigurationLoadFailure::Invalid,
-                    );
-                return;
-            }
-        };
-        let status = self
-            .configuration_reloader
-            .save_interface_settings(&replacement);
-        if matches!(status, ConfigurationStartupStatus::InterfaceSettingsSaved) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+        self.apply_configuration_save(
+            self.state
+                .configuration()
+                .with_interface_settings(self.state.interface_settings()),
+            ConfigurationStartupStatus::InterfaceSettingsSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_interface_settings,
+        );
     }
 
     /// Persists the host key currently displayed for `tab` as trusted (ADR
@@ -1255,28 +1274,13 @@ impl FesTermApp {
         let host = prompt.host().to_owned();
         let port = prompt.port();
         let fingerprint = prompt.sha256_fingerprint().to_owned();
-        let replacement =
-            match self
-                .state
+        self.apply_configuration_save(
+            self.state
                 .configuration()
-                .with_known_host_trust(&host, port, &fingerprint)
-            {
-                Ok(replacement) => replacement,
-                Err(_) => {
-                    self.configuration_status =
-                        ConfigurationStartupStatus::KnownHostTrustSaveFailure(
-                            crate::configuration_startup::ConfigurationLoadFailure::Invalid,
-                        );
-                    return;
-                }
-            };
-        let status = self
-            .configuration_reloader
-            .save_known_host_trust(&replacement);
-        if matches!(status, ConfigurationStartupStatus::KnownHostTrustSaved) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+                .with_known_host_trust(&host, port, &fingerprint),
+            ConfigurationStartupStatus::KnownHostTrustSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_known_host_trust,
+        );
     }
 
     /// Creates or edits a profile from the Profiles surface (both are the
@@ -1284,20 +1288,11 @@ impl FesTermApp {
     /// editing"). The in-memory configuration only changes after the atomic
     /// file write succeeds, matching every other automatic-save path here.
     fn save_profile(&mut self, profile: festerm_config::Profile) {
-        let replacement = match self.state.configuration().with_profile(profile) {
-            Ok(replacement) => replacement,
-            Err(_) => {
-                self.configuration_status = ConfigurationStartupStatus::ProfileSaveFailure(
-                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
-                );
-                return;
-            }
-        };
-        let status = self.configuration_reloader.save_profile(&replacement);
-        if matches!(status, ConfigurationStartupStatus::ProfileSaved) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+        self.apply_configuration_save(
+            self.state.configuration().with_profile(profile),
+            ConfigurationStartupStatus::ProfileSaveFailure,
+            crate::configuration_startup::ConfigurationReloader::save_profile,
+        );
     }
 
     /// Deletes a profile the user has already confirmed in the Profiles
@@ -1305,20 +1300,11 @@ impl FesTermApp {
     /// a profile still referenced by a saved workspace tab, surfacing that
     /// as an ordinary save failure rather than silently orphaning the tab.
     fn delete_profile(&mut self, identifier: &str) {
-        let replacement = match self.state.configuration().without_profile(identifier) {
-            Ok(replacement) => replacement,
-            Err(_) => {
-                self.configuration_status = ConfigurationStartupStatus::ProfileDeleteFailure(
-                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
-                );
-                return;
-            }
-        };
-        let status = self.configuration_reloader.delete_profile(&replacement);
-        if matches!(status, ConfigurationStartupStatus::ProfileDeleted) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+        self.apply_configuration_save(
+            self.state.configuration().without_profile(identifier),
+            ConfigurationStartupStatus::ProfileDeleteFailure,
+            crate::configuration_startup::ConfigurationReloader::delete_profile,
+        );
     }
 
     /// Reorders a saved profile after a drag-to-reorder gesture on the
@@ -1326,24 +1312,13 @@ impl FesTermApp {
     /// Launcher's own profile ordering reflects this immediately since both
     /// surfaces read the same persisted `Configuration::profiles` order.
     fn reorder_profiles(&mut self, moved: &str, before: Option<&str>) {
-        let replacement = match self
-            .state
-            .configuration()
-            .with_reordered_profiles(moved, before)
-        {
-            Ok(replacement) => replacement,
-            Err(_) => {
-                self.configuration_status = ConfigurationStartupStatus::ProfilesReorderFailure(
-                    crate::configuration_startup::ConfigurationLoadFailure::Invalid,
-                );
-                return;
-            }
-        };
-        let status = self.configuration_reloader.reorder_profiles(&replacement);
-        if matches!(status, ConfigurationStartupStatus::ProfilesReordered) {
-            self.state.replace_configuration(replacement);
-        }
-        self.configuration_status = status;
+        self.apply_configuration_save(
+            self.state
+                .configuration()
+                .with_reordered_profiles(moved, before),
+            ConfigurationStartupStatus::ProfilesReorderFailure,
+            crate::configuration_startup::ConfigurationReloader::reorder_profiles,
+        );
     }
 
     /// Applies the reset-interface-settings policy shared by chrome, the
