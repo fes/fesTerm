@@ -24,7 +24,7 @@ use festerm_serial::LineSettings;
 use festerm_session::TerminalSize;
 use festerm_ssh::{
     is_sha256_fingerprint, HostIdentity, PersistenceProvider, PersistentSessionName,
-    SessionStrategy, SshConnectionProfile,
+    SessionStrategy, SshConnectionProfile, SshPortForwardSpec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1743,6 +1743,31 @@ impl SshPortForwardConfiguration {
         HostIdentity::new(&self.destination_host, self.destination_port)
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshPortForwardConfiguration))?;
         Ok(())
+    }
+}
+
+impl SshPortForwardSpec for SshPortForwardConfiguration {
+    fn direction(&self) -> festerm_session::SshPortForwardDirection {
+        match self.direction {
+            SshPortForwardDirection::Local => festerm_session::SshPortForwardDirection::Local,
+            SshPortForwardDirection::Remote => festerm_session::SshPortForwardDirection::Remote,
+        }
+    }
+
+    fn bind_host(&self) -> &str {
+        self.bind_host()
+    }
+
+    fn bind_port(&self) -> u16 {
+        self.bind_port()
+    }
+
+    fn destination_host(&self) -> &str {
+        self.destination_host()
+    }
+
+    fn destination_port(&self) -> u16 {
+        self.destination_port()
     }
 }
 

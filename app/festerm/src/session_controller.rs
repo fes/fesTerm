@@ -579,6 +579,7 @@ impl<S: Session> SessionController<S> {
             SessionEvent::PasswordRequested(prompt) => {
                 self.password_prompt = Some(prompt);
             }
+            SessionEvent::PortForwardsUpdated(_) => {}
             SessionEvent::Error(error) => self.record_session_error(error),
             SessionEvent::Output(_) => {}
         }
