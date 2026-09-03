@@ -1916,8 +1916,13 @@ fn append_text_segments(
         .iter()
         .enumerate()
         .filter_map(|(index, matched)| {
-            overlap_with_relative_range(span, matched.span())
-                .map(|range| (range.start, range.end, find.current_index == Some(index)))
+            overlap_with_relative_range(span, matched.span()).and_then(|range| {
+                (range.end <= text.len()).then_some((
+                    range.start,
+                    range.end,
+                    find.current_index == Some(index),
+                ))
+            })
         })
         .collect();
     for (start, end, current) in matches {
@@ -2280,6 +2285,26 @@ mod tests {
         state.open();
         assert!(state.take_focus_request());
         assert!(!state.take_focus_request());
+    }
+
+    #[test]
+    fn find_highlighting_ignores_source_span_bytes_outside_inline_text() {
+        let document = document("# Heading\n\nFind needle here.");
+        let mut find = MarkdownFindState::default();
+        find.set_query(&document, "needle".to_owned());
+        let Block::Heading(heading) = &document.blocks()[0] else {
+            panic!("the first block should be a heading");
+        };
+
+        let job = inline_layout_job(
+            heading.inlines(),
+            &document,
+            &find,
+            FontId::proportional(14.0),
+            false,
+        );
+
+        assert_eq!(job.text, "Heading");
     }
 
     #[test]

@@ -1261,6 +1261,7 @@
         "markdown_palette_picker_selection_opens_the_selected_file",
         "outline_and_preview_keep_separate_vertical_viewports",
         "local_markdown_display_paths_hide_windows_verbatim_prefixes",
+        "find_highlighting_ignores_source_span_bytes_outside_inline_text",
         "markdown_viewer_palette_items_follow_the_active_viewer",
         "workspace_capture_omits_runtime_markdown_viewer_tabs",
         "find_navigation_wraps_in_both_directions",
