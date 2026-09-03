@@ -638,18 +638,28 @@ impl Scrollback {
             }
         }
         segments.reverse();
-        let rows = segments.into_iter().flatten().collect();
+        let rows: Vec<ScreenRow> = segments.into_iter().flatten().collect();
+        // Every entry in `rows` is exactly one physical row popped from the
+        // tail of `lines` above, and `enforce_limit` below only evicts from
+        // the front (moving `content_row_origin`, never `screen_row_origin`)
+        // - see its own doc comment. So `screen_row_origin`, which was
+        // correct before this call (`push_rows` and, when triggered,
+        // `reflow` both keep it in lockstep with the true row count as they
+        // go), just needs the removed tail rows subtracted back out; no
+        // rescan of `lines` is needed.
+        let removed_from_tail = rows.len() as u64;
         self.enforce_limit();
-        // `total_physical_rows()` derives its result from
-        // `screen_row_origin - content_row_origin`, so it can't be used to
-        // recompute `screen_row_origin` itself here without circularity:
-        // this loop just removed trailing rows from `lines` without moving
-        // `content_row_origin` (which only tracks the front/oldest side),
-        // so the new true row count must come from a fresh scan.
-        let true_physical_rows: usize = self.lines.iter().map(|line| line.physical_rows).sum();
-        self.screen_row_origin = self
-            .content_row_origin
-            .saturating_add(true_physical_rows as u64);
+        self.screen_row_origin = self.screen_row_origin.saturating_sub(removed_from_tail);
+        debug_assert_eq!(
+            self.screen_row_origin,
+            self.content_row_origin.saturating_add(
+                self.lines
+                    .iter()
+                    .map(|line| line.physical_rows)
+                    .sum::<usize>() as u64
+            ),
+            "screen_row_origin must stay in lockstep with content_row_origin + total physical rows"
+        );
         rows
     }
 

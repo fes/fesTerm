@@ -148,7 +148,16 @@ impl BufferState {
         let mut fold_rows = self.screen.to_rows();
         fold_rows.truncate(content_rows);
 
-        let mut combined = scrollback.clone();
+        // Take ownership of the current scrollback instead of cloning it:
+        // every retained line gets folded into `combined` and (if columns
+        // changed) rewrapped anyway, and `scrollback` is fully overwritten
+        // with the result below, so cloning first only pays an extra
+        // O(retained-lines) copy for content that's about to be replaced
+        // or discarded regardless. This matters even when the column width
+        // is unchanged (a pure vertical resize, e.g. dragging the bottom
+        // edge of the window), since `reflow()` is skipped in that case but
+        // the clone previously ran unconditionally on every resize call.
+        let mut combined = std::mem::replace(scrollback, Scrollback::new(scrollback_limit));
         // Resize must reflow the complete live screen even when retained
         // history is disabled or near its bound. Apply the real scrollback
         // policy only after the new visible tail has been split back out.
