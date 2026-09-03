@@ -363,15 +363,15 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 | `VIS-01` | Approved baseline states | Compare Launcher, terminal, default/compact chrome, Settings, Inspector, reconnect, disconnected, dialogs, context menus, and narrow state to linked PNGs. | Blue-graphite roles, geometry, hierarchy, density, icon usage, typography, terminal dominance; prose/negotiated deviations override static image. | No mutation; rebuild checkpoint per image. | V,U |
 | `NON-01` | All surfaces | Search for out-of-scope affordances. | No split panes, detach/migrate, dashboard/onboarding, disabled promises, automatic URL/path detection, Select All, transcript persistence, generic telemetry, one-option theme/font control, or invented status data. | No mutation. | H,V,U |
 
-## Q. Post-transport Markdown-viewing decision
+## Q. Approved post-transport Markdown viewer
 
-These edges remain capability-blocked until Local, SSH, and Serial plus their
-owned UI flows are complete. `MD-01` is a product decision; `MD-02..06` become
-testable only if that decision accepts a bounded viewer.
+`MD-01` is resolved by the approved readability-first design in
+`docs/markdown-viewer-design.md`. `MD-02..06` remain implementation-blocked and
+become testable only when the bounded viewer exists.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `MD-01` | `TransportComplete → Rejected/ViewerScope` | Conduct the documented product review. | Explicit decision whether viewing belongs in fesTerm; if yes, one named primary target—readability-first or bounded visual fidelity—and an accepted syntax/security/lifecycle scope. No ambiguous “accurate Markdown” promise. | Rejection leaves product unchanged; acceptance returns to design/prototype planning, not production implementation. | U,architecture; deferred |
+| `MD-01` | `TransportComplete → ViewerScopeApproved` | Review the accepted viewer specification and mockups. | Readability-first is the named target with explicit syntax, resource, security, lifecycle, accessibility, and local/remote ownership bounds; no ambiguous “accurate Markdown” promise. | Reopen product review before materially widening the approved boundary. | U,architecture; design-approved |
 | `MD-02` | `LocalFileSelection → Viewer/Error` | Explicitly select a repository-owned local Markdown fixture. | Supported structures match the accepted target; unsupported constructs are safe and understandable; bounded load is cancellable; binary, oversize, and encoding failures are concise. | Close/Escape restores exact prior surface; final viewer returns Launcher. | P,H,V,N,U; deferred |
 | `MD-03` | `RemoteFileSelection → Viewer/Error` | Explicitly request an SSH-remote fixture while connected, then disconnect/reconnect. | Remote path never becomes local; fetch is explicit and bounded; disconnect is truthful; no silent upload, local open, persistence, or cross-generation retarget. | Cancel fetch or close viewer; restore prior SSH surface/checkpoint. | P,H,N,U,privacy; deferred |
 | `MD-04` | `Viewer → Viewer` | Navigate headings, links, tables, tasks, code, Find, selection/Copy, reload, resize, scale, and accessibility traversal. | Behavior meets the chosen readability/fidelity oracle; link/resource policy is enforced; semantic navigation and scroll restoration are accurate; content stays out of logs/diagnostics. | Clear Find/selection and restore scale/scroll fixture baseline. | P,H,V,N,U,privacy; deferred |
@@ -406,7 +406,7 @@ it has no implemented control yet.
 | Accessibility and selection | `A11Y-*`, `TERM-03/04` |
 | Responsive behavior | `K11`, `WIN-03`, responsive variants of `PAL-01`, `INSP-01`, `PASTE-08`, `CLOSE-01` |
 | Populated Launcher | `LAUNCH-07` |
-| Deferred native Markdown viewing | `MD-*` |
+| Approved native Markdown viewer | `MD-*` |
 | Validation and iteration | The execution protocol below plus `VIS-01` |
 
 ## Exploration walks

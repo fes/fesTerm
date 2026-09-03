@@ -476,28 +476,17 @@ to their package manager. Release notes never interrupt startup. Update state
 is quiet, factual, dismissible, and cannot block the Launcher or a terminal
 session. Developer and incompletely signed builds expose no network action.
 
-### Deferred native Markdown viewing
+### Approved native Markdown viewing
 
-Native Markdown viewing is pinned for an explicit product-design discussion
-only after Local, SSH, and Serial capabilities and their UI components are
-complete. Markdown is unusually valuable in AI-assisted development and
-technical terminal workflows, but that motivation does not yet establish that
-fesTerm should own a document renderer. No viewer control, disabled menu item,
-file association, or implementation issue should be added before the gate.
+The post-transport product review accepts a bounded native Markdown viewer for
+fesTerm with **readability-first** as its named primary quality target. The
+approved first-release behavior, resource policy, lifecycle, keyboard model,
+and reviewable workflow are specified in
+[`markdown-viewer-design.md`](markdown-viewer-design.md). Implementation and
+native validation remain pending; builds must not show disabled or non-working
+viewer promises before the corresponding capability exists.
 
-The review must first answer **whether** native viewing belongs in a restrained
-terminal workstation. If it does, it must then choose and name one primary
-quality target:
-
-- **Readability-first:** dependable structure, typography, code blocks,
-  tables, links, search, selection, and Copy without claiming browser- or
-  editor-identical layout.
-- **Visual-fidelity-oriented:** a broader, precisely specified Markdown and
-  styling model with deterministic rendering/reference evidence and the
-  additional complexity that entails.
-
-A vague promise to “render Markdown accurately” is not sufficient. The design
-review must bound at least:
+The accepted design explicitly bounds:
 
 - Markdown dialect and extensions: CommonMark/GFM, tables, task lists,
   footnotes, syntax highlighting, math, diagrams, embedded HTML, and any
@@ -528,8 +517,10 @@ Any accepted viewer must follow the existing application-surface model: it
 cannot resize or take ownership of a live terminal session, terminal escape
 sequences cannot open it without an explicit user action, Escape/Close returns
 to a known prior surface, and closing the final viewer returns to Launcher.
-Workspace persistence, recent-document history, file watching, remote fetch,
-and external-resource loading remain absent unless separately designed.
+The approved first release omits workspace persistence, recent-document
+history, file watching, and background remote fetch. Secondary resources never
+load implicitly; the narrow per-item local/remote image actions in the focused
+viewer specification are the only accepted resource-loading path.
 
 ### Contextual status region
 
@@ -2587,8 +2578,6 @@ discovered defect.
 - Backend capability and command semantics for a real Reconnect action; the UX
   contract is specified above, while the current overlay correctly omits an
   action it cannot perform.
-- Post-transport Markdown-viewing decision: whether it belongs in fesTerm at
-  all and, if accepted, whether the primary target is structural readability
-  or a deliberately bounded level of visual fidelity. The prerequisite and
-  design/security questions are recorded under Deferred native Markdown
-  viewing; no implementation is scheduled yet.
+- Native Markdown-viewer implementation and validation against the approved
+  readability-first boundary in `docs/markdown-viewer-design.md`; no current
+  milestone depends on it.

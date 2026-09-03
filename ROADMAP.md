@@ -517,14 +517,12 @@ The following tracks remain intentionally outside the initial critical path. Arc
 - Further serial refinement. The first-class UI, profile, lifecycle, worker
   backend, validation, and Linux loopback coverage are implemented; native
   Windows/macOS adapter and permission evidence remains in the manual registry.
-- Native Markdown viewing is a post-transport product-design candidate because
-  Markdown is central to AI-assisted development and technical workflows. It
-  must not begin until Local, SSH, and Serial capabilities and their owned UI
-  flows are complete. The later review first decides whether fesTerm should
-  include it at all, then chooses readability-first viewing versus a more
-  visually faithful renderer and explicitly bounds syntax, resources,
-  security, accessibility, local/remote ownership, and update behavior. It is
-  not currently a committed renderer, editor, IDE, or milestone.
+- Native Markdown viewing has an approved post-transport, readability-first
+  product design in `docs/markdown-viewer-design.md`. Implementation remains a
+  future capability: it is a bounded read-only application surface with
+  explicit syntax, resource, security, accessibility, local/remote ownership,
+  and freshness rules—not an editor, browser, preview server, IDE, or current
+  milestone dependency.
 - Password-encrypted profile export/import.
 - Advanced graphics protocols.
 - Persistent, explicitly enabled terminal history.

@@ -1084,7 +1084,7 @@
         "MD-*"
       ],
       "requirements": [
-        "docs/gui-design.md#deferred-native-markdown-viewing"
+        "docs/gui-design.md#approved-native-markdown-viewing"
       ],
       "decisions": [],
       "automated_tests": [],
