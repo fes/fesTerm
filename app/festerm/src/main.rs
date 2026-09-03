@@ -11,6 +11,7 @@ mod environment;
 mod inspector;
 mod native_smoke;
 mod overlay_state;
+mod port_forward_draft;
 mod screens;
 mod search;
 pub mod session_controller;

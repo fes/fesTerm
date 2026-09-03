@@ -3184,6 +3184,8 @@ const PASSWORD_DECISION_TIMEOUT: Duration = Duration::from_secs(120);
 pub const MAX_INTERACTIVE_PASSWORD_ATTEMPTS: u8 = 3;
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const PORT_FORWARD_PENDING_CONNECTION_CAPACITY: usize = 32;
+const MAX_IN_FLIGHT_PORT_FORWARD_CONNECTIONS: usize = 32;
 /// Ordinary SSH liveness/keepalive cadence (ADR 0018): how often a running
 /// session actively verifies its transport even without an explicit
 /// wake/network-change trigger or on-demand [`SshSession::try_check_liveness`]
@@ -3665,6 +3667,33 @@ struct ForwardedTcpIpConnection {
     channel: russh::Channel<russh::client::Msg>,
 }
 
+#[derive(Clone)]
+struct PortForwardAttemptLimiter {
+    permits: Arc<tokio::sync::Semaphore>,
+    max_in_flight: usize,
+}
+
+impl PortForwardAttemptLimiter {
+    fn new(max_in_flight: usize) -> Self {
+        assert!(
+            max_in_flight > 0,
+            "port-forward attempt limit must be nonzero"
+        );
+        Self {
+            permits: Arc::new(tokio::sync::Semaphore::new(max_in_flight)),
+            max_in_flight,
+        }
+    }
+
+    fn max_in_flight(&self) -> usize {
+        self.max_in_flight
+    }
+
+    fn try_acquire(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.permits.clone().try_acquire_owned().ok()
+    }
+}
+
 enum ActivePortForwardHandle {
     Inactive,
     Local {
@@ -3887,6 +3916,54 @@ fn emit_sftp_output(shared: &WorkerShared, text: impl AsRef<str>) {
     let _ = shared.try_emit(SessionEvent::Output(text.as_ref().as_bytes().to_vec()));
 }
 
+fn emit_sftp_outcome(shared: &WorkerShared, outcome: &sftp::SftpCommandOutcome) {
+    match outcome {
+        sftp::SftpCommandOutcome::DirectoryListing { path, entries } => {
+            emit_sftp_directory_listing(shared, path, entries);
+        }
+        _ => emit_sftp_output(shared, format_sftp_outcome(outcome)),
+    }
+}
+
+fn emit_sftp_directory_listing(
+    shared: &WorkerShared,
+    path: &str,
+    entries: &[sftp::SftpDirectoryEntry],
+) {
+    let mut chunk = format!("Listing for {path}:\r\n");
+    if entries.is_empty() {
+        chunk.push_str("(empty)\r\n");
+        emit_sftp_output(shared, chunk);
+        return;
+    }
+
+    for entry in entries {
+        let kind = match entry.file_type {
+            sftp::SftpEntryType::Directory => "dir ",
+            sftp::SftpEntryType::File => "file",
+            sftp::SftpEntryType::Symlink => "link",
+            sftp::SftpEntryType::Other => "other",
+        };
+        let permissions = entry
+            .permissions
+            .map(|permissions| format!("{permissions:04o}"))
+            .unwrap_or_else(|| "----".to_owned());
+        let size = entry
+            .size
+            .map(|size| size.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        let line = format!("{kind} {permissions:>4} {size:>10} {}\r\n", entry.name);
+        if chunk.len() + line.len() > MAX_IO_CHUNK_BYTES {
+            emit_sftp_output(shared, std::mem::take(&mut chunk));
+        }
+        chunk.push_str(&line);
+    }
+
+    if !chunk.is_empty() {
+        emit_sftp_output(shared, chunk);
+    }
+}
+
 fn emit_sftp_prompt(
     shared: &WorkerShared,
     profile: &SshConnectionProfile,
@@ -3946,7 +4023,7 @@ struct SshClientHandler {
     shared: Arc<WorkerShared>,
     host_key_gate: Arc<HostKeyDecisionGate>,
     host_key_rejected: Arc<AtomicBool>,
-    forwarded_tcpip_sender: tokio::sync::mpsc::UnboundedSender<ForwardedTcpIpConnection>,
+    forwarded_tcpip_sender: tokio::sync::mpsc::Sender<ForwardedTcpIpConnection>,
     /// A persistent-trust-store fingerprint already on file for this
     /// destination (ADR 0020), if any. An exact match is accepted silently,
     /// mirroring `ssh`'s own already-in-`known_hosts` behavior; any other
@@ -4006,6 +4083,7 @@ impl russh::client::Handler for SshClientHandler {
         _session: &mut russh::client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
         let forwarded_tcpip_sender = self.forwarded_tcpip_sender.clone();
+        let shared = Arc::clone(&self.shared);
         let key = PortForwardBindingKey {
             direction: SshPortForwardDirection::Remote,
             bind_host: connected_address.to_owned(),
@@ -4013,7 +4091,24 @@ impl russh::client::Handler for SshClientHandler {
         };
         async move {
             reply.accept().await;
-            let _ = forwarded_tcpip_sender.send(ForwardedTcpIpConnection { key, channel });
+            match forwarded_tcpip_sender.try_send(ForwardedTcpIpConnection { key, channel }) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(forwarded)) => {
+                    report_port_forward_error(
+                        &shared,
+                        format!(
+                            "SSH remote port forward on {}:{} rejected a forwarded connection because {} connections were already pending",
+                            forwarded.key.bind_host,
+                            forwarded.key.bind_port,
+                            PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
+                        ),
+                    );
+                    let _ = forwarded.channel.close().await;
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(forwarded)) => {
+                    let _ = forwarded.channel.close().await;
+                }
+            }
             Ok(())
         }
     }
@@ -4075,7 +4170,7 @@ async fn ssh_worker(
                 shared.set_reconnecting(false);
                 shared.set_lifecycle(SessionLifecycle::Running);
                 match run_authenticated_channel(
-                    handle,
+                    Arc::new(handle),
                     channel,
                     forwarded_tcpip_receiver,
                     initial_profile_port_forwards.take().unwrap_or_default(),
@@ -4274,7 +4369,7 @@ enum ConnectionAttempt {
     Established(
         russh::client::Handle<SshClientHandler>,
         russh::Channel<russh::client::Msg>,
-        tokio::sync::mpsc::UnboundedReceiver<ForwardedTcpIpConnection>,
+        tokio::sync::mpsc::Receiver<ForwardedTcpIpConnection>,
     ),
     Retryable(ConnectionFailure, &'static str),
     Permanent(ConnectionFailure, &'static str),
@@ -4383,7 +4478,8 @@ async fn establish_connection(
         ..Default::default()
     });
     let host_key_rejected = Arc::new(AtomicBool::new(false));
-    let (forwarded_tcpip_sender, forwarded_tcpip_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (forwarded_tcpip_sender, forwarded_tcpip_receiver) =
+        tokio::sync::mpsc::channel(PORT_FORWARD_PENDING_CONNECTION_CAPACITY);
     let handler = SshClientHandler {
         identity: profile.identity.clone(),
         shared: Arc::clone(shared),
@@ -4826,7 +4922,8 @@ async fn establish_authenticated_handle(
         ..Default::default()
     });
     let host_key_rejected = Arc::new(AtomicBool::new(false));
-    let (forwarded_tcpip_sender, _) = tokio::sync::mpsc::unbounded_channel();
+    let (forwarded_tcpip_sender, _) =
+        tokio::sync::mpsc::channel(PORT_FORWARD_PENDING_CONNECTION_CAPACITY);
     let handler = SshClientHandler {
         identity: profile.identity.clone(),
         shared: Arc::clone(shared),
@@ -5090,7 +5187,7 @@ async fn execute_sftp_input_line(
     match session.execute_line(&line).await {
         Ok(outcome) => {
             update_sftp_working_directories(working_directories, session);
-            emit_sftp_output(shared, format_sftp_outcome(&outcome));
+            emit_sftp_outcome(shared, &outcome);
             if !matches!(outcome, sftp::SftpCommandOutcome::SessionClosed) {
                 emit_sftp_prompt(shared, profile, session);
                 return Ok(false);
@@ -5460,9 +5557,9 @@ fn liveness_probe_due(
 }
 
 async fn run_authenticated_channel(
-    handle: russh::client::Handle<SshClientHandler>,
+    handle: Arc<russh::client::Handle<SshClientHandler>>,
     mut channel: russh::Channel<russh::client::Msg>,
-    mut forwarded_tcpip_receiver: tokio::sync::mpsc::UnboundedReceiver<ForwardedTcpIpConnection>,
+    mut forwarded_tcpip_receiver: tokio::sync::mpsc::Receiver<ForwardedTcpIpConnection>,
     initial_profile_port_forwards: Vec<RequestedSshPortForward>,
     command_receiver: &WorkerCommandReceiver,
     shared: &Arc<WorkerShared>,
@@ -5475,11 +5572,14 @@ async fn run_authenticated_channel(
     // change hook), which is checked on every tick regardless of this
     // deadline.
     let mut next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
-    let (local_forward_sender, mut local_forward_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (local_forward_sender, mut local_forward_receiver) =
+        tokio::sync::mpsc::channel(PORT_FORWARD_PENDING_CONNECTION_CAPACITY);
     let mut local_forward_receiver_closed = false;
     let mut forwarded_tcpip_receiver_closed = false;
     let mut active_port_forwards = Vec::new();
     let mut pending_commands = VecDeque::new();
+    let attempt_limiter = PortForwardAttemptLimiter::new(MAX_IN_FLIGHT_PORT_FORWARD_CONNECTIONS);
+    let mut port_forward_attempts = tokio::task::JoinSet::new();
     if !initial_profile_port_forwards.is_empty() {
         pending_commands.push_back(WorkerCommand::ApplyPortForwards(
             initial_profile_port_forwards,
@@ -5492,8 +5592,14 @@ async fn run_authenticated_channel(
             shared.take_liveness_check_requested(),
         );
         if probe_due {
-            if !probe_liveness(&handle).await {
-                teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+            if !probe_liveness(handle.as_ref()).await {
+                teardown_port_forwards(
+                    Some(handle.as_ref()),
+                    &mut active_port_forwards,
+                    &mut port_forward_attempts,
+                    shared,
+                )
+                .await;
                 return RunningOutcome::ConnectionLost(
                     "SSH liveness probe did not receive a response",
                 );
@@ -5501,37 +5607,68 @@ async fn run_authenticated_channel(
             next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
         }
         tokio::select! {
+            result = port_forward_attempts.join_next(), if !port_forward_attempts.is_empty() => {
+                let _ = result;
+            }
             message = channel.wait() => match message {
                 Some(russh::ChannelMsg::Data { data }) => emit_channel_output(shared, data.as_ref()),
                 Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                    teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                    teardown_port_forwards(
+                        Some(handle.as_ref()),
+                        &mut active_port_forwards,
+                        &mut port_forward_attempts,
+                        shared,
+                    ).await;
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_exit_code(exit_status));
                 }
                 Some(russh::ChannelMsg::ExitSignal { .. }) => {
-                    teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                    teardown_port_forwards(
+                        Some(handle.as_ref()),
+                        &mut active_port_forwards,
+                        &mut port_forward_attempts,
+                        shared,
+                    ).await;
                     return RunningOutcome::Exited(festerm_session::SessionExit::with_signal(0, "remote signal"));
                 }
                 Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => {
-                    teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                    teardown_port_forwards(
+                        Some(handle.as_ref()),
+                        &mut active_port_forwards,
+                        &mut port_forward_attempts,
+                        shared,
+                    ).await;
                     return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
                 }
                 Some(_) => {}
             },
             accepted = local_forward_receiver.recv(), if !local_forward_receiver_closed => match accepted {
                 Some(accepted) => {
-                    handle_local_forward_connection(&handle, accepted, &active_port_forwards, shared).await;
+                    handle_local_forward_connection(
+                        &handle,
+                        accepted,
+                        &mut active_port_forwards,
+                        shared,
+                        &attempt_limiter,
+                        &mut port_forward_attempts,
+                    );
                 }
                 None => local_forward_receiver_closed = true,
             },
             forwarded = forwarded_tcpip_receiver.recv(), if !forwarded_tcpip_receiver_closed => match forwarded {
                 Some(forwarded) => {
-                    handle_forwarded_tcpip_connection(forwarded, &active_port_forwards, shared).await;
+                    handle_forwarded_tcpip_connection(
+                        forwarded,
+                        &mut active_port_forwards,
+                        shared,
+                        &attempt_limiter,
+                        &mut port_forward_attempts,
+                    );
                 }
                 None => forwarded_tcpip_receiver_closed = true,
             },
             _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
                 match process_authenticated_commands(
-                    &handle,
+                    handle.as_ref(),
                     &mut channel,
                     &mut pending_commands,
                     &mut active_port_forwards,
@@ -5542,18 +5679,46 @@ async fn run_authenticated_channel(
                 ).await {
                     Ok(AuthenticatedCommandOutcome::Continue) => {}
                     Ok(AuthenticatedCommandOutcome::Shutdown) => {
-                        teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                        teardown_port_forwards(
+                            Some(handle.as_ref()),
+                            &mut active_port_forwards,
+                            &mut port_forward_attempts,
+                            shared,
+                        ).await;
                         return RunningOutcome::Shutdown(
-                            stop_handle(handle, shared).await.unwrap_or(ShutdownResult::Stopped)
+                            stop_handle(
+                                Arc::try_unwrap(handle).unwrap_or_else(|_| {
+                                    panic!("port-forward tasks must release the SSH handle")
+                                }),
+                                shared,
+                            )
+                            .await
+                            .unwrap_or(ShutdownResult::Stopped)
                         );
                     }
                     Ok(AuthenticatedCommandOutcome::Reconnect) => {
-                        teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
-                        let _ = stop_handle(handle, shared).await;
+                        teardown_port_forwards(
+                            Some(handle.as_ref()),
+                            &mut active_port_forwards,
+                            &mut port_forward_attempts,
+                            shared,
+                        ).await;
+                        let _ = stop_handle(
+                            Arc::try_unwrap(handle).unwrap_or_else(|_| {
+                                panic!("port-forward tasks must release the SSH handle")
+                            }),
+                            shared,
+                        )
+                        .await;
                         return RunningOutcome::ReconnectRequested;
                     }
                     Err(_) => {
-                        teardown_port_forwards(Some(&handle), &mut active_port_forwards, shared).await;
+                        teardown_port_forwards(
+                            Some(handle.as_ref()),
+                            &mut active_port_forwards,
+                            &mut port_forward_attempts,
+                            shared,
+                        ).await;
                         return RunningOutcome::ConnectionLost("SSH connection ended unexpectedly");
                     }
                 }
@@ -5574,9 +5739,9 @@ async fn process_authenticated_commands(
     channel: &mut russh::Channel<russh::client::Msg>,
     pending_commands: &mut VecDeque<WorkerCommand>,
     active_port_forwards: &mut Vec<ActivePortForward>,
-    local_forward_sender: &tokio::sync::mpsc::UnboundedSender<AcceptedLocalForwardConnection>,
+    local_forward_sender: &tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
     command_receiver: &WorkerCommandReceiver,
-    shared: &WorkerShared,
+    shared: &Arc<WorkerShared>,
     host_key_gate: &HostKeyDecisionGate,
 ) -> Result<AuthenticatedCommandOutcome, SessionError> {
     if shared.shutdown_requested() {
@@ -5693,8 +5858,8 @@ async fn apply_port_forward(
     handle: &russh::client::Handle<SshClientHandler>,
     requested: RequestedSshPortForward,
     active_port_forwards: &mut Vec<ActivePortForward>,
-    local_forward_sender: &tokio::sync::mpsc::UnboundedSender<AcceptedLocalForwardConnection>,
-    shared: &WorkerShared,
+    local_forward_sender: &tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
+    shared: &Arc<WorkerShared>,
 ) {
     if active_port_forwards.iter().any(|forward| {
         forward.key()
@@ -5719,7 +5884,8 @@ async fn apply_port_forward(
 
     let runtime_result = match requested.direction {
         SshPortForwardDirection::Local => {
-            start_local_port_forward(&requested, local_forward_sender.clone()).await
+            start_local_port_forward(&requested, local_forward_sender.clone(), Arc::clone(shared))
+                .await
         }
         SshPortForwardDirection::Remote => start_remote_port_forward(handle, &requested).await,
     };
@@ -5742,7 +5908,8 @@ async fn apply_port_forward(
 
 async fn start_local_port_forward(
     requested: &RequestedSshPortForward,
-    local_forward_sender: tokio::sync::mpsc::UnboundedSender<AcceptedLocalForwardConnection>,
+    local_forward_sender: tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
+    shared: Arc<WorkerShared>,
 ) -> Result<ActivePortForwardHandle, String> {
     let listener =
         tokio::net::TcpListener::bind((requested.bind_host.as_str(), requested.bind_port))
@@ -5764,13 +5931,25 @@ async fn start_local_port_forward(
                 }
                 accepted = listener.accept() => match accepted {
                     Ok((stream, address)) => {
-                        if local_forward_sender.send(AcceptedLocalForwardConnection {
+                        match local_forward_sender.try_send(AcceptedLocalForwardConnection {
                             key: key.clone(),
                             stream,
                             originator_address: address.ip().to_string(),
                             originator_port: address.port(),
-                        }).is_err() {
-                            break;
+                        }) {
+                            Ok(()) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                report_port_forward_error(
+                                    &shared,
+                                    format!(
+                                        "SSH local port forward on {}:{} rejected an accepted connection because {} connections were already pending",
+                                        key.bind_host,
+                                        key.bind_port,
+                                        PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
+                                    ),
+                                );
+                            }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
                         }
                     }
                     Err(_) => tokio::time::sleep(COMMAND_POLL_INTERVAL).await,
@@ -5837,11 +6016,14 @@ async fn remove_port_forward(
 async fn teardown_port_forwards(
     handle: Option<&russh::client::Handle<SshClientHandler>>,
     active_port_forwards: &mut Vec<ActivePortForward>,
+    port_forward_attempts: &mut tokio::task::JoinSet<()>,
     shared: &WorkerShared,
 ) {
     while let Some(forward) = active_port_forwards.pop() {
         stop_active_port_forward(handle, forward).await;
     }
+    port_forward_attempts.abort_all();
+    while port_forward_attempts.join_next().await.is_some() {}
     emit_port_forward_snapshot(shared, active_port_forwards);
 }
 
@@ -5871,13 +6053,15 @@ async fn stop_active_port_forward(
     }
 }
 
-async fn handle_local_forward_connection(
-    handle: &russh::client::Handle<SshClientHandler>,
+fn handle_local_forward_connection(
+    handle: &Arc<russh::client::Handle<SshClientHandler>>,
     accepted: AcceptedLocalForwardConnection,
-    active_port_forwards: &[ActivePortForward],
-    shared: &WorkerShared,
+    active_port_forwards: &mut [ActivePortForward],
+    shared: &Arc<WorkerShared>,
+    attempt_limiter: &PortForwardAttemptLimiter,
+    port_forward_attempts: &mut tokio::task::JoinSet<()>,
 ) {
-    let Some(forward) = active_port_forwards.iter().find(|forward| {
+    let Some(forward) = active_port_forwards.iter_mut().find(|forward| {
         forward.runtime.state() == SshPortForwardState::Active && forward.key() == accepted.key
     }) else {
         return;
@@ -5885,107 +6069,188 @@ async fn handle_local_forward_connection(
     let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
         return;
     };
-    let channel = match tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        handle.channel_open_direct_tcpip(
-            forward.requested.destination_host.clone(),
-            u32::from(forward.requested.destination_port),
-            accepted.originator_address,
-            u32::from(accepted.originator_port),
-        ),
-    )
-    .await
-    {
-        Ok(Ok(channel)) => channel,
-        Ok(Err(error)) => {
-            report_port_forward_error(
-                shared,
-                format!(
-                    "SSH local port forward {}:{} -> {}:{} could not open a channel: {error}",
-                    forward.requested.bind_host,
-                    forward.requested.bind_port,
-                    forward.requested.destination_host,
-                    forward.requested.destination_port,
-                ),
-            );
-            return;
-        }
-        Err(_) => {
-            report_port_forward_error(
-                shared,
-                format!(
-                    "SSH local port forward {}:{} -> {}:{} timed out while opening a channel",
-                    forward.requested.bind_host,
-                    forward.requested.bind_port,
-                    forward.requested.destination_host,
-                    forward.requested.destination_port,
-                ),
-            );
-            return;
-        }
+    let Some(_permit) = attempt_limiter.try_acquire() else {
+        report_port_forward_error(
+            shared,
+            format!(
+                "SSH local port forward {}:{} -> {}:{} rejected a connection because {} forwarded connections were already in flight",
+                forward.requested.bind_host,
+                forward.requested.bind_port,
+                forward.requested.destination_host,
+                forward.requested.destination_port,
+                attempt_limiter.max_in_flight(),
+            ),
+        );
+        return;
     };
-    tokio::spawn(async move {
-        bridge_tcp_and_ssh(accepted.stream, channel, shutdown_receiver).await;
+    let requested = forward.requested.clone();
+    let handle = Arc::clone(handle);
+    let shared = Arc::clone(shared);
+    port_forward_attempts.spawn(async move {
+        run_local_forward_connection(
+            handle,
+            accepted,
+            requested,
+            shutdown_receiver,
+            shared,
+            _permit,
+        )
+        .await;
     });
 }
 
-async fn handle_forwarded_tcpip_connection(
-    forwarded: ForwardedTcpIpConnection,
-    active_port_forwards: &[ActivePortForward],
-    shared: &WorkerShared,
+async fn run_local_forward_connection(
+    handle: Arc<russh::client::Handle<SshClientHandler>>,
+    accepted: AcceptedLocalForwardConnection,
+    requested: RequestedSshPortForward,
+    mut shutdown_receiver: tokio::sync::watch::Receiver<bool>,
+    shared: Arc<WorkerShared>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
-    let Some(forward) = active_port_forwards.iter().find(|forward| {
+    let channel = tokio::select! {
+        changed = shutdown_receiver.changed() => {
+            let _ = changed;
+            return;
+        }
+        result = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            handle.channel_open_direct_tcpip(
+                requested.destination_host.clone(),
+                u32::from(requested.destination_port),
+                accepted.originator_address,
+                u32::from(accepted.originator_port),
+            ),
+        ) => match result {
+            Ok(Ok(channel)) => channel,
+            Ok(Err(error)) => {
+                report_port_forward_error(
+                    &shared,
+                    format!(
+                        "SSH local port forward {}:{} -> {}:{} could not open a channel: {error}",
+                        requested.bind_host,
+                        requested.bind_port,
+                        requested.destination_host,
+                        requested.destination_port,
+                    ),
+                );
+                return;
+            }
+            Err(_) => {
+                report_port_forward_error(
+                    &shared,
+                    format!(
+                        "SSH local port forward {}:{} -> {}:{} timed out while opening a channel",
+                        requested.bind_host,
+                        requested.bind_port,
+                        requested.destination_host,
+                        requested.destination_port,
+                    ),
+                );
+                return;
+            }
+        }
+    };
+    bridge_tcp_and_ssh(accepted.stream, channel, shutdown_receiver).await;
+}
+
+fn handle_forwarded_tcpip_connection(
+    forwarded: ForwardedTcpIpConnection,
+    active_port_forwards: &mut [ActivePortForward],
+    shared: &Arc<WorkerShared>,
+    attempt_limiter: &PortForwardAttemptLimiter,
+    port_forward_attempts: &mut tokio::task::JoinSet<()>,
+) {
+    let Some(forward) = active_port_forwards.iter_mut().find(|forward| {
         forward.runtime.state() == SshPortForwardState::Active && forward.key() == forwarded.key
     }) else {
-        let _ = forwarded.channel.close().await;
+        port_forward_attempts.spawn(async move {
+            let _ = forwarded.channel.close().await;
+        });
         return;
     };
     let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
-        let _ = forwarded.channel.close().await;
+        port_forward_attempts.spawn(async move {
+            let _ = forwarded.channel.close().await;
+        });
         return;
     };
-    let stream = match tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        tokio::net::TcpStream::connect((
-            forward.requested.destination_host.as_str(),
-            forward.requested.destination_port,
-        )),
-    )
-    .await
-    {
-        Ok(Ok(stream)) => stream,
-        Ok(Err(error)) => {
-            report_port_forward_error(
-                shared,
-                format!(
-                    "SSH remote port forward {}:{} -> {}:{} could not connect locally: {error}",
-                    forward.requested.bind_host,
-                    forward.requested.bind_port,
-                    forward.requested.destination_host,
-                    forward.requested.destination_port,
-                ),
-            );
+    let Some(_permit) = attempt_limiter.try_acquire() else {
+        report_port_forward_error(
+            shared,
+            format!(
+                "SSH remote port forward {}:{} -> {}:{} rejected a connection because {} forwarded connections were already in flight",
+                forward.requested.bind_host,
+                forward.requested.bind_port,
+                forward.requested.destination_host,
+                forward.requested.destination_port,
+                attempt_limiter.max_in_flight(),
+            ),
+        );
+        port_forward_attempts.spawn(async move {
+            let _ = forwarded.channel.close().await;
+        });
+        return;
+    };
+    let requested = forward.requested.clone();
+    let shared = Arc::clone(shared);
+    port_forward_attempts.spawn(async move {
+        run_forwarded_tcpip_connection(forwarded, requested, shutdown_receiver, shared, _permit)
+            .await;
+    });
+}
+
+async fn run_forwarded_tcpip_connection(
+    forwarded: ForwardedTcpIpConnection,
+    requested: RequestedSshPortForward,
+    mut shutdown_receiver: tokio::sync::watch::Receiver<bool>,
+    shared: Arc<WorkerShared>,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let stream = tokio::select! {
+        changed = shutdown_receiver.changed() => {
+            let _ = changed;
             let _ = forwarded.channel.close().await;
             return;
         }
-        Err(_) => {
-            report_port_forward_error(
-                shared,
-                format!(
-                    "SSH remote port forward {}:{} -> {}:{} timed out while connecting locally",
-                    forward.requested.bind_host,
-                    forward.requested.bind_port,
-                    forward.requested.destination_host,
-                    forward.requested.destination_port,
-                ),
-            );
-            let _ = forwarded.channel.close().await;
-            return;
+        result = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            tokio::net::TcpStream::connect((
+                requested.destination_host.as_str(),
+                requested.destination_port,
+            )),
+        ) => match result {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(error)) => {
+                report_port_forward_error(
+                    &shared,
+                    format!(
+                        "SSH remote port forward {}:{} -> {}:{} could not connect locally: {error}",
+                        requested.bind_host,
+                        requested.bind_port,
+                        requested.destination_host,
+                        requested.destination_port,
+                    ),
+                );
+                let _ = forwarded.channel.close().await;
+                return;
+            }
+            Err(_) => {
+                report_port_forward_error(
+                    &shared,
+                    format!(
+                        "SSH remote port forward {}:{} -> {}:{} timed out while connecting locally",
+                        requested.bind_host,
+                        requested.bind_port,
+                        requested.destination_host,
+                        requested.destination_port,
+                    ),
+                );
+                let _ = forwarded.channel.close().await;
+                return;
+            }
         }
     };
-    tokio::spawn(async move {
-        bridge_tcp_and_ssh(stream, forwarded.channel, shutdown_receiver).await;
-    });
+    bridge_tcp_and_ssh(stream, forwarded.channel, shutdown_receiver).await;
 }
 
 async fn bridge_tcp_and_ssh(
@@ -6253,6 +6518,55 @@ mod tests {
         assert!(output.starts_with("Listing for /remote:\r\n"));
         assert!(output.contains("dir  0755          - docs\r\n"));
         assert!(output.contains("file 0644         42 readme.txt\r\n"));
+    }
+
+    #[test]
+    fn large_sftp_directory_listings_are_emitted_without_dropping_lines() {
+        let (worker, _receiver, _resolver, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            4,
+            512,
+            noop_session_event_notifier(),
+        );
+        let entries = (0..5000)
+            .map(|index| sftp::SftpDirectoryEntry {
+                name: format!("entry-{index:04}.txt"),
+                path: format!("/remote/entry-{index:04}.txt"),
+                file_type: sftp::SftpEntryType::File,
+                size: Some(index as u64),
+                permissions: Some(0o644),
+            })
+            .collect::<Vec<_>>();
+        let outcome = sftp::SftpCommandOutcome::DirectoryListing {
+            path: "/remote".to_owned(),
+            entries,
+        };
+        let expected = format_sftp_outcome(&outcome);
+
+        emit_sftp_outcome(&worker.shared, &outcome);
+
+        let mut chunk_count = 0;
+        let mut actual = Vec::new();
+        loop {
+            match worker.try_recv_event() {
+                Ok(SessionEvent::Output(bytes)) => {
+                    chunk_count += 1;
+                    assert!(
+                        bytes.len() <= MAX_IO_CHUNK_BYTES,
+                        "chunked SFTP output must stay within the session output bound"
+                    );
+                    actual.extend_from_slice(&bytes);
+                }
+                Ok(_) => {}
+                Err(SessionTryReceiveError::Empty | SessionTryReceiveError::Closed) => break,
+            }
+        }
+
+        assert!(
+            chunk_count > 1,
+            "large listings should be split into multiple chunks"
+        );
+        assert_eq!(String::from_utf8(actual).unwrap(), expected);
     }
 
     #[test]
@@ -6807,6 +7121,25 @@ mod tests {
         assert_eq!(
             worker.try_remove_port_forward(SshPortForwardDirection::Local, "127.0.0.1", 19003,),
             Err(SshPortForwardRequestError::NotRunning)
+        );
+    }
+
+    #[test]
+    fn port_forward_attempt_limit_rejects_excess_in_flight_connections() {
+        let limiter = PortForwardAttemptLimiter::new(1);
+        let first = limiter
+            .try_acquire()
+            .expect("first in-flight connection should reserve the only permit");
+
+        assert!(
+            limiter.try_acquire().is_none(),
+            "once the limit is reached, new forwarded connections must be rejected instead of growing unbounded state"
+        );
+
+        drop(first);
+        assert!(
+            limiter.try_acquire().is_some(),
+            "releasing an in-flight attempt should make room for the next one"
         );
     }
 
@@ -7796,7 +8129,10 @@ mod tests {
                 shared,
                 host_key_gate: gate,
                 host_key_rejected: Arc::new(AtomicBool::new(false)),
-                forwarded_tcpip_sender: tokio::sync::mpsc::unbounded_channel().0,
+                forwarded_tcpip_sender: tokio::sync::mpsc::channel(
+                    PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
+                )
+                .0,
                 expected_fingerprint: None,
             };
             runtime
@@ -7839,7 +8175,10 @@ mod tests {
             shared,
             host_key_gate: gate,
             host_key_rejected: Arc::new(AtomicBool::new(false)),
-            forwarded_tcpip_sender: tokio::sync::mpsc::unbounded_channel().0,
+            forwarded_tcpip_sender: tokio::sync::mpsc::channel(
+                PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
+            )
+            .0,
             expected_fingerprint: Some(
                 "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ".to_owned(),
             ),
@@ -7887,7 +8226,10 @@ mod tests {
                 shared,
                 host_key_gate: gate,
                 host_key_rejected: Arc::new(AtomicBool::new(false)),
-                forwarded_tcpip_sender: tokio::sync::mpsc::unbounded_channel().0,
+                forwarded_tcpip_sender: tokio::sync::mpsc::channel(
+                    PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
+                )
+                .0,
                 expected_fingerprint: Some("SHA256:previouslyTrustedButDifferent".to_owned()),
             };
             runtime

@@ -760,10 +760,10 @@
         "ADR-0028"
       ],
       "automated_tests": [
-        "settings_accept_existing_default_sftp_local_directory",
-        "settings_reject_missing_default_sftp_local_directory",
+        "settings_auto_applies_default_sftp_local_directory_edits",
+        "settings_accept_missing_default_sftp_local_directory_metadata",
         "default_sftp_local_directory_round_trips_through_toml",
-        "missing_default_sftp_local_directory_is_rejected"
+        "missing_default_sftp_local_directory_is_allowed"
       ],
       "manual_scenarios": [],
       "status": "partial",

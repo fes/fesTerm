@@ -12,10 +12,9 @@
 
 use std::{sync::mpsc, time::Instant};
 
-use festerm_config::{SshPortForwardConfiguration, SshPortForwardDirection};
 use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 
-use crate::tabs::TabId;
+use crate::{port_forward_draft::PortForwardDraft as LivePortForwardDraft, tabs::TabId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloseConsequence {
@@ -80,54 +79,6 @@ pub(crate) struct PendingFileDropConfirmation {
 #[derive(Clone, Debug)]
 pub(crate) struct PendingSettingsResetConfirmation {
     pub(crate) cancel_focus_requested: bool,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct LivePortForwardDraft {
-    pub(crate) direction: SshPortForwardDirection,
-    pub(crate) bind_host: String,
-    pub(crate) bind_port: String,
-    pub(crate) destination_host: String,
-    pub(crate) destination_port: String,
-}
-
-impl Default for LivePortForwardDraft {
-    fn default() -> Self {
-        Self {
-            direction: SshPortForwardDirection::Local,
-            bind_host: "127.0.0.1".to_owned(),
-            bind_port: String::new(),
-            destination_host: String::new(),
-            destination_port: String::new(),
-        }
-    }
-}
-
-impl LivePortForwardDraft {
-    pub(crate) fn build(&self) -> Result<SshPortForwardConfiguration, String> {
-        let bind_port: u16 = self
-            .bind_port
-            .trim()
-            .parse()
-            .map_err(|_| "Bind port must be a number between 1 and 65535".to_owned())?;
-        let destination_port: u16 = self
-            .destination_port
-            .trim()
-            .parse()
-            .map_err(|_| "Destination port must be a number between 1 and 65535".to_owned())?;
-        SshPortForwardConfiguration::new(
-            self.direction,
-            self.bind_host.trim(),
-            bind_port,
-            self.destination_host.trim(),
-            destination_port,
-        )
-        .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn reset(&mut self) {
-        *self = Self::default();
-    }
 }
 
 #[derive(Clone, Debug)]
