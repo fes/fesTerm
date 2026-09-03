@@ -257,6 +257,18 @@ pub(crate) struct Scrollback {
     screen_row_origin: u64,
     oversize_lines: u64,
     active_oversize_line: Option<(u64, usize)>,
+    /// Absolute (never-decreasing, coordinate-space matching
+    /// `content_row_origin`/`screen_row_origin`) physical-row index of each
+    /// retained line's first row, kept in lockstep with `lines` (always
+    /// `line_row_starts.len() == lines.len()`). This exists purely so
+    /// [`Self::physical_row`]/[`Self::physical_row_soft_wrapped`] can binary
+    /// search for the line containing a given retained-physical-row index
+    /// instead of linearly scanning every line from the oldest one on every
+    /// call - the render path queries one of these per visible cell, so a
+    /// linear scan made rendering any scrolled view into a large scrollback
+    /// (e.g. after a `dir /s` on a big tree) cost `O(rows_visible *
+    /// total_retained_physical_rows)` per frame.
+    line_row_starts: VecDeque<u64>,
     #[cfg(test)]
     trim_compactions: u64,
 }
@@ -273,6 +285,7 @@ impl Scrollback {
             screen_row_origin: 0,
             oversize_lines: 0,
             active_oversize_line: None,
+            line_row_starts: VecDeque::new(),
             #[cfg(test)]
             trim_compactions: 0,
         }
@@ -304,6 +317,13 @@ impl Scrollback {
         }
 
         if self.lines.back().is_none_or(|line| line.hard_break) {
+            // This row starts a brand-new retained line, at the absolute
+            // physical-row coordinate this row itself occupies (see
+            // `line_row_starts`'s doc comment): `screen_row_origin` was
+            // already incremented above for this row, so `- 1` is its own
+            // coordinate.
+            self.line_row_starts
+                .push_back(self.screen_row_origin.saturating_sub(1));
             let continued_oversize = self
                 .lines
                 .is_empty()
@@ -376,6 +396,7 @@ impl Scrollback {
             let Some(removed) = self.lines.pop_front() else {
                 break;
             };
+            self.line_row_starts.pop_front();
             self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
             self.evicted_lines = self.evicted_lines.saturating_add(1);
             self.content_row_origin = self
@@ -387,6 +408,7 @@ impl Scrollback {
     pub(crate) fn clear(&mut self) {
         self.content_row_origin = self.screen_row_origin;
         self.lines.clear();
+        self.line_row_starts.clear();
         self.charged_bytes = 0;
         self.active_oversize_line = None;
     }
@@ -398,13 +420,16 @@ impl Scrollback {
     /// row-index capacity, so the caller re-applies the bound after splitting
     /// the live-screen tail back out.
     pub(crate) fn reflow(&mut self, columns: usize) {
-        for line in &mut self.lines {
+        let mut cursor = self.content_row_origin;
+        for (line, start) in self.lines.iter_mut().zip(self.line_row_starts.iter_mut()) {
             let prior_charge = line.charged_bytes;
             line.reflow(columns);
             self.charged_bytes = self
                 .charged_bytes
                 .saturating_sub(prior_charge)
                 .saturating_add(line.charged_bytes);
+            *start = cursor;
+            cursor = cursor.saturating_add(line.physical_rows as u64);
         }
     }
 
@@ -415,6 +440,55 @@ impl Scrollback {
     /// Total physical rows across every retained logical line.
     pub(crate) fn total_physical_rows(&self) -> usize {
         self.lines.iter().map(|line| line.physical_rows).sum()
+    }
+
+    /// Finds the index into `self.lines`/`self.line_row_starts` of the line
+    /// containing absolute physical-row coordinate `target`, via binary
+    /// search over the monotonically increasing `line_row_starts`. Returns
+    /// `None` if `target` precedes the first retained line (shouldn't
+    /// happen for valid callers) or there are no retained lines.
+    fn line_index_for_absolute_row(&self, target: u64) -> Option<usize> {
+        if self.line_row_starts.is_empty() {
+            return None;
+        }
+        // Manual binary search: find the last index `i` with
+        // `line_row_starts[i] <= target`. `VecDeque` doesn't expose
+        // `slice::binary_search` directly without `make_contiguous`, so this
+        // walks the same halving pattern by index instead.
+        let (mut low, mut high) = (0usize, self.line_row_starts.len());
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.line_row_starts[mid] <= target {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low.checked_sub(1)
+    }
+
+    /// Looks up the cells of retained physical row `row` (0-indexed from the
+    /// oldest retained row, i.e. relative to `content_row_origin`) in
+    /// `O(log lines)` time instead of the `O(lines)` linear scan this
+    /// replaces. This is called once per visible cell's column during
+    /// rendering, so it needs to stay cheap even against a scrollback with
+    /// many thousands of retained lines (e.g. after a large `dir /s`).
+    pub(crate) fn physical_row(&self, row: usize) -> Option<&[Cell]> {
+        let target = self.content_row_origin.saturating_add(row as u64);
+        let index = self.line_index_for_absolute_row(target)?;
+        let line = &self.lines[index];
+        let local = usize::try_from(target - self.line_row_starts[index]).ok()?;
+        line.physical_row(local)
+    }
+
+    /// Same lookup as [`Self::physical_row`], but reporting whether that row
+    /// is soft-wrapped into the next one rather than its cell content.
+    pub(crate) fn physical_row_soft_wrapped(&self, row: usize) -> Option<bool> {
+        let target = self.content_row_origin.saturating_add(row as u64);
+        let index = self.line_index_for_absolute_row(target)?;
+        let line = &self.lines[index];
+        let local = usize::try_from(target - self.line_row_starts[index]).ok()?;
+        line.physical_row_soft_wrapped(local)
     }
 
     /// Captures a stable logical anchor (line identity plus cell-stream
@@ -474,6 +548,7 @@ impl Scrollback {
             let Some(mut line) = self.lines.pop_back() else {
                 break;
             };
+            let line_start = self.line_row_starts.pop_back();
             self.charged_bytes = self.charged_bytes.saturating_sub(line.charged_bytes);
             if line.physical_rows <= remaining {
                 remaining -= line.physical_rows;
@@ -521,6 +596,8 @@ impl Scrollback {
                 line.recalculate_charge();
                 self.charged_bytes = self.charged_bytes.saturating_add(line.charged_bytes);
                 self.lines.push_back(line);
+                self.line_row_starts
+                    .push_back(line_start.expect("popped a line, so its start exists"));
                 remaining = 0;
             }
         }
@@ -576,6 +653,9 @@ impl Scrollback {
                 .saturating_sub(prior_charge.saturating_sub(line.charged_bytes));
         }
         self.content_row_origin = self.content_row_origin.saturating_add(removed_rows as u64);
+        if let Some(start) = self.line_row_starts.front_mut() {
+            *start = start.saturating_add(removed_rows as u64);
+        }
         if removed_rows > 0 {
             if self.active_oversize_line.map(|(id, _)| id) != Some(line_id) {
                 self.oversize_lines = self.oversize_lines.saturating_add(1);
@@ -584,6 +664,7 @@ impl Scrollback {
         }
         if line.physical_rows() == 0 {
             let removed = self.lines.pop_front().expect("front line exists");
+            self.line_row_starts.pop_front();
             self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
         }
     }
@@ -684,5 +765,134 @@ mod tests {
 
         scrollback.reflow(3);
         assert_eq!(scrollback.resolve_anchor(anchor), Some((1, 1)));
+    }
+
+    /// Recomputes a physical row by linearly scanning `lines()` from the
+    /// oldest retained line - the same logic `physical_row`/
+    /// `physical_row_soft_wrapped` replaced - so the indexed lookup's
+    /// answers can be cross-checked against it.
+    fn linear_physical_row(scrollback: &Scrollback, mut row: usize) -> Option<&[super::Cell]> {
+        for line in scrollback.lines() {
+            if row < line.physical_rows() {
+                return line.physical_row(row);
+            }
+            row -= line.physical_rows();
+        }
+        None
+    }
+
+    fn linear_physical_row_soft_wrapped(scrollback: &Scrollback, mut row: usize) -> Option<bool> {
+        for line in scrollback.lines() {
+            if row < line.physical_rows() {
+                return line.physical_row_soft_wrapped(row);
+            }
+            row -= line.physical_rows();
+        }
+        None
+    }
+
+    fn assert_indexed_lookup_matches_linear_scan(scrollback: &Scrollback) {
+        let total = scrollback.total_physical_rows();
+        for row in 0..total + 2 {
+            assert_eq!(
+                scrollback.physical_row(row),
+                linear_physical_row(scrollback, row),
+                "physical_row mismatch at row {row}"
+            );
+            assert_eq!(
+                scrollback.physical_row_soft_wrapped(row),
+                linear_physical_row_soft_wrapped(scrollback, row),
+                "physical_row_soft_wrapped mismatch at row {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_physical_row_lookup_matches_linear_scan_after_evictions() {
+        let mut scrollback = Scrollback::new(2_000);
+        // Push many short hard-broken lines so `evict_complete_lines` runs
+        // repeatedly, exercising `line_row_starts`'s front-eviction upkeep.
+        for i in 0..200u32 {
+            scrollback.push_rows(vec![ScreenRow {
+                cells: vec![blank_cell(); 1 + (i as usize % 5)],
+                soft_wrapped: false,
+            }]);
+        }
+        assert!(scrollback.stats().evicted_lines() > 0);
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+    }
+
+    #[test]
+    fn indexed_physical_row_lookup_matches_linear_scan_with_soft_wrapped_lines() {
+        let mut scrollback = Scrollback::new(10_000);
+        for i in 0..50u32 {
+            scrollback.push_rows(vec![
+                ScreenRow {
+                    cells: vec![blank_cell(); 3],
+                    soft_wrapped: true,
+                },
+                ScreenRow {
+                    cells: vec![blank_cell(); 3],
+                    soft_wrapped: true,
+                },
+                ScreenRow {
+                    cells: vec![blank_cell(); 1 + (i as usize % 3)],
+                    soft_wrapped: false,
+                },
+            ]);
+        }
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+    }
+
+    #[test]
+    fn indexed_physical_row_lookup_matches_linear_scan_after_reflow() {
+        let mut scrollback = Scrollback::new(10_000);
+        for _ in 0..40u32 {
+            scrollback.push_rows(vec![
+                ScreenRow {
+                    cells: vec![blank_cell(); 6],
+                    soft_wrapped: false,
+                },
+                ScreenRow {
+                    cells: vec![blank_cell(); 2],
+                    soft_wrapped: false,
+                },
+            ]);
+        }
+        scrollback.reflow(3);
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+        scrollback.reflow(9);
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+    }
+
+    #[test]
+    fn indexed_physical_row_lookup_matches_linear_scan_after_split_off_tail() {
+        let mut scrollback = Scrollback::new(10_000);
+        for _ in 0..30u32 {
+            scrollback.push_rows(vec![ScreenRow {
+                cells: vec![blank_cell(); 4],
+                soft_wrapped: false,
+            }]);
+        }
+        let removed = scrollback.split_off_tail(5);
+        assert_eq!(removed.len(), 5);
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+    }
+
+    #[test]
+    fn indexed_physical_row_lookup_matches_linear_scan_with_oversize_open_line_trim() {
+        // A single still-open (never hard-broken) line that alone exceeds
+        // the byte budget exercises `enforce_limit`'s front-of-line
+        // `trim_oldest_physical_rows_to` path, which shifts `line_row_starts`'
+        // own front entry rather than popping it.
+        let mut scrollback = Scrollback::new(500);
+        for _ in 0..200u32 {
+            scrollback.push_rows(vec![ScreenRow {
+                cells: vec![blank_cell(); 4],
+                soft_wrapped: true,
+            }]);
+            assert_indexed_lookup_matches_linear_scan(&scrollback);
+        }
+        assert!(scrollback.trim_compactions() > 0);
     }
 }
