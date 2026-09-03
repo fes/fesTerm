@@ -1389,6 +1389,128 @@ fn controlled_openssh_sftp_refuses_overwrite_without_mutating_destinations() {
 
 #[test]
 #[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_sftp_remote_directory_snapshot_contains_sortable_metadata() {
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let local_root = unique_sftp_artifact_root("snapshot");
+    recreate_directory(&local_root);
+    let local_upload = local_root.join("snapshot.txt");
+    fs::write(&local_upload, b"snapshot-fixture").expect("could not create local snapshot fixture");
+
+    let runtime = raw_russh_runtime();
+    runtime.block_on(async {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let (handle, mut session) =
+            connect_authenticated_sftp_session(&configuration, &local_root, deadline).await;
+        let remote_root_name = format!(
+            "festerm-sftp-snapshot-{}",
+            SFTP_INTEROP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
+
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("mkdir {remote_root_name}"),
+            deadline,
+            "create the remote snapshot test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("cd {remote_root_name}"),
+            deadline,
+            "change into the remote snapshot test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("put {}", quote_command_argument(&local_upload)),
+            deadline,
+            "upload the remote snapshot fixture",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "mkdir nested",
+            deadline,
+            "create a nested remote snapshot directory",
+        )
+        .await;
+
+        let snapshot = tokio::time::timeout(
+            remaining_until(deadline, "read remote snapshot metadata"),
+            session.remote_directory_snapshot(None),
+        )
+        .await
+        .expect("reading remote snapshot metadata should not time out")
+        .expect("remote snapshot metadata should load");
+
+        assert_eq!(snapshot.location, festerm_ssh::SftpLocation::Remote);
+        assert_eq!(
+            snapshot.path,
+            festerm_ssh::SftpPath::remote(format!("/home/festerm/{remote_root_name}"))
+        );
+        assert!(
+            snapshot.entries.iter().any(|entry| {
+                entry.name == "nested"
+                    && entry.file_type == SftpEntryType::Directory
+                    && entry.modified_at.is_some()
+            }),
+            "remote snapshot should include nested directory metadata"
+        );
+        assert!(
+            snapshot.entries.iter().any(|entry| {
+                entry.name == "snapshot.txt"
+                    && entry.file_type == SftpEntryType::File
+                    && entry.size == Some(16)
+                    && entry.modified_at.is_some()
+                    && entry.permissions.is_some()
+            }),
+            "remote snapshot should include file metadata for sorting columns"
+        );
+
+        let _ = run_sftp_command(
+            &mut session,
+            "rm snapshot.txt",
+            deadline,
+            "remove the remote snapshot fixture",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "rmdir nested",
+            deadline,
+            "remove the nested remote snapshot directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "cd ..",
+            deadline,
+            "leave the remote snapshot test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            &format!("rmdir {remote_root_name}"),
+            deadline,
+            "remove the remote snapshot test directory",
+        )
+        .await;
+        let _ = run_sftp_command(
+            &mut session,
+            "quit",
+            deadline,
+            "close the remote snapshot session",
+        )
+        .await;
+        shutdown_raw_handle(handle).await;
+    });
+
+    remove_directory_if_present(&local_root);
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
 fn controlled_openssh_sftp_mutating_commands_change_remote_state() {
     let configuration =
         OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
