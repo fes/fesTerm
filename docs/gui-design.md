@@ -1145,7 +1145,7 @@ name; it affects only future launches of that saved profile. The built-in
 **Local Shell** has no persistence control and always starts a fresh plain
 shell unless the user later resumes an already-running `festerm-sessiond`
 session from the Launcher. SSH profiles contain name, host, port, username,
-stored-password/private-key reference state, and an authentication
+stored-password/private-key reference state, saved port-forward mappings, and an authentication
 preference. Serial profiles contain name, exact device
 identifier, baud rate, data bits, parity, stop bits, and flow control. Profiles
 never contain passwords, private-key contents, terminal output, scrollback, or
@@ -1169,8 +1169,9 @@ buttons, plus "New Serial Profile" when serial support is available. Each row
 offers Edit, Duplicate, and Delete. Local editing currently covers
 name/executable/arguments/working directory and explicit local
 `festerm-sessiond`/tmux/screen persistence; SSH editing currently covers
-name/host/port/username, stored password/private-key replacement and removal,
-and tmux/screen durable-session settings. SSH-agent, key-file-path, and
+name/host/port/username, saved local/remote port forwards, stored
+password/private-key replacement and removal, and tmux/screen durable-session
+settings. SSH-agent, key-file-path, and
 OpenSSH-import UI remain future work. A profile's name is also its
 identifier, so it is validated as kebab-case (lowercase letters, digits,
 hyphens); an invalid or empty name/executable surfaces a single inline
