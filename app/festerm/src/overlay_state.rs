@@ -12,6 +12,7 @@
 
 use std::{sync::mpsc, time::Instant};
 
+use festerm_config::{SshPortForwardConfiguration, SshPortForwardDirection};
 use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 
 use crate::tabs::TabId;
@@ -81,6 +82,73 @@ pub(crate) struct PendingSettingsResetConfirmation {
     pub(crate) cancel_focus_requested: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct LivePortForwardDraft {
+    pub(crate) direction: SshPortForwardDirection,
+    pub(crate) bind_host: String,
+    pub(crate) bind_port: String,
+    pub(crate) destination_host: String,
+    pub(crate) destination_port: String,
+}
+
+impl Default for LivePortForwardDraft {
+    fn default() -> Self {
+        Self {
+            direction: SshPortForwardDirection::Local,
+            bind_host: "127.0.0.1".to_owned(),
+            bind_port: String::new(),
+            destination_host: String::new(),
+            destination_port: String::new(),
+        }
+    }
+}
+
+impl LivePortForwardDraft {
+    pub(crate) fn build(&self) -> Result<SshPortForwardConfiguration, String> {
+        let bind_port: u16 = self
+            .bind_port
+            .trim()
+            .parse()
+            .map_err(|_| "Bind port must be a number between 1 and 65535".to_owned())?;
+        let destination_port: u16 = self
+            .destination_port
+            .trim()
+            .parse()
+            .map_err(|_| "Destination port must be a number between 1 and 65535".to_owned())?;
+        SshPortForwardConfiguration::new(
+            self.direction,
+            self.bind_host.trim(),
+            bind_port,
+            self.destination_host.trim(),
+            destination_port,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LivePortForwardManager {
+    pub(crate) tab: TabId,
+    pub(crate) draft: LivePortForwardDraft,
+    pub(crate) error: Option<String>,
+    pub(crate) request_focus: bool,
+}
+
+impl LivePortForwardManager {
+    pub(crate) fn new(tab: TabId) -> Self {
+        Self {
+            tab,
+            draft: LivePortForwardDraft::default(),
+            error: None,
+            request_focus: true,
+        }
+    }
+}
+
 /// Aggregate confirmation shown once, for the whole application, when the
 /// OS requests that the window close while any session still has something
 /// to lose (`docs/gui-design.md` "Closing sessions and quitting",
@@ -133,18 +201,18 @@ impl PendingQuitConfirmation {
 pub(crate) struct PendingPasswordStore {
     pub(crate) receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
     pub(crate) profile_id: String,
-    pub(crate) options: festerm_ssh::SshSessionOptions,
     pub(crate) store: std::sync::Arc<dyn SecretStore>,
     /// Whether the profile should auto-launch once the credential finishes
-    /// saving. True for the live-connect form's "remember password"
-    /// checkbox (`AppCommand::StoreSshPassword`); false when the credential
-    /// is entered directly in the Profiles editor
-    /// (`AppCommand::StoreProfilePassword`/`AppCommand::StoreProfilePrivateKey`),
-    /// which has no session to launch.
-    pub(crate) launch_after_store: bool,
+    /// saving, and if so as which remote session kind.
+    pub(crate) launch_after_store: Option<StoredCredentialLaunch>,
     /// Which kind of secret was just stored, so the saved profile's
     /// `credential_kind` metadata matches what was actually written.
     pub(crate) credential_kind: festerm_config::CredentialKind,
+}
+
+pub(crate) enum StoredCredentialLaunch {
+    Ssh(festerm_ssh::SshSessionOptions),
+    Sftp,
 }
 
 /// The confirmation prompts, in-flight secure-storage lookup, and transient
@@ -156,6 +224,7 @@ pub(crate) struct OverlayState {
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
+    pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
     pub(crate) transient_notice: Option<(String, Instant)>,
@@ -186,6 +255,7 @@ impl OverlayState {
             || self.pending_paste.is_some()
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
+            || self.port_forward_manager.is_some()
             || self.pending_quit.is_some()
             || self.about_open
     }
@@ -234,6 +304,17 @@ mod tests {
                 },
                 cancel_focus_requested: false,
             }),
+            ..OverlayState::default()
+        };
+        assert!(overlays.blocks_terminal_input());
+    }
+
+    #[test]
+    fn blocks_terminal_input_is_true_while_port_forward_manager_is_open() {
+        let overlays = OverlayState {
+            port_forward_manager: Some(LivePortForwardManager::new(
+                crate::tabs::AppState::for_test().active(),
+            )),
             ..OverlayState::default()
         };
         assert!(overlays.blocks_terminal_input());

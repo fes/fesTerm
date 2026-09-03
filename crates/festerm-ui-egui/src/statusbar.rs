@@ -60,6 +60,8 @@ pub struct StatusBarContent<'a> {
     /// session details in chips"). Sits after dimensions/locality and before
     /// the right-aligned state; never shown alongside chip secondary text.
     pub detail: Option<&'a str>,
+    /// Optional active SSH port-forward count for the focused session.
+    pub port_forwards: Option<&'a str>,
 }
 
 /// Renders the bottom status bar band.
@@ -92,6 +94,13 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
             }
             if let Some(detail) = content.detail {
                 ui.label(RichText::new(detail).small().color(STATUS_BAR_TEXT_DIM));
+            }
+            if let Some(port_forwards) = content.port_forwards {
+                ui.label(
+                    RichText::new(port_forwards)
+                        .small()
+                        .color(STATUS_BAR_TEXT_DIM),
+                );
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
@@ -138,6 +147,7 @@ mod tests {
                         status: ChipStatus::Connected,
                         status_label: "Running",
                         detail: None,
+                        port_forwards: None,
                     },
                 );
             });
@@ -160,6 +170,7 @@ mod tests {
                         status: ChipStatus::Neutral,
                         status_label: "",
                         detail: None,
+                        port_forwards: None,
                     },
                 );
             });
@@ -184,10 +195,32 @@ mod tests {
                         status: ChipStatus::Connected,
                         status_label: "Running",
                         detail: Some("cargo test — fesTerm"),
+                        port_forwards: None,
                     },
                 );
             });
         harness.run();
         assert!(harness.query_by_label("cargo test — fesTerm").is_some());
+    }
+
+    #[test]
+    fn status_bar_shows_an_active_port_forward_count_when_present() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 60.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    StatusBarContent {
+                        dimensions: Some("80×24"),
+                        system: Some("Remote"),
+                        status: ChipStatus::Connected,
+                        status_label: "Connected",
+                        detail: None,
+                        port_forwards: Some("2 active forwards"),
+                    },
+                );
+            });
+        harness.run();
+        assert!(harness.query_by_label("2 active forwards").is_some());
     }
 }

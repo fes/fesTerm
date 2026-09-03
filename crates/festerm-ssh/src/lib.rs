@@ -5,6 +5,7 @@ mod sftp;
 use std::{
     collections::VecDeque,
     fmt,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
@@ -3256,6 +3257,174 @@ impl fmt::Display for SshSessionStartError {
 
 impl std::error::Error for SshSessionStartError {}
 
+/// Failure to create the dedicated SFTP worker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SftpTerminalSessionStartError;
+
+impl fmt::Display for SftpTerminalSessionStartError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("could not start SFTP worker thread")
+    }
+}
+
+impl std::error::Error for SftpTerminalSessionStartError {}
+
+/// A live text-mode SFTP session rendered through the terminal transcript.
+///
+/// Like [`SshSession`], each instance owns one dedicated worker thread and
+/// one current-thread Tokio runtime. The worker authenticates over SSH,
+/// opens the `"sftp"` subsystem, formats text-mode command output, and emits
+/// it through the ordinary bounded `SessionEvent::Output` queue.
+pub struct SftpTerminalSession {
+    foundation: SshWorkerFoundation,
+    host_key_resolver: HostKeyDecisionResolver,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+    password_resolver: PasswordDecisionResolver,
+    password_gate: Arc<PasswordDecisionGate>,
+    working_directories: Arc<Mutex<Option<SftpWorkingDirectories>>>,
+    completion_receiver: Mutex<Receiver<Result<ShutdownResult, SessionError>>>,
+    completion: Mutex<Option<Result<ShutdownResult, SessionError>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SftpWorkingDirectories {
+    remote: String,
+    local: PathBuf,
+}
+
+impl SftpWorkingDirectories {
+    pub fn remote(&self) -> &str {
+        &self.remote
+    }
+
+    pub fn local(&self) -> &Path {
+        &self.local
+    }
+}
+
+impl SftpTerminalSession {
+    /// Starts a text-mode SFTP session with the default no-op event notifier.
+    pub fn start(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        local_working_directory: Option<PathBuf>,
+        known_host_fingerprint: Option<String>,
+    ) -> Result<Self, SftpTerminalSessionStartError> {
+        Self::start_with_notifier(
+            profile,
+            authentication,
+            local_working_directory,
+            known_host_fingerprint,
+            noop_session_event_notifier(),
+        )
+    }
+
+    /// Starts a text-mode SFTP session and wakes `event_notifier` after
+    /// every queued event.
+    pub fn start_with_notifier(
+        profile: SshConnectionProfile,
+        authentication: SshAuthentication,
+        local_working_directory: Option<PathBuf>,
+        known_host_fingerprint: Option<String>,
+        event_notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, SftpTerminalSessionStartError> {
+        let (foundation, command_receiver, host_key_resolver, password_resolver) =
+            SshWorkerFoundation::new_with_capacities(
+                profile.clone(),
+                DEFAULT_COMMAND_QUEUE_CAPACITY,
+                DEFAULT_EVENT_QUEUE_CAPACITY,
+                event_notifier,
+            );
+        let shared = Arc::clone(&foundation.shared);
+        let host_key_gate = Arc::clone(&foundation.host_key_gate);
+        let password_gate = Arc::clone(&foundation.password_gate);
+        let worker_host_key_gate = Arc::clone(&host_key_gate);
+        let worker_password_gate = Arc::clone(&password_gate);
+        let working_directories = Arc::new(Mutex::new(None));
+        let worker_working_directories = Arc::clone(&working_directories);
+        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name(format!("festerm-sftp-{}", foundation.id()))
+            .spawn(move || {
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .enable_time()
+                    .build()
+                    .map_err(|_| sftp_failure(&shared, "SFTP runtime could not start"))
+                    .and_then(|runtime| {
+                        runtime.block_on(sftp_worker(
+                            profile,
+                            authentication,
+                            local_working_directory,
+                            known_host_fingerprint,
+                            worker_working_directories,
+                            shared,
+                            command_receiver,
+                            worker_host_key_gate,
+                            worker_password_gate,
+                        ))
+                    });
+                let _ = completion_sender.send(result);
+            })
+            .map_err(|_| SftpTerminalSessionStartError)?;
+
+        Ok(Self {
+            foundation,
+            host_key_resolver,
+            host_key_gate,
+            password_resolver,
+            password_gate,
+            working_directories,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        })
+    }
+
+    /// Returns a resolver for the current host-key verification request.
+    pub fn host_key_decision_resolver(&self) -> HostKeyDecisionResolver {
+        self.host_key_resolver.clone()
+    }
+
+    /// Returns a resolver for the current interactive password request.
+    pub fn password_decision_resolver(&self) -> PasswordDecisionResolver {
+        self.password_resolver.clone()
+    }
+
+    pub fn working_directories(&self) -> Option<SftpWorkingDirectories> {
+        self.working_directories
+            .lock()
+            .expect("SFTP working-directory lock is not poisoned")
+            .clone()
+    }
+
+    fn await_completion(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
+        let mut completion = self
+            .completion
+            .lock()
+            .expect("SFTP completion lock is not poisoned");
+        if let Some(result) = completion.clone() {
+            return result.map_err(ShutdownError::Failed);
+        }
+
+        match self
+            .completion_receiver
+            .lock()
+            .expect("SFTP completion receiver lock is not poisoned")
+            .recv_timeout(timeout)
+        {
+            Ok(result) => {
+                *completion = Some(result.clone());
+                result.map_err(ShutdownError::Failed)
+            }
+            Err(RecvTimeoutError::Timeout) => Err(ShutdownError::TimedOut { timeout }),
+            Err(RecvTimeoutError::Disconnected) => Err(ShutdownError::Failed(SessionError::new(
+                SessionErrorKind::Shutdown,
+                "SFTP worker ended without reporting shutdown completion",
+            ))),
+        }
+    }
+}
+
 /// A live SSH transport session with bounded application-facing queues.
 ///
 /// Each instance owns exactly one dedicated OS thread and one current-thread
@@ -3577,6 +3746,199 @@ impl Drop for SshSession {
         self.password_gate.reject_pending();
         let _ = self.foundation.try_shutdown();
     }
+}
+
+impl Session for SftpTerminalSession {
+    fn id(&self) -> SessionId {
+        self.foundation.id()
+    }
+
+    fn lifecycle(&self) -> SessionLifecycle {
+        self.foundation.lifecycle()
+    }
+
+    fn metrics(&self) -> SessionMetrics {
+        self.foundation.metrics()
+    }
+
+    fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+        self.foundation.try_send_input(bytes)
+    }
+
+    fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
+        self.foundation.try_resize(size)
+    }
+
+    fn try_shutdown(&self) -> Result<(), SessionSendError> {
+        self.host_key_gate.reject_pending();
+        self.password_gate.reject_pending();
+        self.foundation.try_shutdown()
+    }
+
+    fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+        self.foundation.try_recv_event()
+    }
+
+    fn shutdown(&self, timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
+        let _ = self.try_shutdown();
+        self.await_completion(timeout)
+    }
+}
+
+impl Drop for SftpTerminalSession {
+    fn drop(&mut self) {
+        self.host_key_gate.reject_pending();
+        self.password_gate.reject_pending();
+        let _ = self.foundation.try_shutdown();
+    }
+}
+
+fn sftp_prompt() -> &'static str {
+    "sftp> "
+}
+
+fn sftp_title(profile: &SshConnectionProfile, remote: &str, local: &Path) -> String {
+    format!(
+        "SFTP · {}@{}:{} · {} · {}",
+        profile.username(),
+        profile.identity().host(),
+        profile.identity().port(),
+        remote,
+        local.display()
+    )
+}
+
+fn sftp_title_sequence(profile: &SshConnectionProfile, remote: &str, local: &Path) -> String {
+    format!("\x1b]0;{}\x07", sftp_title(profile, remote, local))
+}
+
+fn format_sftp_outcome(outcome: &sftp::SftpCommandOutcome) -> String {
+    use sftp::SftpCommandOutcome as Outcome;
+
+    match outcome {
+        Outcome::Help { text } => format!("{text}\r\n"),
+        Outcome::WorkingDirectory { path } => format!("Remote working directory: {path}\r\n"),
+        Outcome::LocalWorkingDirectory { path } => {
+            format!("Local working directory: {}\r\n", path.display())
+        }
+        Outcome::ChangedDirectory { path } => format!("Remote directory changed to {path}\r\n"),
+        Outcome::ChangedLocalDirectory { path } => {
+            format!("Local directory changed to {}\r\n", path.display())
+        }
+        Outcome::DirectoryListing { path, entries } => {
+            let mut output = format!("Listing for {path}:\r\n");
+            if entries.is_empty() {
+                output.push_str("(empty)\r\n");
+                return output;
+            }
+            for entry in entries {
+                let kind = match entry.file_type {
+                    sftp::SftpEntryType::Directory => "dir ",
+                    sftp::SftpEntryType::File => "file",
+                    sftp::SftpEntryType::Symlink => "link",
+                    sftp::SftpEntryType::Other => "other",
+                };
+                let permissions = entry
+                    .permissions
+                    .map(|permissions| format!("{permissions:04o}"))
+                    .unwrap_or_else(|| "----".to_owned());
+                let size = entry
+                    .size
+                    .map(|size| size.to_string())
+                    .unwrap_or_else(|| "-".to_owned());
+                output.push_str(&format!(
+                    "{kind} {permissions:>4} {size:>10} {}\r\n",
+                    entry.name
+                ));
+            }
+            output
+        }
+        Outcome::CreatedDirectory { path } => format!("Created remote directory {path}\r\n"),
+        Outcome::RemovedDirectory { path } => format!("Removed remote directory {path}\r\n"),
+        Outcome::RemovedFile { path } => format!("Removed remote file {path}\r\n"),
+        Outcome::Renamed {
+            source,
+            destination,
+        } => format!("Renamed {source} to {destination}\r\n"),
+        Outcome::PermissionsChanged { path, mode } => {
+            format!("Changed permissions on {path} to {mode:04o}\r\n")
+        }
+        Outcome::Downloaded {
+            remote_path,
+            local_path,
+            byte_count,
+        } => format!(
+            "Downloaded {remote_path} to {} ({byte_count} bytes)\r\n",
+            local_path.display()
+        ),
+        Outcome::Uploaded {
+            local_path,
+            remote_path,
+            byte_count,
+        } => format!(
+            "Uploaded {} to {remote_path} ({byte_count} bytes)\r\n",
+            local_path.display()
+        ),
+        Outcome::SessionClosed => "SFTP session closed.\r\n".to_owned(),
+    }
+}
+
+fn emit_sftp_output(shared: &WorkerShared, text: impl AsRef<str>) {
+    let _ = shared.try_emit(SessionEvent::Output(text.as_ref().as_bytes().to_vec()));
+}
+
+fn emit_sftp_prompt(
+    shared: &WorkerShared,
+    profile: &SshConnectionProfile,
+    session: &sftp::SftpSession,
+) {
+    emit_sftp_output(
+        shared,
+        format!(
+            "{}{}",
+            sftp_title_sequence(
+                profile,
+                session.remote_working_directory(),
+                session.local_working_directory()
+            ),
+            sftp_prompt()
+        ),
+    );
+}
+
+fn emit_sftp_startup_banner(
+    shared: &WorkerShared,
+    profile: &SshConnectionProfile,
+    session: &sftp::SftpSession,
+) {
+    emit_sftp_output(
+        shared,
+        format!(
+            "{}Connected SFTP session to {}@{}:{}.\r\nRemote working directory: {}\r\nLocal working directory: {}\r\n",
+            sftp_title_sequence(
+                profile,
+                session.remote_working_directory(),
+                session.local_working_directory()
+            ),
+            profile.username(),
+            profile.identity().host(),
+            profile.identity().port(),
+            session.remote_working_directory(),
+            session.local_working_directory().display(),
+        ),
+    );
+}
+
+fn update_sftp_working_directories(
+    working_directories: &Arc<Mutex<Option<SftpWorkingDirectories>>>,
+    session: &sftp::SftpSession,
+) {
+    *working_directories
+        .lock()
+        .expect("SFTP working-directory lock is not poisoned") = Some(SftpWorkingDirectories {
+        remote: session.remote_working_directory().to_owned(),
+        local: session.local_working_directory().to_path_buf(),
+    });
 }
 
 struct SshClientHandler {
@@ -4436,6 +4798,475 @@ async fn establish_connection(
         ChannelRequestReply::Shutdown => {
             let _ = stop_handle(handle, shared).await;
             ConnectionAttempt::Shutdown
+        }
+    }
+}
+
+enum AuthenticatedHandleAttempt {
+    Established(russh::client::Handle<SshClientHandler>),
+    Retryable(ConnectionFailure, &'static str),
+    Permanent(ConnectionFailure, &'static str),
+    Shutdown,
+}
+
+async fn establish_authenticated_handle(
+    profile: &SshConnectionProfile,
+    authentication: &WorkerAuthentication,
+    known_host_fingerprint: Option<&str>,
+    shared: &Arc<WorkerShared>,
+    command_receiver: &WorkerCommandReceiver,
+    host_key_gate: &Arc<HostKeyDecisionGate>,
+    password_gate: &Arc<PasswordDecisionGate>,
+) -> AuthenticatedHandleAttempt {
+    if process_commands_before_running(command_receiver, shared, host_key_gate) {
+        return AuthenticatedHandleAttempt::Shutdown;
+    }
+    let config = Arc::new(russh::client::Config {
+        nodelay: true,
+        ..Default::default()
+    });
+    let host_key_rejected = Arc::new(AtomicBool::new(false));
+    let (forwarded_tcpip_sender, _) = tokio::sync::mpsc::unbounded_channel();
+    let handler = SshClientHandler {
+        identity: profile.identity.clone(),
+        shared: Arc::clone(shared),
+        host_key_gate: Arc::clone(host_key_gate),
+        host_key_rejected: Arc::clone(&host_key_rejected),
+        forwarded_tcpip_sender,
+        expected_fingerprint: known_host_fingerprint.map(str::to_owned),
+    };
+    let connection = russh::client::connect(
+        config,
+        (profile.identity.host(), profile.identity.port()),
+        handler,
+    );
+    tokio::pin!(connection);
+    let connection_timeout = tokio::time::sleep(CONNECT_TIMEOUT);
+    tokio::pin!(connection_timeout);
+
+    let mut handle = loop {
+        tokio::select! {
+            result = &mut connection => match result {
+                Ok(handle) => break handle,
+                Err(_) if host_key_rejected.load(Ordering::Acquire) => {
+                    return AuthenticatedHandleAttempt::Permanent(
+                        ConnectionFailure::HostTrust,
+                        "SSH host key was rejected",
+                    );
+                }
+                Err(_) => {
+                    return AuthenticatedHandleAttempt::Retryable(
+                        ConnectionFailure::Transport,
+                        "SSH connection failed",
+                    )
+                }
+            },
+            _ = &mut connection_timeout => return AuthenticatedHandleAttempt::Retryable(
+                ConnectionFailure::Transport,
+                "SSH connection timed out",
+            ),
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return AuthenticatedHandleAttempt::Shutdown;
+                }
+            }
+        }
+    };
+
+    let authentication_result = match authentication {
+        WorkerAuthentication::Password(password) => {
+            wait_for_ssh_operation(
+                handle.authenticate_password(profile.username(), password),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+        WorkerAuthentication::StoredPassword(authentication) => {
+            let mut password = match resolve_stored_password(authentication) {
+                Ok(password) => password,
+                Err(error) => {
+                    return AuthenticatedHandleAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        error.message(),
+                    );
+                }
+            };
+            let result = wait_for_ssh_operation(
+                handle.authenticate_password(profile.username(), &password),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await;
+            password.zeroize();
+            result
+        }
+        WorkerAuthentication::PublicKey(private_key) => {
+            let hash_algorithm = match wait_for_ssh_operation(
+                handle.best_supported_rsa_hash(),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+            {
+                WorkerWait::Completed(Ok(hash_algorithm)) => hash_algorithm.flatten(),
+                WorkerWait::Completed(Err(_)) => {
+                    return AuthenticatedHandleAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        "SSH public-key authentication could not select a signature algorithm",
+                    );
+                }
+                WorkerWait::Shutdown => {
+                    let _ = stop_handle(handle, shared).await;
+                    return AuthenticatedHandleAttempt::Shutdown;
+                }
+            };
+            wait_for_ssh_operation(
+                handle.authenticate_publickey(
+                    profile.username(),
+                    russh::keys::PrivateKeyWithHashAlg::new(
+                        Arc::clone(private_key),
+                        hash_algorithm,
+                    ),
+                ),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+        WorkerAuthentication::StoredPrivateKey(authentication) => {
+            let private_key = match resolve_stored_private_key(authentication) {
+                Ok(private_key) => private_key,
+                Err(error) => {
+                    return AuthenticatedHandleAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        error.message(),
+                    );
+                }
+            };
+            let hash_algorithm = match wait_for_ssh_operation(
+                handle.best_supported_rsa_hash(),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+            {
+                WorkerWait::Completed(Ok(hash_algorithm)) => hash_algorithm.flatten(),
+                WorkerWait::Completed(Err(_)) => {
+                    return AuthenticatedHandleAttempt::Permanent(
+                        ConnectionFailure::Authentication,
+                        "SSH public-key authentication could not select a signature algorithm",
+                    );
+                }
+                WorkerWait::Shutdown => {
+                    let _ = stop_handle(handle, shared).await;
+                    return AuthenticatedHandleAttempt::Shutdown;
+                }
+            };
+            wait_for_ssh_operation(
+                handle.authenticate_publickey(
+                    profile.username(),
+                    russh::keys::PrivateKeyWithHashAlg::new(private_key, hash_algorithm),
+                ),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+        WorkerAuthentication::Interactive => {
+            let mut attempt: u8 = 1;
+            let mut previous_attempt_failed = false;
+            loop {
+                let waiter = match request_password_verification(
+                    profile,
+                    shared,
+                    password_gate,
+                    attempt,
+                    previous_attempt_failed,
+                ) {
+                    Ok(waiter) => waiter,
+                    Err(_) => {
+                        let _ = stop_handle(handle, shared).await;
+                        return AuthenticatedHandleAttempt::Shutdown;
+                    }
+                };
+                let mut password = match waiter
+                    .wait_async(password_gate, PASSWORD_DECISION_TIMEOUT)
+                    .await
+                {
+                    Some(password) => password,
+                    None => {
+                        let _ = stop_handle(handle, shared).await;
+                        return AuthenticatedHandleAttempt::Shutdown;
+                    }
+                };
+                let result = wait_for_ssh_operation(
+                    handle.authenticate_password(profile.username(), &password),
+                    command_receiver,
+                    shared,
+                    host_key_gate,
+                )
+                .await;
+                password.zeroize();
+                let retry_exhausted = attempt >= MAX_INTERACTIVE_PASSWORD_ATTEMPTS;
+                match &result {
+                    WorkerWait::Completed(Ok(auth)) if auth.success() => break result,
+                    WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_))
+                        if !retry_exhausted =>
+                    {
+                        attempt += 1;
+                        previous_attempt_failed = true;
+                    }
+                    WorkerWait::Completed(_) | WorkerWait::Shutdown => break result,
+                }
+            }
+        }
+    };
+
+    match authentication_result {
+        WorkerWait::Completed(Ok(result)) if result.success() => {
+            AuthenticatedHandleAttempt::Established(handle)
+        }
+        WorkerWait::Completed(Ok(_)) | WorkerWait::Completed(Err(_)) => {
+            AuthenticatedHandleAttempt::Permanent(
+                ConnectionFailure::Authentication,
+                "SSH authentication failed",
+            )
+        }
+        WorkerWait::Shutdown => {
+            let _ = stop_handle(handle, shared).await;
+            AuthenticatedHandleAttempt::Shutdown
+        }
+    }
+}
+
+async fn wait_for_sftp_operation<T, F>(
+    operation: F,
+    command_receiver: &WorkerCommandReceiver,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> WorkerWait<Result<T, sftp::SftpSessionError>>
+where
+    F: std::future::Future<Output = Result<T, sftp::SftpSessionError>>,
+{
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            result = &mut operation => return WorkerWait::Completed(Ok(result)),
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {
+                if process_commands_before_running(command_receiver, shared, host_key_gate) {
+                    return WorkerWait::Shutdown;
+                }
+            }
+        }
+    }
+}
+
+fn pop_sftp_input_byte(buffer: &mut Vec<u8>) {
+    let _ = buffer.pop();
+    while let Some(byte) = buffer.last() {
+        if (byte & 0b1100_0000) != 0b1000_0000 {
+            break;
+        }
+        let _ = buffer.pop();
+    }
+}
+
+async fn execute_sftp_input_line(
+    profile: &SshConnectionProfile,
+    line: Vec<u8>,
+    session: &mut sftp::SftpSession,
+    working_directories: &Arc<Mutex<Option<SftpWorkingDirectories>>>,
+    shared: &WorkerShared,
+) -> Result<bool, SessionError> {
+    let line =
+        String::from_utf8(line).map_err(|_| sftp_failure(shared, "SFTP input must be UTF-8"))?;
+    match session.execute_line(&line).await {
+        Ok(outcome) => {
+            update_sftp_working_directories(working_directories, session);
+            emit_sftp_output(shared, format_sftp_outcome(&outcome));
+            if !matches!(outcome, sftp::SftpCommandOutcome::SessionClosed) {
+                emit_sftp_prompt(shared, profile, session);
+                return Ok(false);
+            }
+            Ok(true)
+        }
+        Err(error) => {
+            emit_sftp_output(shared, format!("{error}\r\n"));
+            emit_sftp_prompt(shared, profile, session);
+            Ok(false)
+        }
+    }
+}
+
+async fn process_sftp_input_bytes(
+    profile: &SshConnectionProfile,
+    bytes: Vec<u8>,
+    input_buffer: &mut Vec<u8>,
+    session: &mut sftp::SftpSession,
+    working_directories: &Arc<Mutex<Option<SftpWorkingDirectories>>>,
+    shared: &WorkerShared,
+) -> Result<bool, SessionError> {
+    let byte_count = bytes.len();
+    for byte in bytes {
+        match byte {
+            b'\r' | b'\n' => {
+                emit_sftp_output(shared, "\r\n");
+                let line = std::mem::take(input_buffer);
+                if execute_sftp_input_line(profile, line, session, working_directories, shared)
+                    .await?
+                {
+                    shared.record_input_sent(byte_count);
+                    return Ok(true);
+                }
+            }
+            0x08 | 0x7f => {
+                if !input_buffer.is_empty() {
+                    pop_sftp_input_byte(input_buffer);
+                    emit_sftp_output(shared, "\u{8} \u{8}");
+                }
+            }
+            0x03 => {
+                input_buffer.clear();
+                emit_sftp_output(shared, "^C\r\n");
+                emit_sftp_prompt(shared, profile, session);
+            }
+            byte if !byte.is_ascii_control() => {
+                input_buffer.push(byte);
+                let _ = shared.try_emit(SessionEvent::Output(vec![byte]));
+            }
+            _ => {}
+        }
+    }
+    shared.record_input_sent(byte_count);
+    Ok(false)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn sftp_worker(
+    profile: SshConnectionProfile,
+    authentication: SshAuthentication,
+    local_working_directory: Option<PathBuf>,
+    known_host_fingerprint: Option<String>,
+    working_directories: Arc<Mutex<Option<SftpWorkingDirectories>>>,
+    shared: Arc<WorkerShared>,
+    command_receiver: WorkerCommandReceiver,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+    password_gate: Arc<PasswordDecisionGate>,
+) -> Result<ShutdownResult, SessionError> {
+    let authentication = authentication.into_worker_authentication();
+    let handle = match establish_authenticated_handle(
+        &profile,
+        &authentication,
+        known_host_fingerprint.as_deref(),
+        &shared,
+        &command_receiver,
+        &host_key_gate,
+        &password_gate,
+    )
+    .await
+    {
+        AuthenticatedHandleAttempt::Established(handle) => handle,
+        AuthenticatedHandleAttempt::Retryable(failure, message)
+        | AuthenticatedHandleAttempt::Permanent(failure, message) => {
+            return Err(sftp_failure_with_kind(
+                &shared,
+                session_error_kind_for_failure(failure),
+                message,
+            ));
+        }
+        AuthenticatedHandleAttempt::Shutdown => {
+            shared.set_lifecycle(SessionLifecycle::Stopped);
+            return Ok(ShutdownResult::Stopped);
+        }
+    };
+
+    let connect = async {
+        match local_working_directory {
+            Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path).await,
+            None => sftp::SftpSession::connect(&handle).await,
+        }
+    };
+    let mut session =
+        match wait_for_sftp_operation(connect, &command_receiver, &shared, &host_key_gate).await {
+            WorkerWait::Completed(Ok(Ok(session))) => session,
+            WorkerWait::Completed(Ok(Err(error))) => {
+                let _ = stop_handle(handle, &shared).await;
+                return Err(sftp_failure(
+                    &shared,
+                    format!("SFTP session failed to start: {error}"),
+                ));
+            }
+            WorkerWait::Completed(Err(_)) => unreachable!("SFTP worker wraps its result in Ok"),
+            WorkerWait::Shutdown => {
+                let _ = stop_handle(handle, &shared).await;
+                shared.set_lifecycle(SessionLifecycle::Stopped);
+                return Ok(ShutdownResult::Stopped);
+            }
+        };
+
+    shared.set_lifecycle(SessionLifecycle::Running);
+    update_sftp_working_directories(&working_directories, &session);
+    emit_sftp_startup_banner(&shared, &profile, &session);
+    emit_sftp_prompt(&shared, &profile, &session);
+
+    let mut input_buffer = Vec::new();
+    loop {
+        if shared.shutdown_requested() {
+            shared.set_lifecycle(SessionLifecycle::Stopping);
+            let _ = session.close().await;
+            let result = stop_handle(handle, &shared)
+                .await
+                .unwrap_or(ShutdownResult::Stopped);
+            shared.set_lifecycle(SessionLifecycle::Stopped);
+            return Ok(result);
+        }
+        match command_receiver.try_recv() {
+            Ok(WorkerCommand::Input(bytes)) => {
+                if process_sftp_input_bytes(
+                    &profile,
+                    bytes,
+                    &mut input_buffer,
+                    &mut session,
+                    &working_directories,
+                    &shared,
+                )
+                .await?
+                {
+                    shared.set_lifecycle(SessionLifecycle::Stopping);
+                    let result = stop_handle(handle, &shared)
+                        .await
+                        .unwrap_or(ShutdownResult::Stopped);
+                    shared.set_lifecycle(SessionLifecycle::Stopped);
+                    return Ok(result);
+                }
+            }
+            Ok(WorkerCommand::Resize(size)) => shared.record_running_resize(size),
+            Ok(WorkerCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
+                shared.set_lifecycle(SessionLifecycle::Stopping);
+                let _ = session.close().await;
+                let result = stop_handle(handle, &shared)
+                    .await
+                    .unwrap_or(ShutdownResult::Stopped);
+                shared.set_lifecycle(SessionLifecycle::Stopped);
+                return Ok(result);
+            }
+            Ok(
+                WorkerCommand::ApplyPortForwards(_)
+                | WorkerCommand::AddPortForward(_)
+                | WorkerCommand::RemovePortForward(_)
+                | WorkerCommand::QueryPortForwards
+                | WorkerCommand::Reconnect,
+            ) => {}
+            Err(TryRecvError::Empty) => {
+                tokio::time::sleep(COMMAND_POLL_INTERVAL).await;
+            }
         }
     }
 }
@@ -5304,10 +6135,25 @@ fn ssh_failure(shared: &WorkerShared, message: &'static str) -> SessionError {
     ssh_failure_with_kind(shared, SessionErrorKind::Spawn, message)
 }
 
+fn sftp_failure(shared: &WorkerShared, message: impl Into<String>) -> SessionError {
+    sftp_failure_with_kind(shared, SessionErrorKind::Spawn, message)
+}
+
 fn ssh_failure_with_kind(
     shared: &WorkerShared,
     kind: SessionErrorKind,
     message: &'static str,
+) -> SessionError {
+    let error = SessionError::new(kind, message);
+    let _ = shared.try_emit(SessionEvent::Error(error.clone()));
+    shared.set_lifecycle(SessionLifecycle::Failed(error.clone()));
+    error
+}
+
+fn sftp_failure_with_kind(
+    shared: &WorkerShared,
+    kind: SessionErrorKind,
+    message: impl Into<String>,
 ) -> SessionError {
     let error = SessionError::new(kind, message);
     let _ = shared.try_emit(SessionEvent::Error(error.clone()));
@@ -5380,6 +6226,41 @@ mod tests {
                 "every other connection failure must keep the prior generic classification"
             );
         }
+    }
+
+    #[test]
+    fn sftp_directory_listings_are_rendered_as_terminal_transcript_lines() {
+        let output = format_sftp_outcome(&sftp::SftpCommandOutcome::DirectoryListing {
+            path: "/remote".to_owned(),
+            entries: vec![
+                sftp::SftpDirectoryEntry {
+                    name: "docs".to_owned(),
+                    path: "/remote/docs".to_owned(),
+                    file_type: sftp::SftpEntryType::Directory,
+                    size: None,
+                    permissions: Some(0o755),
+                },
+                sftp::SftpDirectoryEntry {
+                    name: "readme.txt".to_owned(),
+                    path: "/remote/readme.txt".to_owned(),
+                    file_type: sftp::SftpEntryType::File,
+                    size: Some(42),
+                    permissions: Some(0o644),
+                },
+            ],
+        });
+
+        assert!(output.starts_with("Listing for /remote:\r\n"));
+        assert!(output.contains("dir  0755          - docs\r\n"));
+        assert!(output.contains("file 0644         42 readme.txt\r\n"));
+    }
+
+    #[test]
+    fn sftp_session_closed_outcome_renders_a_terminal_message() {
+        assert_eq!(
+            format_sftp_outcome(&sftp::SftpCommandOutcome::SessionClosed),
+            "SFTP session closed.\r\n"
+        );
     }
 
     #[test]

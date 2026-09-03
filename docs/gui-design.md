@@ -172,6 +172,8 @@ The launcher may contain:
 
 - **Local shell** — platform default and saved local profiles.
 - **SSH** — connect to a host or select a saved profile.
+- **SFTP** — open a text-mode file-transfer session over SSH using the same
+  connection metadata and trust/authentication flow.
 - **Serial** — open a local serial device with explicit line settings.
 - **Recent sessions or profiles**.
 - **Recent workspaces**.
@@ -185,18 +187,19 @@ selection and Enter launches whichever option is currently highlighted,
 without requiring the mouse. Local Shell has initial focus. Each row uses its
 semantic icon, a short primary label, and one factual secondary line: **Local
 Shell** / “Default shell on this computer,” **SSH** / “Connect to a remote
-host,” and **Serial** / “Open a local serial device.” Saved profiles remain in
-list order by default, but the Settings toggle may render them in a responsive
-multi-column grid when width allows. When the selected local shell or profile
-is reliably known, that identity may replace the generic Local Shell
-secondary line.
+host,” **SFTP** / “Transfer files over SSH,” and **Serial** / “Open a local
+serial device.” Saved profiles remain in list order by default, but the
+Settings toggle may render them in a responsive multi-column grid when width
+allows. When the selected local shell or profile is reliably known, that
+identity may replace the generic Local Shell secondary line.
 
-The initial target launcher shows the usable choices Local Shell, SSH, and
-Serial. A choice whose transport is not yet implemented remains absent from a
-shipped build rather than appearing as a disabled promise. Empty
+The initial target launcher shows the usable choices Local Shell, SSH, SFTP,
+and Serial. A choice whose transport is not yet implemented remains absent
+from a shipped build rather than appearing as a disabled promise. Empty
 Recent, Profiles, and Workspaces sections remain absent until their underlying
-models exist and contain real entries. Local Shell launches immediately; SSH
-and Serial navigate within the same launcher tab to focused connection forms.
+models exist and contain real entries. Local Shell launches immediately; SSH,
+SFTP, and Serial navigate within the same launcher tab to focused connection
+forms.
 Back or Escape returns to the launcher without creating another chip. Escape
 closes a Launcher opened from another session and restores that session, but
 does nothing when Launcher is the window's only surface. Partially entered
@@ -561,6 +564,10 @@ two-line-chip mode.
   accessible text label. Local sessions use `Running`, SSH sessions use
   `Connected`, and serial sessions use `Open`; each term describes the fact
   the owning transport can establish without implying a responsive peer.
+- When the active SSH session has one or more active forwards, the bar may add
+  a compact factual count such as `1 active forward` or `3 active forwards`.
+  This is presence/count only: it does not replace the Port Forward Manager as
+  the authoritative live-management surface.
 - Stable session identity and terminal title remain in the active chip and are
   not repeated in the bar while session details are shown in chips. When the
   **Show session details in chips** preference is off, the active session's
@@ -1007,6 +1014,23 @@ Username, host, port, cipher, latency, and key algorithm belong in the session
 inspector rather than permanent chrome. A user rename changes only stable
 display identity, never the destination or profile.
 
+Selecting SFTP reuses the same destination-entry, host-key verification, and
+authentication sequence, but the resulting running surface is a terminal-style
+text-mode SFTP REPL rather than a remote shell. The supported command set is
+exactly `help`, `pwd`, `lpwd`, `cd`, `lcd`, `ls`, `mkdir`, `rmdir`, `rm`,
+`rename`, `chmod`, `get`, `put`, `quit`, and `exit`. Output is formatted into
+the ordinary terminal transcript, and restored workspace SFTP tabs come back
+as authentication-required placeholders instead of auto-reconnecting.
+
+Live SSH port forwarding is managed from a session-scoped **Port Forward
+Manager** overlay rather than the launcher or profile editor. It is available
+only while an authenticated SSH shell session is connected, opens from its
+dedicated shortcut or the command palette, and lists the live runtime snapshot:
+direction, bind, destination, source (`Profile` or `Ephemeral`), and
+active/failed state. Adding a forward here always targets only the current live
+session; it never rewrites the saved profile. Disconnecting clears the live
+runtime list, and reconnect does not silently restore prior ephemeral state.
+
 ### Serial session creation
 
 ![Serial connection form target](images/gui-mockups/serial-connection.png)
@@ -1188,7 +1212,7 @@ profiles follow the same order.
 Settings is a singleton application surface represented by its own chip;
 invoking Settings again focuses it. It currently uses compact cards rather
 than a category sidebar: **Interface**, **Scrolling**, **Terminal
-typography**, and **Keyboard**. Only implemented controls appear.
+typography**, **Keyboard**, and **SFTP**. Only implemented controls appear.
 
 The current **Interface** card groups the persistent chrome/session toggles as
 quiet rows with subtle dividers:
@@ -1232,6 +1256,10 @@ history motion relative to the original fixed mapping.
 The **Terminal typography** card exposes the bundled terminal-family selector
 plus the default-off ligature toggle. The **Keyboard** card currently exposes
 the off-by-default quick-switch-number overlay preference.
+The **SFTP** card exposes the optional default local starting directory for new
+SFTP tabs. It validates that the configured path already exists and is a
+directory, applies only to future SFTP sessions, and is still overridable per
+session with `lcd`.
 
 The two layout choices remain visible rather than hiding a binary decision in a
 selector. Reversible settings apply immediately and save automatically as they
@@ -1832,6 +1860,7 @@ input. The current platform defaults are:
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` (pending native-convention review) |
 | Command palette / session switcher | `Ctrl+Shift+P` | `Cmd+Shift+P` |
 | Open Settings | `Ctrl+Shift+S` | `Cmd+Shift+S` (also `Cmd+,`, the macOS "Preferences" convention, via the native app menu) |
+| Manage Port Forwards | `Ctrl+Shift+M` | `Cmd+Shift+M` |
 | Find in terminal | `Ctrl+Shift+F` | `Cmd+F` |
 | Copy / Paste | `Ctrl+Shift+C` / `Ctrl+Shift+V` | `Cmd+C` / `Cmd+V` |
 | Clear terminal (display and scrollback) | `Ctrl+Shift+K` | `Cmd+K` |
@@ -1880,8 +1909,9 @@ surface applicability, is:
 
 - **New Session…** and **Start Local Shell**;
 - **Find in Terminal**, **Show Session Inspector** or **Hide Session
-  Inspector**, **Rename Session…**, a capability-backed **Reconnect Session**,
-  and **Close Session…**;
+  Inspector**, **Manage Port Forwards…** for a live SSH shell session,
+  **Rename Session…**, a capability-backed **Reconnect Session**, and
+  **Close Session…**;
 - **Enter Focus Mode** or **Exit Focus Mode**, **Zoom In**, **Zoom Out**, and
   **Reset Zoom**; and
 - **Open Settings**.

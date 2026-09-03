@@ -86,6 +86,28 @@
       "prerequisites": []
     },
     {
+      "id": "sftp-launcher",
+      "edges": [
+        "LAUNCH-09"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-launcher"
+      ],
+      "decisions": [
+        "ADR-0018",
+        "ADR-0028"
+      ],
+      "automated_tests": [
+        "sftp_launcher_defaults_to_quick_connect_not_the_advanced_form",
+        "quick_connect_with_no_password_starts_an_interactive_sftp_session"
+      ],
+      "manual_scenarios": [],
+      "status": "partial",
+      "prerequisites": [
+        "saved-profile launcher coverage still targets unit/UI paths rather than a full end-to-end session launch"
+      ]
+    },
+    {
       "id": "local-session",
       "edges": [
         "LOCAL-*"
@@ -207,6 +229,30 @@
       ]
     },
     {
+      "id": "sftp-session",
+      "edges": [
+        "SSH-09"
+      ],
+      "requirements": [
+        "docs/gui-design.md#ssh-session-creation"
+      ],
+      "decisions": [
+        "ADR-0018",
+        "ADR-0028"
+      ],
+      "automated_tests": [
+        "restored_sftp_tab_requires_fresh_authentication_without_starting_a_session",
+        "startup_workspace_restores_sftp_tabs_as_authentication_required_surfaces",
+        "sftp_directory_listings_are_rendered_as_terminal_transcript_lines",
+        "sftp_session_closed_outcome_renders_a_terminal_message"
+      ],
+      "manual_scenarios": [],
+      "status": "partial",
+      "prerequisites": [
+        "no app-layer ignored Docker interop test currently drives the full SFTP tab worker through authentication and command execution"
+      ]
+    },
+    {
       "id": "ssh-port-forwarding",
       "edges": [
         "SSH-06",
@@ -225,15 +271,20 @@
         "local_forward_bridges_bytes_bidirectionally",
         "live_ephemeral_forward_can_be_added_and_removed_mid_session",
         "forwards_are_torn_down_cleanly_on_disconnect",
-        "remote_forward_bridges_bytes_bidirectionally"
+        "remote_forward_bridges_bytes_bidirectionally",
+        "opening_the_port_forward_manager_shows_an_empty_state",
+        "port_forward_manager_renders_runtime_snapshots_and_failure_details",
+        "port_forward_manager_submit_dispatches_an_add_request",
+        "port_forward_manager_remove_dispatches_a_remove_request",
+        "port_forward_manager_shortcut_and_palette_entry_open_the_overlay",
+        "port_forward_manager_is_gated_to_live_ssh_tabs_only",
+        "disconnecting_clears_the_port_forward_manager_list"
       ],
       "manual_scenarios": [
         "TI-11"
       ],
       "status": "partial",
-      "prerequisites": [
-        "live Port Forward Manager overlay routing remains pending"
-      ]
+      "prerequisites": []
     },
     {
       "id": "serial",
@@ -635,7 +686,8 @@
       "decisions": [],
       "automated_tests": [
         "status_bar_renders_left_and_right_text",
-        "status_bar_omits_status_label_and_dot_when_neutral"
+        "status_bar_omits_status_label_and_dot_when_neutral",
+        "status_bar_shows_an_active_port_forward_count_when_present"
       ],
       "manual_scenarios": [
         "NP-05",
@@ -667,7 +719,7 @@
     {
       "id": "settings",
       "edges": [
-        "SET-*"
+        "SET-0[1-8]"
       ],
       "requirements": [
         "docs/gui-design.md#settings"
@@ -695,6 +747,29 @@
       ],
       "status": "partial",
       "prerequisites": []
+    },
+    {
+      "id": "sftp-settings",
+      "edges": [
+        "SET-09"
+      ],
+      "requirements": [
+        "docs/gui-design.md#settings"
+      ],
+      "decisions": [
+        "ADR-0028"
+      ],
+      "automated_tests": [
+        "settings_accept_existing_default_sftp_local_directory",
+        "settings_reject_missing_default_sftp_local_directory",
+        "default_sftp_local_directory_round_trips_through_toml",
+        "missing_default_sftp_local_directory_is_rejected"
+      ],
+      "manual_scenarios": [],
+      "status": "partial",
+      "prerequisites": [
+        "no full application restart scenario currently exercises editing the SFTP directory and then launching a real authenticated SFTP tab"
+      ]
     },
     {
       "id": "configuration-recovery",
