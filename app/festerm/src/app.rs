@@ -2829,14 +2829,8 @@ impl FesTermApp {
         let mut remove_requested: Option<SshPortForwardRuntime> = None;
         let width = (content_rect.width() - 32.0).clamp(360.0, 520.0);
         let height = (content_rect.height() - 24.0).clamp(280.0, 520.0);
-        let area_pos = egui::pos2(
-            content_rect.center().x - width / 2.0,
-            (content_rect.top() + 12.0).max(content_rect.center().y - height / 2.0),
-        );
-
-        egui::Area::new(egui::Id::new(("port_forward_manager", manager.tab)))
-            .order(egui::Order::Foreground)
-            .fixed_pos(area_pos)
+        egui::Modal::new(egui::Id::new(("port_forward_manager", manager.tab)))
+            .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .inner_margin(egui::Margin::same(14))

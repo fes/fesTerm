@@ -6,13 +6,13 @@
 //! and own no session or tab policy themselves; `AppState::dispatch` remains
 //! the single command-handling path.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
     CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SshPortForwardConfiguration,
-    SshPortForwardDirection, SshProfileConfiguration, TerminalFontPreference,
+    Profile, ScrollSpeedPreference, ScrollbackLimitPreference, SshPortForwardDirection,
+    SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -21,6 +21,10 @@ use festerm_ssh::{
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
+#[cfg(test)]
+use festerm_config::SshPortForwardConfiguration;
+
+use crate::port_forward_draft::PortForwardDraft as SshPortForwardDraft;
 use crate::tabs::{AppCommand, PasswordToStore, PrivateKeyToStore, TabId};
 
 /// One selectable launch option in the Launcher list: the fixed default
@@ -240,7 +244,11 @@ fn show_launcher_choice(
             },
         );
         edit_response.widget_info(|| {
-            WidgetInfo::labeled(WidgetType::Button, true, format!("Edit {primary}"))
+            WidgetInfo::labeled(
+                WidgetType::Button,
+                true,
+                format!("Edit {primary} ({secondary})"),
+            )
         });
         edit_response
     });
@@ -1524,9 +1532,9 @@ pub fn show_launcher(
             .iter()
             .filter_map(Profile::as_ssh)
             .map(|profile| LauncherItem {
-                label: format!("{} (SFTP)", profile.identifier()),
+                label: profile.identifier().to_owned(),
                 description: format!(
-                    "Saved SFTP destination · {}@{}:{}",
+                    "Saved SSH profile · SFTP · {}@{}:{}",
                     profile.username(),
                     profile.host(),
                     profile.port()
@@ -2598,32 +2606,32 @@ pub fn show_settings(
                                             &mut state.default_sftp_local_directory,
                                         )
                                         .id(field_id)
-                                        .hint_text("Path to existing local directory")
+                                        .hint_text("Path to local directory")
                                         .desired_width(180.0),
                                     );
                                     let response = response
                                         .labelled_by(label_id.expect("label should be rendered"));
-                                    let submitted = response.lost_focus()
-                                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                                    if submitted || ui.button("Apply").clicked() {
+                                    if response.changed() {
                                         let trimmed = state.default_sftp_local_directory.trim();
                                         if trimmed.is_empty() {
                                             state.feedback = None;
+                                            state.synced_value = Some(String::new());
                                             command =
                                                 Some(AppCommand::SetDefaultSftpLocalDirectory(
                                                     None,
                                                 ));
-                                        } else if Path::new(trimmed).is_dir() {
+                                        } else if trimmed.chars().any(char::is_control) {
+                                            state.feedback = Some(
+                                                "Default local SFTP directory must not contain control characters."
+                                                    .to_owned(),
+                                            );
+                                        } else {
                                             state.feedback = None;
+                                            state.synced_value = Some(trimmed.to_owned());
                                             command = Some(
                                                 AppCommand::SetDefaultSftpLocalDirectory(Some(
                                                     PathBuf::from(trimmed),
                                                 )),
-                                            );
-                                        } else {
-                                            state.feedback = Some(
-                                                "Default local SFTP directory must exist and be a directory."
-                                                    .to_owned(),
                                             );
                                         }
                                     }
@@ -2977,60 +2985,6 @@ impl LocalProfileDraft {
                 .map_err(|error| error.to_string()),
             None => Ok(profile),
         }
-    }
-}
-
-#[derive(Clone)]
-struct SshPortForwardDraft {
-    direction: SshPortForwardDirection,
-    bind_host: String,
-    bind_port: String,
-    destination_host: String,
-    destination_port: String,
-}
-
-impl Default for SshPortForwardDraft {
-    fn default() -> Self {
-        Self {
-            direction: SshPortForwardDirection::Local,
-            bind_host: "127.0.0.1".to_owned(),
-            bind_port: String::new(),
-            destination_host: String::new(),
-            destination_port: String::new(),
-        }
-    }
-}
-
-impl SshPortForwardDraft {
-    fn from_configuration(forward: &SshPortForwardConfiguration) -> Self {
-        Self {
-            direction: forward.direction(),
-            bind_host: forward.bind_host().to_owned(),
-            bind_port: forward.bind_port().to_string(),
-            destination_host: forward.destination_host().to_owned(),
-            destination_port: forward.destination_port().to_string(),
-        }
-    }
-
-    fn build(&self) -> Result<SshPortForwardConfiguration, String> {
-        let bind_port: u16 = self
-            .bind_port
-            .trim()
-            .parse()
-            .map_err(|_| "Bind port must be a number between 1 and 65535".to_owned())?;
-        let destination_port: u16 = self
-            .destination_port
-            .trim()
-            .parse()
-            .map_err(|_| "Destination port must be a number between 1 and 65535".to_owned())?;
-        SshPortForwardConfiguration::new(
-            self.direction,
-            self.bind_host.trim(),
-            bind_port,
-            self.destination_host.trim(),
-            destination_port,
-        )
-        .map_err(|error| error.to_string())
     }
 }
 
@@ -4403,7 +4357,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_accept_existing_default_sftp_local_directory() {
+    fn settings_auto_applies_default_sftp_local_directory_edits() {
         let mut harness = settings_harness();
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         harness.run();
@@ -4413,8 +4367,6 @@ mod tests {
             .get_by_label("Default local SFTP directory")
             .type_text(directory.to_string_lossy().as_ref());
         harness.run();
-        harness.get_by_label("Apply").click();
-        harness.run();
 
         assert!(matches!(
             harness.state().command.as_ref(),
@@ -4423,7 +4375,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_reject_missing_default_sftp_local_directory() {
+    fn settings_accept_missing_default_sftp_local_directory_metadata() {
         let mut harness = settings_harness();
         let missing = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("does-not-exist-default-sftp-local-directory");
@@ -4434,16 +4386,17 @@ mod tests {
             .get_by_label("Default local SFTP directory")
             .type_text(missing.to_string_lossy().as_ref());
         harness.run();
-        harness.get_by_label("Apply").click();
-        harness.run();
 
+        assert!(matches!(
+            harness.state().command.as_ref(),
+            Some(AppCommand::SetDefaultSftpLocalDirectory(Some(path))) if path == &missing
+        ));
         assert!(
             harness
-                .query_by_label("Default local SFTP directory must exist and be a directory.")
-                .is_some(),
-            "invalid directories must show inline validation feedback"
+                .query_by_label("Default local SFTP directory must not contain control characters.")
+                .is_none(),
+            "ordinary path metadata must not show inline validation errors"
         );
-        assert!(harness.state().command.is_none());
     }
 
     #[test]
@@ -5460,6 +5413,32 @@ mod tests {
     }
 
     #[test]
+    fn saved_sftp_profile_uses_the_ssh_profile_identity_as_its_primary_label() {
+        let profiles = vec![Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test profile is valid")];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        assert!(harness
+            .query_by_label("production — Saved SSH profile · SFTP · deploy@ssh.example.test:2200")
+            .is_some());
+        assert!(
+            harness
+                .query_by_label("production (SFTP) — Saved SFTP destination · deploy@ssh.example.test:2200")
+                .is_none(),
+            "saved SFTP launchers must reuse the SSH profile identity instead of inventing a second label vocabulary"
+        );
+    }
+
+    #[test]
     fn saved_ssh_profile_card_dispatches_a_configured_launch_regardless_of_stored_credential() {
         let profile = Profile::ssh(
             "production",
@@ -5502,7 +5481,9 @@ mod tests {
         let mut harness = harness_with_profiles(vec![profile]);
         harness.run();
 
-        harness.get_by_label("Edit production").click();
+        harness
+            .get_by_label("Edit production (Saved SSH profile · deploy@ssh.example.test:2200)")
+            .click();
         harness.run();
 
         assert!(matches!(
@@ -5564,13 +5545,17 @@ mod tests {
                 .expect("status bar panel state should be recorded")
                 .outer_rect
                 .top();
-        let last_edit_rect = harness.get_by_label("Edit host-0").rect();
+        let last_edit_rect = harness
+            .get_by_label("Edit host-0 (Saved SSH profile · deploy@ssh.example.test:22)")
+            .rect();
         assert!(
             last_edit_rect.max.y <= status_bar_top,
             "saved profile edit icons must stay above the status bar rather than overlapping it"
         );
 
-        harness.get_by_label("Edit host-0").click();
+        harness
+            .get_by_label("Edit host-0 (Saved SSH profile · deploy@ssh.example.test:22)")
+            .click();
         harness.run();
         assert!(matches!(
             harness.state().command,

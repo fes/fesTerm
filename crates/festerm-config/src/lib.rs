@@ -753,7 +753,7 @@ impl InterfaceSettings {
 
     fn validate(&self) -> Result<(), ConfigError> {
         if let Some(directory) = &self.default_sftp_local_directory {
-            validate_existing_directory_setting(directory)?;
+            validate_stored_path_setting(directory)?;
         }
         Ok(())
     }
@@ -2345,14 +2345,8 @@ fn contains_control_character(value: &str) -> bool {
     value.chars().any(char::is_control)
 }
 
-fn validate_existing_directory_setting(path: &str) -> Result<(), ConfigError> {
-    if path.is_empty()
-        || contains_control_character(path)
-        || contains_secret_bearing_value(path)
-        || fs::metadata(path)
-            .map(|metadata| !metadata.is_dir())
-            .unwrap_or(true)
-    {
+fn validate_stored_path_setting(path: &str) -> Result<(), ConfigError> {
+    if path.is_empty() || contains_control_character(path) || contains_secret_bearing_value(path) {
         return Err(ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings));
     }
     Ok(())
@@ -2655,7 +2649,7 @@ impl fmt::Display for ConfigError {
                 formatter.write_str("known_hosts[] entries must be unique per host:port")
             }
             ConfigErrorKind::InvalidInterfaceSettings => formatter.write_str(
-                "interface settings must use existing local directories for default_sftp_local_directory and safe values for every other field",
+                    "interface settings must use non-empty, control-character-free default_sftp_local_directory values without secret-bearing text and safe values for every other field",
             ),
             ConfigErrorKind::Serialization => {
                 formatter.write_str("configuration could not be serialized")
@@ -4744,22 +4738,28 @@ schema_version = 99
     }
 
     #[test]
-    fn missing_default_sftp_local_directory_is_rejected() {
+    fn missing_default_sftp_local_directory_is_allowed() {
         let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("does-not-exist-default-sftp-local-directory");
-        let configuration = Configuration::empty().with_interface_settings(
-            InterfaceSettings::new(
-                ChipLayoutPreference::SingleRowScroll,
-                true,
-                true,
-                true,
-                false,
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::new(
+                    ChipLayoutPreference::SingleRowScroll,
+                    true,
+                    true,
+                    true,
+                    false,
+                )
+                .with_default_sftp_local_directory(Some(missing.display().to_string())),
             )
-            .with_default_sftp_local_directory(Some(missing.display().to_string())),
-        );
+            .expect("stored SFTP directory metadata must not require an existing path");
 
-        let error = configuration.expect_err("missing SFTP directories must be rejected");
-        assert_eq!(error.kind(), ConfigErrorKind::InvalidInterfaceSettings);
+        assert_eq!(
+            configuration
+                .interface_settings()
+                .default_sftp_local_directory(),
+            Some(missing.as_path())
+        );
     }
 
     #[test]

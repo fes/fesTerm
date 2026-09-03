@@ -1257,8 +1257,9 @@ The **Terminal typography** card exposes the bundled terminal-family selector
 plus the default-off ligature toggle. The **Keyboard** card currently exposes
 the off-by-default quick-switch-number overlay preference.
 The **SFTP** card exposes the optional default local starting directory for new
-SFTP tabs. It validates that the configured path already exists and is a
-directory, applies only to future SFTP sessions, and is still overridable per
+SFTP tabs. It saves immediately like the other Settings rows, stores any
+non-empty control-character-free path string without parse-time existence
+checks, applies only to future SFTP sessions, and is still overridable per
 session with `lcd`.
 
 The two layout choices remain visible rather than hiding a binary decision in a
