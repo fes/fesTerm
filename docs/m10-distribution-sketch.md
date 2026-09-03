@@ -30,9 +30,9 @@ Expected native outputs:
 
 | Platform | Initial outputs | In-place updater format |
 |---|---|---|
-| macOS | signed/notarized `.app` in `.dmg` | `app` |
-| Windows | signed NSIS `.exe` | `nsis` |
-| Linux | AppImage and `.deb` | `appimage` only |
+| macOS ARM64 | signed/notarized `.app` in `.dmg` | `app` |
+| Windows x86_64 and ARM64 | signed NSIS `.exe` | `nsis` |
+| Linux x86_64 and ARM64 | AppImage and `.deb` | `appimage` only |
 
 The Debian package remains package-manager-owned. An update check may notify
 its user, but fesTerm must not replace files installed by `apt`/`dpkg`.
@@ -44,7 +44,10 @@ The checked-in `.github/workflows/release.yml`:
 1. Trigger only for a version tag, plus an explicit dry-run dispatch.
 2. Verify that the tag and workspace version agree.
 3. Run the existing tests before packaging.
-4. Build each target on its native GitHub runner.
+4. Build each target on its native GitHub runner. Because Artifact Signing
+   does not support hosted Windows ARM runners, transfer the native ARM64
+   package input to a supported Windows x64 runner for architecture-aware NSIS
+   packaging and signing.
 5. Package, platform-sign, and notarize as applicable.
 6. Generate updater signatures for eligible artifacts.
 7. Verifies package structure and native signatures; clean
@@ -74,12 +77,22 @@ contains all supported target/architecture combinations:
     },
     "windows-x86_64": {
       "signature": "<contents of artifact.sig>",
-      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-x64-setup.exe",
+      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-0.2.0-windows-x86_64-setup.exe",
+      "format": "nsis"
+    },
+    "windows-aarch64": {
+      "signature": "<contents of artifact.sig>",
+      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-0.2.0-windows-aarch64-setup.exe",
       "format": "nsis"
     },
     "linux-x86_64": {
       "signature": "<contents of artifact.sig>",
-      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-x86_64.AppImage",
+      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-0.2.0-linux-x86_64.AppImage",
+      "format": "appimage"
+    },
+    "linux-aarch64": {
+      "signature": "<contents of artifact.sig>",
+      "url": "https://github.com/fes/fesTerm/releases/download/v0.2.0/fesTerm-0.2.0-linux-aarch64.AppImage",
       "format": "appimage"
     }
   }

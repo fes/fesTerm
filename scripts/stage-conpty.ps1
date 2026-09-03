@@ -62,12 +62,38 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $archiveSha512 = [string]$manifest.sha512
-$dllSha512 = [string]$manifest.files.'win-x64/conpty.dll'.sha512
-$hostSha512 = [string]$manifest.files.'x64/OpenConsole.exe'.sha512
+
+$nativeArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+switch ($nativeArchitecture) {
+    'X64' {
+        $runtimeId = 'win-x64'
+        $hostArchitecture = 'x64'
+    }
+    'Arm64' {
+        $runtimeId = 'win-arm64'
+        $hostArchitecture = 'arm64'
+    }
+    default {
+        throw "Unsupported native Windows architecture for bundled ConPTY staging: $nativeArchitecture"
+    }
+}
+
+$dllManifestPath = "$runtimeId/conpty.dll"
+$hostManifestPath = "$hostArchitecture/OpenConsole.exe"
+$dllManifestEntry = $manifest.files.PSObject.Properties[$dllManifestPath]
+$hostManifestEntry = $manifest.files.PSObject.Properties[$hostManifestPath]
+if ($null -eq $dllManifestEntry) {
+    throw "Pinned ConPTY manifest is missing file metadata for $dllManifestPath"
+}
+if ($null -eq $hostManifestEntry) {
+    throw "Pinned ConPTY manifest is missing file metadata for $hostManifestPath"
+}
+$dllSha512 = [string]$dllManifestEntry.Value.sha512
+$hostSha512 = [string]$hostManifestEntry.Value.sha512
 
 Assert-ManifestSha512 -Value $archiveSha512 -Description 'Package archive hash'
-Assert-ManifestSha512 -Value $dllSha512 -Description 'win-x64 conpty.dll hash'
-Assert-ManifestSha512 -Value $hostSha512 -Description 'x64 OpenConsole.exe hash'
+Assert-ManifestSha512 -Value $dllSha512 -Description "$runtimeId conpty.dll hash"
+Assert-ManifestSha512 -Value $hostSha512 -Description "$hostArchitecture OpenConsole.exe hash"
 
 $sourceUri = $null
 if (-not [Uri]::TryCreate([string]$manifest.source_url, [UriKind]::Absolute, [ref]$sourceUri) -or
@@ -125,14 +151,14 @@ if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
 
 Assert-Sha512 -Path $archivePath -Expected $archiveSha512 -Description 'ConPTY package archive'
 
-$dllRelativePath = 'runtimes\win-x64\native\conpty.dll'
-$hostRelativePath = 'build\native\runtimes\x64\OpenConsole.exe'
+$dllRelativePath = "runtimes\$runtimeId\native\conpty.dll"
+$hostRelativePath = "build\native\runtimes\$hostArchitecture\OpenConsole.exe"
 $dllSource = Join-Path $packageDirectory $dllRelativePath
 $hostSource = Join-Path $packageDirectory $hostRelativePath
 
 try {
-    Assert-Sha512 -Path $dllSource -Expected $dllSha512 -Description 'Extracted win-x64 conpty.dll'
-    Assert-Sha512 -Path $hostSource -Expected $hostSha512 -Description 'Extracted x64 OpenConsole.exe'
+    Assert-Sha512 -Path $dllSource -Expected $dllSha512 -Description "Extracted $runtimeId conpty.dll"
+    Assert-Sha512 -Path $hostSource -Expected $hostSha512 -Description "Extracted $hostArchitecture OpenConsole.exe"
     Write-Host "Using verified extracted ConPTY package cache: $packageDirectory"
 }
 catch {
@@ -141,8 +167,8 @@ catch {
     }
     New-Item -ItemType Directory -Force -Path $packageDirectory | Out-Null
     Expand-Archive -LiteralPath $archivePath -DestinationPath $packageDirectory -Force
-    Assert-Sha512 -Path $dllSource -Expected $dllSha512 -Description 'Extracted win-x64 conpty.dll'
-    Assert-Sha512 -Path $hostSource -Expected $hostSha512 -Description 'Extracted x64 OpenConsole.exe'
+    Assert-Sha512 -Path $dllSource -Expected $dllSha512 -Description "Extracted $runtimeId conpty.dll"
+    Assert-Sha512 -Path $hostSource -Expected $hostSha512 -Description "Extracted $hostArchitecture OpenConsole.exe"
 }
 
 Push-Location $repositoryRoot
@@ -158,8 +184,8 @@ try {
 
     $profileDirectory = $Configuration.ToLowerInvariant()
     foreach ($binaryDirectory in @("target\$profileDirectory", "target\$profileDirectory\deps")) {
-        $runtimeDirectory = Join-Path $repositoryRoot ($binaryDirectory + '\runtime\conpty\win-x64')
-        $hostDirectory = Join-Path $runtimeDirectory 'x64'
+        $runtimeDirectory = Join-Path $repositoryRoot ($binaryDirectory + "\runtime\conpty\$runtimeId")
+        $hostDirectory = Join-Path $runtimeDirectory $hostArchitecture
         New-Item -ItemType Directory -Force -Path $hostDirectory | Out-Null
 
         $stagedDll = Join-Path $runtimeDirectory 'conpty.dll'
@@ -170,7 +196,7 @@ try {
         Assert-Sha512 -Path $stagedHost -Expected $hostSha512 -Description "Staged $binaryDirectory OpenConsole.exe"
     }
 
-    Write-Host "Staged verified x64 ConPTY runtime in target\$profileDirectory and target\$profileDirectory\deps."
+    Write-Host "Staged verified $hostArchitecture ConPTY runtime in target\$profileDirectory and target\$profileDirectory\deps."
 
     if ($RunSmoke) {
         & cargo test -p festerm windows_conpty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture

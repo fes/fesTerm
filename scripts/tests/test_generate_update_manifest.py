@@ -12,6 +12,39 @@ SPEC.loader.exec_module(manifest)
 
 
 class UpdateManifestTests(unittest.TestCase):
+    def test_manifest_supports_windows_and_linux_arm64_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifacts = []
+            for target, filename, update_format in (
+                ("windows-aarch64", "festerm-arm64.exe", "nsis"),
+                ("linux-aarch64", "festerm-aarch64.AppImage", "appimage"),
+            ):
+                artifact = root / filename
+                artifact.write_bytes(b"artifact")
+                Path(f"{artifact}.sig").write_text(
+                    f"{target}-signature\n", encoding="utf-8"
+                )
+                artifacts.append(
+                    (
+                        target,
+                        artifact,
+                        f"https://github.com/fes/fesTerm/releases/download/v1.2.3/{filename}",
+                        update_format,
+                    )
+                )
+
+            result = manifest.generate(
+                "1.2.3", "notes", artifacts, "2026-01-02T03:04:05Z"
+            )
+
+            self.assertEqual(
+                result["platforms"]["windows-aarch64"]["format"], "nsis"
+            )
+            self.assertEqual(
+                result["platforms"]["linux-aarch64"]["format"], "appimage"
+            )
+
     def test_manifest_requires_and_embeds_the_signature(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "festerm.AppImage"

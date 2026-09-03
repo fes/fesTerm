@@ -20,18 +20,29 @@ permissions:
 
 jobs:
   package:
-    name: ${{ matrix.platform }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos
+          - name: macos
+            platform: macos
             runner: macos-latest
-          - platform: windows
+          - name: windows-x86_64
+            platform: windows
             runner: windows-latest
-          - platform: linux
+            conpty_runtime: win-x64
+          - name: windows-aarch64
+            platform: windows
+            runner: windows-11-arm
+            conpty_runtime: win-arm64
+          - name: linux-x86_64
+            platform: linux
             runner: ubuntu-latest
+          - name: linux-aarch64
+            platform: linux
+            runner: ubuntu-24.04-arm
     env:
       FESTERM_UPDATE_PUBLIC_KEY: unsigned-package-smoke-key
     steps:
@@ -40,6 +51,15 @@ jobs:
         with:
           python-version: '3.x'
       - uses: dtolnay/rust-toolchain@stable
+      - name: Add native LLVM to PATH on Windows ARM64
+        if: matrix.name == 'windows-aarch64'
+        shell: pwsh
+        run: |
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path (Join-Path $llvmBin 'clang.exe') -PathType Leaf)) {
+            throw "Native LLVM is unavailable at $llvmBin"
+          }
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: Swatinem/rust-cache@v2
         with:
           # Distinct cache key from ci.yml's `quality` job: this workflow
@@ -54,7 +74,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config
+          sudo apt-get install -y libfuse2t64 libudev-dev pkg-config
       - name: Cache pinned cargo-packager binary
         id: cargo-packager-cache
         uses: actions/cache@v4
@@ -97,7 +117,7 @@ jobs:
           }
           $installedBinary = Join-Path $installDirectory 'festerm.exe'
           $installedSessionDaemon = Join-Path $installDirectory 'festerm-sessiond.exe'
-          $installedConpty = Join-Path $installDirectory 'runtime/conpty/win-x64/conpty.dll'
+          $installedConpty = Join-Path $installDirectory 'runtime/conpty/${{ matrix.conpty_runtime }}/conpty.dll'
           $uninstaller = Join-Path $installDirectory 'uninstall.exe'
           if (-not (Test-Path $installedBinary -PathType Leaf)) {
             throw 'NSIS install did not place festerm.exe'

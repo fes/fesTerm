@@ -44,11 +44,12 @@ future work.
 
 Native packaging and signed updates are implemented under
 [ADR 0021](docs/adr/0021-cargo-packager-github-releases-distribution.md):
-signed/notarized macOS DMG, Authenticode-signed Windows NSIS, Linux AppImage
-and Debian packages, updater signatures, a protected tag-driven GitHub release
-workflow, and an explicit check/download/install UI. Signed production
-releases (most recently v0.1.7) are published with macOS/Windows/Linux
-artifacts; end-to-end install/upgrade/uninstall and failure-path evidence
+signed/notarized macOS ARM64 DMG, Authenticode-signed Windows x86_64 and ARM64
+NSIS installers, Linux x86_64 and ARM64 AppImage and Debian packages, updater
+signatures, a protected tag-driven GitHub release workflow, and an explicit
+check/download/install UI. Signed production releases are published with
+macOS/Windows/Linux artifacts; end-to-end install/upgrade/uninstall and
+failure-path evidence
 (clean install, verified update, signature-rejection, and interrupted-download
 handling across all supported targets) remains tracked in
 [#62](https://github.com/fes/fesTerm/issues/62), now scoped to that remaining
