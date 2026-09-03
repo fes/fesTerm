@@ -2914,6 +2914,26 @@ const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 /// session actively verifies its transport even without an explicit
 /// wake/network-change trigger or on-demand [`SshSession::try_check_liveness`]
 /// request.
+///
+/// This is a deliberate default (issue #55), not an unexamined leftover
+/// constant:
+/// - It stays enabled by default because network-interface/route-change
+///   detection is not yet implemented on any platform (#48), so the
+///   automatic cadence is currently the only way a genuinely idle session
+///   (no user input, no wake event) ever notices a black-holed connection
+///   and moves to `Disconnected`.
+/// - 60 seconds balances that detection latency against the network/NAT
+///   keepalive traffic and desktop battery cost of a periodic probe; it is
+///   in the same range commonly used for interactive SSH client keepalive
+///   (`ServerAliveInterval`-style) settings.
+/// - It is intentionally a non-configurable implementation constant for
+///   0.1 rather than a global/profile setting: per ADR 0018's own
+///   constraints, low-level keepalive knobs are not exposed without a
+///   concrete product requirement, and a probe failure never grants
+///   permission to auto-reconnect regardless of cadence, so the product
+///   risk of a fixed default is low. Revisit if #48 lands reliable
+///   network-change detection on all platforms, or if a concrete
+///   battery/network complaint justifies a setting.
 const LIVENESS_PROBE_INTERVAL: Duration = Duration::from_secs(60);
 /// Bound on how long a single liveness probe waits for the remote peer to
 /// reply before the transport is treated as unresponsive.
@@ -4209,6 +4229,25 @@ async fn probe_liveness(handle: &russh::client::Handle<SshClientHandler>) -> boo
     )
 }
 
+/// Pure decision for whether an automatic/on-demand liveness probe is due
+/// right now, extracted from the main connection loop so the cadence policy
+/// (ADR 0018, issue #55) can be exercised in tests against synthetic
+/// `Instant`s instead of real wall-clock sleeps.
+///
+/// A probe is due if either an on-demand request is pending (wake hook or
+/// `SshSession::try_check_liveness`) or the automatic cadence deadline has
+/// elapsed. Setting `next_probe` far in the future (e.g. `now + Duration::MAX`)
+/// models a "disabled" automatic cadence while still allowing on-demand
+/// requests to fire, which is how tests cover both halves of #55's
+/// acceptance criteria without an always-enabled/always-disabled setting.
+fn liveness_probe_due(
+    now: tokio::time::Instant,
+    next_probe: tokio::time::Instant,
+    on_demand_requested: bool,
+) -> bool {
+    on_demand_requested || now >= next_probe
+}
+
 async fn run_authenticated_channel(
     mut handle: russh::client::Handle<SshClientHandler>,
     mut channel: russh::Channel<russh::client::Msg>,
@@ -4224,8 +4263,11 @@ async fn run_authenticated_channel(
     // deadline.
     let mut next_liveness_probe = tokio::time::Instant::now() + LIVENESS_PROBE_INTERVAL;
     loop {
-        let probe_due = shared.take_liveness_check_requested()
-            || tokio::time::Instant::now() >= next_liveness_probe;
+        let probe_due = liveness_probe_due(
+            tokio::time::Instant::now(),
+            next_liveness_probe,
+            shared.take_liveness_check_requested(),
+        );
         if probe_due {
             if !probe_liveness(&handle).await {
                 return RunningOutcome::ConnectionLost(
@@ -5155,6 +5197,53 @@ mod tests {
             assert!(!error.to_string().contains("password"));
             assert!(!error.to_string().contains("private"));
         }
+    }
+
+    #[test]
+    fn liveness_probe_due_fires_on_demand_regardless_of_automatic_deadline() {
+        // Issue #55 / ADR 0018: an on-demand request (wake hook or
+        // `SshSession::try_check_liveness`) must fire immediately even while
+        // the automatic cadence deadline is far in the future - the two
+        // triggers are independent. Uses synthetic `Instant`s rather than a
+        // real sleep, per #55's acceptance criteria.
+        let now = tokio::time::Instant::now();
+        let far_future_deadline = now + Duration::from_secs(3600);
+
+        assert!(liveness_probe_due(now, far_future_deadline, true));
+    }
+
+    #[test]
+    fn liveness_probe_due_fires_once_the_automatic_cadence_deadline_elapses() {
+        // The documented always-enabled default (#55): once the automatic
+        // deadline has passed, a probe is due even with no on-demand
+        // request pending.
+        let deadline = tokio::time::Instant::now();
+        let after_deadline = deadline + Duration::from_millis(1);
+
+        assert!(liveness_probe_due(after_deadline, deadline, false));
+        assert!(liveness_probe_due(deadline, deadline, false));
+    }
+
+    #[test]
+    fn liveness_probe_due_stays_false_before_the_deadline_without_a_request() {
+        let now = tokio::time::Instant::now();
+        let future_deadline = now + Duration::from_secs(1);
+
+        assert!(!liveness_probe_due(now, future_deadline, false));
+    }
+
+    #[test]
+    fn liveness_probe_due_models_a_disabled_automatic_cadence() {
+        // Setting the automatic deadline far in the future (as if the
+        // cadence were disabled) must not suppress on-demand requests, and
+        // must not spuriously fire on its own - this is how #55's "disabled"
+        // half of "tests cover disabled/enabled cadence behavior" is
+        // exercised without an actual disable setting existing in 0.1.
+        let now = tokio::time::Instant::now();
+        let effectively_disabled = now + Duration::from_secs(u64::from(u32::MAX));
+
+        assert!(!liveness_probe_due(now, effectively_disabled, false));
+        assert!(liveness_probe_due(now, effectively_disabled, true));
     }
 
     #[test]
