@@ -47,6 +47,7 @@ use festerm_ui_egui::{
     TerminalView,
 };
 
+use crate::markdown_viewer::MarkdownViewerTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 
 /// Stable application-level tab identifier.
@@ -1241,6 +1242,7 @@ pub enum TabContent {
     Profiles,
     SshAuthenticationRequired(SshAuthenticationRequiredTab),
     SftpAuthenticationRequired(SftpAuthenticationRequiredTab),
+    MarkdownViewer(Box<MarkdownViewerTab>),
     Session(Box<SessionTab>),
 }
 
@@ -1263,6 +1265,10 @@ pub enum AppCommand {
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
+    OpenMarkdownFilePicker,
+    OpenLocalMarkdownFile {
+        path: PathBuf,
+    },
     /// Opens an explicit terminal hyperlink after application-owned URL
     /// validation. Terminal presentation emits intent only.
     OpenExternalLink {
@@ -1334,6 +1340,16 @@ pub enum AppCommand {
     /// `StartConfiguredLocalProfile`.
     StartConfiguredSerialProfile {
         profile_id: String,
+    },
+    ReloadMarkdown,
+    ToggleMarkdownPreviewSource,
+    ToggleMarkdownOutline,
+    OpenMarkdownFind,
+    NavigateMarkdownFind {
+        reverse: bool,
+    },
+    LoadMarkdownLocalImage {
+        reference_index: usize,
     },
     /// Requests that the composition root store a password for an existing
     /// configured SSH profile before starting it. The value is redacted from
@@ -1879,6 +1895,7 @@ impl AppState {
                 TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
                 TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
                 TabContent::Profiles => Some(WorkspaceTab::profiles(identifier.clone())?),
+                TabContent::MarkdownViewer(_) => None,
                 TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
                     identifier.clone(),
                     ssh.profile.identifier(),
@@ -2043,6 +2060,7 @@ impl AppState {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
+                | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_) => None,
             })
@@ -2072,6 +2090,7 @@ impl AppState {
             TabContent::Launcher
             | TabContent::Settings
             | TabContent::Profiles
+            | TabContent::MarkdownViewer(_)
             | TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_) => None,
         })
@@ -2089,6 +2108,7 @@ impl AppState {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
+                | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_) => None,
             })
@@ -2119,6 +2139,8 @@ impl AppState {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
+            AppCommand::OpenMarkdownFilePicker => {}
+            AppCommand::OpenLocalMarkdownFile { path } => self.open_local_markdown(path),
             AppCommand::OpenExternalLink { target } => {
                 if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
                 {
@@ -2148,6 +2170,25 @@ impl AppState {
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
+            AppCommand::ReloadMarkdown => {
+                self.with_active_markdown_viewer(|viewer| viewer.reload())
+            }
+            AppCommand::ToggleMarkdownPreviewSource => {
+                self.with_active_markdown_viewer(|viewer| viewer.toggle_mode())
+            }
+            AppCommand::ToggleMarkdownOutline => {
+                self.with_active_markdown_viewer(|viewer| viewer.toggle_outline())
+            }
+            AppCommand::OpenMarkdownFind => {
+                self.with_active_markdown_viewer(|viewer| viewer.open_find())
+            }
+            AppCommand::NavigateMarkdownFind { reverse } => {
+                self.with_active_markdown_viewer(|viewer| viewer.advance_find(reverse))
+            }
+            AppCommand::LoadMarkdownLocalImage { reference_index } => self
+                .with_active_markdown_viewer(|viewer| {
+                    viewer.load_local_image(reference_index, context)
+                }),
             AppCommand::StartSerialSession { settings } => {
                 self.start_serial_session(settings, context)
             }
@@ -2258,6 +2299,13 @@ impl AppState {
         }
     }
 
+    fn with_active_markdown_viewer(&mut self, mut apply: impl FnMut(&mut MarkdownViewerTab)) {
+        let TabContent::MarkdownViewer(viewer) = &mut self.active_tab_mut().content else {
+            return;
+        };
+        apply(viewer);
+    }
+
     fn open_launcher(&mut self) {
         // Launcher is a singleton task surface and the window's stable empty
         // state. Every invocation path focuses the existing chip rather than
@@ -2316,6 +2364,24 @@ impl AppState {
         self.tabs.push(Tab {
             id,
             content: TabContent::Profiles,
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
+    }
+
+    fn open_local_markdown(&mut self, path: PathBuf) {
+        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::MarkdownViewer(viewer) if viewer.matches_local_path(&path) => Some(tab.id),
+            _ => None,
+        }) {
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return;
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(path))),
         });
         self.set_active(id);
         self.workspace_dirty = true;
@@ -3308,6 +3374,24 @@ mod tests {
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
         assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
         state.dispatch(AppCommand::CloseTab(state.active()), &context);
+    }
+
+    #[test]
+    fn workspace_capture_omits_runtime_markdown_viewer_tabs() {
+        let mut state = AppState::for_test();
+        state.tabs.push(Tab {
+            id: TabId::next(),
+            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(
+                PathBuf::from("/docs/readme.md"),
+            ))),
+        });
+        state.active = state.tabs[1].id;
+
+        let captured = state.capture_workspace_configuration().unwrap();
+        let workspace = captured.workspace().unwrap();
+
+        assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
+        assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
     }
 
     #[test]

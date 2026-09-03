@@ -9,6 +9,7 @@ mod configuration_startup;
 mod diagnostics;
 mod environment;
 mod inspector;
+mod markdown_viewer;
 mod native_smoke;
 mod overlay_state;
 mod port_forward_draft;

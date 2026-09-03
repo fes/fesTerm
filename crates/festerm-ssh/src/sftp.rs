@@ -230,6 +230,10 @@ pub enum SftpSessionError {
     MissingFileName {
         path: String,
     },
+    RemoteFileTooLarge {
+        path: String,
+        limit_bytes: usize,
+    },
     SubsystemRejected,
     LocalOperationFailed {
         operation: &'static str,
@@ -270,6 +274,12 @@ impl fmt::Display for SftpSessionError {
             }
             Self::MissingFileName { path } => {
                 write!(formatter, "path has no usable file name: {path}")
+            }
+            Self::RemoteFileTooLarge { path, limit_bytes } => {
+                write!(
+                    formatter,
+                    "remote file exceeds the {limit_bytes}-byte limit: {path}"
+                )
             }
             Self::SubsystemRejected => {
                 formatter.write_str("SSH server rejected the SFTP subsystem request")
@@ -479,6 +489,41 @@ impl SftpSession {
         self.ensure_open()?;
         let resolved = resolve_remote_path(&self.remote_working_directory, path)?;
         self.remote_path_metadata_exact(&resolved).await
+    }
+
+    /// Reads one remote file snapshot up to `max_bytes`, reusing the existing
+    /// authenticated SFTP session rather than opening a second SSH path.
+    pub async fn read_markdown_snapshot(
+        &mut self,
+        path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, SftpSessionError> {
+        self.ensure_open()?;
+        let resolved = resolve_remote_path(&self.remote_working_directory, path)?;
+        let mut file = self
+            .client
+            .open(resolved.clone())
+            .await
+            .map_err(|error| remote_error("open file", &resolved, error))?;
+        let mut bytes = Vec::new();
+        let mut buffer = vec![0u8; TRANSFER_CHUNK_BYTES.min(max_bytes.saturating_add(1).max(1))];
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .await
+                .map_err(|error| remote_error("read file", &resolved, error))?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..read]);
+            if bytes.len() > max_bytes {
+                return Err(SftpSessionError::RemoteFileTooLarge {
+                    path: resolved,
+                    limit_bytes: max_bytes,
+                });
+            }
+        }
+        Ok(bytes)
     }
 
     /// Closes the SFTP subsystem channel cleanly.

@@ -11,6 +11,7 @@
     "docs/application-command-model.md",
     "docs/development-governance.md",
     "docs/gui-design.md",
+    "docs/markdown-viewer-design.md",
     "docs/ui-test-plan.md"
   ],
   "legacy_adrs_without_validation_impact": [
@@ -1156,19 +1157,34 @@
     {
       "id": "markdown-viewing",
       "edges": [
+        "LAUNCH-11",
         "MD-*"
       ],
       "requirements": [
-        "docs/gui-design.md#approved-native-markdown-viewing"
+        "docs/gui-design.md#approved-native-markdown-viewing",
+        "docs/markdown-viewer-design.md"
       ],
-      "decisions": [],
-      "automated_tests": [],
+      "decisions": [
+        "ADR-0030"
+      ],
+      "automated_tests": [
+        "command_palette_always_offers_open_markdown_file",
+        "markdown_viewer_palette_items_follow_the_active_viewer",
+        "workspace_capture_omits_runtime_markdown_viewer_tabs",
+        "find_navigation_wraps_in_both_directions",
+        "same_source_reload_preserves_current_match_when_possible",
+        "mode_switch_anchor_round_trips_within_heading_section",
+        "resource_approval_is_per_reference_and_clears",
+        "markdown_source_errors_build_content_free_error_states",
+        "markdown_load_errors_build_content_free_error_states",
+        "local_load_errors_build_actionable_error_states"
+      ],
       "manual_scenarios": [
         "CP-06"
       ],
-      "status": "deferred",
+      "status": "partial",
       "prerequisites": [
-        "Complete Local, SSH, and Serial capabilities and UI; explicit product/security design decision"
+        "Remote SSH-backed Markdown preview still depends on the planned GUI SFTP browser surface from ADR-0029"
       ]
     }
   ]
