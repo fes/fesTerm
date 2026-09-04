@@ -24,6 +24,7 @@ use festerm_session::{
     SshPortForwardDirection, SshPortForwardRuntime, SshPortForwardSource, SshPortForwardState,
     TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
+use ssh_key::Certificate as OpenSshCertificate;
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroize;
 
@@ -111,6 +112,7 @@ pub enum SshAuthentication {
     Password(SshPassword),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(SshPrivateKey),
+    Certificate(SshCertificateAuthentication),
     StoredPrivateKey(StoredPrivateKeyAuthentication),
     /// No credential is supplied upfront. The worker connects and verifies
     /// the host key first (exactly as it would for any other credential),
@@ -175,6 +177,15 @@ impl SshAuthentication {
         Self::PublicKey(private_key)
     }
 
+    /// Selects OpenSSH certificate authentication for this session.
+    ///
+    /// Both the private key and its signed certificate are moved directly to
+    /// the worker. An explicit reconnect policy retains only their parsed
+    /// forms in that worker for bounded fresh authentication attempts.
+    pub fn certificate(private_key: SshPrivateKey, certificate: SshCertificate) -> Self {
+        Self::Certificate(SshCertificateAuthentication::new(private_key, certificate))
+    }
+
     /// Selects interactive password authentication: no credential is
     /// supplied upfront, so the worker prompts for one (through
     /// [`SessionEvent::PasswordRequested`]) only after the host key has
@@ -188,6 +199,12 @@ impl SshAuthentication {
             Self::Password(password) => WorkerAuthentication::Password(password.password),
             Self::StoredPassword(password) => WorkerAuthentication::StoredPassword(password),
             Self::PublicKey(private_key) => WorkerAuthentication::PublicKey(private_key.key),
+            Self::Certificate(authentication) => {
+                WorkerAuthentication::Certificate(WorkerCertificateAuthentication {
+                    key: authentication.key.key,
+                    certificate: authentication.certificate.certificate,
+                })
+            }
             Self::StoredPrivateKey(private_key) => {
                 WorkerAuthentication::StoredPrivateKey(private_key)
             }
@@ -204,6 +221,9 @@ impl fmt::Debug for SshAuthentication {
                 formatter.write_str("SshAuthentication::StoredPassword([REDACTED])")
             }
             Self::PublicKey(_) => formatter.write_str("SshAuthentication::PublicKey([REDACTED])"),
+            Self::Certificate(_) => {
+                formatter.write_str("SshAuthentication::Certificate([REDACTED])")
+            }
             Self::StoredPrivateKey(_) => {
                 formatter.write_str("SshAuthentication::StoredPrivateKey([REDACTED])")
             }
@@ -239,6 +259,29 @@ pub struct StoredPasswordAuthentication {
 pub struct StoredPrivateKeyAuthentication {
     store: Arc<dyn SecretStore>,
     reference: SecretReference,
+}
+
+/// Parsed OpenSSH certificate authentication material consumed by
+/// [`SshAuthentication`] only through the worker.
+///
+/// This type intentionally has no getters or derived `Debug`
+/// implementation. The accompanying private key remains secret, and the
+/// certificate is only meaningful together with that key.
+pub struct SshCertificateAuthentication {
+    key: SshPrivateKey,
+    certificate: SshCertificate,
+}
+
+impl SshCertificateAuthentication {
+    fn new(key: SshPrivateKey, certificate: SshCertificate) -> Self {
+        Self { key, certificate }
+    }
+}
+
+impl fmt::Debug for SshCertificateAuthentication {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SshCertificateAuthentication([REDACTED])")
+    }
 }
 
 /// Encodes an OpenSSH private key and its optional passphrase into one
@@ -464,12 +507,83 @@ impl fmt::Display for SshPrivateKeyError {
 
 impl std::error::Error for SshPrivateKeyError {}
 
+/// Parsed OpenSSH certificate material consumed by certificate-based SSH
+/// authentication.
+///
+/// This type intentionally has no getter or derived `Debug` implementation.
+/// The parsed certificate is retained only in memory for the worker.
+pub struct SshCertificate {
+    certificate: Arc<OpenSshCertificate>,
+}
+
+impl SshCertificate {
+    /// Parses an in-memory OpenSSH certificate (the usual `-cert.pub` text).
+    ///
+    /// The supplied bytes are validated immediately and are not retained after
+    /// parsing.
+    pub fn from_openssh(encoded: impl AsRef<[u8]>) -> Result<Self, SshCertificateError> {
+        let encoded = openssh_certificate_text(encoded.as_ref())?;
+        let certificate = OpenSshCertificate::from_openssh(encoded)
+            .map_err(|_| SshCertificateError::InvalidCertificate)?;
+        Ok(Self {
+            certificate: Arc::new(certificate),
+        })
+    }
+}
+
+fn openssh_certificate_text(encoded: &[u8]) -> Result<&str, SshCertificateError> {
+    let encoded = std::str::from_utf8(encoded).map_err(|_| SshCertificateError::InvalidEncoding)?;
+    let Some(kind) = encoded.split_whitespace().next() else {
+        return Err(SshCertificateError::NotOpenSsh);
+    };
+    if !kind.ends_with("-cert-v01@openssh.com") {
+        return Err(SshCertificateError::NotOpenSsh);
+    }
+    Ok(encoded)
+}
+
+impl fmt::Debug for SshCertificate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SshCertificate([REDACTED])")
+    }
+}
+
+/// Failure to accept an in-memory OpenSSH certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SshCertificateError {
+    InvalidEncoding,
+    NotOpenSsh,
+    InvalidCertificate,
+}
+
+impl fmt::Display for SshCertificateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidEncoding => formatter.write_str("SSH certificate is not valid UTF-8"),
+            Self::NotOpenSsh => {
+                formatter.write_str("SSH certificate is not in OpenSSH certificate format")
+            }
+            Self::InvalidCertificate => {
+                formatter.write_str("SSH certificate is invalid or unsupported")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SshCertificateError {}
+
 enum WorkerAuthentication {
     Password(String),
     StoredPassword(StoredPasswordAuthentication),
     PublicKey(Arc<russh::keys::PrivateKey>),
+    Certificate(WorkerCertificateAuthentication),
     StoredPrivateKey(StoredPrivateKeyAuthentication),
     Interactive,
+}
+
+struct WorkerCertificateAuthentication {
+    key: Arc<russh::keys::PrivateKey>,
+    certificate: Arc<OpenSshCertificate>,
 }
 
 /// Content-free failures while resolving a native stored SSH password.
@@ -4805,6 +4919,19 @@ async fn establish_connection(
             )
             .await
         }
+        WorkerAuthentication::Certificate(authentication) => {
+            wait_for_ssh_operation(
+                handle.authenticate_openssh_cert(
+                    profile.username(),
+                    Arc::clone(&authentication.key),
+                    authentication.certificate.as_ref().clone(),
+                ),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
         WorkerAuthentication::StoredPrivateKey(authentication) => {
             // Resolve and parse only after the transport and host-key gate
             // are ready, immediately before public-key authentication on
@@ -5240,6 +5367,19 @@ async fn establish_authenticated_handle(
                         Arc::clone(private_key),
                         hash_algorithm,
                     ),
+                ),
+                command_receiver,
+                shared,
+                host_key_gate,
+            )
+            .await
+        }
+        WorkerAuthentication::Certificate(authentication) => {
+            wait_for_ssh_operation(
+                handle.authenticate_openssh_cert(
+                    profile.username(),
+                    Arc::clone(&authentication.key),
+                    authentication.certificate.as_ref().clone(),
                 ),
                 command_receiver,
                 shared,
@@ -7017,6 +7157,22 @@ mod tests {
         SshPrivateKey::from_openssh(encoded.as_bytes()).expect("could not parse test SSH key")
     }
 
+    fn generated_certificate_text() -> &'static str {
+        concat!(
+            "ssh-ed25519-cert-v01@openssh.com ",
+            "AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIP4NAgsSLiXrpfby",
+            "oGxrF9cZN7UiLq2EJ80DswScilD2AAAAIHRw0uaN2ad8NjeXNK5BLHkiXmMpuUjwYVr5",
+            "+9/9Rnz2AAAAAAAAAAAAAAABAAAACXRlc3QtY2VydAAAAA0AAAAJdGVzdC11c2VyAAAA",
+            "AAAAAAD//////////wAAAAAAAACCAAAAFXBlcm1pdC1YMTEtZm9yd2FyZGluZwAAAAAA",
+            "AAAXcGVybWl0LWFnZW50LWZvcndhcmRpbmcAAAAAAAAAFnBlcm1pdC1wb3J0LWZvcndh",
+            "cmRpbmcAAAAAAAAACnBlcm1pdC1wdHkAAAAAAAAADnBlcm1pdC11c2VyLXJjAAAAAAAA",
+            "AAAAAAAzAAAAC3NzaC1lZDI1NTE5AAAAINmASn24MXIM7yAjzI0wX348PDFGJo5lhB0F",
+            "6R99e8jvAAAAUwAAAAtzc2gtZWQyNTUxOQAAAECrYKMa8P+MB7+swJDRQ2t0++H73Vih",
+            "OwvkL2nqJ+N2JIo9WVnInnZvEr81Pi1q9LTcupbTegAQCgFqhB34vrMK",
+            " fes@fes-m4.feslabs.com"
+        )
+    }
+
     #[allow(dead_code)]
     struct TestPortForwardSpec {
         direction: SshPortForwardDirection,
@@ -7078,6 +7234,47 @@ mod tests {
         let error = SshPrivateKey::from_openssh(malformed)
             .expect_err("malformed OpenSSH private key must not parse");
         assert_eq!(error, SshPrivateKeyError::InvalidKey);
+        assert!(!error.to_string().contains(malformed));
+    }
+
+    #[test]
+    fn certificate_authentication_redacts_and_dispatches_the_parsed_material() {
+        let private_key = generated_private_key();
+        let certificate =
+            SshCertificate::from_openssh(generated_certificate_text().as_bytes()).unwrap();
+
+        assert_eq!(format!("{certificate:?}"), "SshCertificate([REDACTED])");
+
+        let authentication = SshAuthentication::certificate(private_key, certificate);
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::Certificate([REDACTED])"
+        );
+        assert!(matches!(
+            authentication.into_worker_authentication(),
+            WorkerAuthentication::Certificate(_)
+        ));
+    }
+
+    #[test]
+    fn certificate_parser_accepts_valid_and_rejects_invalid_openssh_material_without_echoing_it() {
+        let certificate = SshCertificate::from_openssh(generated_certificate_text().as_bytes())
+            .expect("valid OpenSSH certificate must parse");
+        assert_eq!(format!("{certificate:?}"), "SshCertificate([REDACTED])");
+
+        assert!(matches!(
+            SshCertificate::from_openssh([0xff]),
+            Err(SshCertificateError::InvalidEncoding)
+        ));
+        assert!(matches!(
+            SshCertificate::from_openssh("ssh-ed25519 AAAA not-a-certificate"),
+            Err(SshCertificateError::NotOpenSsh)
+        ));
+
+        let malformed = "ssh-ed25519-cert-v01@openssh.com definitely-not-a-certificate";
+        let error = SshCertificate::from_openssh(malformed)
+            .expect_err("malformed OpenSSH certificate must not parse");
+        assert_eq!(error, SshCertificateError::InvalidCertificate);
         assert!(!error.to_string().contains(malformed));
     }
 

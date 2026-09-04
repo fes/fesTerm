@@ -22,8 +22,8 @@ use festerm_config::{
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
     HostIdentity, PersistenceProvider, PersistenceProviderProbeAvailability, ReconnectPolicy,
-    RecoveryPolicy, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
-    SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
+    RecoveryPolicy, SessionStrategy, SshAuthentication, SshCertificate, SshConnectionProfile,
+    SshKeyPassphrase, SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
@@ -314,6 +314,7 @@ enum SshAuthenticationMethod {
     #[default]
     Password,
     PrivateKey,
+    Certificate,
 }
 
 #[derive(Clone)]
@@ -650,6 +651,7 @@ struct SshLauncherForm {
     password: String,
     private_key: String,
     key_passphrase: String,
+    certificate: String,
     saved_profile_id: Option<String>,
     saved_profile_has_credential: bool,
     saved_profile_credential_kind: Option<CredentialKind>,
@@ -679,6 +681,7 @@ impl Default for SshLauncherForm {
             password: String::new(),
             private_key: String::new(),
             key_passphrase: String::new(),
+            certificate: String::new(),
             saved_profile_id: None,
             saved_profile_has_credential: false,
             saved_profile_credential_kind: None,
@@ -834,6 +837,7 @@ impl SshLauncherForm {
         let password = std::mem::take(&mut self.password);
         let private_key = std::mem::take(&mut self.private_key);
         let key_passphrase = std::mem::take(&mut self.key_passphrase);
+        let certificate = std::mem::take(&mut self.certificate);
         let profile = self.connection_profile()?;
         let options = self.session_options()?;
 
@@ -869,6 +873,11 @@ impl SshLauncherForm {
                 authentication: Self::parse_private_key(private_key, key_passphrase)?,
                 options,
             }),
+            SshAuthenticationMethod::Certificate => Ok(AppCommand::StartSshSession {
+                profile,
+                authentication: Self::parse_certificate(private_key, key_passphrase, certificate)?,
+                options,
+            }),
         }
     }
 
@@ -902,6 +911,7 @@ impl SshLauncherForm {
         let password = std::mem::take(&mut self.password);
         let private_key = std::mem::take(&mut self.private_key);
         let key_passphrase = std::mem::take(&mut self.key_passphrase);
+        let certificate = std::mem::take(&mut self.certificate);
         let profile = self.connection_profile()?;
 
         match self.authentication_method {
@@ -931,6 +941,10 @@ impl SshLauncherForm {
             SshAuthenticationMethod::PrivateKey => Ok(AppCommand::StartSftpSession {
                 profile,
                 authentication: Self::parse_private_key(private_key, key_passphrase)?,
+            }),
+            SshAuthenticationMethod::Certificate => Ok(AppCommand::StartSftpSession {
+                profile,
+                authentication: Self::parse_certificate(private_key, key_passphrase, certificate)?,
             }),
         }
     }
@@ -1031,23 +1045,39 @@ impl SshLauncherForm {
     /// Encrypted OpenSSH keys use the SSH crate's explicit passphrase API; the
     /// parser distinguishes that case without trying to persist or log either
     /// source string.
+    fn parse_private_key_material(
+        private_key: &str,
+        key_passphrase: String,
+    ) -> Result<SshPrivateKey, String> {
+        match SshPrivateKey::from_openssh(private_key) {
+            Ok(private_key) if key_passphrase.is_empty() => Ok(private_key),
+            Ok(_) => Err("SSH private key is unencrypted; clear the passphrase".to_owned()),
+            Err(SshPrivateKeyError::Encrypted) => SshPrivateKey::from_encrypted_openssh(
+                private_key,
+                SshKeyPassphrase::new(key_passphrase),
+            )
+            .map_err(|error| error.to_string()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
     fn parse_private_key(
         private_key: String,
         key_passphrase: String,
     ) -> Result<SshAuthentication, String> {
-        match SshPrivateKey::from_openssh(&private_key) {
-            Ok(private_key) if key_passphrase.is_empty() => {
-                Ok(SshAuthentication::public_key(private_key))
-            }
-            Ok(_) => Err("SSH private key is unencrypted; clear the passphrase".to_owned()),
-            Err(SshPrivateKeyError::Encrypted) => SshPrivateKey::from_encrypted_openssh(
-                &private_key,
-                SshKeyPassphrase::new(key_passphrase),
-            )
+        Self::parse_private_key_material(&private_key, key_passphrase)
             .map(SshAuthentication::public_key)
-            .map_err(|error| error.to_string()),
-            Err(error) => Err(error.to_string()),
-        }
+    }
+
+    fn parse_certificate(
+        private_key: String,
+        key_passphrase: String,
+        certificate: String,
+    ) -> Result<SshAuthentication, String> {
+        let private_key = Self::parse_private_key_material(&private_key, key_passphrase)?;
+        let certificate =
+            SshCertificate::from_openssh(&certificate).map_err(|error| error.to_string())?;
+        Ok(SshAuthentication::certificate(private_key, certificate))
     }
 }
 
@@ -1216,6 +1246,28 @@ fn ssh_text_edit(
     .inner
 }
 
+fn ssh_multiline_text_edit(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: &'static str,
+    label: &str,
+    value: &mut String,
+    password: bool,
+) -> egui::Response {
+    ui.vertical(|ui| {
+        let label = ui.label(label);
+        ui.add(
+            TextEdit::multiline(value)
+                .id_salt(("launcher_ssh", tab_id, field))
+                .password(password)
+                .desired_width(360.0)
+                .desired_rows(5),
+        )
+        .labelled_by(label.id)
+    })
+    .inner
+}
+
 fn ssh_multiline_secret_text_edit(
     ui: &mut Ui,
     tab_id: TabId,
@@ -1223,18 +1275,7 @@ fn ssh_multiline_secret_text_edit(
     label: &str,
     value: &mut String,
 ) -> egui::Response {
-    ui.vertical(|ui| {
-        let label = ui.label(label);
-        ui.add(
-            TextEdit::multiline(value)
-                .id_salt(("launcher_ssh", tab_id, field))
-                .password(true)
-                .desired_width(360.0)
-                .desired_rows(5),
-        )
-        .labelled_by(label.id)
-    })
-    .inner
+    ssh_multiline_text_edit(ui, tab_id, field, label, value, true)
 }
 
 /// The default, minimal launcher surface for a fresh SSH connection: a
@@ -1631,6 +1672,11 @@ fn show_ssh_form(
                     SshAuthenticationMethod::PrivateKey,
                     "Private-key authentication",
                 );
+                ui.radio_value(
+                    &mut form.authentication_method,
+                    SshAuthenticationMethod::Certificate,
+                    "Certificate authentication",
+                );
             });
             ui.add_space(4.0);
             let submit_with_enter = match form.authentication_method {
@@ -1703,6 +1749,42 @@ fn show_ssh_form(
                     .lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 }
+                SshAuthenticationMethod::Certificate => {
+                    ssh_multiline_secret_text_edit(
+                        ui,
+                        tab_id,
+                        "private_key",
+                        "OpenSSH private key",
+                        &mut form.private_key,
+                    );
+                    ssh_paragraph(
+                        ui,
+                        "The private key and certificate are kept in memory only, never saved.",
+                    );
+                    ssh_text_edit(
+                        ui,
+                        tab_id,
+                        "key_passphrase",
+                        "Key passphrase (optional)",
+                        &mut form.key_passphrase,
+                        true,
+                        false,
+                    );
+                    ui.add_space(4.0);
+                    ssh_multiline_text_edit(
+                        ui,
+                        tab_id,
+                        "certificate",
+                        "OpenSSH certificate",
+                        &mut form.certificate,
+                        false,
+                    );
+                    ssh_paragraph(
+                        ui,
+                        "Paste the signed OpenSSH certificate text from the matching -cert.pub file.",
+                    );
+                    false
+                }
             };
 
             if result.is_none() {
@@ -1710,6 +1792,7 @@ fn show_ssh_form(
                 let submit_label = match form.authentication_method {
                     SshAuthenticationMethod::Password => "Connect with password",
                     SshAuthenticationMethod::PrivateKey => "Connect with private key",
+                    SshAuthenticationMethod::Certificate => "Connect with certificate",
                 };
                 if ui.button(submit_label).clicked() || submit_with_enter {
                     match form.submit() {
@@ -1809,6 +1892,11 @@ fn show_sftp_form(
                     SshAuthenticationMethod::PrivateKey,
                     "Private-key authentication",
                 );
+                ui.radio_value(
+                    &mut form.authentication_method,
+                    SshAuthenticationMethod::Certificate,
+                    "Certificate authentication",
+                );
             });
             ui.add_space(4.0);
             let submit_with_enter = match form.authentication_method {
@@ -1879,6 +1967,42 @@ fn show_sftp_form(
                     .lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 }
+                SshAuthenticationMethod::Certificate => {
+                    ssh_multiline_secret_text_edit(
+                        ui,
+                        tab_id,
+                        "private_key",
+                        "OpenSSH private key",
+                        &mut form.private_key,
+                    );
+                    ssh_paragraph(
+                        ui,
+                        "The private key and certificate are kept in memory only, never saved.",
+                    );
+                    ssh_text_edit(
+                        ui,
+                        tab_id,
+                        "key_passphrase",
+                        "Key passphrase (optional)",
+                        &mut form.key_passphrase,
+                        true,
+                        false,
+                    );
+                    ui.add_space(4.0);
+                    ssh_multiline_text_edit(
+                        ui,
+                        tab_id,
+                        "certificate",
+                        "OpenSSH certificate",
+                        &mut form.certificate,
+                        false,
+                    );
+                    ssh_paragraph(
+                        ui,
+                        "Paste the signed OpenSSH certificate text from the matching -cert.pub file.",
+                    );
+                    false
+                }
             };
 
             if result.is_none() {
@@ -1886,6 +2010,7 @@ fn show_sftp_form(
                 let submit_label = match form.authentication_method {
                     SshAuthenticationMethod::Password => "Connect with password",
                     SshAuthenticationMethod::PrivateKey => "Connect with private key",
+                    SshAuthenticationMethod::Certificate => "Connect with certificate",
                 };
                 if ui.button(submit_label).clicked() || submit_with_enter {
                     match form.submit_sftp() {
@@ -3768,7 +3893,9 @@ impl SshProfileDraft {
                     PrivateKeyToStore::new(std::mem::take(&mut self.private_key), passphrase),
                 ))
             }
-            SshAuthenticationMethod::Password | SshAuthenticationMethod::PrivateKey => None,
+            SshAuthenticationMethod::Password
+            | SshAuthenticationMethod::PrivateKey
+            | SshAuthenticationMethod::Certificate => None,
         }
     }
 }
@@ -4636,6 +4763,12 @@ pub fn show_profiles(
                                             }
                                         }
                                     }
+                                    SshAuthenticationMethod::Certificate => {
+                                        ssh_paragraph(
+                                            ui,
+                                            "Certificate authentication is available only for one-off SSH and terminal SFTP quick-connect launches. Saved profiles still support storing passwords or private keys only.",
+                                        );
+                                    }
                                 }
                             });
                         });
@@ -5350,6 +5483,23 @@ mod tests {
                 .to_string(),
             passphrase,
         )
+    }
+
+    fn generated_openssh_certificate() -> String {
+        concat!(
+            "ssh-ed25519-cert-v01@openssh.com ",
+            "AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIP4NAgsSLiXrpfby",
+            "oGxrF9cZN7UiLq2EJ80DswScilD2AAAAIHRw0uaN2ad8NjeXNK5BLHkiXmMpuUjwYVr5",
+            "+9/9Rnz2AAAAAAAAAAAAAAABAAAACXRlc3QtY2VydAAAAA0AAAAJdGVzdC11c2VyAAAA",
+            "AAAAAAD//////////wAAAAAAAACCAAAAFXBlcm1pdC1YMTEtZm9yd2FyZGluZwAAAAAA",
+            "AAAXcGVybWl0LWFnZW50LWZvcndhcmRpbmcAAAAAAAAAFnBlcm1pdC1wb3J0LWZvcndh",
+            "cmRpbmcAAAAAAAAACnBlcm1pdC1wdHkAAAAAAAAADnBlcm1pdC11c2VyLXJjAAAAAAAA",
+            "AAAAAAAzAAAAC3NzaC1lZDI1NTE5AAAAINmASn24MXIM7yAjzI0wX348PDFGJo5lhB0F",
+            "6R99e8jvAAAAUwAAAAtzc2gtZWQyNTUxOQAAAECrYKMa8P+MB7+swJDRQ2t0++H73Vih",
+            "OwvkL2nqJ+N2JIo9WVnInnZvEr81Pi1q9LTcupbTegAQCgFqhB34vrMK",
+            " fes@fes-m4.feslabs.com"
+        )
+        .to_owned()
     }
 
     #[test]
@@ -6436,6 +6586,25 @@ mod tests {
     }
 
     #[test]
+    fn ssh_form_shows_certificate_fields_only_for_certificate_authentication() {
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+
+        assert!(harness.query_by_label("OpenSSH certificate").is_none());
+
+        harness.get_by_label("Certificate authentication").click();
+        harness.run();
+
+        assert!(harness.query_by_label("Password").is_none());
+        assert!(harness.query_by_label("OpenSSH private key").is_some());
+        assert!(harness.query_by_label("OpenSSH certificate").is_some());
+        assert!(harness
+            .query_by_label("The private key and certificate are kept in memory only, never saved.")
+            .is_some());
+    }
+
+    #[test]
     fn ssh_form_shows_constructor_validation_feedback() {
         let mut harness = harness();
         harness.run();
@@ -6655,6 +6824,56 @@ mod tests {
         assert!(form.password.is_empty());
         assert!(form.private_key.is_empty());
         assert!(form.key_passphrase.is_empty());
+    }
+
+    #[test]
+    fn ssh_form_submits_transient_certificate_authentication_and_clears_all_auth_material() {
+        let private_key = generated_openssh_private_key();
+        let certificate = generated_openssh_certificate();
+        let mut form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            authentication_method: SshAuthenticationMethod::Certificate,
+            private_key,
+            certificate,
+            ..Default::default()
+        };
+
+        let AppCommand::StartSshSession { authentication, .. } = form
+            .submit()
+            .expect("valid certificate-auth form must submit")
+        else {
+            unreachable!("the form only creates SSH commands");
+        };
+
+        assert_eq!(
+            format!("{authentication:?}"),
+            "SshAuthentication::Certificate([REDACTED])"
+        );
+        assert!(form.private_key.is_empty());
+        assert!(form.key_passphrase.is_empty());
+        assert!(form.certificate.is_empty());
+    }
+
+    #[test]
+    fn ssh_form_rejects_an_invalid_certificate_and_clears_all_auth_material() {
+        let mut form = SshLauncherForm {
+            host: "example.invalid".to_owned(),
+            username: "test-user".to_owned(),
+            authentication_method: SshAuthenticationMethod::Certificate,
+            private_key: generated_openssh_private_key(),
+            certificate: "not an OpenSSH certificate".to_owned(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            form.submit()
+                .expect_err("invalid certificate must not submit"),
+            "SSH certificate is not in OpenSSH certificate format"
+        );
+        assert!(form.private_key.is_empty());
+        assert!(form.key_passphrase.is_empty());
+        assert!(form.certificate.is_empty());
     }
 
     fn test_ssh_password_prompt() -> PasswordPrompt {

@@ -25,6 +25,15 @@ const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 const OUTLINE_WIDTH: f32 = 220.0;
 const READING_WIDTH: f32 = 860.0;
+const BODY_TEXT_SIZE: f32 = 15.0;
+const PARAGRAPH_BLOCK_SPACING: f32 = 16.0;
+const HEADING_PARAGRAPH_SPACING: f32 = 8.0;
+const LIST_ITEM_SPACING: f32 = 6.0;
+const CODE_BLOCK_PADDING_X: i8 = 14;
+const CODE_BLOCK_PADDING_Y: i8 = 12;
+const TABLE_CELL_PADDING_X: i8 = 10;
+const TABLE_CELL_PADDING_Y: i8 = 6;
+const MARKDOWN_PANEL_RADIUS: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MarkdownViewerMode {
@@ -885,7 +894,158 @@ struct MarkdownDocumentLayout {
     document_rect: egui::Rect,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HeadingStyle {
+    size: f32,
+    text_color: Color32,
+    underline: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InlineRenderStyle {
+    text_color: Color32,
+    link_color: Color32,
+    code_background: Color32,
+    strong: bool,
+    italics: bool,
+    strikethrough: bool,
+    code_like: bool,
+    link_like: bool,
+}
+
+impl InlineRenderStyle {
+    fn body() -> Self {
+        Self {
+            text_color: theme::TEXT_PRIMARY,
+            link_color: theme::ACCENT_PRIMARY,
+            code_background: theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.85),
+            strong: false,
+            italics: false,
+            strikethrough: false,
+            code_like: false,
+            link_like: false,
+        }
+    }
+
+    fn blockquote() -> Self {
+        Self {
+            text_color: theme::TEXT_SECONDARY,
+            italics: true,
+            ..Self::body()
+        }
+    }
+
+    fn with_strong(self) -> Self {
+        Self {
+            strong: true,
+            ..self
+        }
+    }
+
+    fn with_italics(self) -> Self {
+        Self {
+            italics: true,
+            ..self
+        }
+    }
+
+    fn with_strikethrough(self) -> Self {
+        Self {
+            strikethrough: true,
+            ..self
+        }
+    }
+
+    fn as_inline_code(self) -> Self {
+        Self {
+            code_like: true,
+            italics: false,
+            ..self
+        }
+    }
+
+    fn as_link(self) -> Self {
+        Self {
+            link_like: true,
+            ..self
+        }
+    }
+}
+
+fn heading_style(level: u8) -> HeadingStyle {
+    // VS Code's Markdown preview uses a 14px body and a 2em/1.5em/1.25em
+    // heading ladder. fesTerm keeps its own typeface, but matches that scale
+    // against a 15px body size so documents keep the same visual hierarchy.
+    match level {
+        1 => HeadingStyle {
+            size: BODY_TEXT_SIZE * 2.0,
+            text_color: theme::TEXT_PRIMARY,
+            underline: true,
+        },
+        2 => HeadingStyle {
+            size: BODY_TEXT_SIZE * 1.5,
+            text_color: theme::TEXT_PRIMARY,
+            underline: true,
+        },
+        3 => HeadingStyle {
+            size: BODY_TEXT_SIZE * 1.25,
+            text_color: theme::TEXT_PRIMARY,
+            underline: false,
+        },
+        4 => HeadingStyle {
+            size: BODY_TEXT_SIZE,
+            text_color: theme::TEXT_PRIMARY,
+            underline: false,
+        },
+        5 => HeadingStyle {
+            size: BODY_TEXT_SIZE * 0.9,
+            text_color: theme::TEXT_PRIMARY,
+            underline: false,
+        },
+        _ => HeadingStyle {
+            size: BODY_TEXT_SIZE * 0.85,
+            text_color: theme::TEXT_SECONDARY,
+            underline: false,
+        },
+    }
+}
+
+fn inter_block_spacing(previous: &Block, next: &Block) -> f32 {
+    match next {
+        Block::Heading(heading) => {
+            if heading.level() <= 2 {
+                24.0
+            } else {
+                18.0
+            }
+        }
+        _ if matches!(previous, Block::Heading(_)) => HEADING_PARAGRAPH_SPACING,
+        Block::List(_) => 12.0,
+        Block::Table(_) | Block::CodeBlock(_) | Block::BlockQuote(_) | Block::Html(_) => 14.0,
+        Block::Rule { .. } => 18.0,
+        _ => PARAGRAPH_BLOCK_SPACING,
+    }
+}
+
 impl MarkdownRenderState<'_> {
+    fn render_blocks(
+        &mut self,
+        ui: &mut egui::Ui,
+        blocks: &[Block],
+        document: &MarkdownDocument,
+        text_style: InlineRenderStyle,
+    ) {
+        for (index, block) in blocks.iter().enumerate() {
+            if let Some(previous) = index
+                .checked_sub(1)
+                .and_then(|previous| blocks.get(previous))
+            {
+                ui.add_space(inter_block_spacing(previous, block));
+            }
+            self.render_block(ui, block, document, text_style);
+        }
+    }
+
     fn show_document(
         &mut self,
         ui: &mut egui::Ui,
@@ -964,12 +1124,12 @@ impl MarkdownRenderState<'_> {
                             ui.vertical(|ui| {
                                 ui.set_max_width(READING_WIDTH.min(ui.available_width()));
                                 match self.mode {
-                                    MarkdownViewerMode::Preview => {
-                                        for block in document.blocks() {
-                                            self.render_block(ui, block, document);
-                                            ui.add_space(10.0);
-                                        }
-                                    }
+                                    MarkdownViewerMode::Preview => self.render_blocks(
+                                        ui,
+                                        document.blocks(),
+                                        document,
+                                        InlineRenderStyle::body(),
+                                    ),
                                     MarkdownViewerMode::Source => {
                                         self.render_source(ui, document);
                                     }
@@ -986,7 +1146,13 @@ impl MarkdownRenderState<'_> {
         .inner
     }
 
-    fn render_block(&mut self, ui: &mut egui::Ui, block: &Block, document: &MarkdownDocument) {
+    fn render_block(
+        &mut self,
+        ui: &mut egui::Ui,
+        block: &Block,
+        document: &MarkdownDocument,
+        text_style: InlineRenderStyle,
+    ) {
         match block {
             Block::Paragraph(block) => render_text_block(
                 ui,
@@ -999,21 +1165,37 @@ impl MarkdownRenderState<'_> {
                 self.image_errors,
                 self.pending_scroll,
                 self.outline_selected,
+                text_style,
             ),
-            Block::Heading(block) => self.render_heading_block(ui, block, document),
+            Block::Heading(block) => self.render_heading_block(ui, block, document, text_style),
             Block::BlockQuote(block) => {
-                egui::Frame::new()
-                    .fill(theme::SURFACE_TAB_INACTIVE)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .inner_margin(egui::Margin::same(8))
+                // VS Code's preview uses a 5px quote bar with muted, inset
+                // text. Keep the same proportions while staying on fesTerm's
+                // palette instead of introducing an unrelated Markdown theme.
+                let quote = egui::Frame::new()
+                    .fill(theme::SURFACE_TAB_INACTIVE.gamma_multiply(0.45))
+                    .corner_radius(4.0)
+                    .inner_margin(egui::Margin::symmetric(16, 0))
                     .show(ui, |ui| {
-                        for nested in block.blocks() {
-                            self.render_block(ui, nested, document);
-                        }
+                        self.render_blocks(
+                            ui,
+                            block.blocks(),
+                            document,
+                            InlineRenderStyle::blockquote(),
+                        );
                     });
+                let bar_rect = egui::Rect::from_min_max(
+                    quote.response.rect.left_top(),
+                    egui::pos2(
+                        quote.response.rect.left() + 5.0,
+                        quote.response.rect.bottom(),
+                    ),
+                );
+                ui.painter()
+                    .rect_filled(bar_rect, 2.0, theme::BORDER_ACTIVE.gamma_multiply(0.7));
             }
-            Block::List(block) => self.render_list(ui, block, document),
-            Block::Table(block) => self.render_table(ui, block, document),
+            Block::List(block) => self.render_list(ui, block, document, text_style),
+            Block::Table(block) => self.render_table(ui, block, document, text_style),
             Block::CodeBlock(block) => self.render_code_block(ui, block),
             Block::Html(block) => self.render_html_block(ui, block),
             Block::Rule { .. } => {
@@ -1027,22 +1209,20 @@ impl MarkdownRenderState<'_> {
         ui: &mut egui::Ui,
         block: &HeadingBlock,
         document: &MarkdownDocument,
+        text_style: InlineRenderStyle,
     ) {
-        let size = match block.level() {
-            1 => 28.0,
-            2 => 24.0,
-            3 => 20.0,
-            4 => 18.0,
-            _ => 16.0,
-        };
+        let style = heading_style(block.level());
         let heading_index = block.heading_index();
         let selected = *self.outline_selected == Some(heading_index);
         let mut job = inline_layout_job(
             block.inlines(),
             document,
             self.find,
-            FontId::proportional(size),
-            false,
+            FontId::proportional(style.size),
+            InlineRenderStyle {
+                text_color: style.text_color,
+                ..text_style.with_strong()
+            },
         );
         if selected {
             for section in &mut job.sections {
@@ -1057,6 +1237,14 @@ impl MarkdownRenderState<'_> {
                 format!("Heading level {}: {}", block.level(), block.plain_text()),
             )
         });
+        if style.underline {
+            ui.add_space(4.0);
+            let underline = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().line_segment(
+                [underline.0.left_center(), underline.0.right_center()],
+                egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+            );
+        }
         if matches!(*self.pending_scroll, Some(PendingScroll::Heading(index)) if index == heading_index)
         {
             response.scroll_to_me(Some(Align::Center));
@@ -1074,79 +1262,157 @@ impl MarkdownRenderState<'_> {
         }
     }
 
-    fn render_list(&mut self, ui: &mut egui::Ui, block: &ListBlock, document: &MarkdownDocument) {
+    fn render_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        block: &ListBlock,
+        document: &MarkdownDocument,
+        text_style: InlineRenderStyle,
+    ) {
         for (index, item) in block.items().iter().enumerate() {
             ui.horizontal_top(|ui| {
-                match item.task_state() {
-                    Some(TaskState::Checked) => ui.label("☑"),
-                    Some(TaskState::Unchecked) => ui.label("☐"),
+                let marker = match item.task_state() {
+                    Some(TaskState::Checked) => "☑".to_owned(),
+                    Some(TaskState::Unchecked) => "☐".to_owned(),
                     None => match block.kind() {
-                        ListKind::Bullet => ui.label("•"),
+                        ListKind::Bullet => "•".to_owned(),
                         ListKind::Ordered { first_item_number } => {
                             let number = first_item_number + index as u64;
-                            ui.label(format!("{number}."))
+                            format!("{number}.")
                         }
                     },
                 };
+                ui.add_sized(
+                    [24.0, BODY_TEXT_SIZE + 4.0],
+                    egui::Label::new(
+                        RichText::new(marker)
+                            .size(BODY_TEXT_SIZE)
+                            .color(text_style.text_color),
+                    ),
+                );
                 ui.vertical(|ui| {
-                    for nested in item.blocks() {
-                        self.render_block(ui, nested, document);
-                    }
+                    self.render_blocks(ui, item.blocks(), document, text_style);
                 });
             });
+            if index + 1 < block.items().len() {
+                ui.add_space(LIST_ITEM_SPACING);
+            }
         }
     }
 
-    fn render_table(&mut self, ui: &mut egui::Ui, block: &TableBlock, document: &MarkdownDocument) {
+    fn render_table(
+        &mut self,
+        ui: &mut egui::Ui,
+        block: &TableBlock,
+        document: &MarkdownDocument,
+        text_style: InlineRenderStyle,
+    ) {
         egui::Frame::new()
-            .fill(theme::SURFACE_TAB_INACTIVE)
+            .fill(theme::SURFACE_TAB_INACTIVE.gamma_multiply(0.35))
+            .corner_radius(MARKDOWN_PANEL_RADIUS)
             .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-            .inner_margin(egui::Margin::same(8))
+            .inner_margin(egui::Margin::same(1))
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
+                    let mut cell_rects = Vec::new();
                     egui::Grid::new(("markdown-table", block.span().byte_range().start))
-                        .striped(true)
+                        .spacing(vec2(0.0, 0.0))
                         .show(ui, |ui| {
                             for row in block.rows() {
+                                let mut row_rects = Vec::new();
                                 for (column, cell) in row.cells().iter().enumerate() {
                                     let alignment = block
                                         .alignments()
                                         .get(column)
                                         .copied()
                                         .unwrap_or(TableAlignment::None);
-                                    let mut job = inline_layout_job(
-                                        cell.inlines(),
-                                        document,
-                                        self.find,
-                                        FontId::proportional(14.0),
-                                        row.is_header(),
-                                    );
-                                    if row.is_header() {
-                                        for section in &mut job.sections {
-                                            section.format.font_id = FontId::proportional(14.0);
-                                        }
-                                    }
-                                    match alignment {
-                                        TableAlignment::Right => {
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(Align::Center),
-                                                |ui| {
-                                                    ui.add(
-                                                        egui::Label::new(job.clone())
-                                                            .selectable(true)
-                                                            .wrap(),
-                                                    );
+                                    let cell = egui::Frame::new()
+                                        .fill(if row.is_header() {
+                                            theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.55)
+                                        } else {
+                                            Color32::TRANSPARENT
+                                        })
+                                        // Mirrors VS Code/GitHub table cell
+                                        // padding closely enough to keep dense
+                                        // tables readable without widening the
+                                        // whole reading column too aggressively.
+                                        .inner_margin(egui::Margin::symmetric(
+                                            TABLE_CELL_PADDING_X,
+                                            TABLE_CELL_PADDING_Y,
+                                        ))
+                                        .show(ui, |ui| {
+                                            let job = inline_layout_job(
+                                                cell.inlines(),
+                                                document,
+                                                self.find,
+                                                FontId::proportional(BODY_TEXT_SIZE - 1.0),
+                                                if row.is_header() {
+                                                    text_style.with_strong()
+                                                } else {
+                                                    text_style
                                                 },
                                             );
-                                        }
-                                        _ => {
-                                            ui.add(egui::Label::new(job).selectable(true).wrap());
-                                        }
-                                    }
+                                            match alignment {
+                                                TableAlignment::Right => {
+                                                    ui.with_layout(
+                                                        egui::Layout::right_to_left(Align::Center),
+                                                        |ui| {
+                                                            ui.add(
+                                                                egui::Label::new(job)
+                                                                    .selectable(true)
+                                                                    .wrap(),
+                                                            );
+                                                        },
+                                                    )
+                                                    .response
+                                                }
+                                                _ => ui.add(
+                                                    egui::Label::new(job).selectable(true).wrap(),
+                                                ),
+                                            }
+                                        });
+                                    row_rects.push(cell.response.rect);
                                 }
+                                cell_rects.push(row_rects);
                                 ui.end_row();
                             }
                         });
+
+                    if let Some(first_row) = cell_rects.first() {
+                        let table_rect = cell_rects
+                            .iter()
+                            .flatten()
+                            .fold(first_row[0], |rect, next| rect.union(*next));
+                        ui.painter().rect_stroke(
+                            table_rect,
+                            0.0,
+                            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                            egui::StrokeKind::Inside,
+                        );
+                        for row in &cell_rects {
+                            for cell in row.iter().take(row.len().saturating_sub(1)) {
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(cell.right(), table_rect.top()),
+                                        egui::pos2(cell.right(), table_rect.bottom()),
+                                    ],
+                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                );
+                            }
+                        }
+                        for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
+                            let Some(first_cell) = row.first() else {
+                                continue;
+                            };
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(table_rect.left(), first_cell.bottom()),
+                                    egui::pos2(table_rect.right(), first_cell.bottom()),
+                                ],
+                                egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                            );
+                        }
+                    }
                 });
             });
     }
@@ -1154,20 +1420,30 @@ impl MarkdownRenderState<'_> {
     fn render_code_block(&mut self, ui: &mut egui::Ui, block: &CodeBlock) {
         egui::Frame::new()
             .fill(theme::SURFACE_TAB_INACTIVE)
+            .corner_radius(MARKDOWN_PANEL_RADIUS)
             .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-            .inner_margin(egui::Margin::same(8))
+            // VS Code's default preview uses roughly 16px of inset on fenced
+            // code; keeping close to that makes code blocks read as distinct
+            // panels instead of blending into the document background.
+            .inner_margin(egui::Margin::symmetric(
+                CODE_BLOCK_PADDING_X,
+                CODE_BLOCK_PADDING_Y,
+            ))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(block.language().unwrap_or("text"))
-                            .small()
+                            .size(BODY_TEXT_SIZE - 2.0)
                             .monospace()
                             .color(theme::TEXT_SECONDARY),
                     );
-                    if ui.small_button("Copy").clicked() {
-                        ui.ctx().copy_text(block.code_text().to_owned());
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("Copy").clicked() {
+                            ui.ctx().copy_text(block.code_text().to_owned());
+                        }
+                    });
                 });
+                ui.add_space(8.0);
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     for line in block.highlighted_lines() {
                         let response = ui.add(
@@ -1373,6 +1649,7 @@ fn render_text_block(
     image_errors: &BTreeMap<usize, String>,
     pending_scroll: &mut Option<PendingScroll>,
     outline_selected: &mut Option<usize>,
+    text_style: InlineRenderStyle,
 ) {
     let response = ui
         .horizontal_wrapped(|ui| {
@@ -1385,8 +1662,8 @@ fn render_text_block(
                 loaded_images,
                 pending_image_loads,
                 image_errors,
-                FontId::proportional(15.0),
-                false,
+                FontId::proportional(BODY_TEXT_SIZE),
+                text_style,
                 pending_scroll,
                 outline_selected,
             );
@@ -1411,7 +1688,7 @@ fn render_inline_flow(
     pending_image_loads: &BTreeMap<usize, PendingImageLoad>,
     image_errors: &BTreeMap<usize, String>,
     font: FontId,
-    strong: bool,
+    style: InlineRenderStyle,
     pending_scroll: &mut Option<PendingScroll>,
     outline_selected: &mut Option<usize>,
 ) {
@@ -1424,9 +1701,7 @@ fn render_inline_flow(
                         text.text_span(),
                         find,
                         font.clone(),
-                        strong,
-                        false,
-                        false,
+                        style,
                     ))
                     .selectable(true)
                     .wrap(),
@@ -1439,9 +1714,7 @@ fn render_inline_flow(
                         text.text_span(),
                         find,
                         FontId::monospace(font.size),
-                        strong,
-                        false,
-                        false,
+                        style.as_inline_code(),
                     ))
                     .selectable(true)
                     .wrap(),
@@ -1457,7 +1730,7 @@ fn render_inline_flow(
                 pending_image_loads,
                 image_errors,
                 FontId::proportional(font.size),
-                strong,
+                style.with_italics(),
                 pending_scroll,
                 outline_selected,
             ),
@@ -1471,7 +1744,7 @@ fn render_inline_flow(
                 pending_image_loads,
                 image_errors,
                 font.clone(),
-                true,
+                style.with_strong(),
                 pending_scroll,
                 outline_selected,
             ),
@@ -1486,7 +1759,7 @@ fn render_inline_flow(
                     pending_image_loads,
                     image_errors,
                     font.clone(),
-                    strong,
+                    style,
                     pending_scroll,
                     outline_selected,
                 );
@@ -1498,7 +1771,7 @@ fn render_inline_flow(
                     document,
                     find,
                     font.clone(),
-                    strong,
+                    style,
                     pending_scroll,
                     outline_selected,
                 );
@@ -1522,9 +1795,7 @@ fn render_inline_flow(
                         html.span(),
                         find,
                         FontId::monospace(font.size),
-                        strong,
-                        false,
-                        true,
+                        style.as_inline_code(),
                     ))
                     .selectable(true)
                     .wrap(),
@@ -1548,7 +1819,7 @@ fn render_struck_inline_flow(
     pending_image_loads: &BTreeMap<usize, PendingImageLoad>,
     image_errors: &BTreeMap<usize, String>,
     font: FontId,
-    strong: bool,
+    style: InlineRenderStyle,
     pending_scroll: &mut Option<PendingScroll>,
     outline_selected: &mut Option<usize>,
 ) {
@@ -1566,9 +1837,11 @@ fn render_struck_inline_flow(
                         } else {
                             font.clone()
                         },
-                        strong,
-                        true,
-                        false,
+                        if mono {
+                            style.as_inline_code().with_strikethrough()
+                        } else {
+                            style.with_strikethrough()
+                        },
                     ))
                     .selectable(true)
                     .wrap(),
@@ -1584,7 +1857,7 @@ fn render_struck_inline_flow(
                 pending_image_loads,
                 image_errors,
                 font.clone(),
-                strong,
+                style.with_strikethrough(),
                 pending_scroll,
                 outline_selected,
             ),
@@ -1599,7 +1872,7 @@ fn render_link(
     document: &MarkdownDocument,
     find: &MarkdownFindState,
     font: FontId,
-    strong: bool,
+    style: InlineRenderStyle,
     pending_scroll: &mut Option<PendingScroll>,
     outline_selected: &mut Option<usize>,
 ) {
@@ -1610,17 +1883,9 @@ fn render_link(
         link.plain_text().to_owned()
     };
     let job = if link.inlines().is_empty() {
-        text_job(
-            &accessible_text,
-            link.span(),
-            find,
-            font,
-            strong,
-            false,
-            false,
-        )
+        text_job(&accessible_text, link.span(), find, font, style.as_link())
     } else {
-        inline_layout_job(link.inlines(), document, find, font, strong)
+        inline_layout_job(link.inlines(), document, find, font, style.as_link())
     };
     let response = ui.add(egui::Button::new(job).frame(false));
     response.widget_info(|| {
@@ -1742,12 +2007,10 @@ fn inline_layout_job(
     document: &MarkdownDocument,
     find: &MarkdownFindState,
     font: FontId,
-    strong: bool,
+    style: InlineRenderStyle,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
-    append_inline_layout(
-        &mut job, inlines, document, find, font, strong, false, false,
-    );
+    append_inline_layout(&mut job, inlines, document, find, font, style);
     job
 }
 
@@ -1758,9 +2021,7 @@ fn append_inline_layout(
     document: &MarkdownDocument,
     find: &MarkdownFindState,
     font: FontId,
-    strong: bool,
-    strikethrough: bool,
-    code: bool,
+    style: InlineRenderStyle,
 ) {
     for inline in inlines {
         match inline {
@@ -1769,14 +2030,8 @@ fn append_inline_layout(
                 text.text(),
                 text.text_span(),
                 find,
-                if code {
-                    FontId::monospace(font.size)
-                } else {
-                    font.clone()
-                },
-                strong,
-                strikethrough,
-                false,
+                font.clone(),
+                style,
             ),
             Inline::Code(text) => append_text_segments(
                 job,
@@ -1784,9 +2039,7 @@ fn append_inline_layout(
                 text.text_span(),
                 find,
                 FontId::monospace(font.size),
-                strong,
-                strikethrough,
-                false,
+                style.as_inline_code(),
             ),
             Inline::Emphasis(container) => append_inline_layout(
                 job,
@@ -1794,9 +2047,7 @@ fn append_inline_layout(
                 document,
                 find,
                 font.clone(),
-                strong,
-                strikethrough,
-                code,
+                style.with_italics(),
             ),
             Inline::Strong(container) => append_inline_layout(
                 job,
@@ -1804,9 +2055,7 @@ fn append_inline_layout(
                 document,
                 find,
                 font.clone(),
-                true,
-                strikethrough,
-                code,
+                style.with_strong(),
             ),
             Inline::Strikethrough(container) => append_inline_layout(
                 job,
@@ -1814,9 +2063,7 @@ fn append_inline_layout(
                 document,
                 find,
                 font.clone(),
-                strong,
-                true,
-                code,
+                style.with_strikethrough(),
             ),
             Inline::Link(link) => append_inline_layout(
                 job,
@@ -1824,9 +2071,7 @@ fn append_inline_layout(
                 document,
                 find,
                 font.clone(),
-                strong,
-                strikethrough,
-                code,
+                style.as_link(),
             ),
             Inline::Image(image) => append_text_segments(
                 job,
@@ -1834,9 +2079,7 @@ fn append_inline_layout(
                 image.alt_text_span(),
                 find,
                 font.clone(),
-                strong,
-                strikethrough,
-                false,
+                style,
             ),
             Inline::RawHtml(html) => append_text_segments(
                 job,
@@ -1844,20 +2087,14 @@ fn append_inline_layout(
                 html.span(),
                 find,
                 FontId::monospace(font.size),
-                strong,
-                strikethrough,
-                true,
+                style.as_inline_code(),
             ),
-            Inline::SoftBreak { .. } => job.append(
-                "\n",
-                0.0,
-                base_text_format(font.clone(), strong, strikethrough, false),
-            ),
-            Inline::HardBreak { .. } => job.append(
-                "\n",
-                0.0,
-                base_text_format(font.clone(), strong, strikethrough, false),
-            ),
+            Inline::SoftBreak { .. } => {
+                job.append("\n", 0.0, base_text_format(font.clone(), style))
+            }
+            Inline::HardBreak { .. } => {
+                job.append("\n", 0.0, base_text_format(font.clone(), style))
+            }
         }
     }
 }
@@ -1867,21 +2104,10 @@ fn text_job(
     span: SourceSpan,
     find: &MarkdownFindState,
     font: FontId,
-    strong: bool,
-    strikethrough: bool,
-    code_like: bool,
+    style: InlineRenderStyle,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
-    append_text_segments(
-        &mut job,
-        text,
-        span,
-        find,
-        font,
-        strong,
-        strikethrough,
-        code_like,
-    );
+    append_text_segments(&mut job, text, span, find, font, style);
     job
 }
 
@@ -1893,23 +2119,18 @@ fn source_line_job(line: &str, span: SourceSpan, find: &MarkdownFindState) -> La
         span,
         find,
         FontId::monospace(14.0),
-        false,
-        false,
-        false,
+        InlineRenderStyle::body(),
     );
     job
 }
 
-#[allow(clippy::too_many_arguments)]
 fn append_text_segments(
     job: &mut LayoutJob,
     text: &str,
     span: SourceSpan,
     find: &MarkdownFindState,
     font: FontId,
-    strong: bool,
-    strikethrough: bool,
-    code_like: bool,
+    style: InlineRenderStyle,
 ) {
     if text.is_empty() {
         return;
@@ -1934,10 +2155,10 @@ fn append_text_segments(
             job.append(
                 &text[cursor..start],
                 0.0,
-                base_text_format(font.clone(), strong, strikethrough, code_like),
+                base_text_format(font.clone(), style),
             );
         }
-        let mut format = base_text_format(font.clone(), strong, strikethrough, code_like);
+        let mut format = base_text_format(font.clone(), style);
         format.background = if current {
             theme::ACCENT_PRIMARY.gamma_multiply(0.35)
         } else {
@@ -1947,11 +2168,7 @@ fn append_text_segments(
         cursor = end;
     }
     if cursor < text.len() {
-        job.append(
-            &text[cursor..],
-            0.0,
-            base_text_format(font, strong, strikethrough, code_like),
-        );
+        job.append(&text[cursor..], 0.0, base_text_format(font, style));
     }
 }
 
@@ -1961,7 +2178,7 @@ fn highlighted_line_job(line: &HighlightedCodeLine) -> LayoutJob {
         job.append(
             line.text(),
             0.0,
-            base_text_format(FontId::monospace(14.0), false, false, true),
+            base_text_format(FontId::monospace(14.0), InlineRenderStyle::body()),
         );
         return job;
     }
@@ -2000,27 +2217,33 @@ fn text_format_from_highlight(style: HighlightStyle) -> TextFormat {
     format
 }
 
-fn base_text_format(
-    font: FontId,
-    strong: bool,
-    strikethrough: bool,
-    code_like: bool,
-) -> TextFormat {
+fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
+    let inline_code = style.code_like;
     let mut format = TextFormat {
         font_id: font,
-        color: theme::TEXT_PRIMARY,
-        background: if code_like {
-            theme::SURFACE_TAB_ACTIVE
+        color: if style.link_like {
+            style.link_color
+        } else {
+            style.text_color
+        },
+        background: if inline_code && !style.link_like {
+            style.code_background
         } else {
             Color32::TRANSPARENT
         },
         ..Default::default()
     };
-    if strong {
+    if style.strong {
         format.font_id.size += 0.5;
     }
-    if strikethrough {
+    if style.strikethrough {
         format.strikethrough = egui::Stroke::new(1.0, format.color);
+    }
+    if style.italics {
+        format.italics = true;
+    }
+    if style.link_like {
+        format.underline = egui::Stroke::new(1.0, format.color);
     }
     format
 }
@@ -2209,6 +2432,19 @@ mod tests {
             .collect()
     }
 
+    fn section_format_for_text<'a>(job: &'a LayoutJob, needle: &str) -> &'a TextFormat {
+        let start = job.text.find(needle).expect("text should be present");
+        let end = start + needle.len();
+        &job.sections
+            .iter()
+            .find(|section| {
+                let range = section.byte_range.start.0..section.byte_range.end.0;
+                range.start <= start && range.end >= end
+            })
+            .expect("section should cover the requested text")
+            .format
+    }
+
     #[test]
     fn outline_and_preview_keep_separate_vertical_viewports() {
         let document = document(
@@ -2317,7 +2553,7 @@ mod tests {
             &document,
             &find,
             FontId::proportional(14.0),
-            false,
+            InlineRenderStyle::body(),
         );
 
         assert_eq!(job.text, "before code after");
@@ -2338,7 +2574,7 @@ mod tests {
             &document,
             &find,
             FontId::proportional(14.0),
-            false,
+            InlineRenderStyle::body(),
         );
 
         assert_eq!(job.text, "see needle link now");
@@ -2357,6 +2593,66 @@ mod tests {
         let before = state.current_match().unwrap().span();
         state.restore_for_reload(&document);
         assert_eq!(state.current_match().unwrap().span(), before);
+    }
+
+    #[test]
+    fn heading_scale_matches_vscode_preview_hierarchy() {
+        assert_eq!(
+            heading_style(1),
+            HeadingStyle {
+                size: 30.0,
+                text_color: theme::TEXT_PRIMARY,
+                underline: true,
+            }
+        );
+        assert_eq!(
+            heading_style(2),
+            HeadingStyle {
+                size: 22.5,
+                text_color: theme::TEXT_PRIMARY,
+                underline: true,
+            }
+        );
+        assert_eq!(
+            heading_style(6),
+            HeadingStyle {
+                size: 12.75,
+                text_color: theme::TEXT_SECONDARY,
+                underline: false,
+            }
+        );
+    }
+
+    #[test]
+    fn inline_layout_styles_emphasis_links_inline_code_and_blockquotes() {
+        let document = document("> *quoted* [link](https://example.com) `code`");
+        let Block::BlockQuote(blockquote) = &document.blocks()[0] else {
+            panic!("the first block should be a blockquote");
+        };
+        let Block::Paragraph(paragraph) = &blockquote.blocks()[0] else {
+            panic!("the quoted content should be a paragraph");
+        };
+
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &MarkdownFindState::default(),
+            FontId::proportional(BODY_TEXT_SIZE),
+            InlineRenderStyle::blockquote(),
+        );
+
+        let quoted = section_format_for_text(&job, "quoted");
+        let link = section_format_for_text(&job, "link");
+        let code = section_format_for_text(&job, "code");
+        assert!(quoted.italics);
+        assert_eq!(quoted.color, theme::TEXT_SECONDARY);
+        assert_eq!(link.color, theme::ACCENT_PRIMARY);
+        assert_eq!(link.underline.color, theme::ACCENT_PRIMARY);
+        assert_eq!(
+            code.background,
+            theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.85)
+        );
+        assert_eq!(code.font_id.family, egui::FontFamily::Monospace);
     }
 
     #[test]

@@ -1150,6 +1150,18 @@ For password authentication:
   action. One-off forms remain transient; private keys, passphrases, agents,
   key files, and host trust are never included in this control.
 
+For private-key and certificate authentication:
+
+- the OpenSSH private key remains transient and is cleared after every
+  submission attempt;
+- encrypted keys require an explicit transient passphrase, while unencrypted
+  keys reject a stray passphrase;
+- certificate authentication adds a second transient multiline field for the
+  signed OpenSSH `-cert.pub` text paired with that private key; and
+- saved profiles still store only password or private-key credentials in
+  native secure storage, so certificate entry remains a one-off quick-connect
+  capability rather than a persisted profile field.
+
 ### Profile editing
 
 ![Profile editor target](images/gui-mockups/profile-editor.png)
