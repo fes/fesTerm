@@ -113,97 +113,112 @@ pub(crate) fn show_authentication_required(
             .unwrap_or_default()
     });
     let mut command = None;
-    ui.vertical(|ui| {
-        ui.add_space(24.0);
-        ui.heading("Open GUI SFTP");
-        ui.label(format!(
-            "Destination: {}@{}:{}",
-            target.username, target.host, target.port
-        ));
-        if !target.known_host_persisted {
-            ui.colored_label(
-                theme::STATUS_ERROR,
-                "GUI SFTP currently requires a persisted host-trust record for this destination.",
-            );
-            ui.label(
-                "Accept and remember the host key through SSH or text-mode SFTP first, then reopen GUI SFTP.",
-            );
-        }
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut state.mode, AuthMode::Password, "Password");
-            ui.radio_value(&mut state.mode, AuthMode::PrivateKey, "Private key");
-        });
-        ui.add_space(6.0);
-        match state.mode {
-            AuthMode::Password => {
-                ui.label("Password");
-                ui.add(TextEdit::singleline(&mut state.password).password(true));
-            }
-            AuthMode::PrivateKey => {
-                ui.label("OpenSSH private key");
-                ui.add(TextEdit::multiline(&mut state.private_key).desired_rows(8));
-                ui.label("Passphrase (optional)");
-                ui.add(TextEdit::singleline(&mut state.passphrase).password(true));
-            }
-        }
-        if let Some(feedback) = &state.feedback {
-            ui.colored_label(theme::STATUS_ERROR, feedback);
-        }
-        ui.add_space(10.0);
-        if let (Some(profile_id), Some(kind)) =
-            (&target.profile_id, target.stored_credential_kind)
-        {
-            let label = match kind {
-                CredentialKind::Password => "Use stored password",
-                CredentialKind::PrivateKey => "Use stored private key",
-            };
-            if ui
-                .add_enabled(target.known_host_persisted, egui::Button::new(label))
-                .clicked()
-            {
-                command = Some(
-                    crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
-                        profile_id: profile_id.clone(),
-                    },
-                );
-            }
-            ui.add_space(6.0);
-        }
-        let connect = ui.add_enabled(
-            target.known_host_persisted,
-            egui::Button::new("Open SFTP file manager"),
-        );
-        if connect.clicked() {
-            let authentication = match state.mode {
-                AuthMode::Password if state.password.is_empty() => {
-                    state.feedback = Some("Enter a password.".to_owned());
-                    None
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading("Open GUI SFTP");
+                ui.label(format!(
+                    "Destination: {}@{}:{}",
+                    target.username, target.host, target.port
+                ));
+                if !target.known_host_persisted {
+                    ui.colored_label(
+                        theme::STATUS_ERROR,
+                        "GUI SFTP currently requires a persisted host-trust record for this destination.",
+                    );
+                    ui.label(
+                        "Accept and remember the host key through SSH or text-mode SFTP first, then reopen GUI SFTP.",
+                    );
                 }
-                AuthMode::Password => Some(SftpFileManagerAuthentication::Password(
-                    std::mem::take(&mut state.password),
-                )),
-                AuthMode::PrivateKey if state.private_key.trim().is_empty() => {
-                    state.feedback = Some("Paste an OpenSSH private key.".to_owned());
-                    None
-                }
-                AuthMode::PrivateKey => Some(SftpFileManagerAuthentication::PrivateKey {
-                    key_text: std::mem::take(&mut state.private_key),
-                    passphrase: (!state.passphrase.is_empty())
-                        .then(|| std::mem::take(&mut state.passphrase)),
-                }),
-            };
-            if let Some(authentication) = authentication {
-                state.feedback = None;
-                command = Some(crate::tabs::AppCommand::StartSftpFileManager {
-                    target: target.clone(),
-                    authentication,
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut state.mode, AuthMode::Password, "Password");
+                    ui.radio_value(&mut state.mode, AuthMode::PrivateKey, "Private key");
                 });
-            }
-        }
-    });
+                ui.add_space(6.0);
+                match state.mode {
+                    AuthMode::Password => {
+                        ui.label("Password");
+                        ui.add(TextEdit::singleline(&mut state.password).password(true));
+                    }
+                    AuthMode::PrivateKey => {
+                        ui.label("OpenSSH private key");
+                        ui.add(TextEdit::multiline(&mut state.private_key).desired_rows(8));
+                        ui.label("Passphrase (optional)");
+                        ui.add(TextEdit::singleline(&mut state.passphrase).password(true));
+                    }
+                }
+                if let Some(feedback) = &state.feedback {
+                    ui.colored_label(theme::STATUS_ERROR, feedback);
+                }
+                ui.add_space(10.0);
+                if let (Some(profile_id), Some(kind)) =
+                    (&target.profile_id, target.stored_credential_kind)
+                {
+                    let label = match kind {
+                        CredentialKind::Password => "Use stored password",
+                        CredentialKind::PrivateKey => "Use stored private key",
+                    };
+                    if ui
+                        .add_enabled(target.known_host_persisted, egui::Button::new(label))
+                        .clicked()
+                    {
+                        command = Some(
+                            crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
+                                profile_id: profile_id.clone(),
+                            },
+                        );
+                    }
+                    ui.add_space(6.0);
+                }
+                let connect = ui.add_enabled(
+                    target.known_host_persisted,
+                    egui::Button::new("Open SFTP file manager"),
+                );
+                if connect.clicked() {
+                    let authentication = match state.mode {
+                        AuthMode::Password if state.password.is_empty() => {
+                            state.feedback = Some("Enter a password.".to_owned());
+                            None
+                        }
+                        AuthMode::Password => Some(SftpFileManagerAuthentication::Password(
+                            std::mem::take(&mut state.password),
+                        )),
+                        AuthMode::PrivateKey if state.private_key.trim().is_empty() => {
+                            state.feedback = Some("Paste an OpenSSH private key.".to_owned());
+                            None
+                        }
+                        AuthMode::PrivateKey => Some(SftpFileManagerAuthentication::PrivateKey {
+                            key_text: std::mem::take(&mut state.private_key),
+                            passphrase: (!state.passphrase.is_empty())
+                                .then(|| std::mem::take(&mut state.passphrase)),
+                        }),
+                    };
+                    if let Some(authentication) = authentication {
+                        state.feedback = None;
+                        command = Some(crate::tabs::AppCommand::StartSftpFileManager {
+                            target: target.clone(),
+                            authentication,
+                        });
+                    }
+                }
+            });
+        });
     ui.data_mut(|data| data.insert_temp(state_id, state));
     command
+}
+
+fn show_connection_status_banner(ui: &mut Ui, connection_state: &SftpConnectionState) {
+    if let SftpConnectionState::Failed { summary, details }
+    | SftpConnectionState::Disconnected { summary, details } = connection_state
+    {
+        ui.colored_label(theme::STATUS_ERROR, summary);
+        if !details.is_empty() {
+            ui.label(RichText::new(details).small().color(theme::TEXT_MUTED));
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -641,16 +656,8 @@ pub(crate) struct SftpCollisionDialogState {
 pub(crate) enum SftpConnectionState {
     Connecting,
     Ready,
-    Failed {
-        summary: String,
-        #[allow(dead_code)]
-        details: String,
-    },
-    Disconnected {
-        summary: String,
-        #[allow(dead_code)]
-        details: String,
-    },
+    Failed { summary: String, details: String },
+    Disconnected { summary: String, details: String },
 }
 
 pub(crate) struct SftpFileManagerTab {
@@ -802,11 +809,7 @@ impl SftpFileManagerTab {
                 }
             });
         });
-        if let SftpConnectionState::Failed { summary, .. }
-        | SftpConnectionState::Disconnected { summary, .. } = &self.connection_state
-        {
-            ui.colored_label(theme::STATUS_ERROR, summary);
-        }
+        show_connection_status_banner(ui, &self.connection_state);
     }
 
     fn show_narrow(&mut self, ui: &mut Ui) {
@@ -2318,6 +2321,79 @@ mod tests {
                 profile_id
             }) if profile_id == "production"
         ));
+    }
+
+    #[test]
+    fn authentication_surface_uses_the_standard_inner_padding() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: true,
+        };
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+
+        harness.run();
+
+        assert!(
+            harness.get_by_label("Open GUI SFTP").rect().left() >= 16.0,
+            "the GUI SFTP auth form should use the same inset as other full-tab forms"
+        );
+    }
+
+    #[test]
+    fn failed_connection_banner_shows_diagnostic_details() {
+        let state = SftpConnectionState::Failed {
+            summary: "Connection failed".to_owned(),
+            details: "GUI SFTP currently requires a persisted host-key fingerprint.".to_owned(),
+        };
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                show_connection_status_banner(ui, &state);
+                *command = None;
+            },
+            None,
+        );
+
+        harness.run();
+
+        assert!(harness.query_by_label("Connection failed").is_some());
+        assert!(harness
+            .query_by_label("GUI SFTP currently requires a persisted host-key fingerprint.")
+            .is_some());
+    }
+
+    #[test]
+    fn disconnected_connection_banner_shows_diagnostic_details() {
+        let state = SftpConnectionState::Disconnected {
+            summary: "Disconnected".to_owned(),
+            details: "The SSH/SFTP connection could not be established.".to_owned(),
+        };
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                show_connection_status_banner(ui, &state);
+                *command = None;
+            },
+            None,
+        );
+
+        harness.run();
+
+        assert!(harness.query_by_label("Disconnected").is_some());
+        assert!(harness
+            .query_by_label("The SSH/SFTP connection could not be established.")
+            .is_some());
     }
 
     #[test]
