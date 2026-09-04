@@ -14,12 +14,14 @@ use std::{
 use eframe::egui::{self, Key, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{CredentialKind, SftpPaneOrderPreference};
 use festerm_secret_store::{SecretReference, SecretStore};
+use festerm_session::HostKeyPrompt;
 use festerm_ssh::{
-    connect_gui_sftp_session, GuiSftpSessionConnectError, HostIdentity, SftpCollision,
-    SftpCollisionDecision, SftpCollisionResolution, SftpCollisionScope, SftpDirectoryItem,
-    SftpDirectorySnapshot, SftpEntryType, SftpLocation, SftpPath, SftpPathMetadata,
-    SftpTransferEvent, SftpTransferId, SftpTransferManager, SftpTransferRequest, SftpTransferState,
-    SshAuthentication, SshConnectionProfile, SshPrivateKey,
+    connect_gui_sftp_session, GuiSftpSessionConnectError, GuiSftpSessionConnectOutcome,
+    HostIdentity, HostKeyDecisionResolver, SftpCollision, SftpCollisionDecision,
+    SftpCollisionResolution, SftpCollisionScope, SftpDirectoryItem, SftpDirectorySnapshot,
+    SftpEntryType, SftpLocation, SftpPath, SftpPathMetadata, SftpTransferEvent, SftpTransferId,
+    SftpTransferManager, SftpTransferRequest, SftpTransferState, SshAuthentication,
+    SshConnectionProfile, SshPrivateKey,
 };
 use festerm_ui_egui::theme;
 
@@ -124,12 +126,8 @@ pub(crate) fn show_authentication_required(
                     target.username, target.host, target.port
                 ));
                 if !target.known_host_persisted {
-                    ui.colored_label(
-                        theme::STATUS_ERROR,
-                        "GUI SFTP currently requires a persisted host-trust record for this destination.",
-                    );
                     ui.label(
-                        "Accept and remember the host key through SSH or text-mode SFTP first, then reopen GUI SFTP.",
+                        "If this host is new or its key changed, fesTerm will pause for host-key verification before opening the file manager.",
                     );
                 }
                 ui.add_space(10.0);
@@ -162,7 +160,7 @@ pub(crate) fn show_authentication_required(
                         CredentialKind::PrivateKey => "Use stored private key",
                     };
                     if ui
-                        .add_enabled(target.known_host_persisted, egui::Button::new(label))
+                        .add(egui::Button::new(label))
                         .clicked()
                     {
                         command = Some(
@@ -173,10 +171,7 @@ pub(crate) fn show_authentication_required(
                     }
                     ui.add_space(6.0);
                 }
-                let connect = ui.add_enabled(
-                    target.known_host_persisted,
-                    egui::Button::new("Open SFTP file manager"),
-                );
+                let connect = ui.add(egui::Button::new("Open SFTP file manager"));
                 if connect.clicked() {
                     let authentication = match state.mode {
                         AuthMode::Password if state.password.is_empty() => {
@@ -208,6 +203,157 @@ pub(crate) fn show_authentication_required(
         });
     ui.data_mut(|data| data.insert_temp(state_id, state));
     command
+}
+
+#[derive(Clone, Debug)]
+struct PendingHostKeyDecision {
+    prompt: HostKeyPrompt,
+    resolver: HostKeyDecisionResolver,
+}
+
+fn host_key_destination(target: &SftpFileManagerLaunchTarget) -> String {
+    format!("{}@{}:{}", target.username, target.host, target.port)
+}
+
+fn host_key_host_port(prompt: &HostKeyPrompt) -> String {
+    format!("{}:{}", prompt.host(), prompt.port())
+}
+
+fn show_unknown_host_key_prompt(
+    ui: &mut Ui,
+    tab_id: crate::tabs::TabId,
+    target: &SftpFileManagerLaunchTarget,
+    prompt: &HostKeyPrompt,
+) -> Option<crate::tabs::AppCommand> {
+    let mut command = None;
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading("Open GUI SFTP");
+                ui.label(format!("Destination: {}", host_key_destination(target)));
+                ui.add_space(10.0);
+                ui.label(format!(
+                    "The authenticity of host '{}' can't be established.",
+                    host_key_host_port(prompt)
+                ));
+                ui.label(format!(
+                    "ED25519 key fingerprint is {}.",
+                    prompt.sha256_fingerprint()
+                ));
+                ui.label("Are you sure you want to continue connecting?");
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Reject").clicked() {
+                        command = Some(crate::tabs::AppCommand::ResolveHostKeyTrust {
+                            tab: tab_id,
+                            decision: crate::tabs::HostKeyTrustDecision::Reject,
+                        });
+                    }
+                    if ui.button("Accept Once").clicked() {
+                        command = Some(crate::tabs::AppCommand::ResolveHostKeyTrust {
+                            tab: tab_id,
+                            decision: crate::tabs::HostKeyTrustDecision::AcceptOnce,
+                        });
+                    }
+                    if ui.button("Accept and Remember").clicked() {
+                        command = Some(crate::tabs::AppCommand::ResolveHostKeyTrust {
+                            tab: tab_id,
+                            decision: crate::tabs::HostKeyTrustDecision::AcceptAndPersist,
+                        });
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new(
+                    "Accept Once applies only to this GUI SFTP connection attempt. Accept and Remember saves the fingerprint for future SSH and SFTP connections.",
+                ).small().color(theme::TEXT_MUTED));
+            });
+        });
+    command
+}
+
+fn show_changed_host_key_prompt(
+    ui: &mut Ui,
+    tab_id: crate::tabs::TabId,
+    target: &SftpFileManagerLaunchTarget,
+    prompt: &HostKeyPrompt,
+) -> Option<crate::tabs::AppCommand> {
+    let state_id = ui.id().with(("gui_sftp_changed_host_key_state", tab_id));
+    let mut typed: String = ui.data_mut(|data| data.get_temp(state_id).unwrap_or_default());
+    let mut command = None;
+
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.heading("Open GUI SFTP");
+                ui.label(format!("Destination: {}", host_key_destination(target)));
+                ui.add_space(10.0);
+                ui.colored_label(
+                    theme::STATUS_ERROR,
+                    "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @",
+                );
+                ui.label(format!(
+                    "The key previously trusted for '{}' was {}.",
+                    host_key_host_port(prompt),
+                    prompt
+                        .previously_trusted_fingerprint()
+                        .unwrap_or_default()
+                ));
+                ui.label(format!(
+                    "The server now presents a different key: {}.",
+                    prompt.sha256_fingerprint()
+                ));
+                ui.label(
+                    "This could mean someone is intercepting this connection, or the host's key was legitimately changed.",
+                );
+                ui.label(
+                    "Type 'yes' and press Enter to replace the trusted key and continue, or press Escape to cancel.",
+                );
+                let response = ui.add(
+                    TextEdit::singleline(&mut typed)
+                        .hint_text("Type yes to continue")
+                        .desired_width(220.0),
+                );
+                let submit = response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+                if submit && typed == "yes" {
+                    command = Some(crate::tabs::AppCommand::ResolveHostKeyTrust {
+                        tab: tab_id,
+                        decision: crate::tabs::HostKeyTrustDecision::AcceptAndPersist,
+                    });
+                } else if submit {
+                    command = Some(crate::tabs::AppCommand::ResolveHostKeyTrust {
+                        tab: tab_id,
+                        decision: crate::tabs::HostKeyTrustDecision::Reject,
+                    });
+                }
+                if ui.button("Cancel").clicked()
+                    || ui.input(|input| input.key_pressed(Key::Escape))
+                {
+                    command = Some(crate::tabs::AppCommand::ResolveHostKeyTrust {
+                        tab: tab_id,
+                        decision: crate::tabs::HostKeyTrustDecision::Reject,
+                    });
+                }
+            });
+        });
+    ui.data_mut(|data| data.insert_temp(state_id, typed));
+    command
+}
+
+fn show_host_key_prompt(
+    ui: &mut Ui,
+    tab_id: crate::tabs::TabId,
+    target: &SftpFileManagerLaunchTarget,
+    prompt: &HostKeyPrompt,
+) -> Option<crate::tabs::AppCommand> {
+    if prompt.is_key_change() {
+        show_changed_host_key_prompt(ui, tab_id, target, prompt)
+    } else {
+        show_unknown_host_key_prompt(ui, tab_id, target, prompt)
+    }
 }
 
 fn show_connection_status_banner(ui: &mut Ui, connection_state: &SftpConnectionState) {
@@ -655,6 +801,7 @@ pub(crate) struct SftpCollisionDialogState {
 #[derive(Clone, Debug)]
 pub(crate) enum SftpConnectionState {
     Connecting,
+    AwaitingHostKey,
     Ready,
     Failed { summary: String, details: String },
     Disconnected { summary: String, details: String },
@@ -677,13 +824,14 @@ pub(crate) struct SftpFileManagerTab {
     event_sender: Sender<WorkerEvent>,
     repaint: egui::Context,
     next_local_request_id: u64,
+    pending_host_key: Option<PendingHostKeyDecision>,
 }
 
 impl SftpFileManagerTab {
     pub(crate) fn new(
         target: SftpFileManagerLaunchTarget,
         authentication: SftpFileManagerAuthentication,
-        known_host_fingerprint: String,
+        known_host_fingerprint: Option<String>,
         local_directory: PathBuf,
         pane_order: SftpPaneOrderPreference,
         context: &egui::Context,
@@ -733,6 +881,7 @@ impl SftpFileManagerTab {
             event_sender,
             repaint: context.clone(),
             next_local_request_id: 1,
+            pending_host_key: None,
         };
         let initial_local = tab.local_pane.current_path.clone();
         load_path(&mut tab, PaneFocus::Local, initial_local, false);
@@ -749,12 +898,39 @@ impl SftpFileManagerTab {
         self.pane_order = pane_order;
     }
 
-    pub(crate) fn show(&mut self, ui: &mut Ui) {
+    pub(crate) fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {
+        self.pending_host_key
+            .as_ref()
+            .map(|pending| &pending.prompt)
+    }
+
+    pub(crate) fn resolve_host_key_trust(
+        &mut self,
+        decision: crate::tabs::HostKeyTrustDecision,
+    ) -> Result<(), crate::tabs::HostKeyTrustResolutionError> {
+        let Some(pending) = self.pending_host_key.take() else {
+            return Err(crate::tabs::HostKeyTrustResolutionError::NoPendingPrompt);
+        };
+        self.connection_state = SftpConnectionState::Connecting;
+        pending
+            .resolver
+            .resolve(&pending.prompt, decision.into())
+            .map_err(crate::tabs::HostKeyTrustResolutionError::Transport)
+    }
+
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut Ui,
+        tab_id: crate::tabs::TabId,
+    ) -> Option<crate::tabs::AppCommand> {
         self.poll();
         self.handle_keyboard(ui.ctx());
         let narrow = ui.available_width() < 980.0;
         self.show_toolbar(ui, narrow);
         ui.add_space(8.0);
+        if let Some(pending) = self.pending_host_key.as_ref() {
+            return show_host_key_prompt(ui, tab_id, &self.launch_target, &pending.prompt);
+        }
         if narrow {
             self.show_narrow(ui);
         } else {
@@ -773,6 +949,7 @@ impl SftpFileManagerTab {
         }
         self.show_transfer_drawer(ui);
         self.show_collision_dialog(ui.ctx());
+        None
     }
 
     fn show_toolbar(&mut self, ui: &mut Ui, narrow: bool) {
@@ -781,6 +958,7 @@ impl SftpFileManagerTab {
             ui.label(
                 RichText::new(match &self.connection_state {
                     SftpConnectionState::Connecting => "Connecting…",
+                    SftpConnectionState::AwaitingHostKey => "Trust required",
                     SftpConnectionState::Ready => "Connected",
                     SftpConnectionState::Failed { .. } => "Connection failed",
                     SftpConnectionState::Disconnected { .. } => "Disconnected",
@@ -788,6 +966,7 @@ impl SftpFileManagerTab {
                 .color(match self.connection_state {
                     SftpConnectionState::Ready => theme::ACCENT_PRIMARY,
                     SftpConnectionState::Connecting => theme::TEXT_SECONDARY,
+                    SftpConnectionState::AwaitingHostKey => theme::STATUS_ERROR,
                     SftpConnectionState::Failed { .. }
                     | SftpConnectionState::Disconnected { .. } => theme::STATUS_ERROR,
                 }),
@@ -839,6 +1018,7 @@ impl SftpFileManagerTab {
             PaneFocus::Remote => Some(match &self.connection_state {
                 SftpConnectionState::Ready => "Connected",
                 SftpConnectionState::Connecting => "Connecting…",
+                SftpConnectionState::AwaitingHostKey => "Trust required",
                 SftpConnectionState::Failed { .. } => "Connection failed",
                 SftpConnectionState::Disconnected { .. } => "Disconnected",
             }),
@@ -1459,11 +1639,17 @@ impl SftpFileManagerTab {
 
     fn apply_event(&mut self, event: WorkerEvent) {
         match event {
+            WorkerEvent::HostKeyVerificationRequired { prompt, resolver } => {
+                self.connection_state = SftpConnectionState::AwaitingHostKey;
+                self.pending_host_key = Some(PendingHostKeyDecision { prompt, resolver });
+                self.remote_pane.loading = false;
+            }
             WorkerEvent::Connected {
                 remote_directory,
                 remote_metadata,
             } => {
                 self.connection_state = SftpConnectionState::Ready;
+                self.pending_host_key = None;
                 self.remote_pane
                     .set_snapshot(remote_directory, remote_metadata);
                 self.remote_pane
@@ -1493,15 +1679,18 @@ impl SftpFileManagerTab {
             }
             WorkerEvent::RemoteDirectoryLoaded { snapshot, metadata } => {
                 self.connection_state = SftpConnectionState::Ready;
+                self.pending_host_key = None;
                 self.remote_pane.set_snapshot(snapshot, metadata);
             }
             WorkerEvent::RemoteDirectoryFailed { summary, details } => {
+                self.pending_host_key = None;
                 self.remote_pane.set_error(summary.clone(), details.clone());
                 self.connection_state = SftpConnectionState::Disconnected { summary, details };
                 self.remote_pane.stale = true;
             }
             WorkerEvent::Transfer(event) => self.apply_transfer_event(event),
             WorkerEvent::ConnectionFailed { summary, details } => {
+                self.pending_host_key = None;
                 self.connection_state = SftpConnectionState::Failed { summary, details };
                 self.remote_pane.loading = false;
             }
@@ -1648,6 +1837,14 @@ impl SftpFileManagerTab {
     }
 }
 
+impl Drop for SftpFileManagerTab {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending_host_key.take() {
+            let _ = pending.resolver.cancel(&pending.prompt);
+        }
+    }
+}
+
 #[derive(Debug)]
 enum WorkerCommand {
     LoadRemote { path: String },
@@ -1659,6 +1856,10 @@ enum WorkerCommand {
 
 #[derive(Debug)]
 enum WorkerEvent {
+    HostKeyVerificationRequired {
+        prompt: HostKeyPrompt,
+        resolver: HostKeyDecisionResolver,
+    },
     Connected {
         remote_directory: SftpDirectorySnapshot,
         remote_metadata: Option<SftpPathMetadata>,
@@ -1693,35 +1894,56 @@ enum WorkerEvent {
 async fn run_worker(
     target: SftpFileManagerLaunchTarget,
     authentication: SftpFileManagerAuthentication,
-    known_host_fingerprint: String,
+    known_host_fingerprint: Option<String>,
     mut command_receiver: tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
     event_sender: mpsc::Sender<WorkerEvent>,
     repaint: egui::Context,
 ) {
-    let mut browsing =
-        match connect_remote_session(&target, &authentication, &known_host_fingerprint).await {
-            Ok(session) => session,
-            Err(error) => {
-                let _ = event_sender.send(WorkerEvent::ConnectionFailed {
-                    summary: "Could not connect the SFTP file manager.".to_owned(),
-                    details: error,
-                });
-                repaint.request_repaint();
-                return;
-            }
-        };
-    let transfer_session =
-        match connect_remote_session(&target, &authentication, &known_host_fingerprint).await {
-            Ok(session) => session,
-            Err(error) => {
-                let _ = event_sender.send(WorkerEvent::ConnectionFailed {
-                    summary: "Could not start the SFTP transfer worker.".to_owned(),
-                    details: error,
-                });
-                repaint.request_repaint();
-                return;
-            }
-        };
+    let mut session_known_host_fingerprint = known_host_fingerprint;
+    let (mut browsing, accepted_fingerprint) = match connect_remote_session(
+        &target,
+        &authentication,
+        session_known_host_fingerprint.as_deref(),
+        &event_sender,
+        &repaint,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = event_sender.send(WorkerEvent::ConnectionFailed {
+                summary: "Could not connect the SFTP file manager.".to_owned(),
+                details: error,
+            });
+            repaint.request_repaint();
+            return;
+        }
+    };
+    if let Some(fingerprint) = accepted_fingerprint {
+        session_known_host_fingerprint = Some(fingerprint);
+    }
+    let (transfer_session, accepted_fingerprint) = match connect_remote_session(
+        &target,
+        &authentication,
+        session_known_host_fingerprint.as_deref(),
+        &event_sender,
+        &repaint,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = event_sender.send(WorkerEvent::ConnectionFailed {
+                summary: "Could not start the SFTP transfer worker.".to_owned(),
+                details: error,
+            });
+            repaint.request_repaint();
+            return;
+        }
+    };
+    if let Some(fingerprint) = accepted_fingerprint {
+        session_known_host_fingerprint = Some(fingerprint);
+    }
     let mut transfer_manager = SftpTransferManager::new(transfer_session);
     let mut current_remote = browsing.remote_working_directory().to_owned();
     if let Ok(snapshot) = browsing.remote_directory_snapshot(None).await {
@@ -1771,8 +1993,19 @@ async fn run_worker(
                         let _ = transfer_manager.resolve_collision(resolution);
                     }
                     WorkerCommand::Reconnect => {
-                        match connect_remote_session(&target, &authentication, &known_host_fingerprint).await {
-                            Ok(session) => {
+                        match connect_remote_session(
+                            &target,
+                            &authentication,
+                            session_known_host_fingerprint.as_deref(),
+                            &event_sender,
+                            &repaint,
+                        )
+                        .await
+                        {
+                            Ok((session, accepted_fingerprint)) => {
+                                if let Some(fingerprint) = accepted_fingerprint {
+                                    session_known_host_fingerprint = Some(fingerprint);
+                                }
                                 browsing = session;
                                 match browsing.remote_directory_snapshot(Some(&current_remote)).await {
                                     Ok(snapshot) => {
@@ -1810,8 +2043,10 @@ async fn run_worker(
 async fn connect_remote_session(
     target: &SftpFileManagerLaunchTarget,
     authentication: &SftpFileManagerAuthentication,
-    known_host_fingerprint: &str,
-) -> Result<festerm_ssh::SftpSession, String> {
+    known_host_fingerprint: Option<&str>,
+    event_sender: &mpsc::Sender<WorkerEvent>,
+    repaint: &egui::Context,
+) -> Result<(festerm_ssh::SftpSession, Option<String>), String> {
     let profile = target.connection_profile()?;
     let authentication = match authentication {
         SftpFileManagerAuthentication::Password(password) => {
@@ -1840,25 +2075,48 @@ async fn connect_remote_session(
             SshAuthentication::stored_private_key(Arc::clone(store), reference)
         }
     };
-    connect_gui_sftp_session(
+    match connect_gui_sftp_session(
         profile,
         authentication,
         None,
-        Some(known_host_fingerprint.to_owned()),
+        known_host_fingerprint.map(str::to_owned),
     )
     .await
     .map_err(|error| match error {
-        GuiSftpSessionConnectError::MissingKnownHostFingerprint => {
-            "GUI SFTP currently requires a persisted host-key fingerprint.".to_owned()
-        }
         GuiSftpSessionConnectError::InteractiveAuthenticationUnsupported => {
             "GUI SFTP currently needs an explicit password, private key, or stored credential."
                 .to_owned()
         }
+        GuiSftpSessionConnectError::HostKeyRejected => {
+            "The SSH host key was rejected or the trust prompt expired.".to_owned()
+        }
         GuiSftpSessionConnectError::ConnectionFailed => {
             "The SSH/SFTP connection could not be established.".to_owned()
         }
-    })
+    })? {
+        GuiSftpSessionConnectOutcome::Connected(session) => Ok((session, None)),
+        GuiSftpSessionConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion,
+        } => {
+            let fingerprint = prompt.sha256_fingerprint().to_owned();
+            let _ =
+                event_sender.send(WorkerEvent::HostKeyVerificationRequired { prompt, resolver });
+            repaint.request_repaint();
+            completion.wait().await.map(|session| (session, Some(fingerprint))).map_err(
+                |error| match error {
+                    GuiSftpSessionConnectError::InteractiveAuthenticationUnsupported => "GUI SFTP currently needs an explicit password, private key, or stored credential.".to_owned(),
+                    GuiSftpSessionConnectError::HostKeyRejected => {
+                        "The SSH host key was rejected or the trust prompt expired.".to_owned()
+                    }
+                    GuiSftpSessionConnectError::ConnectionFailed => {
+                        "The SSH/SFTP connection could not be established.".to_owned()
+                    }
+                },
+            )
+        }
+    }
 }
 
 fn toolbar_button(ui: &mut Ui, label: &str) -> egui::Response {
@@ -2353,10 +2611,75 @@ mod tests {
     }
 
     #[test]
+    fn authentication_surface_allows_connecting_before_host_trust_is_persisted() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: false,
+        };
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                ui.data_mut(|data| {
+                    data.insert_temp(
+                        ui.id().with(("gui_sftp_auth_state", tab_id)),
+                        AuthenticationFormState {
+                            password: "secret".to_owned(),
+                            ..Default::default()
+                        },
+                    );
+                });
+                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+
+        harness.run();
+        harness.get_by_label("Open SFTP file manager").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state(),
+            Some(crate::tabs::AppCommand::StartSftpFileManager { .. })
+        ));
+    }
+
+    #[test]
+    fn unknown_host_key_prompt_shows_inline_trust_actions() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: false,
+        };
+        let prompt = HostKeyPrompt::new("sftp.example.test", 22, "SHA256:abcDef012+/");
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                *command = show_host_key_prompt(ui, tab_id, &target, &prompt);
+            },
+            None,
+        );
+
+        harness.run();
+        assert!(harness.query_by_label("Accept Once").is_some());
+        assert!(harness.query_by_label("Accept and Remember").is_some());
+    }
+
+    #[test]
     fn failed_connection_banner_shows_diagnostic_details() {
         let state = SftpConnectionState::Failed {
             summary: "Connection failed".to_owned(),
-            details: "GUI SFTP currently requires a persisted host-key fingerprint.".to_owned(),
+            details: "The SSH host key was rejected or the trust prompt expired.".to_owned(),
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
@@ -2370,7 +2693,7 @@ mod tests {
 
         assert!(harness.query_by_label("Connection failed").is_some());
         assert!(harness
-            .query_by_label("GUI SFTP currently requires a persisted host-key fingerprint.")
+            .query_by_label("The SSH host key was rejected or the trust prompt expired.")
             .is_some());
     }
 

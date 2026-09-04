@@ -496,3 +496,19 @@ advanced ad-hoc SSH launches now carry the same validated local/remote
 port-forward drafts already supported by saved profiles, and one-off SSH/SFTP
 connect forms now accept transient OpenSSH certificate authentication by
 pairing an in-memory private key with its signed `-cert.pub` text.
+
+## September 2026 GUI SFTP trust-on-first-use parity
+
+GUI SFTP quick connect had an awkward blind spot: it reused the shared
+`establish_authenticated_handle` transport, but still refused to start unless
+ a known-host fingerprint was already persisted. That meant a first-time or
+ rotated host key failed generically even though the SSH path already had the
+ right pause-and-resolve primitive for inline trust decisions.
+
+The fix stayed deliberately inside the existing trust boundary. `festerm-ssh`
+now lets GUI SFTP surface a pending `HostKeyDecisionResolver` while the actual
+connect work waits in the background, and the egui file-manager tab renders the
+same inline TOFU / changed-key decision flow before showing files. Reusing the
+accepted fingerprint across the browsing and transfer-worker connections avoids
+double prompts for one launch, while Accept and Remember still persists through
+the ordinary application-owned known-host configuration path.

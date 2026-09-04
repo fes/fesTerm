@@ -1417,7 +1417,8 @@ pub enum AppCommand {
         profile_id: String,
         private_key: PrivateKeyToStore,
     },
-    /// Resolves the displayed host-key request for one specific SSH tab.
+    /// Resolves the displayed host-key request for one specific SSH or GUI
+    /// SFTP tab.
     ///
     /// `AcceptAndPersist` (ADR 0020) additionally requires the composition
     /// root to write a durable trust record before this command reaches
@@ -2196,6 +2197,23 @@ impl AppState {
             })
     }
 
+    pub fn sftp_file_manager_tab_mut(&mut self, id: TabId) -> Option<&mut SftpFileManagerTab> {
+        self.tabs
+            .iter_mut()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| match &mut tab.content {
+                TabContent::SftpFileManager(session) => Some(session.as_mut()),
+                TabContent::Launcher
+                | TabContent::Settings
+                | TabContent::Profiles
+                | TabContent::MarkdownViewer(_)
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+                | TabContent::Session(_) => None,
+            })
+    }
+
     pub fn apply_terminal_font_set(&mut self, font_set: festerm_ui_egui::TerminalFontSet) {
         for tab in &mut self.tabs {
             if let TabContent::Session(session) = &mut tab.content {
@@ -2789,10 +2807,6 @@ impl AppState {
             .configuration
             .known_host_fingerprint(&target.host, target.port)
             .map(str::to_owned);
-        let Some(known_host_fingerprint) = known_host_fingerprint else {
-            self.open_sftp_file_manager(target);
-            return;
-        };
         let local_directory = self
             .default_sftp_local_directory
             .clone()
@@ -3021,18 +3035,22 @@ impl AppState {
     }
 
     fn resolve_host_key_trust(&mut self, tab: TabId, decision: HostKeyTrustDecision) {
-        let Some(session) = self.session_tab_mut(tab) else {
+        if let Some(session) = self.session_tab_mut(tab) {
+            if let Err(error) = session.resolve_host_key_trust(decision) {
+                session.controller.record_host_key_resolution_error(error);
+            }
+            // The "Reject"/"Accept Once" buttons steal keyboard focus from the
+            // terminal for however long the prompt is on screen. Unlike the
+            // close/paste/rename overlays, nothing else claims focus afterwards,
+            // so without this the terminal is left silently unfocused - typing
+            // does nothing until the user clicks into it.
+            session.view.request_focus_on_next_frame();
+            return;
+        }
+        let Some(tab) = self.sftp_file_manager_tab_mut(tab) else {
             return;
         };
-        if let Err(error) = session.resolve_host_key_trust(decision) {
-            session.controller.record_host_key_resolution_error(error);
-        }
-        // The "Reject"/"Accept Once" buttons steal keyboard focus from the
-        // terminal for however long the prompt is on screen. Unlike the
-        // close/paste/rename overlays, nothing else claims focus afterwards,
-        // so without this the terminal is left silently unfocused - typing
-        // does nothing until the user clicks into it.
-        session.view.request_focus_on_next_frame();
+        let _ = tab.resolve_host_key_trust(decision);
     }
 
     fn request_reconnect(&mut self, tab: TabId) {
