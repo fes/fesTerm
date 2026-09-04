@@ -332,7 +332,7 @@ pub struct MarkdownViewerTab {
 
 impl MarkdownViewerTab {
     pub fn open_local(path: PathBuf) -> Self {
-        let display_path = path.display().to_string();
+        let display_path = display_local_path(&path);
         let title = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -878,69 +878,112 @@ struct MarkdownRenderState<'a> {
     outline_keyboard_focus: &'a mut bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
+struct MarkdownDocumentLayout {
+    outline_rect: Option<egui::Rect>,
+    document_rect: egui::Rect,
+}
+
 impl MarkdownRenderState<'_> {
-    fn show_document(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
+    fn show_document(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &MarkdownDocument,
+    ) -> MarkdownDocumentLayout {
+        let viewport_height = (ui.available_height() - 40.0).max(120.0);
         ui.horizontal(|ui| {
+            ui.set_height(viewport_height);
+            let mut outline_rect = None;
             if self.outline_open {
-                egui::Frame::new()
+                let outline = egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE)
                     .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         ui.set_width(OUTLINE_WIDTH);
-                        icon_label(ui, Icon::Outline, "Outline");
-                        ui.add_space(6.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("markdown-outline")
-                            .show(ui, |ui| {
-                                for (index, heading) in document.headings().iter().enumerate() {
-                                    let selected = *self.outline_selected == Some(index);
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(
-                                            (heading.level().saturating_sub(1) as f32) * 12.0,
-                                        );
-                                        let response =
-                                            ui.selectable_label(selected, heading.text());
-                                        response.widget_info(|| {
-                                            WidgetInfo::labeled(
-                                                WidgetType::Button,
-                                                true,
-                                                format!(
-                                                    "Heading level {}: {}",
-                                                    heading.level(),
-                                                    heading.text()
-                                                ),
-                                            )
-                                        });
-                                        if response.clicked() {
-                                            *self.outline_selected = Some(index);
-                                            *self.pending_scroll =
-                                                Some(PendingScroll::Heading(index));
-                                            *self.outline_keyboard_focus = true;
+                        ui.set_max_width(OUTLINE_WIDTH);
+                        ui.set_height(viewport_height);
+                        ui.vertical(|ui| {
+                            icon_label(ui, Icon::Outline, "Outline");
+                            ui.add_space(6.0);
+                            egui::ScrollArea::vertical()
+                                .id_salt("markdown-outline")
+                                .max_height((viewport_height - 34.0).max(80.0))
+                                .show(ui, |ui| {
+                                    ui.vertical(|ui| {
+                                        for (index, heading) in
+                                            document.headings().iter().enumerate()
+                                        {
+                                            let selected = *self.outline_selected == Some(index);
+                                            ui.horizontal(|ui| {
+                                                ui.add_space(
+                                                    (heading.level().saturating_sub(1) as f32)
+                                                        * 12.0,
+                                                );
+                                                let response =
+                                                    ui.selectable_label(selected, heading.text());
+                                                response.widget_info(|| {
+                                                    WidgetInfo::labeled(
+                                                        WidgetType::Button,
+                                                        true,
+                                                        format!(
+                                                            "Heading level {}: {}",
+                                                            heading.level(),
+                                                            heading.text()
+                                                        ),
+                                                    )
+                                                });
+                                                if response.clicked() {
+                                                    *self.outline_selected = Some(index);
+                                                    *self.pending_scroll =
+                                                        Some(PendingScroll::Heading(index));
+                                                    *self.outline_keyboard_focus = true;
+                                                }
+                                            });
                                         }
                                     });
-                                }
-                            });
+                                });
+                        });
                     });
+                outline_rect = Some(outline.response.rect);
                 ui.add_space(12.0);
             }
-            egui::ScrollArea::vertical()
-                .id_salt("markdown-document")
-                .show(ui, |ui| {
-                    ui.set_max_width(READING_WIDTH.min(ui.available_width()));
-                    match self.mode {
-                        MarkdownViewerMode::Preview => {
-                            for block in document.blocks() {
-                                self.render_block(ui, block, document);
-                                ui.add_space(10.0);
-                            }
-                        }
-                        MarkdownViewerMode::Source => {
-                            self.render_source(ui, document);
-                        }
-                    }
-                });
-        });
+            let document_width = ui.available_width();
+            let mut document_rect = egui::Rect::NOTHING;
+            ui.allocate_ui_with_layout(
+                vec2(document_width, viewport_height),
+                egui::Layout::top_down(Align::Min),
+                |ui| {
+                    document_rect = ui.max_rect();
+                    egui::ScrollArea::vertical()
+                        .id_salt("markdown-document")
+                        .max_height(viewport_height)
+                        .min_scrolled_height(viewport_height)
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_max_width(READING_WIDTH.min(ui.available_width()));
+                                match self.mode {
+                                    MarkdownViewerMode::Preview => {
+                                        for block in document.blocks() {
+                                            self.render_block(ui, block, document);
+                                            ui.add_space(10.0);
+                                        }
+                                    }
+                                    MarkdownViewerMode::Source => {
+                                        self.render_source(ui, document);
+                                    }
+                                }
+                            });
+                        });
+                },
+            );
+            MarkdownDocumentLayout {
+                outline_rect,
+                document_rect,
+            }
+        })
+        .inner
     }
 
     fn render_block(&mut self, ui: &mut egui::Ui, block: &Block, document: &MarkdownDocument) {
@@ -1244,7 +1287,21 @@ fn load_local_document(
             &Default::default(),
         )
         .map_err(MarkdownViewerLoadFailure::Load)?;
-    Ok((canonical.display().to_string(), document))
+    Ok((display_local_path(&canonical), document))
+}
+
+fn display_local_path(path: &Path) -> String {
+    let display = path.display().to_string();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(unc) = display.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{unc}");
+        }
+        if let Some(ordinary) = display.strip_prefix(r"\\?\") {
+            return ordinary.to_owned();
+        }
+    }
+    display
 }
 
 fn local_document_source(source: &MarkdownSource) -> Option<&LocalMarkdownSource> {
@@ -1364,7 +1421,7 @@ fn render_inline_flow(
                 ui.add(
                     egui::Label::new(text_job(
                         text.text(),
-                        text.span(),
+                        text.text_span(),
                         find,
                         font.clone(),
                         strong,
@@ -1379,7 +1436,7 @@ fn render_inline_flow(
                 ui.add(
                     egui::Label::new(text_job(
                         text.text(),
-                        text.span(),
+                        text.text_span(),
                         find,
                         FontId::monospace(font.size),
                         strong,
@@ -1502,7 +1559,7 @@ fn render_struck_inline_flow(
                 ui.add(
                     egui::Label::new(text_job(
                         text.text(),
-                        text.span(),
+                        text.text_span(),
                         find,
                         if mono {
                             FontId::monospace(font.size)
@@ -1547,24 +1604,28 @@ fn render_link(
     outline_selected: &mut Option<usize>,
 ) {
     let reference = &document.resource_references()[link.reference_index()];
-    let text = if link.plain_text().is_empty() {
+    let accessible_text = if link.plain_text().is_empty() {
         reference.target().to_owned()
     } else {
         link.plain_text().to_owned()
     };
-    let response = ui.add(
-        egui::Button::new(text_job(
-            &text,
+    let job = if link.inlines().is_empty() {
+        text_job(
+            &accessible_text,
             link.span(),
             find,
             font,
             strong,
             false,
             false,
-        ))
-        .frame(false),
-    );
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, format!("Link: {text}")));
+        )
+    } else {
+        inline_layout_job(link.inlines(), document, find, font, strong)
+    };
+    let response = ui.add(egui::Button::new(job).frame(false));
+    response.widget_info(|| {
+        WidgetInfo::labeled(WidgetType::Button, true, format!("Link: {accessible_text}"))
+    });
     let response = response.on_hover_text(reference.target());
     if matches!(pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(link.span(), *target))
     {
@@ -1706,7 +1767,7 @@ fn append_inline_layout(
             Inline::Text(text) => append_text_segments(
                 job,
                 text.text(),
-                text.span(),
+                text.text_span(),
                 find,
                 if code {
                     FontId::monospace(font.size)
@@ -1720,7 +1781,7 @@ fn append_inline_layout(
             Inline::Code(text) => append_text_segments(
                 job,
                 text.text(),
-                text.span(),
+                text.text_span(),
                 find,
                 FontId::monospace(font.size),
                 strong,
@@ -1757,20 +1818,20 @@ fn append_inline_layout(
                 true,
                 code,
             ),
-            Inline::Link(link) => append_text_segments(
+            Inline::Link(link) => append_inline_layout(
                 job,
-                link.plain_text(),
-                link.span(),
+                link.inlines(),
+                document,
                 find,
                 font.clone(),
                 strong,
                 strikethrough,
-                false,
+                code,
             ),
             Inline::Image(image) => append_text_segments(
                 job,
                 image.alt_text(),
-                image.span(),
+                image.alt_text_span(),
                 find,
                 font.clone(),
                 strong,
@@ -1859,8 +1920,13 @@ fn append_text_segments(
         .iter()
         .enumerate()
         .filter_map(|(index, matched)| {
-            overlap_with_relative_range(span, matched.span())
-                .map(|range| (range.start, range.end, find.current_index == Some(index)))
+            overlap_with_relative_range(span, matched.span()).and_then(|range| {
+                (range.end <= text.len()).then_some((
+                    range.start,
+                    range.end,
+                    find.current_index == Some(index),
+                ))
+            })
         })
         .collect();
     for (start, end, current) in matches {
@@ -2119,6 +2185,7 @@ pub fn take_viewer_commands(context: &egui::Context) -> Vec<AppCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ops::Range;
 
     fn document(text: &str) -> MarkdownDocument {
         MarkdownLoader::default()
@@ -2129,6 +2196,89 @@ mod tests {
                 &Default::default(),
             )
             .unwrap()
+    }
+
+    fn highlighted_sections(job: &LayoutJob) -> Vec<(Range<usize>, String)> {
+        job.sections
+            .iter()
+            .filter(|section| section.format.background != Color32::TRANSPARENT)
+            .map(|section| {
+                let range = section.byte_range.start.0..section.byte_range.end.0;
+                (range.clone(), job.text[range].to_owned())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn outline_and_preview_keep_separate_vertical_viewports() {
+        let document = document(
+            "# fesTerm Architecture\n\nIntro.\n\n## Architectural Goals\n\nGoals.\n\n## Dependency Direction\n\nDependencies.",
+        );
+        let context = egui::Context::default();
+        let mut outline_selected = None;
+        let find = MarkdownFindState::default();
+        let approvals = ResourceApprovalState::default();
+        let loaded_images = BTreeMap::new();
+        let pending_image_loads = BTreeMap::new();
+        let image_errors = BTreeMap::new();
+        let mut pending_scroll = None;
+        let mut outline_keyboard_focus = false;
+        let mut layout = None;
+
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(1_000.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |context| {
+                egui::CentralPanel::default().show(context, |ui| {
+                    let mut render_state = MarkdownRenderState {
+                        mode: MarkdownViewerMode::Preview,
+                        outline_open: true,
+                        outline_selected: &mut outline_selected,
+                        find: &find,
+                        resource_approvals: &approvals,
+                        loaded_images: &loaded_images,
+                        pending_image_loads: &pending_image_loads,
+                        image_errors: &image_errors,
+                        pending_scroll: &mut pending_scroll,
+                        line_heading_indices: &[],
+                        outline_keyboard_focus: &mut outline_keyboard_focus,
+                    };
+                    layout = Some(render_state.show_document(ui, &document));
+                });
+            },
+        );
+        output.textures_delta.clear();
+
+        let layout = layout.expect("the Markdown document should be laid out");
+        let outline = layout.outline_rect.expect("the outline should be visible");
+        assert!(outline.width() <= OUTLINE_WIDTH + 18.0);
+        assert!(layout.document_rect.left() > outline.right());
+        assert!(
+            layout.document_rect.width() > 500.0,
+            "unexpected Markdown layout: {layout:?}"
+        );
+        assert!(
+            layout.document_rect.height() > 500.0,
+            "unexpected Markdown layout: {layout:?}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn local_markdown_display_paths_hide_windows_verbatim_prefixes() {
+        assert_eq!(
+            display_local_path(Path::new(r"\\?\C:\work\README.md")),
+            r"C:\work\README.md"
+        );
+        assert_eq!(
+            display_local_path(Path::new(r"\\?\UNC\server\share\README.md")),
+            r"\\server\share\README.md"
+        );
     }
 
     #[test]
@@ -2151,6 +2301,51 @@ mod tests {
         state.open();
         assert!(state.take_focus_request());
         assert!(!state.take_focus_request());
+    }
+
+    #[test]
+    fn find_highlighting_tracks_inline_code_text_offsets() {
+        let document = document("before `code` after");
+        let mut find = MarkdownFindState::default();
+        find.set_query(&document, "code".to_owned());
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &find,
+            FontId::proportional(14.0),
+            false,
+        );
+
+        assert_eq!(job.text, "before code after");
+        assert_eq!(highlighted_sections(&job), vec![(7..11, "code".to_owned())]);
+    }
+
+    #[test]
+    fn find_highlighting_tracks_link_label_offsets() {
+        let document = document("see [needle link](https://example.com) now");
+        let mut find = MarkdownFindState::default();
+        find.set_query(&document, "needle".to_owned());
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &find,
+            FontId::proportional(14.0),
+            false,
+        );
+
+        assert_eq!(job.text, "see needle link now");
+        assert_eq!(
+            highlighted_sections(&job),
+            vec![(4..10, "needle".to_owned())]
+        );
     }
 
     #[test]

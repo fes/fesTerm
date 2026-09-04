@@ -295,15 +295,16 @@ field or metadata is allowed in profiles or workspaces. The SSH transport
 resolves the opaque reference on its background worker immediately before
 authentication; UI event handling never retrieves the secret.
 
-The Launcher/profile editor exposes stored-credential actions only for an
-existing saved SSH profile. A user may explicitly enter a password or an
-OpenSSH private key (with optional passphrase) and select **Remember this
-password/private key in native secure storage**; the secret is written on a
-background worker, then the generated opaque reference and its
-`credential_kind` are atomically saved into that profile. If configuration
-persistence fails, fesTerm removes the newly created
-native secret where possible and leaves the old profile reference unchanged.
-One-off SSH connections remain transient. Restored workspace SSH surfaces
+The profile editor accepts an initial password or OpenSSH private key (with
+optional passphrase) while creating either an SSH or SFTP profile. Profile
+metadata is persisted first; only after that succeeds is the secret written on
+a background worker and the generated opaque reference plus
+`credential_kind` atomically saved into the profile. Existing profiles expose
+separate password/private-key replacement actions. If reference persistence
+fails, fesTerm removes the newly created native secret where possible and
+leaves the old profile reference unchanged. Saved credentials can authenticate
+SSH, terminal SFTP, and GUI SFTP; GUI SFTP still requires persisted host trust.
+One-off SSH/SFTP connections remain transient. Restored workspace surfaces
 never auto-connect: users must explicitly choose the stored-credential action
 or enter fresh authentication.
 
