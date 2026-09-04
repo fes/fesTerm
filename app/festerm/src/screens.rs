@@ -440,6 +440,11 @@ enum RemoteTmuxProbeAuthKey {
         private_key: String,
         key_passphrase: String,
     },
+    Certificate {
+        private_key: String,
+        key_passphrase: String,
+        certificate: String,
+    },
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -810,6 +815,24 @@ impl SshLauncherForm {
                     RemoteTmuxProbeAuthKey::PrivateKey {
                         private_key: probe_form.private_key,
                         key_passphrase: probe_form.key_passphrase,
+                    },
+                )
+            }
+            SshAuthenticationMethod::Certificate => {
+                if probe_form.private_key.is_empty() || probe_form.certificate.is_empty() {
+                    return None;
+                }
+                (
+                    Self::parse_certificate(
+                        probe_form.private_key.clone(),
+                        probe_form.key_passphrase.clone(),
+                        probe_form.certificate.clone(),
+                    )
+                    .ok()?,
+                    RemoteTmuxProbeAuthKey::Certificate {
+                        private_key: probe_form.private_key,
+                        key_passphrase: probe_form.key_passphrase,
+                        certificate: probe_form.certificate,
                     },
                 )
             }
@@ -3803,6 +3826,10 @@ impl SshProfileDraft {
                     },
                 )
             }
+            // Saved SSH profiles don't yet support storing a certificate
+            // credential (deferred alongside certificate auth in #120), so
+            // there is nothing to probe with here.
+            SshAuthenticationMethod::Certificate => return None,
         };
         let key = RemoteTmuxProbeKey {
             host: profile.identity().host().to_owned(),
