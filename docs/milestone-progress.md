@@ -532,3 +532,20 @@ same inline TOFU / changed-key decision flow before showing files. Reusing the
 accepted fingerprint across the browsing and transfer-worker connections avoids
 double prompts for one launch, while Accept and Remember still persists through
 the ordinary application-owned known-host configuration path.
+
+## September 2026 GUI SFTP split-pane mockup parity
+
+The first GUI SFTP landing got the typed browsing and transfer behavior in
+place, but the presentation still looked like default egui scaffolding instead
+of the reviewed split-pane workflow mockup. The follow-up tightened the file
+manager without changing its architecture: pane sections now use the mockup's
+measured compact heights, toolbar hit targets, framed breadcrumb/filter rows,
+monospace path-and-metadata typography, transfer-rail sizing, footer counts,
+and collision-action ordering.
+
+The same pass also aligned a few behaviorally visible presentation rules from
+the prose spec that the mockup made easy to miss during the first build. The
+remote pane now keeps reconnect on its own identity line when a listing goes
+stale, table rows expose more specific file-type labels/icons instead of a
+generic "File" bucket, and the transfer drawer summarizes active/completed
+work in the same compact hierarchy as the reviewed workflow states.
