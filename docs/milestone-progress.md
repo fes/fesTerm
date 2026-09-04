@@ -187,6 +187,26 @@ local session persistence remains experimental and unvalidated as a supported
 capability until `CP-11` and that security review are complete and the ADR is
 formally accepted or the shipped scope is narrowed.
 
+## September 2026: best-effort tmux defaults for durable remote sessions
+
+Issue [#123](https://github.com/fes/fesTerm/issues/123) started from a useful
+wrong premise: if a remote host did not have tmux, perhaps SSH durability
+should fall back to `festerm-sessiond`. Reading ADR 0025 and the current
+configuration/UI boundary showed why that was out of scope. `festerm-sessiond`
+is deliberately a **local-only** persistence daemon; `festerm-config`
+rejects it on SSH profiles, and the remote durable-session UI only exposes
+tmux and GNU Screen. Treating it as a remote fallback would require a larger
+"remote agent" architecture, not a default-selection tweak.
+
+The implemented slice therefore stayed within ADR 0018's existing SSH provider
+model. fesTerm now reuses `festerm-ssh`'s throwaway `command -v tmux` probe as
+a background, best-effort UI default only when it already has enough safe
+input to try: persisted host trust plus a non-interactive credential. A newly
+enabled untouched remote durable-session draft defaults to `tmux` when that
+probe succeeds and to GNU Screen when it completes without finding tmux; if
+the probe cannot be run, the existing selection stays in place, and an
+explicit user choice is never overwritten.
+
 ## September 2026 GUI SFTP backend groundwork
 
 ADR 0029's first implementation slice stayed deliberately below the egui UI:

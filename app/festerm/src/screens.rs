@@ -6,19 +6,24 @@
 //! and own no session or tab policy themselves; `AppState::dispatch` remains
 //! the single command-handling path.
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{mpsc, Arc, Mutex},
+    thread,
+};
 
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
-    CredentialKind, EmojiPresentationPreference, PersistenceConfiguration, PersistenceProviderKind,
-    Profile, RemoteProfileKind, ScrollSpeedPreference, ScrollbackLimitPreference,
-    SftpPaneOrderPreference, SshPortForwardDirection, SshProfileConfiguration,
-    TerminalFontPreference,
+    Configuration, CredentialKind, EmojiPresentationPreference, PersistenceConfiguration,
+    PersistenceProviderKind, Profile, RemoteProfileKind, ScrollSpeedPreference,
+    ScrollbackLimitPreference, SftpPaneOrderPreference, SshPortForwardDirection,
+    SshProfileConfiguration, TerminalFontPreference,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
-    HostIdentity, ReconnectPolicy, RecoveryPolicy, SessionStrategy, SshAuthentication,
-    SshConnectionProfile, SshKeyPassphrase, SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
+    HostIdentity, PersistenceProvider, PersistenceProviderProbeAvailability, ReconnectPolicy,
+    RecoveryPolicy, SessionStrategy, SshAuthentication, SshConnectionProfile, SshKeyPassphrase,
+    SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
 use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 
@@ -315,6 +320,10 @@ enum SshAuthenticationMethod {
 struct DurableSessionDraft {
     enabled: bool,
     provider: PersistenceProviderKind,
+    /// Set once the user explicitly picks a durable-session provider. Remote
+    /// tmux-detection defaults may fill `provider` only while this remains
+    /// false.
+    provider_touched: bool,
     session_name: String,
     /// Set once the user manually edits the session name field directly.
     /// Until then, the session name auto-fills from the profile name as
@@ -329,6 +338,7 @@ impl Default for DurableSessionDraft {
         Self {
             enabled: false,
             provider: PersistenceProviderKind::Tmux,
+            provider_touched: false,
             session_name: "main".to_owned(),
             session_name_touched: false,
             automatic_recovery: false,
@@ -342,6 +352,7 @@ impl DurableSessionDraft {
             Some(persistence) => Self {
                 enabled: true,
                 provider: persistence.provider(),
+                provider_touched: true,
                 session_name: persistence.session_name().to_owned(),
                 // An existing profile's session name was explicitly chosen
                 // (by the user or a prior save), so don't let subsequent
@@ -391,6 +402,197 @@ impl DurableSessionDraft {
                 .map_err(|error| error.to_string());
         }
         Ok(SshSessionOptions::manual_recovery(strategy))
+    }
+
+    fn select_provider(&mut self, provider: PersistenceProviderKind) {
+        self.provider = provider;
+        self.provider_touched = true;
+    }
+
+    fn apply_detected_remote_provider_default(&mut self, detection: RemoteTmuxDetectionResult) {
+        if self.provider_touched {
+            return;
+        }
+        self.provider = remote_provider_from_tmux_detection(detection);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RemoteTmuxDetectionResult {
+    Detected,
+    NotDetected,
+}
+
+const fn remote_provider_from_tmux_detection(
+    detection: RemoteTmuxDetectionResult,
+) -> PersistenceProviderKind {
+    match detection {
+        RemoteTmuxDetectionResult::Detected => PersistenceProviderKind::Tmux,
+        RemoteTmuxDetectionResult::NotDetected => PersistenceProviderKind::Screen,
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+enum RemoteTmuxProbeAuthKey {
+    Password(String),
+    PrivateKey {
+        private_key: String,
+        key_passphrase: String,
+    },
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct RemoteTmuxProbeKey {
+    host: String,
+    port: u16,
+    username: String,
+    known_host_fingerprint: String,
+    authentication: RemoteTmuxProbeAuthKey,
+}
+
+struct RemoteTmuxProbeRequest {
+    key: RemoteTmuxProbeKey,
+    profile: SshConnectionProfile,
+    authentication: SshAuthentication,
+    known_host_fingerprint: String,
+}
+
+#[derive(Clone)]
+struct RemoteTmuxProbeCompletion {
+    key: RemoteTmuxProbeKey,
+    availability: PersistenceProviderProbeAvailability,
+}
+
+#[derive(Clone)]
+struct PendingRemoteTmuxProbe {
+    key: RemoteTmuxProbeKey,
+    receiver: Arc<Mutex<mpsc::Receiver<RemoteTmuxProbeCompletion>>>,
+}
+
+#[derive(Clone, Default)]
+struct RemoteTmuxProbeState {
+    pending: Option<PendingRemoteTmuxProbe>,
+    completed: Option<RemoteTmuxProbeCompletion>,
+}
+
+impl RemoteTmuxProbeState {
+    fn sync(
+        &mut self,
+        context: &egui::Context,
+        durable_session: &mut DurableSessionDraft,
+        request: Option<RemoteTmuxProbeRequest>,
+    ) {
+        if !durable_session.enabled || durable_session.provider_touched {
+            return;
+        }
+
+        if let Some(completion) = self.poll_pending_probe() {
+            self.completed = Some(completion);
+        }
+
+        if let (Some(request), Some(completion)) = (request.as_ref(), self.completed.as_ref()) {
+            if completion.key == request.key {
+                if let Some(detection) =
+                    remote_tmux_detection_from_probe_availability(completion.availability)
+                {
+                    durable_session.apply_detected_remote_provider_default(detection);
+                }
+                return;
+            }
+        }
+
+        let Some(request) = request else {
+            return;
+        };
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.key == request.key)
+        {
+            return;
+        }
+        if self
+            .completed
+            .as_ref()
+            .is_some_and(|completion| completion.key == request.key)
+        {
+            return;
+        }
+
+        let repaint = context.clone();
+        let key = request.key.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        match thread::Builder::new()
+            .name("festerm-remote-tmux-probe".to_owned())
+            .spawn(move || {
+                let availability = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map(|runtime| {
+                        runtime.block_on(festerm_ssh::probe_remote_persistence_provider(
+                            request.profile,
+                            request.authentication,
+                            Some(request.known_host_fingerprint),
+                            PersistenceProvider::Tmux,
+                        ))
+                    })
+                    .unwrap_or(PersistenceProviderProbeAvailability::Indeterminate);
+                let _ = sender.send(RemoteTmuxProbeCompletion { key, availability });
+                repaint.request_repaint();
+            }) {
+            Ok(_) => {
+                self.pending = Some(PendingRemoteTmuxProbe {
+                    key: request.key,
+                    receiver: Arc::new(Mutex::new(receiver)),
+                });
+            }
+            Err(_) => {
+                self.completed = Some(RemoteTmuxProbeCompletion {
+                    key: request.key,
+                    availability: PersistenceProviderProbeAvailability::Indeterminate,
+                });
+            }
+        }
+    }
+
+    fn poll_pending_probe(&mut self) -> Option<RemoteTmuxProbeCompletion> {
+        let pending = self.pending.as_ref()?;
+        let key = pending.key.clone();
+        let result = {
+            let receiver = pending
+                .receiver
+                .lock()
+                .expect("remote tmux probe receiver lock is not poisoned");
+            receiver.try_recv()
+        };
+        match result {
+            Ok(completion) => {
+                self.pending = None;
+                Some(completion)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pending = None;
+                Some(RemoteTmuxProbeCompletion {
+                    key,
+                    availability: PersistenceProviderProbeAvailability::Indeterminate,
+                })
+            }
+        }
+    }
+}
+
+fn remote_tmux_detection_from_probe_availability(
+    availability: PersistenceProviderProbeAvailability,
+) -> Option<RemoteTmuxDetectionResult> {
+    match availability {
+        PersistenceProviderProbeAvailability::Available => {
+            Some(RemoteTmuxDetectionResult::Detected)
+        }
+        PersistenceProviderProbeAvailability::Unavailable => {
+            Some(RemoteTmuxDetectionResult::NotDetected)
+        }
+        PersistenceProviderProbeAvailability::Indeterminate => None,
     }
 }
 
@@ -452,6 +654,7 @@ struct SshLauncherForm {
     saved_profile_has_credential: bool,
     saved_profile_credential_kind: Option<CredentialKind>,
     durable_session: DurableSessionDraft,
+    remote_tmux_probe: Box<RemoteTmuxProbeState>,
     port_forwards: Vec<SshPortForwardDraft>,
     sftp_gui_mode: bool,
     remember_password: bool,
@@ -480,6 +683,7 @@ impl Default for SshLauncherForm {
             saved_profile_has_credential: false,
             saved_profile_credential_kind: None,
             durable_session: DurableSessionDraft::default(),
+            remote_tmux_probe: Box::default(),
             port_forwards: Vec::new(),
             sftp_gui_mode: true,
             remember_password: false,
@@ -522,6 +726,16 @@ impl SshLauncherForm {
         self.advanced_open = true;
     }
 
+    fn sync_remote_durable_provider_default(
+        &mut self,
+        context: &egui::Context,
+        configuration: Option<&Configuration>,
+    ) {
+        let request = self.remote_tmux_probe_request(configuration);
+        self.remote_tmux_probe
+            .sync(context, &mut self.durable_session, request);
+    }
+
     fn prefill_saved_profile(&mut self, profile: &SshProfileConfiguration) {
         self.prefill_from_profile(profile);
         self.saved_profile_id = Some(profile.identifier().to_owned());
@@ -556,6 +770,60 @@ impl SshLauncherForm {
             initial_size,
         )
         .map_err(|error| error.to_string())
+    }
+
+    fn remote_tmux_probe_request(
+        &self,
+        configuration: Option<&Configuration>,
+    ) -> Option<RemoteTmuxProbeRequest> {
+        let mut probe_form = self.clone();
+        if !probe_form.advanced_open {
+            probe_form.sync_advanced_from_quick_connect();
+        }
+        let profile = probe_form.connection_profile().ok()?;
+        let known_host_fingerprint = configuration?
+            .known_host_fingerprint(profile.identity().host(), profile.identity().port())?
+            .to_owned();
+        let (authentication, authentication_key) = match probe_form.authentication_method {
+            SshAuthenticationMethod::Password => {
+                if probe_form.password.is_empty() {
+                    return None;
+                }
+                (
+                    SshAuthentication::password(probe_form.password.clone()),
+                    RemoteTmuxProbeAuthKey::Password(probe_form.password),
+                )
+            }
+            SshAuthenticationMethod::PrivateKey => {
+                if probe_form.private_key.is_empty() {
+                    return None;
+                }
+                (
+                    Self::parse_private_key(
+                        probe_form.private_key.clone(),
+                        probe_form.key_passphrase.clone(),
+                    )
+                    .ok()?,
+                    RemoteTmuxProbeAuthKey::PrivateKey {
+                        private_key: probe_form.private_key,
+                        key_passphrase: probe_form.key_passphrase,
+                    },
+                )
+            }
+        };
+        let key = RemoteTmuxProbeKey {
+            host: profile.identity().host().to_owned(),
+            port: profile.identity().port(),
+            username: profile.username().to_owned(),
+            known_host_fingerprint: known_host_fingerprint.clone(),
+            authentication: authentication_key,
+        };
+        Some(RemoteTmuxProbeRequest {
+            key,
+            profile,
+            authentication,
+            known_host_fingerprint,
+        })
     }
 
     /// Converts the transient form into the application's typed SSH command.
@@ -982,6 +1250,7 @@ fn show_ssh_quick_connect(
     tab_id: TabId,
     form: &mut SshLauncherForm,
     focus_quick_connect: bool,
+    configuration: Option<&Configuration>,
 ) -> Option<AppCommand> {
     let mut result = None;
     ssh_section_heading(ui, "Quick Connect");
@@ -1006,6 +1275,7 @@ fn show_ssh_quick_connect(
         })
         .inner;
     ui.add_space(8.0);
+    form.sync_remote_durable_provider_default(ui.ctx(), configuration);
     show_durable_session_controls(
         ui,
         tab_id,
@@ -1136,19 +1406,31 @@ fn show_durable_session_controls(
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if matches!(target, DurableSessionTarget::Local) {
-            ui.radio_value(
-                &mut draft.provider,
-                PersistenceProviderKind::FestermSessiond,
-                "fesTerm native",
-            );
+        if matches!(target, DurableSessionTarget::Local)
+            && ui
+                .radio(
+                    draft.provider == PersistenceProviderKind::FestermSessiond,
+                    "fesTerm native",
+                )
+                .clicked()
+        {
+            draft.select_provider(PersistenceProviderKind::FestermSessiond);
         }
-        ui.radio_value(&mut draft.provider, PersistenceProviderKind::Tmux, "tmux");
-        ui.radio_value(
-            &mut draft.provider,
-            PersistenceProviderKind::Screen,
-            "GNU screen",
-        );
+        if ui
+            .radio(draft.provider == PersistenceProviderKind::Tmux, "tmux")
+            .clicked()
+        {
+            draft.select_provider(PersistenceProviderKind::Tmux);
+        }
+        if ui
+            .radio(
+                draft.provider == PersistenceProviderKind::Screen,
+                "GNU screen",
+            )
+            .clicked()
+        {
+            draft.select_provider(PersistenceProviderKind::Screen);
+        }
     });
     if ssh_text_edit(
         ui,
@@ -1276,6 +1558,7 @@ fn show_ssh_form(
     ui: &mut Ui,
     tab_id: TabId,
     form: &mut SshLauncherForm,
+    configuration: Option<&Configuration>,
     native_store_available: bool,
 ) -> Option<AppCommand> {
     ui.add_space(16.0);
@@ -1290,7 +1573,7 @@ fn show_ssh_form(
         .show(ui, |ui| {
             ui.set_width(340.0);
             if !form.advanced_open {
-                result = show_ssh_quick_connect(ui, tab_id, form, focus_username);
+                result = show_ssh_quick_connect(ui, tab_id, form, focus_username, configuration);
                 return;
             }
             let mut show_advanced = form.advanced_open;
@@ -1317,6 +1600,7 @@ fn show_ssh_form(
 
             ui.add_space(10.0);
             ssh_section_heading(ui, "Durable session");
+            form.sync_remote_durable_provider_default(ui.ctx(), configuration);
             show_durable_session_controls(
                 ui,
                 tab_id,
@@ -1642,12 +1926,13 @@ fn show_sftp_form(
 pub fn show_launcher(
     ui: &mut Ui,
     tab_id: TabId,
-    profiles: &[Profile],
+    configuration: &Configuration,
     native_store_available: bool,
     secure_storage_status: Option<&str>,
     compact_launcher_grid: bool,
     resumable_sessions: &[festerm_sessiond::UnattachedSession],
 ) -> Option<AppCommand> {
+    let profiles = configuration.profiles();
     let mut items = vec![
         LauncherItem {
             label: "Local Shell".to_owned(),
@@ -1785,8 +2070,13 @@ pub fn show_launcher(
                                 .color(theme::TEXT_SECONDARY),
                         );
                         if !back_clicked {
-                            command =
-                                show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available);
+                            command = show_ssh_form(
+                                ui,
+                                tab_id,
+                                &mut state.ssh,
+                                Some(configuration),
+                                native_store_available,
+                            );
                         }
                     });
                 });
@@ -2194,7 +2484,7 @@ pub fn show_ssh_authentication_required(
                 "This workspace restored destination metadata only. Enter fresh authentication \
                  below to connect; no prior connection, credential, or host trust was restored.",
             );
-            show_ssh_form(ui, tab_id, &mut state.ssh, native_store_available)
+            show_ssh_form(ui, tab_id, &mut state.ssh, None, native_store_available)
         })
         .inner;
 
@@ -3268,6 +3558,7 @@ struct SshProfileDraft {
     /// Meaningless unless `has_stored_credential` is true.
     stored_credential_kind: CredentialKind,
     durable_session: DurableSessionDraft,
+    remote_tmux_probe: Box<RemoteTmuxProbeState>,
     error: Option<String>,
 }
 
@@ -3292,6 +3583,7 @@ impl Default for SshProfileDraft {
             has_stored_credential: false,
             stored_credential_kind: CredentialKind::Password,
             durable_session: DurableSessionDraft::default(),
+            remote_tmux_probe: Box::default(),
             error: None,
         }
     }
@@ -3330,8 +3622,76 @@ impl SshProfileDraft {
             has_stored_credential: ssh.credential_reference().is_some(),
             stored_credential_kind,
             durable_session: DurableSessionDraft::from_persistence(ssh.persistence()),
+            remote_tmux_probe: Box::default(),
             error: None,
         }
+    }
+
+    fn sync_remote_durable_provider_default(
+        &mut self,
+        context: &egui::Context,
+        configuration: &Configuration,
+    ) {
+        let request = self.remote_tmux_probe_request(configuration);
+        self.remote_tmux_probe
+            .sync(context, &mut self.durable_session, request);
+    }
+
+    fn remote_tmux_probe_request(
+        &self,
+        configuration: &Configuration,
+    ) -> Option<RemoteTmuxProbeRequest> {
+        let port: u16 = self.port.trim().parse().ok()?;
+        let profile = SshConnectionProfile::new(
+            HostIdentity::new(&self.host, port).ok()?,
+            self.username.clone(),
+            "xterm-256color",
+            TerminalSize::new(80, 24).expect("profile-editor probe terminal size is valid"),
+        )
+        .ok()?;
+        let known_host_fingerprint = configuration
+            .known_host_fingerprint(profile.identity().host(), profile.identity().port())?
+            .to_owned();
+        let (authentication, authentication_key) = match self.auth_method {
+            SshAuthenticationMethod::Password => {
+                if self.password.is_empty() {
+                    return None;
+                }
+                (
+                    SshAuthentication::password(self.password.clone()),
+                    RemoteTmuxProbeAuthKey::Password(self.password.clone()),
+                )
+            }
+            SshAuthenticationMethod::PrivateKey => {
+                if self.private_key.is_empty() {
+                    return None;
+                }
+                (
+                    SshLauncherForm::parse_private_key(
+                        self.private_key.clone(),
+                        self.key_passphrase.clone(),
+                    )
+                    .ok()?,
+                    RemoteTmuxProbeAuthKey::PrivateKey {
+                        private_key: self.private_key.clone(),
+                        key_passphrase: self.key_passphrase.clone(),
+                    },
+                )
+            }
+        };
+        let key = RemoteTmuxProbeKey {
+            host: profile.identity().host().to_owned(),
+            port: profile.identity().port(),
+            username: profile.username().to_owned(),
+            known_host_fingerprint: known_host_fingerprint.clone(),
+            authentication: authentication_key,
+        };
+        Some(RemoteTmuxProbeRequest {
+            key,
+            profile,
+            authentication,
+            known_host_fingerprint,
+        })
     }
 
     fn build(&self, existing_profile: Option<&SshProfileConfiguration>) -> Result<Profile, String> {
@@ -4134,6 +4494,10 @@ pub fn show_profiles(
                                 } else {
                                     ui.add_space(10.0);
                                     ssh_section_heading(ui, "Durable session");
+                                    draft.sync_remote_durable_provider_default(
+                                        ui.ctx(),
+                                        configuration,
+                                    );
                                     show_durable_session_controls(
                                         ui,
                                         tab_id,
@@ -4425,7 +4789,7 @@ mod tests {
 
     struct LauncherHarnessState {
         tab_id: TabId,
-        profiles: Vec<Profile>,
+        configuration: Configuration,
         command: Option<AppCommand>,
     }
 
@@ -4451,6 +4815,7 @@ mod tests {
         width: f32,
         resumable_sessions: Vec<festerm_sessiond::UnattachedSession>,
     ) -> Harness<'static, LauncherHarnessState> {
+        let configuration = Configuration::new(profiles).expect("test configuration is valid");
         Harness::builder()
             .with_size(egui::vec2(width, 560.0))
             .build_ui_state(
@@ -4458,7 +4823,7 @@ mod tests {
                     if let Some(command) = show_launcher(
                         ui,
                         state.tab_id,
-                        &state.profiles,
+                        &state.configuration,
                         true,
                         None,
                         compact_launcher_grid,
@@ -4469,7 +4834,7 @@ mod tests {
                 },
                 LauncherHarnessState {
                     tab_id: AppState::for_test().active(),
-                    profiles,
+                    configuration,
                     command: None,
                 },
             )
@@ -5917,6 +6282,7 @@ mod tests {
                 .expect("test profile is valid")
             })
             .collect();
+        let configuration = Configuration::new(profiles).expect("test configuration is valid");
         let mut harness = Harness::builder()
             .with_size(egui::vec2(520.0, 500.0))
             .build_ui_state(
@@ -5928,15 +6294,21 @@ mod tests {
                             ui.set_min_height(24.0);
                             ui.set_max_height(24.0);
                         });
-                    if let Some(command) =
-                        show_launcher(ui, state.tab_id, &state.profiles, true, None, false, &[])
-                    {
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        true,
+                        None,
+                        false,
+                        &[],
+                    ) {
                         state.command = Some(command);
                     }
                 },
                 LauncherHarnessState {
                     tab_id: AppState::for_test().active(),
-                    profiles,
+                    configuration,
                     command: None,
                 },
             );
@@ -6564,6 +6936,30 @@ mod tests {
             sanitize_session_name_from_profile_name(&"x".repeat(100)),
             "x".repeat(64)
         );
+    }
+
+    #[test]
+    fn remote_tmux_detection_defaults_to_tmux_or_screen() {
+        assert_eq!(
+            remote_provider_from_tmux_detection(RemoteTmuxDetectionResult::Detected),
+            PersistenceProviderKind::Tmux
+        );
+        assert_eq!(
+            remote_provider_from_tmux_detection(RemoteTmuxDetectionResult::NotDetected),
+            PersistenceProviderKind::Screen
+        );
+    }
+
+    #[test]
+    fn detected_remote_provider_default_does_not_override_an_explicit_choice() {
+        let mut draft = DurableSessionDraft {
+            enabled: true,
+            ..Default::default()
+        };
+        draft.select_provider(PersistenceProviderKind::Screen);
+        draft.apply_detected_remote_provider_default(RemoteTmuxDetectionResult::Detected);
+
+        assert_eq!(draft.provider, PersistenceProviderKind::Screen);
     }
 
     #[test]

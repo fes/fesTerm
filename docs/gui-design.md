@@ -221,8 +221,12 @@ and Connect button, plus an initially off **Durable remote session** control.
 Enabling it exposes the shared provider (`tmux` or GNU screen), validated
 session-name, and per-launch automatic-recovery controls, allowing an ad-hoc
 connection to attach to or create a durable session without first saving a
-profile. A "Show advanced settings" checkbox reveals the full destination and
-authentication-method form while reusing those same durable-session controls
+profile. When fesTerm already has persisted host trust plus a non-interactive
+credential for that destination, it may run a best-effort background tmux
+probe and default the provider to `tmux` if detected or GNU Screen if not; an
+explicit user choice is never overwritten. A "Show advanced settings"
+checkbox reveals the full destination and authentication-method form while
+reusing those same durable-session controls
 (`app/festerm/src/screens.rs`'s `show_ssh_quick_connect`/`show_ssh_form`).
 The Launcher list, SSH connection surface, and profile editor use the same
 surface-owned scrollbar behavior as Settings: content reserves a right-side
@@ -1193,7 +1197,10 @@ name/executable/arguments/working directory and explicit local
 `festerm-sessiond`/tmux/screen persistence; SSH editing currently covers
 name/host/port/username, saved local/remote port forwards, stored
 password/private-key replacement and removal, and tmux/screen durable-session
-settings. SSH-agent, key-file-path, and
+settings. As in Quick Connect, a best-effort tmux probe may default a newly
+enabled durable remote session to `tmux` when detected or GNU Screen
+otherwise, but never overrides an explicit provider choice and never treats
+`festerm-sessiond` as a remote option. SSH-agent, key-file-path, and
 OpenSSH-import UI remain future work. A profile's name is also its
 identifier, so it is validated as kebab-case (lowercase letters, digits,
 hyphens); an invalid or empty name/executable surfaces a single inline
