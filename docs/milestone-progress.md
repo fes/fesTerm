@@ -79,12 +79,13 @@ Two narrow parallel tracks proceeded without changing that acceptance status:
   its narrow persistence acceptance criteria. OpenSSH-config import and
   SSH-agent adapters remain separate future work.
 - M7 selected `russh` with the portable `ring` backend and now provides a live
-  SSH `Session`, strict host trust, password and in-memory OpenSSH key
-  authentication, remote PTY/resize, bounded opt-in reconnect, and controlled
-  OpenSSH interoperability evidence. The application offers one-off
-  password-or-private-key SSH tabs, a nonblocking trust prompt, and reconnect
-  controls. M7 is implemented; M8 owns persisted profiles, trust storage,
-  key-file references, and OpenSSH-config import UI, while a separate future
+  SSH `Session`, strict host trust, password, in-memory OpenSSH key, and
+  transient OpenSSH certificate authentication, remote PTY/resize, bounded
+  opt-in reconnect, and controlled OpenSSH interoperability evidence. The
+  application offers one-off password/private-key/certificate SSH tabs, a
+  nonblocking trust prompt, and reconnect controls. M7 is implemented; M8 owns
+  persisted profiles, trust storage, key-file references, and OpenSSH-config
+  import UI, while a separate future
   [#40](https://github.com/fes/fesTerm/issues/40) owns cross-platform
   SSH-agent adapters.
 
@@ -490,6 +491,8 @@ the inherited horizontal layout that could push all rendered content offscreen.
 The follow-up restored authentication and forwarding parity across those
 surfaces. New SSH and SFTP profiles can save an initial password or private key
 without writing secret material into configuration, saved GUI SFTP profiles can
-resolve either credential kind through the native store at connection time, and
+resolve either credential kind through the native store at connection time,
 advanced ad-hoc SSH launches now carry the same validated local/remote
-port-forward drafts already supported by saved profiles.
+port-forward drafts already supported by saved profiles, and one-off SSH/SFTP
+connect forms now accept transient OpenSSH certificate authentication by
+pairing an in-memory private key with its signed `-cert.pub` text.

@@ -2244,6 +2244,7 @@ dependencies = [
  "festerm-session",
  "russh",
  "russh-sftp",
+ "ssh-key",
  "tokio",
  "zeroize",
 ]

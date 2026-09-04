@@ -12,6 +12,7 @@ festerm-session = { path = "../festerm-session" }
 festerm-secret-store = { path = "../festerm-secret-store" }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
 russh-sftp = "=2.3.0"
+ssh-key = "=0.7.0-rc.11"
 tokio = { version = "1.17.0", default-features = false, features = ["fs", "io-util", "net", "rt", "sync", "time"] }
 zeroize = "1"
 

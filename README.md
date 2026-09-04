@@ -31,13 +31,13 @@ restoration; and native secret-store references for saved SSH passwords and
 private keys. Persistent host-key trust is explicit and non-secret.
 
 SSH uses an in-process `russh` transport with fingerprint-first host
-verification, password and in-memory OpenSSH-key authentication, remote PTY
-resize, periodic/on-demand liveness probes, native wake hooks, and bounded
-recovery. Plain SSH reconnect always creates a fresh shell and remains a
-manual action. Profiles may instead select a named `tmux` or GNU Screen
-session; those providers launch without their own status chrome, inherit the
-actual first PTY size, and may opt into bounded automatic recovery. Controlled
-real-provider reattach evidence remains open in
+verification, password, in-memory OpenSSH-key, and transient OpenSSH
+certificate authentication, remote PTY resize, periodic/on-demand liveness
+probes, native wake hooks, and bounded recovery. Plain SSH reconnect always
+creates a fresh shell and remains a manual action. Profiles may instead select
+a named `tmux` or GNU Screen session; those providers launch without their own
+status chrome, inherit the actual first PTY size, and may opt into bounded
+automatic recovery. Controlled real-provider reattach evidence remains open in
 [#49](https://github.com/fes/fesTerm/issues/49). SSH-agent adapters,
 keyboard-interactive/2FA, key-file references, and OpenSSH-config import remain
 future work.
