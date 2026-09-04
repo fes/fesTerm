@@ -4046,6 +4046,108 @@ pub async fn connect_gui_sftp_session(
     }
 }
 
+/// Best-effort availability result for an application-owned remote
+/// persistence-provider probe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PersistenceProviderProbeAvailability {
+    /// The provider executable was successfully probed and is present.
+    Available,
+    /// The probe completed and the provider should be treated as unavailable
+    /// for default-selection purposes.
+    Unavailable,
+    /// fesTerm could not safely complete the probe at all (for example
+    /// because no persisted host trust exists yet, or because the UI only
+    /// has interactive authentication available), so callers should leave any
+    /// existing selection unchanged.
+    Indeterminate,
+}
+
+/// Runs one best-effort remote capability probe for `provider`, using the
+/// existing authenticated-connection path but never surfacing host-key or
+/// password prompts.
+///
+/// This is intended for background UI defaulting rather than for launch-time
+/// enforcement. A missing persisted host-trust record or an interactive-only
+/// authentication mode therefore returns
+/// [`PersistenceProviderProbeAvailability::Indeterminate`] instead of
+/// blocking for user input.
+pub async fn probe_remote_persistence_provider(
+    profile: SshConnectionProfile,
+    authentication: SshAuthentication,
+    known_host_fingerprint: Option<String>,
+    provider: PersistenceProvider,
+) -> PersistenceProviderProbeAvailability {
+    if known_host_fingerprint.is_none() || matches!(authentication, SshAuthentication::Interactive)
+    {
+        return PersistenceProviderProbeAvailability::Indeterminate;
+    }
+
+    struct NoopNotifier;
+    impl SessionEventNotifier for NoopNotifier {
+        fn notify(&self) {}
+    }
+
+    let (event_sender, _event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+    let (command_sender, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
+    drop(command_sender);
+    let shared = Arc::new(WorkerShared {
+        id: SessionId::next(),
+        lifecycle: Mutex::new(SessionLifecycle::Starting),
+        desired_terminal_size: Mutex::new(
+            TerminalSize::new(80, 24).expect("default probe terminal size is valid"),
+        ),
+        pre_running_resize_pending: AtomicBool::new(false),
+        reconnecting: AtomicBool::new(false),
+        reconnect_requested: AtomicBool::new(false),
+        liveness_check_requested: AtomicBool::new(false),
+        shutdown_requested: AtomicBool::new(false),
+        metrics: Mutex::new(SessionMetrics::default()),
+        event_sender,
+        event_notifier: Arc::new(NoopNotifier),
+    });
+    let host_key_gate = Arc::new(HostKeyDecisionGate::new());
+    let password_gate = Arc::new(PasswordDecisionGate::new());
+    let command_receiver = WorkerCommandReceiver { receiver };
+    let authentication = authentication.into_worker_authentication();
+
+    let handle = match establish_authenticated_handle(
+        &profile,
+        &authentication,
+        known_host_fingerprint.as_deref(),
+        &shared,
+        &command_receiver,
+        &host_key_gate,
+        &password_gate,
+    )
+    .await
+    {
+        AuthenticatedHandleAttempt::Established(handle) => handle,
+        AuthenticatedHandleAttempt::Retryable(_, _)
+        | AuthenticatedHandleAttempt::Permanent(_, _)
+        | AuthenticatedHandleAttempt::Shutdown => {
+            return PersistenceProviderProbeAvailability::Indeterminate;
+        }
+    };
+
+    let availability = match probe_persistence_provider(
+        &handle,
+        provider,
+        &command_receiver,
+        &shared,
+        &host_key_gate,
+    )
+    .await
+    {
+        ProviderProbeOutcome::Available => PersistenceProviderProbeAvailability::Available,
+        ProviderProbeOutcome::Unavailable | ProviderProbeOutcome::ProbeFailed => {
+            PersistenceProviderProbeAvailability::Unavailable
+        }
+        ProviderProbeOutcome::Shutdown => PersistenceProviderProbeAvailability::Indeterminate,
+    };
+    let _ = stop_handle(handle, &shared).await;
+    availability
+}
+
 fn sftp_prompt() -> &'static str {
     "sftp> "
 }

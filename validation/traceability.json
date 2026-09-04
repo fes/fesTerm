@@ -78,6 +78,8 @@
         "advanced_ssh_launch_attaches_validated_port_forwards_to_session_options",
         "advanced_ssh_launch_rejects_invalid_port_forwards_before_connecting",
         "stored_credential_launch_preserves_advanced_port_forward_edits",
+        "remote_tmux_detection_defaults_to_tmux_or_screen",
+        "detected_remote_provider_default_does_not_override_an_explicit_choice",
         "ssh_profile_editor_saves_named_tmux_persistence",
         "editing_durable_session_settings_preserves_the_stored_credential_reference"
       ],

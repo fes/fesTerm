@@ -4200,7 +4200,7 @@ impl FesTermApp {
                     screen_command = screens::show_launcher(
                         ui,
                         active_tab_id,
-                        self.state.configuration().profiles(),
+                        self.state.configuration(),
                         native_store_available,
                         secure_storage_status,
                         self.state.compact_launcher_grid(),
