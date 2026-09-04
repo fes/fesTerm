@@ -3,13 +3,17 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc,
+    },
     thread,
     time::SystemTime,
 };
 
 use eframe::egui::{self, Key, RichText, ScrollArea, Sense, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{CredentialKind, SftpPaneOrderPreference};
+use festerm_secret_store::{SecretReference, SecretStore};
 use festerm_ssh::{
     connect_gui_sftp_session, GuiSftpSessionConnectError, HostIdentity, SftpCollision,
     SftpCollisionDecision, SftpCollisionResolution, SftpCollisionScope, SftpDirectoryItem,
@@ -53,6 +57,14 @@ pub(crate) enum SftpFileManagerAuthentication {
         key_text: String,
         passphrase: Option<String>,
     },
+    StoredPassword {
+        store: Arc<dyn SecretStore>,
+        reference: Arc<SecretReference>,
+    },
+    StoredPrivateKey {
+        store: Arc<dyn SecretStore>,
+        reference: Arc<SecretReference>,
+    },
 }
 
 impl std::fmt::Debug for SftpFileManagerAuthentication {
@@ -63,6 +75,12 @@ impl std::fmt::Debug for SftpFileManagerAuthentication {
             }
             Self::PrivateKey { .. } => {
                 formatter.write_str("SftpFileManagerAuthentication::PrivateKey([REDACTED])")
+            }
+            Self::StoredPassword { .. } => {
+                formatter.write_str("SftpFileManagerAuthentication::StoredPassword([REDACTED])")
+            }
+            Self::StoredPrivateKey { .. } => {
+                formatter.write_str("SftpFileManagerAuthentication::StoredPrivateKey([REDACTED])")
             }
         }
     }
@@ -133,6 +151,25 @@ pub(crate) fn show_authentication_required(
             ui.colored_label(theme::STATUS_ERROR, feedback);
         }
         ui.add_space(10.0);
+        if let (Some(profile_id), Some(kind)) =
+            (&target.profile_id, target.stored_credential_kind)
+        {
+            let label = match kind {
+                CredentialKind::Password => "Use stored password",
+                CredentialKind::PrivateKey => "Use stored private key",
+            };
+            if ui
+                .add_enabled(target.known_host_persisted, egui::Button::new(label))
+                .clicked()
+            {
+                command = Some(
+                    crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
+                        profile_id: profile_id.clone(),
+                    },
+                );
+            }
+            ui.add_space(6.0);
+        }
         let connect = ui.add_enabled(
             target.known_host_persisted,
             egui::Button::new("Open SFTP file manager"),
@@ -1793,6 +1830,12 @@ async fn connect_remote_session(
             .map_err(|error| error.to_string())?;
             SshAuthentication::public_key(key)
         }
+        SftpFileManagerAuthentication::StoredPassword { store, reference } => {
+            SshAuthentication::stored_password(Arc::clone(store), reference)
+        }
+        SftpFileManagerAuthentication::StoredPrivateKey { store, reference } => {
+            SshAuthentication::stored_private_key(Arc::clone(store), reference)
+        }
     };
     connect_gui_sftp_session(
         profile,
@@ -2231,6 +2274,7 @@ fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
 
     fn item(name: &str, file_type: SftpEntryType, size: Option<u64>) -> SftpDirectoryItem {
         SftpDirectoryItem {
@@ -2241,6 +2285,39 @@ mod tests {
             modified_at: None,
             permissions: None,
         }
+    }
+
+    #[test]
+    fn authentication_surface_offers_the_saved_credential_for_gui_sftp() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: Some("production".to_owned()),
+            stored_credential_kind: Some(CredentialKind::Password),
+            known_host_persisted: true,
+        };
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+        harness.run();
+
+        harness.get_by_label("Use stored password").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state(),
+            Some(crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
+                profile_id
+            }) if profile_id == "production"
+        ));
     }
 
     #[test]

@@ -486,3 +486,10 @@ palette's Markdown picker now returns through the composition root so a chosen
 file actually opens or focuses its viewer. The Markdown viewer also gives its
 outline and document separate vertical layouts and bounded viewports, avoiding
 the inherited horizontal layout that could push all rendered content offscreen.
+
+The follow-up restored authentication and forwarding parity across those
+surfaces. New SSH and SFTP profiles can save an initial password or private key
+without writing secret material into configuration, saved GUI SFTP profiles can
+resolve either credential kind through the native store at connection time, and
+advanced ad-hoc SSH launches now carry the same validated local/remote
+port-forward drafts already supported by saved profiles.

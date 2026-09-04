@@ -1328,6 +1328,7 @@ pub enum AppCommand {
     /// stored password on the SSH worker. This command has no password value.
     StartStoredPasswordSshProfile {
         profile_id: String,
+        options: SshSessionOptions,
     },
     /// Starts an existing configured SFTP profile by resolving its native
     /// stored password on the SFTP worker. This command has no password value.
@@ -1352,6 +1353,11 @@ pub enum AppCommand {
     },
     /// Opens the GUI SFTP authentication surface for a saved SSH profile.
     OpenConfiguredSftpFileManagerProfile {
+        profile_id: String,
+    },
+    /// Starts a saved profile's GUI SFTP surface using its opaque
+    /// native-store password or private-key reference.
+    StartStoredSftpFileManagerProfile {
         profile_id: String,
     },
     /// Starts a serial session from explicitly supplied line settings. The
@@ -1522,6 +1528,12 @@ pub enum AppCommand {
     SaveProfile {
         profile: festerm_config::Profile,
     },
+    /// Creates a profile and stores its initial native credential only after
+    /// the profile metadata has been persisted successfully.
+    SaveProfileWithCredential {
+        profile: festerm_config::Profile,
+        credential: ProfileCredentialToStore,
+    },
     /// Deletes a profile the user has explicitly confirmed, after any
     /// workspace-tab references have been reported
     /// (`Configuration::workspace_tab_references`). Fully intercepted by the
@@ -1548,6 +1560,25 @@ pub struct PasswordToStore(String);
 
 /// A normalized external URL whose contents stay out of command diagnostics.
 pub struct ExternalLinkTarget(String);
+
+/// Initial native credential submitted while creating an SSH or SFTP profile.
+pub enum ProfileCredentialToStore {
+    Password(PasswordToStore),
+    PrivateKey(PrivateKeyToStore),
+}
+
+impl std::fmt::Debug for ProfileCredentialToStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Password(_) => {
+                formatter.write_str("ProfileCredentialToStore::Password([REDACTED])")
+            }
+            Self::PrivateKey(_) => {
+                formatter.write_str("ProfileCredentialToStore::PrivateKey([REDACTED])")
+            }
+        }
+    }
+}
 
 impl ExternalLinkTarget {
     pub(crate) fn new(target: String) -> Self {
@@ -2266,6 +2297,7 @@ impl AppState {
             } => self.start_sftp_file_manager(target, authentication, context),
             AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StartStoredPasswordSftpProfile { .. }
+            | AppCommand::StartStoredSftpFileManagerProfile { .. }
             | AppCommand::StoreSshPassword { .. }
             | AppCommand::StoreSftpPassword { .. }
             | AppCommand::StoreProfilePassword { .. }
@@ -2398,6 +2430,7 @@ impl AppState {
             // `StoreSshPassword`); they never reach this match with real
             // work to do here.
             AppCommand::SaveProfile { .. }
+            | AppCommand::SaveProfileWithCredential { .. }
             | AppCommand::DeleteProfile { .. }
             | AppCommand::ReorderProfiles { .. } => {}
         }
@@ -2793,6 +2826,55 @@ impl AppState {
         })
     }
 
+    pub(crate) fn start_stored_sftp_file_manager_profile(
+        &mut self,
+        profile_id: &str,
+        store: Arc<dyn festerm_secret_store::SecretStore>,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+        else {
+            return false;
+        };
+        let Some(reference) = profile.credential_reference() else {
+            return false;
+        };
+        let authentication = Self::stored_sftp_file_manager_authentication(
+            profile.credential_kind(),
+            reference,
+            store,
+        );
+        let Some(target) = self.sftp_file_manager_target_for_profile(profile_id) else {
+            return false;
+        };
+        self.start_sftp_file_manager(target, authentication, context);
+        true
+    }
+
+    fn stored_sftp_file_manager_authentication(
+        credential_kind: festerm_config::CredentialKind,
+        reference: &festerm_secret_store::SecretReference,
+        store: Arc<dyn festerm_secret_store::SecretStore>,
+    ) -> SftpFileManagerAuthentication {
+        match credential_kind {
+            festerm_config::CredentialKind::Password => {
+                SftpFileManagerAuthentication::StoredPassword {
+                    store,
+                    reference: Arc::new(reference.duplicate_for_transport()),
+                }
+            }
+            festerm_config::CredentialKind::PrivateKey => {
+                SftpFileManagerAuthentication::StoredPrivateKey {
+                    store,
+                    reference: Arc::new(reference.duplicate_for_transport()),
+                }
+            }
+        }
+    }
+
     pub(crate) fn sftp_file_manager_target_for_tab(
         &self,
         tab_id: TabId,
@@ -2880,9 +2962,6 @@ impl AppState {
             festerm_config::CredentialKind::PrivateKey => {
                 SshAuthentication::stored_private_key(store, reference)
             }
-        };
-        let Ok(options) = Self::with_profile_port_forwards(options, profile) else {
-            return false;
         };
         self.execute_ssh_session(connection_profile, authentication, options, context);
         true
@@ -3616,6 +3695,35 @@ mod tests {
         assert_eq!(tab.target.host, "ssh.example.test");
         assert_eq!(tab.target.port, 2200);
         assert_eq!(tab.target.username, "deploy");
+    }
+
+    #[test]
+    fn gui_sftp_builds_stored_password_and_private_key_authentication_without_loading_secrets() {
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+        let reference = festerm_secret_store::SecretReference::generate();
+
+        let password = AppState::stored_sftp_file_manager_authentication(
+            festerm_config::CredentialKind::Password,
+            &reference,
+            Arc::clone(&store),
+        );
+        let private_key = AppState::stored_sftp_file_manager_authentication(
+            festerm_config::CredentialKind::PrivateKey,
+            &reference,
+            store,
+        );
+
+        assert!(matches!(
+            password,
+            SftpFileManagerAuthentication::StoredPassword { .. }
+        ));
+        assert!(matches!(
+            private_key,
+            SftpFileManagerAuthentication::StoredPrivateKey { .. }
+        ));
+        assert!(!format!("{password:?}").contains(reference.to_persisted_string().as_str()));
+        assert!(!format!("{private_key:?}").contains(reference.to_persisted_string().as_str()));
     }
 
     #[test]

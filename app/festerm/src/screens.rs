@@ -26,7 +26,9 @@ use festerm_ui_egui::{chrome::ChipLayout, icon, icon::Icon, theme};
 use festerm_config::SshPortForwardConfiguration;
 
 use crate::port_forward_draft::PortForwardDraft as SshPortForwardDraft;
-use crate::tabs::{AppCommand, PasswordToStore, PrivateKeyToStore, TabId};
+use crate::tabs::{
+    AppCommand, PasswordToStore, PrivateKeyToStore, ProfileCredentialToStore, TabId,
+};
 
 /// One selectable launch option in the Launcher list: the fixed default
 /// local shell, or a saved local/SSH profile.
@@ -448,7 +450,9 @@ struct SshLauncherForm {
     key_passphrase: String,
     saved_profile_id: Option<String>,
     saved_profile_has_credential: bool,
+    saved_profile_credential_kind: Option<CredentialKind>,
     durable_session: DurableSessionDraft,
+    port_forwards: Vec<SshPortForwardDraft>,
     sftp_gui_mode: bool,
     remember_password: bool,
     feedback: Option<String>,
@@ -474,7 +478,9 @@ impl Default for SshLauncherForm {
             key_passphrase: String::new(),
             saved_profile_id: None,
             saved_profile_has_credential: false,
+            saved_profile_credential_kind: None,
             durable_session: DurableSessionDraft::default(),
+            port_forwards: Vec::new(),
             sftp_gui_mode: true,
             remember_password: false,
             feedback: None,
@@ -492,7 +498,15 @@ impl SshLauncherForm {
     /// connected. A persistent session only gets automatic recovery when
     /// `self.durable_session.automatic_recovery` is explicitly set.
     fn session_options(&self) -> Result<SshSessionOptions, String> {
-        self.durable_session.session_options()
+        let options = self.durable_session.session_options()?;
+        let port_forwards = self
+            .port_forwards
+            .iter()
+            .map(SshPortForwardDraft::build)
+            .collect::<Result<Vec<_>, _>>()?;
+        options
+            .with_profile_port_forwards(port_forwards.iter())
+            .map_err(|error| error.to_string())
     }
 
     fn prefill_from_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -500,6 +514,11 @@ impl SshLauncherForm {
         self.port = profile.port().to_string();
         self.username = profile.username().to_owned();
         self.durable_session = DurableSessionDraft::from_persistence(profile.persistence());
+        self.port_forwards = profile
+            .port_forwards()
+            .iter()
+            .map(SshPortForwardDraft::from_configuration)
+            .collect();
         self.advanced_open = true;
     }
 
@@ -507,6 +526,10 @@ impl SshLauncherForm {
         self.prefill_from_profile(profile);
         self.saved_profile_id = Some(profile.identifier().to_owned());
         self.saved_profile_has_credential = profile.credential_reference().is_some();
+        self.saved_profile_credential_kind = profile
+            .credential_reference()
+            .is_some()
+            .then_some(profile.credential_kind());
     }
 
     fn prefill_restored_sftp_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -579,6 +602,17 @@ impl SshLauncherForm {
                 options,
             }),
         }
+    }
+
+    fn submit_stored_credential(&self) -> Result<AppCommand, String> {
+        let profile_id = self
+            .saved_profile_id
+            .clone()
+            .ok_or_else(|| "A saved profile is required for stored credentials.".to_owned())?;
+        Ok(AppCommand::StartStoredPasswordSshProfile {
+            profile_id,
+            options: self.session_options()?,
+        })
     }
 
     /// Converts the transient form into the application's typed SFTP command.
@@ -1153,6 +1187,91 @@ fn show_durable_session_controls(
     }
 }
 
+fn show_port_forward_drafts(
+    ui: &mut Ui,
+    tab_id: TabId,
+    id_namespace: &'static str,
+    port_forwards: &mut Vec<SshPortForwardDraft>,
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(
+                "New rows start on 127.0.0.1 and apply when this connection starts.",
+            )
+            .size(11.0)
+            .color(theme::TEXT_SECONDARY),
+        );
+        if ui.button("Add port forward").clicked() {
+            port_forwards.push(SshPortForwardDraft::default());
+        }
+    });
+    let mut remove_forward = None;
+    for (index, forward) in port_forwards.iter_mut().enumerate() {
+        ui.add_space(8.0);
+        egui::Frame::new()
+            .fill(theme::SURFACE_TAB_ACTIVE)
+            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Forward {}", index + 1))
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                    if ui.button(format!("Remove forward {}", index + 1)).clicked() {
+                        remove_forward = Some(index);
+                    }
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Direction");
+                    ui.radio_value(
+                        &mut forward.direction,
+                        SshPortForwardDirection::Local,
+                        "Local",
+                    );
+                    ui.radio_value(
+                        &mut forward.direction,
+                        SshPortForwardDirection::Remote,
+                        "Remote",
+                    );
+                });
+                profile_text_edit_with_id(
+                    ui,
+                    tab_id,
+                    (id_namespace, "bind_host", index),
+                    "Bind host",
+                    &mut forward.bind_host,
+                );
+                profile_text_edit_with_id(
+                    ui,
+                    tab_id,
+                    (id_namespace, "bind_port", index),
+                    "Bind port",
+                    &mut forward.bind_port,
+                );
+                profile_text_edit_with_id(
+                    ui,
+                    tab_id,
+                    (id_namespace, "destination_host", index),
+                    "Destination host",
+                    &mut forward.destination_host,
+                );
+                profile_text_edit_with_id(
+                    ui,
+                    tab_id,
+                    (id_namespace, "destination_port", index),
+                    "Destination port",
+                    &mut forward.destination_port,
+                );
+            });
+    }
+    if let Some(index) = remove_forward {
+        port_forwards.remove(index);
+    }
+}
+
 fn show_ssh_form(
     ui: &mut Ui,
     tab_id: TabId,
@@ -1207,6 +1326,15 @@ fn show_ssh_form(
             );
 
             ui.add_space(10.0);
+            ssh_section_heading(ui, "Port forwards");
+            show_port_forward_drafts(
+                ui,
+                tab_id,
+                "ssh_launcher_port_forward",
+                &mut form.port_forwards,
+            );
+
+            ui.add_space(10.0);
             ssh_section_heading(ui, "Authentication");
             ui.horizontal(|ui| {
                 ui.radio_value(
@@ -1245,18 +1373,24 @@ fn show_ssh_form(
                     }
                     if form.saved_profile_has_credential {
                         ui.add_space(4.0);
+                        let stored_credential_label = match form.saved_profile_credential_kind {
+                            Some(CredentialKind::PrivateKey) => "Use stored private key",
+                            Some(CredentialKind::Password) | None => "Use stored password",
+                        };
                         if ui
                             .add_enabled(
                                 native_store_available,
-                                egui::Button::new("Use stored password"),
+                                egui::Button::new(stored_credential_label),
                             )
                             .clicked()
                         {
-                            result = form.saved_profile_id.as_ref().map(|profile_id| {
-                                AppCommand::StartStoredPasswordSshProfile {
-                                    profile_id: profile_id.clone(),
+                            match form.submit_stored_credential() {
+                                Ok(command) => {
+                                    result = Some(command);
+                                    form.feedback = None;
                                 }
-                            });
+                                Err(feedback) => form.feedback = Some(feedback),
+                            }
                         }
                         if !native_store_available {
                             ssh_paragraph(ui, "Native secure storage is unavailable.");
@@ -1417,10 +1551,14 @@ fn show_sftp_form(
                     }
                     if form.saved_profile_has_credential {
                         ui.add_space(4.0);
+                        let stored_credential_label = match form.saved_profile_credential_kind {
+                            Some(CredentialKind::PrivateKey) => "Use stored private key",
+                            Some(CredentialKind::Password) | None => "Use stored password",
+                        };
                         if ui
                             .add_enabled(
                                 native_store_available,
-                                egui::Button::new("Use stored password"),
+                                egui::Button::new(stored_credential_label),
                             )
                             .clicked()
                         {
@@ -3252,6 +3390,27 @@ impl SshProfileDraft {
         }
         Ok(profile)
     }
+
+    fn take_initial_credential(&mut self) -> Option<ProfileCredentialToStore> {
+        if self.original_id.is_some() {
+            return None;
+        }
+        match self.auth_method {
+            SshAuthenticationMethod::Password if !self.password.is_empty() => {
+                Some(ProfileCredentialToStore::Password(PasswordToStore::new(
+                    std::mem::take(&mut self.password),
+                )))
+            }
+            SshAuthenticationMethod::PrivateKey if !self.private_key.trim().is_empty() => {
+                let passphrase = (!self.key_passphrase.is_empty())
+                    .then(|| std::mem::take(&mut self.key_passphrase));
+                Some(ProfileCredentialToStore::PrivateKey(
+                    PrivateKeyToStore::new(std::mem::take(&mut self.private_key), passphrase),
+                ))
+            }
+            SshAuthenticationMethod::Password | SshAuthenticationMethod::PrivateKey => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -3974,132 +4133,52 @@ pub fn show_profiles(
                                     );
                                     ui.add_space(10.0);
                                     ssh_section_heading(ui, "Port forwards");
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(
-                                                "New rows start on 127.0.0.1 and apply on future connects.",
-                                            )
-                                            .size(11.0)
-                                            .color(theme::TEXT_SECONDARY),
-                                        );
-                                        if ui.button("Add port forward").clicked() {
-                                            draft.port_forwards.push(SshPortForwardDraft::default());
-                                        }
-                                    });
-                                    let mut remove_forward = None;
-                                    for (index, forward) in
-                                        draft.port_forwards.iter_mut().enumerate()
-                                    {
-                                        ui.add_space(8.0);
-                                        egui::Frame::new()
-                                            .fill(theme::SURFACE_TAB_ACTIVE)
-                                            .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-                                            .corner_radius(6.0)
-                                            .inner_margin(egui::Margin::same(12))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        egui::RichText::new(format!(
-                                                            "Forward {}",
-                                                            index + 1
-                                                        ))
-                                                        .color(theme::TEXT_SECONDARY),
-                                                    );
-                                                    if ui
-                                                        .button(format!(
-                                                            "Remove forward {}",
-                                                            index + 1
-                                                        ))
-                                                        .clicked()
-                                                    {
-                                                        remove_forward = Some(index);
-                                                    }
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label("Direction");
-                                                    ui.radio_value(
-                                                        &mut forward.direction,
-                                                        SshPortForwardDirection::Local,
-                                                        "Local",
-                                                    );
-                                                    ui.radio_value(
-                                                        &mut forward.direction,
-                                                        SshPortForwardDirection::Remote,
-                                                        "Remote",
-                                                    );
-                                                });
-                                                profile_text_edit_with_id(
-                                                    ui,
-                                                    tab_id,
-                                                    ("ssh_port_forward_bind_host", index),
-                                                    "Bind host",
-                                                    &mut forward.bind_host,
-                                                );
-                                                profile_text_edit_with_id(
-                                                    ui,
-                                                    tab_id,
-                                                    ("ssh_port_forward_bind_port", index),
-                                                    "Bind port",
-                                                    &mut forward.bind_port,
-                                                );
-                                                profile_text_edit_with_id(
-                                                    ui,
-                                                    tab_id,
-                                                    ("ssh_port_forward_destination_host", index),
-                                                    "Destination host",
-                                                    &mut forward.destination_host,
-                                                );
-                                                profile_text_edit_with_id(
-                                                    ui,
-                                                    tab_id,
-                                                    ("ssh_port_forward_destination_port", index),
-                                                    "Destination port",
-                                                    &mut forward.destination_port,
-                                                );
-                                            });
-                                    }
-                                    if let Some(index) = remove_forward {
-                                        draft.port_forwards.remove(index);
-                                    }
+                                    show_port_forward_drafts(
+                                        ui,
+                                        tab_id,
+                                        "ssh_profile_port_forward",
+                                        &mut draft.port_forwards,
+                                    );
                                 }
-                                if let Some(profile_id) = draft.original_id.clone() {
-                                    ui.add_space(10.0);
-                                    ssh_section_heading(ui, "Authentication");
-                                    ui.horizontal(|ui| {
-                                        ui.radio_value(
-                                            &mut draft.auth_method,
-                                            SshAuthenticationMethod::Password,
-                                            "Password authentication",
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Authentication");
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut draft.auth_method,
+                                        SshAuthenticationMethod::Password,
+                                        "Password authentication",
+                                    );
+                                    ui.radio_value(
+                                        &mut draft.auth_method,
+                                        SshAuthenticationMethod::PrivateKey,
+                                        "Private-key authentication",
+                                    );
+                                });
+                                ui.add_space(4.0);
+                                match draft.auth_method {
+                                    SshAuthenticationMethod::Password => {
+                                        ssh_paragraph(
+                                            ui,
+                                            if draft.has_stored_credential
+                                                && draft.stored_credential_kind
+                                                    == CredentialKind::Password
+                                            {
+                                                "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                            } else if draft.original_id.is_some() {
+                                                "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
+                                            } else {
+                                                "Enter a password to save it in native secure storage with this profile, or leave this blank to be prompted at connect time."
+                                            },
                                         );
-                                        ui.radio_value(
-                                            &mut draft.auth_method,
-                                            SshAuthenticationMethod::PrivateKey,
-                                            "Private-key authentication",
+                                        ui.add_space(4.0);
+                                        profile_password_edit(
+                                            ui,
+                                            tab_id,
+                                            "password",
+                                            "Password",
+                                            &mut draft.password,
                                         );
-                                    });
-                                    ui.add_space(4.0);
-                                    match draft.auth_method {
-                                        SshAuthenticationMethod::Password => {
-                                            ssh_paragraph(
-                                                ui,
-                                                if draft.has_stored_credential
-                                                    && draft.stored_credential_kind
-                                                        == CredentialKind::Password
-                                                {
-                                                    "A password is stored in native secure storage for this profile. Enter a new one below to replace it."
-                                                } else {
-                                                    "Enter a password to remember it in native secure storage, or leave this blank to be prompted at connect time."
-                                                },
-                                            );
-                                            ui.add_space(4.0);
-                                            profile_password_edit(
-                                                ui,
-                                                tab_id,
-                                                "password",
-                                                "Password",
-                                                &mut draft.password,
-                                            );
+                                        if let Some(profile_id) = draft.original_id.clone() {
                                             ui.add_space(4.0);
                                             if ui
                                                 .add_enabled(
@@ -4108,44 +4187,49 @@ pub fn show_profiles(
                                                 )
                                                 .clicked()
                                             {
-                                                command = Some(AppCommand::StoreProfilePassword {
-                                                    profile_id,
-                                                    password: PasswordToStore::new(
-                                                        std::mem::take(&mut draft.password),
-                                                    ),
-                                                });
+                                                command =
+                                                    Some(AppCommand::StoreProfilePassword {
+                                                        profile_id,
+                                                        password: PasswordToStore::new(
+                                                            std::mem::take(&mut draft.password),
+                                                        ),
+                                                    });
                                                 draft.has_stored_credential = true;
                                                 draft.stored_credential_kind =
                                                     CredentialKind::Password;
                                             }
                                         }
-                                        SshAuthenticationMethod::PrivateKey => {
-                                            ssh_paragraph(
-                                                ui,
-                                                if draft.has_stored_credential
-                                                    && draft.stored_credential_kind
-                                                        == CredentialKind::PrivateKey
-                                                {
-                                                    "A private key is stored in native secure storage for this profile. Enter a new one below to replace it."
-                                                } else {
-                                                    "Enter an OpenSSH private key to remember it in native secure storage."
-                                                },
-                                            );
-                                            ui.add_space(4.0);
-                                            ssh_multiline_secret_text_edit(
-                                                ui,
-                                                tab_id,
-                                                "private_key",
-                                                "OpenSSH private key",
-                                                &mut draft.private_key,
-                                            );
-                                            profile_password_edit(
-                                                ui,
-                                                tab_id,
-                                                "key_passphrase",
-                                                "Key passphrase (optional)",
-                                                &mut draft.key_passphrase,
-                                            );
+                                    }
+                                    SshAuthenticationMethod::PrivateKey => {
+                                        ssh_paragraph(
+                                            ui,
+                                            if draft.has_stored_credential
+                                                && draft.stored_credential_kind
+                                                    == CredentialKind::PrivateKey
+                                            {
+                                                "A private key is stored in native secure storage for this profile. Enter a new one below to replace it."
+                                            } else if draft.original_id.is_some() {
+                                                "Enter an OpenSSH private key to remember it in native secure storage."
+                                            } else {
+                                                "Enter an OpenSSH private key to save it in native secure storage with this profile."
+                                            },
+                                        );
+                                        ui.add_space(4.0);
+                                        ssh_multiline_secret_text_edit(
+                                            ui,
+                                            tab_id,
+                                            "private_key",
+                                            "OpenSSH private key",
+                                            &mut draft.private_key,
+                                        );
+                                        profile_password_edit(
+                                            ui,
+                                            tab_id,
+                                            "key_passphrase",
+                                            "Key passphrase (optional)",
+                                            &mut draft.key_passphrase,
+                                        );
+                                        if let Some(profile_id) = draft.original_id.clone() {
                                             ui.add_space(4.0);
                                             if ui
                                                 .add_enabled(
@@ -4154,14 +4238,14 @@ pub fn show_profiles(
                                                 )
                                                 .clicked()
                                             {
-                                                let passphrase = if draft.key_passphrase.is_empty()
-                                                {
-                                                    None
-                                                } else {
-                                                    Some(std::mem::take(
-                                                        &mut draft.key_passphrase,
-                                                    ))
-                                                };
+                                                let passphrase =
+                                                    if draft.key_passphrase.is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(std::mem::take(
+                                                            &mut draft.key_passphrase,
+                                                        ))
+                                                    };
                                                 command =
                                                     Some(AppCommand::StoreProfilePrivateKey {
                                                         profile_id,
@@ -4192,6 +4276,15 @@ pub fn show_profiles(
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
+                                if draft.original_id.is_none()
+                                    && configuration.profile(draft.name.trim()).is_some()
+                                {
+                                    draft.error = Some(format!(
+                                        "A profile named '{}' already exists.",
+                                        draft.name.trim()
+                                    ));
+                                    return;
+                                }
                                 let existing_profile = draft
                                     .original_id
                                     .as_deref()
@@ -4199,7 +4292,16 @@ pub fn show_profiles(
                                     .and_then(Profile::as_ssh);
                                 match draft.build(existing_profile) {
                                     Ok(profile) => {
-                                        command = Some(AppCommand::SaveProfile { profile });
+                                        command =
+                                            Some(match draft.take_initial_credential() {
+                                                Some(credential) => {
+                                                    AppCommand::SaveProfileWithCredential {
+                                                        profile,
+                                                        credential,
+                                                    }
+                                                }
+                                                None => AppCommand::SaveProfile { profile },
+                                            });
                                         next_mode = Some(ProfilesScreenMode::List);
                                     }
                                     Err(error) => draft.error = Some(error),
@@ -5137,6 +5239,105 @@ mod tests {
                 session_name: festerm_ssh::PersistentSessionName::new("main").unwrap(),
             }
         );
+    }
+
+    #[test]
+    fn advanced_ssh_launch_attaches_validated_port_forwards_to_session_options() {
+        let mut form = SshLauncherForm {
+            host: "ssh.example.test".to_owned(),
+            username: "deploy".to_owned(),
+            port_forwards: vec![SshPortForwardDraft {
+                direction: SshPortForwardDirection::Remote,
+                bind_host: "127.0.0.1".to_owned(),
+                bind_port: "18080".to_owned(),
+                destination_host: "app.internal".to_owned(),
+                destination_port: "8080".to_owned(),
+            }],
+            ..Default::default()
+        };
+
+        let AppCommand::StartSshSession { options, .. } =
+            form.submit().expect("valid SSH launch should succeed")
+        else {
+            panic!("advanced SSH launch must return a session command");
+        };
+        let expected_forward = SshPortForwardConfiguration::new(
+            SshPortForwardDirection::Remote,
+            "127.0.0.1",
+            18080,
+            "app.internal",
+            8080,
+        )
+        .expect("expected forward should validate");
+        let expected = SshSessionOptions::new()
+            .with_profile_port_forwards([&expected_forward])
+            .expect("expected options should validate");
+        assert_eq!(options, expected);
+    }
+
+    #[test]
+    fn advanced_ssh_launch_rejects_invalid_port_forwards_before_connecting() {
+        let mut form = SshLauncherForm {
+            host: "ssh.example.test".to_owned(),
+            username: "deploy".to_owned(),
+            port_forwards: vec![SshPortForwardDraft {
+                bind_port: "0".to_owned(),
+                destination_host: "app.internal".to_owned(),
+                destination_port: "8080".to_owned(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            form.submit().unwrap_err(),
+            "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports"
+        );
+    }
+
+    #[test]
+    fn stored_credential_launch_preserves_advanced_port_forward_edits() {
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("profile should validate");
+        let mut form = SshLauncherForm::default();
+        form.prefill_saved_profile(profile.as_ssh().expect("profile remains SSH"));
+        form.port_forwards.push(SshPortForwardDraft {
+            bind_port: "18080".to_owned(),
+            destination_host: "app.internal".to_owned(),
+            destination_port: "8080".to_owned(),
+            ..Default::default()
+        });
+
+        let AppCommand::StartStoredPasswordSshProfile {
+            profile_id,
+            options,
+        } = form
+            .submit_stored_credential()
+            .expect("stored credential launch should validate")
+        else {
+            panic!("stored credential launch must retain its session options");
+        };
+        let expected_forward = SshPortForwardConfiguration::new(
+            SshPortForwardDirection::Local,
+            "127.0.0.1",
+            18080,
+            "app.internal",
+            8080,
+        )
+        .expect("expected forward should validate");
+        let expected_options = SshSessionOptions::new()
+            .with_profile_port_forwards([&expected_forward])
+            .expect("expected options should validate");
+        assert_eq!(profile_id, "production");
+        assert_eq!(options, expected_options);
     }
 
     #[test]
@@ -6846,6 +7047,127 @@ mod tests {
         assert_eq!(forward.bind_port(), 8080);
         assert_eq!(forward.destination_host(), "app.internal");
         assert_eq!(forward.destination_port(), 80);
+    }
+
+    #[test]
+    fn new_sftp_profile_saves_an_initial_password_with_the_profile() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        harness.run();
+
+        harness.get_by_label("New SFTP Profile").click();
+        harness.run();
+        for (label, value) in [
+            ("Name", "files"),
+            ("Username", "deploy"),
+            ("Host", "sftp.example.test"),
+            ("Password", "initial-password"),
+        ] {
+            harness.get_by_label(label).scroll_to_me();
+            harness.run();
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfileWithCredential {
+            profile,
+            credential,
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("new SFTP profile with a password must save metadata and credential together");
+        };
+        assert_eq!(
+            profile
+                .as_ssh()
+                .expect("SFTP reuses SSH metadata")
+                .profile_kind(),
+            RemoteProfileKind::Sftp
+        );
+        assert!(matches!(credential, ProfileCredentialToStore::Password(_)));
+        assert!(!format!("{credential:?}").contains("initial-password"));
+    }
+
+    #[test]
+    fn creating_a_profile_cannot_replace_an_existing_profiles_secret_reference() {
+        let reference = festerm_secret_store::SecretReference::generate();
+        let existing = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(reference)
+        .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![existing]).unwrap());
+        harness.run();
+
+        harness.get_by_label("New SSH Profile").click();
+        harness.run();
+        for (label, value) in [
+            ("Name", "production"),
+            ("Username", "other-user"),
+            ("Host", "other.example.test"),
+            ("Password", "replacement-password"),
+        ] {
+            harness.get_by_label(label).scroll_to_me();
+            harness.run();
+            harness.get_by_label(label).focus();
+            harness.get_by_label(label).type_text(value);
+            harness.run();
+        }
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert!(harness.state().command.is_none());
+        assert!(harness
+            .query_by_label("A profile named 'production' already exists.")
+            .is_some());
+    }
+
+    #[test]
+    fn new_ssh_profile_can_stage_an_initial_private_key() {
+        let mut draft = SshProfileDraft {
+            name: "build-host".to_owned(),
+            username: "builder".to_owned(),
+            host: "ssh.example.test".to_owned(),
+            auth_method: SshAuthenticationMethod::PrivateKey,
+            private_key: "private-key-material".to_owned(),
+            key_passphrase: "key-passphrase".to_owned(),
+            ..Default::default()
+        };
+
+        let profile = draft.build(None).expect("profile metadata should validate");
+        let credential = draft
+            .take_initial_credential()
+            .expect("private key should be staged with a new profile");
+
+        assert_eq!(
+            profile
+                .as_ssh()
+                .expect("profile remains SSH")
+                .profile_kind(),
+            RemoteProfileKind::Ssh
+        );
+        assert!(matches!(
+            credential,
+            ProfileCredentialToStore::PrivateKey(_)
+        ));
+        let debug = format!("{credential:?}");
+        assert!(!debug.contains("private-key-material"));
+        assert!(!debug.contains("key-passphrase"));
+        assert!(draft.private_key.is_empty());
+        assert!(draft.key_passphrase.is_empty());
     }
 
     #[test]

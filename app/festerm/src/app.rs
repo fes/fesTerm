@@ -1259,20 +1259,22 @@ impl FesTermApp {
             &crate::configuration_startup::ConfigurationReloader,
             &festerm_config::Configuration,
         ) -> ConfigurationStartupStatus,
-    ) {
+    ) -> bool {
         let replacement = match replacement {
             Ok(replacement) => replacement,
             Err(_) => {
                 self.configuration_status =
                     on_invalid(crate::configuration_startup::ConfigurationLoadFailure::Invalid);
-                return;
+                return false;
             }
         };
         let status = save(&self.configuration_reloader, &replacement);
-        if status.was_saved() {
+        let was_saved = status.was_saved();
+        if was_saved {
             self.state.replace_configuration(replacement);
         }
         self.configuration_status = status;
+        was_saved
     }
 
     /// Captures a metadata-only workspace snapshot and saves it immediately
@@ -1347,12 +1349,12 @@ impl FesTermApp {
     /// same upsert-by-identifier write, `docs/gui-design.md` "Profile
     /// editing"). The in-memory configuration only changes after the atomic
     /// file write succeeds, matching every other automatic-save path here.
-    fn save_profile(&mut self, profile: festerm_config::Profile) {
+    fn save_profile(&mut self, profile: festerm_config::Profile) -> bool {
         self.apply_configuration_save(
             self.state.configuration().with_profile(profile),
             ConfigurationStartupStatus::ProfileSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_profile,
-        );
+        )
     }
 
     /// Deletes a profile the user has already confirmed in the Profiles
@@ -1419,6 +1421,36 @@ impl FesTermApp {
                     .as_ref()
                     .is_some_and(NativeWindowSmoke::requires_color_emoji),
         )
+    }
+
+    fn save_profile_with_credential(
+        &mut self,
+        profile: festerm_config::Profile,
+        credential: crate::tabs::ProfileCredentialToStore,
+        context: &egui::Context,
+    ) {
+        let profile_id = profile.identifier().to_owned();
+        if !self.save_profile(profile) {
+            return;
+        }
+        match credential {
+            crate::tabs::ProfileCredentialToStore::Password(password) => self
+                .store_password_for_profile(
+                    profile_id,
+                    password,
+                    festerm_ssh::SshSessionOptions::new(),
+                    None,
+                    context,
+                ),
+            crate::tabs::ProfileCredentialToStore::PrivateKey(private_key) => self
+                .store_private_key_for_profile(
+                    profile_id,
+                    private_key,
+                    festerm_ssh::SshSessionOptions::new(),
+                    None,
+                    context,
+                ),
+        }
     }
 
     fn apply_terminal_font_policy(&mut self) {
@@ -1523,11 +1555,23 @@ impl FesTermApp {
             .and_then(Profile::as_ssh)
             .and_then(|profile| profile.session_strategy().ok())
             .unwrap_or(festerm_ssh::SessionStrategy::PlainShell);
-        self.start_stored_password_profile_with_options(
-            profile_id,
-            festerm_ssh::SshSessionOptions::manual_recovery(strategy),
-            context,
-        );
+        let options = festerm_ssh::SshSessionOptions::manual_recovery(strategy);
+        let options = self
+            .state
+            .configuration()
+            .profile(&profile_id)
+            .and_then(Profile::as_ssh)
+            .and_then(|profile| {
+                options
+                    .with_profile_port_forwards(profile.port_forwards().iter())
+                    .ok()
+            });
+        let Some(options) = options else {
+            self.secure_storage_feedback =
+                Some("This saved SSH profile has invalid port-forward settings.");
+            return;
+        };
+        self.start_stored_password_profile_with_options(profile_id, options, context);
     }
 
     /// Resolves whether a saved SSH profile has a stored native-secret
@@ -1618,6 +1662,30 @@ impl FesTermApp {
         {
             self.secure_storage_feedback =
                 Some("This saved SFTP destination has no stored password. Enter and remember a password first.");
+        }
+    }
+
+    fn start_stored_sftp_file_manager_profile(
+        &mut self,
+        profile_id: String,
+        context: &egui::Context,
+    ) {
+        let Ok(store) = self.secret_store.as_ref() else {
+            self.secure_storage_feedback = self
+                .secret_store
+                .as_ref()
+                .err()
+                .copied()
+                .map(secret_store_message);
+            return;
+        };
+        if !self.state.start_stored_sftp_file_manager_profile(
+            &profile_id,
+            Arc::clone(store),
+            context,
+        ) {
+            self.secure_storage_feedback =
+                Some("This saved SFTP destination has no stored credential.");
         }
     }
 
@@ -4314,8 +4382,15 @@ impl FesTermApp {
                     self.state
                         .dispatch(AppCommand::OpenLocalMarkdownFile { path }, &context);
                 }
-                AppCommand::StartStoredPasswordSshProfile { profile_id } => {
-                    self.start_stored_password_profile(profile_id, &ui.ctx().clone());
+                AppCommand::StartStoredPasswordSshProfile {
+                    profile_id,
+                    options,
+                } => {
+                    self.start_stored_password_profile_with_options(
+                        profile_id,
+                        options,
+                        &ui.ctx().clone(),
+                    );
                 }
                 AppCommand::StartConfiguredSshProfile { profile_id } => {
                     self.start_configured_ssh_profile(profile_id, &ui.ctx().clone());
@@ -4336,6 +4411,9 @@ impl FesTermApp {
                 ),
                 AppCommand::StartStoredPasswordSftpProfile { profile_id } => {
                     self.start_stored_sftp_profile(profile_id, &ui.ctx().clone());
+                }
+                AppCommand::StartStoredSftpFileManagerProfile { profile_id } => {
+                    self.start_stored_sftp_file_manager_profile(profile_id, &ui.ctx().clone());
                 }
                 AppCommand::StoreSftpPassword {
                     profile_id,
@@ -4367,7 +4445,13 @@ impl FesTermApp {
                     None,
                     &ui.ctx().clone(),
                 ),
-                AppCommand::SaveProfile { profile } => self.save_profile(profile),
+                AppCommand::SaveProfile { profile } => {
+                    self.save_profile(profile);
+                }
+                AppCommand::SaveProfileWithCredential {
+                    profile,
+                    credential,
+                } => self.save_profile_with_credential(profile, credential, &ui.ctx().clone()),
                 AppCommand::DeleteProfile { identifier } => self.delete_profile(&identifier),
                 AppCommand::ReorderProfiles { moved, before } => {
                     self.reorder_profiles(&moved, before.as_deref());
