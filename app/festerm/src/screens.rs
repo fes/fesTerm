@@ -3413,6 +3413,16 @@ impl SshProfileDraft {
     }
 }
 
+fn ssh_profile_name_collides(
+    configuration: &festerm_config::Configuration,
+    original_id: Option<&str>,
+    candidate_name: &str,
+) -> bool {
+    configuration
+        .profile(candidate_name)
+        .is_some_and(|profile| Some(profile.identifier()) != original_id)
+}
+
 #[derive(Clone)]
 struct SerialProfileDraft {
     original_id: Option<String>,
@@ -4276,12 +4286,15 @@ pub fn show_profiles(
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
-                                if draft.original_id.is_none()
-                                    && configuration.profile(draft.name.trim()).is_some()
-                                {
+                                let trimmed_name = draft.name.trim();
+                                if ssh_profile_name_collides(
+                                    configuration,
+                                    draft.original_id.as_deref(),
+                                    trimmed_name,
+                                ) {
                                     draft.error = Some(format!(
                                         "A profile named '{}' already exists.",
-                                        draft.name.trim()
+                                        trimmed_name
                                     ));
                                     return;
                                 }
@@ -7133,6 +7146,66 @@ mod tests {
         assert!(harness
             .query_by_label("A profile named 'production' already exists.")
             .is_some());
+    }
+
+    #[test]
+    fn renaming_a_profile_cannot_replace_another_profiles_secret_reference() {
+        let original = Profile::ssh(
+            "one",
+            "one.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap();
+        let preserved_reference = festerm_secret_store::SecretReference::generate();
+        let preserved_reference_id = preserved_reference.to_persisted_string();
+        let preserved = Profile::ssh(
+            "two",
+            "two.example.test",
+            22,
+            "release",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(preserved_reference)
+        .unwrap();
+        let configuration =
+            festerm_config::Configuration::new(vec![original.clone(), preserved]).unwrap();
+        let mut draft = SshProfileDraft::from_profile(original.as_ssh().unwrap());
+        draft.name = "two".to_owned();
+
+        let trimmed_name = draft.name.trim();
+        if ssh_profile_name_collides(&configuration, draft.original_id.as_deref(), trimmed_name) {
+            draft.error = Some(format!(
+                "A profile named '{}' already exists.",
+                trimmed_name
+            ));
+        }
+
+        assert_eq!(
+            draft.error.as_deref(),
+            Some("A profile named 'two' already exists.")
+        );
+        let preserved = configuration
+            .profile("two")
+            .and_then(Profile::as_ssh)
+            .expect("the conflicting profile must remain untouched");
+        assert_eq!(preserved.host(), "two.example.test");
+        assert_eq!(preserved.username(), "release");
+        assert_eq!(
+            preserved
+                .credential_reference()
+                .expect("the conflicting profile must keep its stored credential")
+                .to_persisted_string(),
+            preserved_reference_id
+        );
     }
 
     #[test]

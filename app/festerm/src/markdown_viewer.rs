@@ -1421,7 +1421,7 @@ fn render_inline_flow(
                 ui.add(
                     egui::Label::new(text_job(
                         text.text(),
-                        text.span(),
+                        text.text_span(),
                         find,
                         font.clone(),
                         strong,
@@ -1436,7 +1436,7 @@ fn render_inline_flow(
                 ui.add(
                     egui::Label::new(text_job(
                         text.text(),
-                        text.span(),
+                        text.text_span(),
                         find,
                         FontId::monospace(font.size),
                         strong,
@@ -1559,7 +1559,7 @@ fn render_struck_inline_flow(
                 ui.add(
                     egui::Label::new(text_job(
                         text.text(),
-                        text.span(),
+                        text.text_span(),
                         find,
                         if mono {
                             FontId::monospace(font.size)
@@ -1604,24 +1604,28 @@ fn render_link(
     outline_selected: &mut Option<usize>,
 ) {
     let reference = &document.resource_references()[link.reference_index()];
-    let text = if link.plain_text().is_empty() {
+    let accessible_text = if link.plain_text().is_empty() {
         reference.target().to_owned()
     } else {
         link.plain_text().to_owned()
     };
-    let response = ui.add(
-        egui::Button::new(text_job(
-            &text,
+    let job = if link.inlines().is_empty() {
+        text_job(
+            &accessible_text,
             link.span(),
             find,
             font,
             strong,
             false,
             false,
-        ))
-        .frame(false),
-    );
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, format!("Link: {text}")));
+        )
+    } else {
+        inline_layout_job(link.inlines(), document, find, font, strong)
+    };
+    let response = ui.add(egui::Button::new(job).frame(false));
+    response.widget_info(|| {
+        WidgetInfo::labeled(WidgetType::Button, true, format!("Link: {accessible_text}"))
+    });
     let response = response.on_hover_text(reference.target());
     if matches!(pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(link.span(), *target))
     {
@@ -1763,7 +1767,7 @@ fn append_inline_layout(
             Inline::Text(text) => append_text_segments(
                 job,
                 text.text(),
-                text.span(),
+                text.text_span(),
                 find,
                 if code {
                     FontId::monospace(font.size)
@@ -1777,7 +1781,7 @@ fn append_inline_layout(
             Inline::Code(text) => append_text_segments(
                 job,
                 text.text(),
-                text.span(),
+                text.text_span(),
                 find,
                 FontId::monospace(font.size),
                 strong,
@@ -1814,20 +1818,20 @@ fn append_inline_layout(
                 true,
                 code,
             ),
-            Inline::Link(link) => append_text_segments(
+            Inline::Link(link) => append_inline_layout(
                 job,
-                link.plain_text(),
-                link.span(),
+                link.inlines(),
+                document,
                 find,
                 font.clone(),
                 strong,
                 strikethrough,
-                false,
+                code,
             ),
             Inline::Image(image) => append_text_segments(
                 job,
                 image.alt_text(),
-                image.span(),
+                image.alt_text_span(),
                 find,
                 font.clone(),
                 strong,
@@ -2181,6 +2185,7 @@ pub fn take_viewer_commands(context: &egui::Context) -> Vec<AppCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ops::Range;
 
     fn document(text: &str) -> MarkdownDocument {
         MarkdownLoader::default()
@@ -2191,6 +2196,17 @@ mod tests {
                 &Default::default(),
             )
             .unwrap()
+    }
+
+    fn highlighted_sections(job: &LayoutJob) -> Vec<(Range<usize>, String)> {
+        job.sections
+            .iter()
+            .filter(|section| section.format.background != Color32::TRANSPARENT)
+            .map(|section| {
+                let range = section.byte_range.start.0..section.byte_range.end.0;
+                (range.clone(), job.text[range].to_owned())
+            })
+            .collect()
     }
 
     #[test]
@@ -2288,23 +2304,48 @@ mod tests {
     }
 
     #[test]
-    fn find_highlighting_ignores_source_span_bytes_outside_inline_text() {
-        let document = document("# Heading\n\nFind needle here.");
+    fn find_highlighting_tracks_inline_code_text_offsets() {
+        let document = document("before `code` after");
         let mut find = MarkdownFindState::default();
-        find.set_query(&document, "needle".to_owned());
-        let Block::Heading(heading) = &document.blocks()[0] else {
-            panic!("the first block should be a heading");
+        find.set_query(&document, "code".to_owned());
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
         };
 
         let job = inline_layout_job(
-            heading.inlines(),
+            paragraph.inlines(),
             &document,
             &find,
             FontId::proportional(14.0),
             false,
         );
 
-        assert_eq!(job.text, "Heading");
+        assert_eq!(job.text, "before code after");
+        assert_eq!(highlighted_sections(&job), vec![(7..11, "code".to_owned())]);
+    }
+
+    #[test]
+    fn find_highlighting_tracks_link_label_offsets() {
+        let document = document("see [needle link](https://example.com) now");
+        let mut find = MarkdownFindState::default();
+        find.set_query(&document, "needle".to_owned());
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &find,
+            FontId::proportional(14.0),
+            false,
+        );
+
+        assert_eq!(job.text, "see needle link now");
+        assert_eq!(
+            highlighted_sections(&job),
+            vec![(4..10, "needle".to_owned())]
+        );
     }
 
     #[test]

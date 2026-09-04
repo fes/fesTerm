@@ -960,18 +960,36 @@ impl Inline {
         append_inline_plain_text(self, &mut plain_text);
         plain_text
     }
+
+    fn display_span(&self) -> SourceSpan {
+        match self {
+            Self::Text(inline) | Self::Code(inline) => inline.text_span,
+            Self::Emphasis(inline) | Self::Strong(inline) | Self::Strikethrough(inline) => {
+                display_span_for_inlines(inline.inlines(), inline.span)
+            }
+            Self::Link(inline) => display_span_for_inlines(inline.inlines(), inline.span),
+            Self::Image(inline) => inline.alt_text_span,
+            Self::RawHtml(inline) => inline.span,
+            Self::SoftBreak { span } | Self::HardBreak { span } => *span,
+        }
+    }
 }
 
 /// One inline text leaf.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextInline {
     span: SourceSpan,
+    text_span: SourceSpan,
     text: String,
 }
 
 impl TextInline {
     pub fn span(&self) -> SourceSpan {
         self.span
+    }
+
+    pub fn text_span(&self) -> SourceSpan {
+        self.text_span
     }
 
     pub fn text(&self) -> &str {
@@ -1028,6 +1046,7 @@ impl LinkInline {
 pub struct ImageInline {
     span: SourceSpan,
     reference_index: usize,
+    alt_text_span: SourceSpan,
     alt_text: String,
 }
 
@@ -1038,6 +1057,10 @@ impl ImageInline {
 
     pub const fn reference_index(&self) -> usize {
         self.reference_index
+    }
+
+    pub fn alt_text_span(&self) -> SourceSpan {
+        self.alt_text_span
     }
 
     pub fn alt_text(&self) -> &str {
@@ -1442,7 +1465,8 @@ impl<'a> DocumentBuilder<'a> {
             Event::End(tag_end) => self.end_tag(tag_end, range),
             Event::Text(text) => self.push_text(text.into_string(), range),
             Event::Code(text) => self.push_inline(Inline::Code(TextInline {
-                span: self.span(range),
+                span: self.span(range.clone()),
+                text_span: self.text_span_within_source_range(range.clone(), text.as_ref()),
                 text: text.into_string(),
             })),
             Event::Html(text) => self.push_html_block_line(text.into_string(), range),
@@ -1477,6 +1501,7 @@ impl<'a> DocumentBuilder<'a> {
             Event::InlineMath(_) | Event::DisplayMath(_) | Event::FootnoteReference(_) => self
                 .push_inline(Inline::Text(TextInline {
                     span: self.span(range.clone()),
+                    text_span: self.span(range.clone()),
                     text: self.source_slice(range).to_owned(),
                 })),
         }
@@ -1850,6 +1875,7 @@ impl<'a> DocumentBuilder<'a> {
                 self.push_inline(Inline::Image(ImageInline {
                     span,
                     reference_index,
+                    alt_text_span: self.display_span_for_inlines(&inlines, span),
                     alt_text,
                 }))
             }
@@ -1906,7 +1932,8 @@ impl<'a> DocumentBuilder<'a> {
             return Ok(());
         }
         self.push_inline(Inline::Text(TextInline {
-            span: self.span(range),
+            span: self.span(range.clone()),
+            text_span: self.span(range),
             text,
         }))
     }
@@ -2055,6 +2082,24 @@ impl<'a> DocumentBuilder<'a> {
 
     fn source_slice(&self, byte_range: Range<usize>) -> &str {
         &self.source_text()[byte_range]
+    }
+
+    fn text_span_within_source_range(&self, source_range: Range<usize>, text: &str) -> SourceSpan {
+        if let Some(relative_start) = self.source_slice(source_range.clone()).find(text) {
+            let start = source_range.start + relative_start;
+            return self.span(start..start + text.len());
+        }
+        self.span(source_range)
+    }
+
+    fn display_span_for_inlines(&self, inlines: &[Inline], fallback: SourceSpan) -> SourceSpan {
+        let Some(first) = inlines.first().map(Inline::display_span) else {
+            return fallback;
+        };
+        let Some(last) = inlines.last().map(Inline::display_span) else {
+            return fallback;
+        };
+        self.span(first.start().byte_offset()..last.end().byte_offset())
     }
 
     fn enter_block(&mut self) -> Result<(), MarkdownLoadError> {
@@ -2542,6 +2587,21 @@ fn append_inline_plain_text(inline: &Inline, plain_text: &mut String) {
         Inline::Image(image) => plain_text.push_str(image.alt_text()),
         Inline::RawHtml(raw) => plain_text.push_str(raw.literal()),
         Inline::SoftBreak { .. } | Inline::HardBreak { .. } => plain_text.push('\n'),
+    }
+}
+
+fn display_span_for_inlines(inlines: &[Inline], fallback: SourceSpan) -> SourceSpan {
+    let Some(first) = inlines.first().map(Inline::display_span) else {
+        return fallback;
+    };
+    let Some(last) = inlines.last().map(Inline::display_span) else {
+        return fallback;
+    };
+    SourceSpan {
+        byte_start: first.start().byte_offset(),
+        byte_end: last.end().byte_offset(),
+        start: first.start(),
+        end: last.end(),
     }
 }
 

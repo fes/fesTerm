@@ -232,7 +232,8 @@
         "ssh_profile_editor_offers_a_private_key_field_that_dispatches_store_profile_private_key",
         "new_sftp_profile_saves_an_initial_password_with_the_profile",
         "new_ssh_profile_can_stage_an_initial_private_key",
-        "creating_a_profile_cannot_replace_an_existing_profiles_secret_reference"
+        "creating_a_profile_cannot_replace_an_existing_profiles_secret_reference",
+        "renaming_a_profile_cannot_replace_another_profiles_secret_reference"
       ],
       "manual_scenarios": [
         "TI-07",
@@ -1275,7 +1276,8 @@
         "markdown_palette_picker_selection_opens_the_selected_file",
         "outline_and_preview_keep_separate_vertical_viewports",
         "local_markdown_display_paths_hide_windows_verbatim_prefixes",
-        "find_highlighting_ignores_source_span_bytes_outside_inline_text",
+        "find_highlighting_tracks_inline_code_text_offsets",
+        "find_highlighting_tracks_link_label_offsets",
         "markdown_viewer_palette_items_follow_the_active_viewer",
         "workspace_capture_omits_runtime_markdown_viewer_tabs",
         "find_navigation_wraps_in_both_directions",
