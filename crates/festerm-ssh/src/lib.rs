@@ -3948,20 +3948,18 @@ impl Drop for SftpTerminalSession {
 /// `SftpTerminalSession` was involved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuiSftpSessionConnectError {
-    MissingKnownHostFingerprint,
     InteractiveAuthenticationUnsupported,
+    HostKeyRejected,
     ConnectionFailed,
 }
 
 impl fmt::Display for GuiSftpSessionConnectError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingKnownHostFingerprint => formatter.write_str(
-                "GUI SFTP currently requires a persisted host-key fingerprint for this destination",
-            ),
             Self::InteractiveAuthenticationUnsupported => formatter.write_str(
                 "GUI SFTP currently requires an explicit password, private key, or stored credential",
             ),
+            Self::HostKeyRejected => formatter.write_str("SSH host key was rejected"),
             Self::ConnectionFailed => formatter.write_str("could not establish GUI SFTP session"),
         }
     }
@@ -3969,24 +3967,199 @@ impl fmt::Display for GuiSftpSessionConnectError {
 
 impl std::error::Error for GuiSftpSessionConnectError {}
 
+struct GuiSftpConnectCompletion<T> {
+    task: Option<tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>>,
+}
+
+impl<T> GuiSftpConnectCompletion<T> {
+    const fn new(task: tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>) -> Self {
+        Self { task: Some(task) }
+    }
+
+    async fn wait(mut self) -> Result<T, GuiSftpSessionConnectError> {
+        match self
+            .task
+            .take()
+            .expect("GUI SFTP completion handle must still be present")
+            .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed),
+        }
+    }
+}
+
+impl<T> Drop for GuiSftpConnectCompletion<T> {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+enum GuiSftpConnectOutcome<T> {
+    Connected(T),
+    NeedsHostKeyDecision {
+        prompt: festerm_session::HostKeyPrompt,
+        resolver: HostKeyDecisionResolver,
+        completion: GuiSftpConnectCompletion<T>,
+    },
+}
+
+/// Awaitable completion for a GUI SFTP connect attempt paused on host trust.
+pub struct GuiSftpSessionConnectCompletion {
+    inner: GuiSftpConnectCompletion<SftpSession>,
+}
+
+impl GuiSftpSessionConnectCompletion {
+    /// Waits for the paused connect attempt to finish after the GUI resolves
+    /// the pending host-key prompt.
+    pub async fn wait(self) -> Result<SftpSession, GuiSftpSessionConnectError> {
+        self.inner.wait().await
+    }
+}
+
+impl fmt::Debug for GuiSftpSessionConnectCompletion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("GuiSftpSessionConnectCompletion")
+    }
+}
+
+/// The initial observable state of a GUI SFTP connect attempt.
+pub enum GuiSftpSessionConnectOutcome {
+    Connected(SftpSession),
+    NeedsHostKeyDecision {
+        prompt: festerm_session::HostKeyPrompt,
+        resolver: HostKeyDecisionResolver,
+        completion: GuiSftpSessionConnectCompletion,
+    },
+}
+
+impl fmt::Debug for GuiSftpSessionConnectOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connected(_) => formatter.write_str("GuiSftpSessionConnectOutcome::Connected"),
+            Self::NeedsHostKeyDecision {
+                prompt,
+                resolver: _,
+                completion: _,
+            } => formatter
+                .debug_struct("GuiSftpSessionConnectOutcome::NeedsHostKeyDecision")
+                .field("prompt", prompt)
+                .finish(),
+        }
+    }
+}
+
+struct GuiSftpConnectTaskConfig {
+    profile: SshConnectionProfile,
+    authentication: WorkerAuthentication,
+    local_working_directory: Option<PathBuf>,
+    shared: Arc<WorkerShared>,
+    command_receiver: WorkerCommandReceiver,
+    host_key_gate: Arc<HostKeyDecisionGate>,
+    password_gate: Arc<PasswordDecisionGate>,
+    known_host_fingerprint: Option<String>,
+}
+
+async fn establish_gui_sftp_session(
+    config: GuiSftpConnectTaskConfig,
+) -> Result<SftpSession, GuiSftpSessionConnectError> {
+    let GuiSftpConnectTaskConfig {
+        profile,
+        authentication,
+        local_working_directory,
+        shared,
+        command_receiver,
+        host_key_gate,
+        password_gate,
+        known_host_fingerprint,
+    } = config;
+    let handle = match establish_authenticated_handle(
+        &profile,
+        &authentication,
+        known_host_fingerprint.as_deref(),
+        &shared,
+        &command_receiver,
+        &host_key_gate,
+        &password_gate,
+    )
+    .await
+    {
+        AuthenticatedHandleAttempt::Established(handle) => handle,
+        AuthenticatedHandleAttempt::Permanent(ConnectionFailure::HostTrust, _)
+        | AuthenticatedHandleAttempt::Retryable(ConnectionFailure::HostTrust, _) => {
+            return Err(GuiSftpSessionConnectError::HostKeyRejected);
+        }
+        AuthenticatedHandleAttempt::Retryable(_, _)
+        | AuthenticatedHandleAttempt::Permanent(_, _)
+        | AuthenticatedHandleAttempt::Shutdown => {
+            return Err(GuiSftpSessionConnectError::ConnectionFailed);
+        }
+    };
+
+    match local_working_directory {
+        Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path)
+            .await
+            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+        None => sftp::SftpSession::connect(&handle)
+            .await
+            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+    }
+}
+
+async fn observe_gui_sftp_connect<T>(
+    event_receiver: Receiver<SessionEvent>,
+    resolver: HostKeyDecisionResolver,
+    mut connect_task: tokio::task::JoinHandle<Result<T, GuiSftpSessionConnectError>>,
+) -> Result<GuiSftpConnectOutcome<T>, GuiSftpSessionConnectError>
+where
+    T: Send + 'static,
+{
+    let prompt_listener = tokio::task::spawn_blocking(move || loop {
+        match event_receiver.recv() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => return Some(prompt),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    });
+    tokio::pin!(prompt_listener);
+
+    tokio::select! {
+        result = &mut connect_task => match result {
+            Ok(Ok(session)) => Ok(GuiSftpConnectOutcome::Connected(session)),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed),
+        },
+        prompt = &mut prompt_listener => match prompt {
+            Ok(Some(prompt)) => Ok(GuiSftpConnectOutcome::NeedsHostKeyDecision {
+                prompt,
+                resolver,
+                completion: GuiSftpConnectCompletion::new(connect_task),
+            }),
+            Ok(None) | Err(_) => match connect_task.await {
+                Ok(Ok(session)) => Ok(GuiSftpConnectOutcome::Connected(session)),
+                Ok(Err(error)) => Err(error),
+                Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed),
+            },
+        },
+    }
+}
+
 /// Opens one raw [`SftpSession`] for the GUI file manager.
 ///
 /// Unlike [`SftpTerminalSession`], this does not own a transcript, event
-/// queue, or interactive host-key/password prompt surface. It is intended for
-/// application-owned GUI workflows that already have a persisted host-trust
-/// record and an explicit credential to use for both the browsing session and
-/// the transfer worker.
+/// queue, or password prompt surface. It is intended for application-owned GUI
+/// workflows that already have an explicit credential, and that may need to
+/// pause on an inline host-key trust prompt before the SFTP session opens.
 pub async fn connect_gui_sftp_session(
     profile: SshConnectionProfile,
     authentication: SshAuthentication,
     local_working_directory: Option<PathBuf>,
     known_host_fingerprint: Option<String>,
-) -> Result<SftpSession, GuiSftpSessionConnectError> {
+) -> Result<GuiSftpSessionConnectOutcome, GuiSftpSessionConnectError> {
     if matches!(authentication, SshAuthentication::Interactive) {
         return Err(GuiSftpSessionConnectError::InteractiveAuthenticationUnsupported);
-    }
-    if known_host_fingerprint.is_none() {
-        return Err(GuiSftpSessionConnectError::MissingKnownHostFingerprint);
     }
 
     struct NoopNotifier;
@@ -3994,7 +4167,7 @@ pub async fn connect_gui_sftp_session(
         fn notify(&self) {}
     }
 
-    let (event_sender, _event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+    let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
     let (command_sender, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
     drop(command_sender);
     let shared = Arc::new(WorkerShared {
@@ -4016,33 +4189,39 @@ pub async fn connect_gui_sftp_session(
     let password_gate = Arc::new(PasswordDecisionGate::new());
     let command_receiver = WorkerCommandReceiver { receiver };
     let authentication = authentication.into_worker_authentication();
-
-    let handle = match establish_authenticated_handle(
-        &profile,
-        &authentication,
-        known_host_fingerprint.as_deref(),
-        &shared,
-        &command_receiver,
-        &host_key_gate,
-        &password_gate,
-    )
-    .await
-    {
-        AuthenticatedHandleAttempt::Established(handle) => handle,
-        AuthenticatedHandleAttempt::Retryable(_, _)
-        | AuthenticatedHandleAttempt::Permanent(_, _)
-        | AuthenticatedHandleAttempt::Shutdown => {
-            return Err(GuiSftpSessionConnectError::ConnectionFailed);
-        }
+    let resolver = HostKeyDecisionResolver {
+        gate: Arc::clone(&host_key_gate),
     };
+    let connect_task = tokio::task::spawn_blocking(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("could not build tokio runtime for GUI SFTP connect")
+            .block_on(establish_gui_sftp_session(GuiSftpConnectTaskConfig {
+                profile,
+                authentication,
+                local_working_directory,
+                shared,
+                command_receiver,
+                host_key_gate,
+                password_gate,
+                known_host_fingerprint,
+            }))
+    });
 
-    match local_working_directory {
-        Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path)
-            .await
-            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
-        None => sftp::SftpSession::connect(&handle)
-            .await
-            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+    match observe_gui_sftp_connect(event_receiver, resolver.clone(), connect_task).await? {
+        GuiSftpConnectOutcome::Connected(session) => {
+            Ok(GuiSftpSessionConnectOutcome::Connected(session))
+        }
+        GuiSftpConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion,
+        } => Ok(GuiSftpSessionConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion: GuiSftpSessionConnectCompletion { inner: completion },
+        }),
     }
 }
 
@@ -8325,6 +8504,261 @@ mod tests {
         assert_eq!(
             waiter.wait(&worker.host_key_gate, Duration::ZERO),
             HostTrustDecision::AcceptOnce
+        );
+    }
+
+    #[test]
+    fn gui_sftp_connect_without_a_prompt_returns_connected_immediately() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (_event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+        let resolver = HostKeyDecisionResolver {
+            gate: Arc::new(HostKeyDecisionGate::new()),
+        };
+
+        let outcome = runtime
+            .block_on(async {
+                observe_gui_sftp_connect(
+                    event_receiver,
+                    resolver,
+                    tokio::spawn(async { Ok::<_, GuiSftpSessionConnectError>("connected") }),
+                )
+                .await
+            })
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            GuiSftpConnectOutcome::Connected("connected")
+        ));
+    }
+
+    #[test]
+    fn gui_sftp_connect_surfaces_a_pending_host_key_decision() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+        let gate = Arc::new(HostKeyDecisionGate::new());
+        let resolver = HostKeyDecisionResolver {
+            gate: Arc::clone(&gate),
+        };
+        let prompt =
+            festerm_session::HostKeyPrompt::new("sftp.example.test", 22, "SHA256:abcDef012+/");
+        let waiter = gate.begin(prompt.clone()).unwrap();
+        let wait_gate = Arc::clone(&gate);
+
+        let outcome = runtime
+            .block_on(async {
+                observe_gui_sftp_connect(
+                    event_receiver,
+                    resolver.clone(),
+                    tokio::spawn(async move {
+                        event_sender
+                            .send(SessionEvent::HostKeyVerification(prompt))
+                            .unwrap();
+                        match waiter.wait_async(&wait_gate, Duration::from_secs(1)).await {
+                            HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist => {
+                                Ok("connected")
+                            }
+                            HostTrustDecision::Reject => {
+                                Err(GuiSftpSessionConnectError::HostKeyRejected)
+                            }
+                        }
+                    }),
+                )
+                .await
+            })
+            .unwrap();
+
+        let GuiSftpConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver: returned_resolver,
+            completion,
+        } = outcome
+        else {
+            panic!("expected a pending host-key decision");
+        };
+        assert_eq!(prompt.host(), "sftp.example.test");
+        assert_eq!(prompt.sha256_fingerprint(), "SHA256:abcDef012+/");
+        returned_resolver
+            .resolve(&prompt, HostTrustDecision::Reject)
+            .unwrap();
+        assert_eq!(
+            runtime.block_on(completion.wait()),
+            Err(GuiSftpSessionConnectError::HostKeyRejected)
+        );
+        assert_eq!(
+            resolver.cancel(&prompt),
+            Err(HostKeyDecisionResolutionError::NoPendingPrompt)
+        );
+    }
+
+    #[test]
+    fn gui_sftp_connect_accept_once_resumes_and_finishes_successfully() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+        let gate = Arc::new(HostKeyDecisionGate::new());
+        let resolver = HostKeyDecisionResolver {
+            gate: Arc::clone(&gate),
+        };
+        let prompt =
+            festerm_session::HostKeyPrompt::new("sftp.example.test", 22, "SHA256:acceptOncePrompt");
+        let waiter = gate.begin(prompt.clone()).unwrap();
+        let wait_gate = Arc::clone(&gate);
+
+        let outcome = runtime
+            .block_on(async {
+                observe_gui_sftp_connect(
+                    event_receiver,
+                    resolver,
+                    tokio::spawn(async move {
+                        event_sender
+                            .send(SessionEvent::HostKeyVerification(prompt))
+                            .unwrap();
+                        match waiter.wait_async(&wait_gate, Duration::from_secs(1)).await {
+                            HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist => {
+                                Ok("connected")
+                            }
+                            HostTrustDecision::Reject => {
+                                Err(GuiSftpSessionConnectError::HostKeyRejected)
+                            }
+                        }
+                    }),
+                )
+                .await
+            })
+            .unwrap();
+
+        let GuiSftpConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion,
+        } = outcome
+        else {
+            panic!("expected a pending host-key decision");
+        };
+        resolver
+            .resolve(&prompt, HostTrustDecision::AcceptOnce)
+            .unwrap();
+        assert_eq!(runtime.block_on(completion.wait()).unwrap(), "connected");
+    }
+
+    #[test]
+    fn gui_sftp_connect_rejecting_the_host_key_fails_the_connect_attempt() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+        let gate = Arc::new(HostKeyDecisionGate::new());
+        let resolver = HostKeyDecisionResolver {
+            gate: Arc::clone(&gate),
+        };
+        let prompt =
+            festerm_session::HostKeyPrompt::new("sftp.example.test", 22, "SHA256:rejectPrompt");
+        let waiter = gate.begin(prompt.clone()).unwrap();
+        let wait_gate = Arc::clone(&gate);
+
+        let outcome = runtime
+            .block_on(async {
+                observe_gui_sftp_connect(
+                    event_receiver,
+                    resolver,
+                    tokio::spawn(async move {
+                        event_sender
+                            .send(SessionEvent::HostKeyVerification(prompt))
+                            .unwrap();
+                        match waiter.wait_async(&wait_gate, Duration::from_secs(1)).await {
+                            HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist => {
+                                Ok("connected")
+                            }
+                            HostTrustDecision::Reject => {
+                                Err(GuiSftpSessionConnectError::HostKeyRejected)
+                            }
+                        }
+                    }),
+                )
+                .await
+            })
+            .unwrap();
+
+        let GuiSftpConnectOutcome::NeedsHostKeyDecision {
+            prompt,
+            resolver,
+            completion,
+        } = outcome
+        else {
+            panic!("expected a pending host-key decision");
+        };
+        resolver
+            .resolve(&prompt, HostTrustDecision::Reject)
+            .unwrap();
+        assert_eq!(
+            runtime.block_on(completion.wait()),
+            Err(GuiSftpSessionConnectError::HostKeyRejected)
+        );
+    }
+
+    #[test]
+    fn gui_sftp_connect_timeout_rejects_and_cleans_up_the_pending_gate() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
+        let gate = Arc::new(HostKeyDecisionGate::new());
+        let resolver = HostKeyDecisionResolver {
+            gate: Arc::clone(&gate),
+        };
+        let prompt =
+            festerm_session::HostKeyPrompt::new("sftp.example.test", 22, "SHA256:timeoutPrompt");
+        let waiter = gate.begin(prompt.clone()).unwrap();
+        let wait_gate = Arc::clone(&gate);
+        let prompt_for_assert = prompt.clone();
+
+        let outcome = runtime
+            .block_on(async {
+                observe_gui_sftp_connect(
+                    event_receiver,
+                    resolver.clone(),
+                    tokio::spawn(async move {
+                        event_sender
+                            .send(SessionEvent::HostKeyVerification(prompt))
+                            .unwrap();
+                        match waiter
+                            .wait_async(&wait_gate, Duration::from_millis(10))
+                            .await
+                        {
+                            HostTrustDecision::AcceptOnce | HostTrustDecision::AcceptAndPersist => {
+                                Ok("connected")
+                            }
+                            HostTrustDecision::Reject => {
+                                Err(GuiSftpSessionConnectError::HostKeyRejected)
+                            }
+                        }
+                    }),
+                )
+                .await
+            })
+            .unwrap();
+
+        let GuiSftpConnectOutcome::NeedsHostKeyDecision { completion, .. } = outcome else {
+            panic!("expected a pending host-key decision");
+        };
+        assert_eq!(
+            runtime.block_on(completion.wait()),
+            Err(GuiSftpSessionConnectError::HostKeyRejected)
+        );
+        assert_eq!(
+            resolver.cancel(&prompt_for_assert),
+            Err(HostKeyDecisionResolutionError::NoPendingPrompt)
         );
     }
 

@@ -130,12 +130,14 @@
         "docs/sftp-ui-design.md#product-decision"
       ],
       "decisions": [
+        "ADR-0020",
         "ADR-0029"
       ],
       "automated_tests": [
         "configured_ssh_profiles_can_open_gui_sftp_authentication_surfaces",
         "gui_sftp_workspace_restore_requires_fresh_authentication",
         "authentication_surface_offers_the_saved_credential_for_gui_sftp",
+        "authentication_surface_allows_connecting_before_host_trust_is_persisted",
         "gui_sftp_builds_stored_password_and_private_key_authentication_without_loading_secrets",
         "sftp_launcher_defaults_to_gui_mode_and_can_use_terminal_mode",
         "profiles_surface_creates_reusable_terminal_sftp_profiles",
@@ -144,7 +146,7 @@
       "manual_scenarios": [],
       "status": "partial",
       "prerequisites": [
-        "current implementation re-prompts for credentials and requires persisted host trust instead of fully reusing live SSH auth/trust context"
+        "current implementation still re-prompts for credentials instead of fully reusing a sibling live SSH session's authenticated state"
       ]
     },
     {
@@ -864,9 +866,17 @@
         "docs/sftp-ui-design.md#collision-and-overwrite-policy"
       ],
       "decisions": [
+        "ADR-0020",
         "ADR-0029"
       ],
       "automated_tests": [
+        "authentication_surface_allows_connecting_before_host_trust_is_persisted",
+        "unknown_host_key_prompt_shows_inline_trust_actions",
+        "gui_sftp_connect_without_a_prompt_returns_connected_immediately",
+        "gui_sftp_connect_surfaces_a_pending_host_key_decision",
+        "gui_sftp_connect_accept_once_resumes_and_finishes_successfully",
+        "gui_sftp_connect_rejecting_the_host_key_fails_the_connect_attempt",
+        "gui_sftp_connect_timeout_rejects_and_cleans_up_the_pending_gate",
         "sort_and_filter_keep_folders_first",
         "breadcrumb_segments_expose_clickable_ancestors",
         "arrow_selection_extends_contiguous_range",

@@ -1326,11 +1326,14 @@ impl FesTermApp {
     /// regardless, since a save failure only means this host will prompt
     /// again on a future connection rather than being remembered.
     fn persist_known_host_trust(&mut self, tab: TabId) {
-        let Some(prompt) = self
-            .state
-            .session_tab_mut(tab)
-            .and_then(|session| session.host_key_prompt())
-        else {
+        let prompt = if let Some(session) = self.state.session_tab_mut(tab) {
+            session.host_key_prompt().cloned()
+        } else if let Some(file_manager) = self.state.sftp_file_manager_tab_mut(tab) {
+            file_manager.host_key_prompt().cloned()
+        } else {
+            None
+        };
+        let Some(prompt) = prompt else {
             return;
         };
         let host = prompt.host().to_owned();
@@ -4276,7 +4279,7 @@ impl FesTermApp {
                 }
                 TabContent::SftpFileManager(tab) => {
                     tab.set_pane_order(sftp_pane_order);
-                    tab.show(ui);
+                    screen_command = tab.show(ui, active_tab_id);
                 }
                 TabContent::Session(session) => {
                     session.view.set_font_set(terminal_font_set);
