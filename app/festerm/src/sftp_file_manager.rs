@@ -1322,7 +1322,7 @@ impl SftpFileManagerTab {
                                 .font(font_for_text_role(SftpTextRole::PaneMeta))
                                 .color(theme::TEXT_SECONDARY),
                             );
-                            ui.add_space(ui.available_width().max(0.0) - 140.0);
+                            ui.add_space((ui.available_width() - 140.0).max(0.0));
                             if let Some((state, color)) = remote_state {
                                 let dot_rect = egui::Rect::from_center_size(
                                     egui::pos2(
@@ -3619,11 +3619,73 @@ fn format_size(size: Option<u64>) -> String {
     }
 }
 
+/// Formats a modification timestamp the way the mockup's Modified column does:
+/// `Today HH:MM` for the current UTC day, `Yesterday` for the previous one,
+/// and `Mon D` (with a trailing year when it differs from the current one)
+/// otherwise. All comparisons use UTC so the result is deterministic and
+/// doesn't require pulling in a timezone-aware date/time dependency.
 fn format_modified(timestamp: Option<SystemTime>) -> String {
-    timestamp
-        .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|duration| format!("{}", duration.as_secs()))
-        .unwrap_or_else(|| "—".to_owned())
+    let Some(timestamp) = timestamp else {
+        return "—".to_owned();
+    };
+    let Ok(duration) = timestamp.duration_since(SystemTime::UNIX_EPOCH) else {
+        return "—".to_owned();
+    };
+    let Ok(now) = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) else {
+        return "—".to_owned();
+    };
+    format_modified_from_epoch_seconds(duration.as_secs(), now.as_secs())
+}
+
+const SECONDS_PER_DAY: i64 = 86_400;
+const MONTH_NAMES: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+fn format_modified_from_epoch_seconds(modified_secs: u64, now_secs: u64) -> String {
+    let modified_secs = modified_secs as i64;
+    let now_secs = now_secs as i64;
+    let modified_day = modified_secs.div_euclid(SECONDS_PER_DAY);
+    let now_day = now_secs.div_euclid(SECONDS_PER_DAY);
+    let time_of_day = modified_secs.rem_euclid(SECONDS_PER_DAY);
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+
+    match now_day - modified_day {
+        0 => format!("Today {hour:02}:{minute:02}"),
+        1 => "Yesterday".to_owned(),
+        _ => {
+            let (year, month, day) = civil_from_days(modified_day);
+            let (now_year, _, _) = civil_from_days(now_day);
+            let month_name = MONTH_NAMES[(month - 1) as usize];
+            if year == now_year {
+                format!("{month_name} {day}")
+            } else {
+                format!("{month_name} {day}, {year}")
+            }
+        }
+    }
+}
+
+/// Converts a day count since the Unix epoch (1970-01-01) into a proleptic
+/// Gregorian civil (year, month, day) triple. This is Howard Hinnant's
+/// widely-used `civil_from_days` algorithm
+/// (<https://howardhinnant.github.io/date_algorithms.html#civil_from_days>),
+/// reproduced here to avoid adding a timezone/date dependency for a single
+/// display-formatting need.
+fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = (z - era * 146_097) as u64;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era as i64 + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month, day)
 }
 
 fn transfer_state_label(state: &SftpTransferState) -> &'static str {
@@ -3745,6 +3807,39 @@ mod tests {
             modified_at: None,
             permissions: None,
         }
+    }
+
+    #[test]
+    fn format_modified_matches_mockup_relative_and_absolute_conventions() {
+        // 2026-09-04 09:27:00 UTC, used as a fixed "now" so the test doesn't
+        // depend on the wall clock.
+        let now = 1_788_513_620u64;
+        // Same UTC calendar day, earlier in the morning.
+        let today_early = now - 3 * 3600 - 47 * 60; // 05:40:20 UTC same day
+        assert_eq!(
+            format_modified_from_epoch_seconds(today_early, now),
+            "Today 05:33"
+        );
+        // Previous UTC calendar day.
+        let yesterday = now - SECONDS_PER_DAY as u64;
+        assert_eq!(
+            format_modified_from_epoch_seconds(yesterday, now),
+            "Yesterday"
+        );
+        // Several days earlier, same year -> "Mon D" without a year suffix.
+        let last_week = now - 5 * SECONDS_PER_DAY as u64;
+        assert_eq!(format_modified_from_epoch_seconds(last_week, now), "Aug 30");
+        // A prior year -> "Mon D, YYYY".
+        let last_year = now - 400 * SECONDS_PER_DAY as u64;
+        assert_eq!(
+            format_modified_from_epoch_seconds(last_year, now),
+            "Jul 31, 2025"
+        );
+    }
+
+    #[test]
+    fn format_modified_handles_missing_timestamps() {
+        assert_eq!(format_modified(None), "—");
     }
 
     #[test]
