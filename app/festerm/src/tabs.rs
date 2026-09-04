@@ -565,6 +565,7 @@ pub const MAX_SSH_PASSWORD_PROMPT_ATTEMPTS: u8 = 3;
 /// raw failed session, bounded by `MAX_SSH_PASSWORD_PROMPT_ATTEMPTS`.
 pub struct SshPasswordRetryState {
     pub profile: SshConnectionProfile,
+    pub profile_identifier: Option<String>,
     pub options: SshSessionOptions,
     pub attempts: u8,
 }
@@ -707,6 +708,7 @@ impl SessionTab {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
         options: SshSessionOptions,
+        profile_id: Option<&str>,
         prior_password_attempts: u8,
         context: &egui::Context,
     ) -> Self {
@@ -742,6 +744,7 @@ impl SessionTab {
         let password_retry = matches!(authentication, SshAuthentication::Password(_)).then(|| {
             SshPasswordRetryState {
                 profile: profile.clone(),
+                profile_identifier: profile_id.map(str::to_owned),
                 options: options.clone(),
                 attempts: prior_password_attempts,
             }
@@ -758,6 +761,7 @@ impl SessionTab {
             dimensions,
             &label,
             launch_secondary,
+            profile_id.map(str::to_owned),
             inspector_transport,
             password_retry,
         )
@@ -832,6 +836,7 @@ impl SessionTab {
         dimensions: Dimensions,
         label: &str,
         launch_secondary: Option<String>,
+        profile_identifier: Option<String>,
         inspector_transport: InspectorTransport,
         password_retry: Option<SshPasswordRetryState>,
     ) -> Self {
@@ -841,7 +846,7 @@ impl SessionTab {
             SessionResultMeta {
                 label,
                 launch_secondary,
-                profile_identifier: None,
+                profile_identifier,
                 session_name: "SSH session",
                 inspector_transport,
                 ssh_password_retry: password_retry,
@@ -2285,7 +2290,7 @@ impl AppState {
                 profile,
                 authentication,
                 options,
-            } => self.execute_ssh_session(profile, authentication, options, context),
+            } => self.execute_ssh_session(profile, authentication, options, None, context),
             AppCommand::StartSftpSession {
                 profile,
                 authentication,
@@ -2647,6 +2652,7 @@ impl AppState {
             connection_profile,
             SshAuthentication::interactive(),
             options,
+            Some(profile_id),
             context,
         );
         true
@@ -2691,6 +2697,7 @@ impl AppState {
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
         options: SshSessionOptions,
+        profile_id: Option<&str>,
         context: &egui::Context,
     ) {
         // Consulted here rather than in the SSH backend so every launch path
@@ -2715,6 +2722,7 @@ impl AppState {
             profile,
             authentication,
             options,
+            profile_id,
             0,
             context,
         ));
@@ -2963,7 +2971,13 @@ impl AppState {
                 SshAuthentication::stored_private_key(store, reference)
             }
         };
-        self.execute_ssh_session(connection_profile, authentication, options, context);
+        self.execute_ssh_session(
+            connection_profile,
+            authentication,
+            options,
+            Some(profile_id),
+            context,
+        );
         true
     }
 
@@ -3126,13 +3140,19 @@ impl AppState {
             if error.kind() != SessionErrorKind::Authentication {
                 continue;
             }
-            restarts.push((index, retry.profile.clone(), retry.options.clone()));
+            restarts.push((
+                index,
+                retry.profile.clone(),
+                retry.profile_identifier.clone(),
+                retry.options.clone(),
+            ));
         }
-        for (index, profile, options) in restarts {
+        for (index, profile, profile_identifier, options) in restarts {
             let mut restarted = SessionTab::start_ssh(
                 profile,
                 SshAuthentication::interactive(),
                 options,
+                profile_identifier.as_deref(),
                 0,
                 context,
             );
@@ -3435,6 +3455,76 @@ mod tests {
 
         assert_eq!(state.active(), launcher_id);
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn configured_interactive_ssh_profile_records_its_profile_identifier() {
+        let context = egui::Context::default();
+        let configuration = Configuration::new(vec![festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")])
+        .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+
+        assert!(state.start_configured_ssh_profile_interactive("production", &context));
+
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("configured SSH profile must place a session tab");
+        };
+        assert_eq!(session.profile_identifier.as_deref(), Some("production"));
+        let target = state
+            .sftp_file_manager_target_for_tab(state.active())
+            .expect("SSH session should offer GUI SFTP");
+        assert_eq!(target.profile_id.as_deref(), Some("production"));
+        assert_eq!(target.stored_credential_kind, None);
+    }
+
+    #[test]
+    fn stored_credential_ssh_profile_exposes_its_saved_credential_to_gui_sftp() {
+        let context = egui::Context::default();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .expect("SSH profile accepts an opaque reference");
+        let configuration = Configuration::new(vec![profile]).expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+
+        assert!(state.start_stored_password_ssh_profile(
+            "production",
+            store,
+            SshSessionOptions::new(),
+            &context,
+        ));
+
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("stored-credential SSH profile must place a session tab");
+        };
+        assert_eq!(session.profile_identifier.as_deref(), Some("production"));
+        let target = state
+            .sftp_file_manager_target_for_tab(state.active())
+            .expect("SSH session should offer GUI SFTP");
+        assert_eq!(target.profile_id.as_deref(), Some("production"));
+        assert_eq!(
+            target.stored_credential_kind,
+            Some(festerm_config::CredentialKind::Password)
+        );
     }
 
     #[test]
@@ -3910,6 +4000,7 @@ mod tests {
             dimensions,
             "test-user@example.invalid",
             Some("SSH · example.invalid:22".to_owned()),
+            None,
             InspectorTransport::Ssh {
                 username: "test-user".to_owned(),
                 host: "example.invalid".to_owned(),
