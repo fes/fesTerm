@@ -46,6 +46,20 @@ const SFTP_TRANSFER_RAIL_WIDTH: f32 = 76.0;
 const SFTP_TRANSFER_BUTTON_WIDTH: f32 = 54.0;
 const SFTP_TRANSFER_BUTTON_HEIGHT: f32 = 57.0;
 const SFTP_STATUS_DOT_SIZE: f32 = 7.0;
+/// Minimum usable width for a single Local/Remote pane before its table
+/// columns and breadcrumb start clipping. Matches the mockup's `.fsftp-pane`
+/// intent (which itself imposes no hard floor, `min-width: 0`, relying on
+/// its grid to distribute space) while keeping fesTerm's columns legible.
+const SFTP_PANE_MIN_WIDTH: f32 = 280.0;
+/// The narrowest content width at which two panes (each at their minimum
+/// width) plus the transfer rail and its gaps can be shown side by side.
+/// Derived directly from [`SFTP_PANE_MIN_WIDTH`] and [`SFTP_TRANSFER_RAIL_WIDTH`]
+/// so the "switch to single-pane" breakpoint always stays consistent with
+/// the actual space the split-pane layout needs, rather than an arbitrary
+/// cutoff that could leave the split view unreachable at common window
+/// sizes (see issue #121).
+const SFTP_SPLIT_VIEW_MIN_WIDTH: f32 =
+    SFTP_PANE_MIN_WIDTH * 2.0 + SFTP_TRANSFER_RAIL_WIDTH + SFTP_SECTION_GAP * 2.0;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1149,7 +1163,7 @@ impl SftpFileManagerTab {
     ) -> Option<crate::tabs::AppCommand> {
         self.poll();
         self.handle_keyboard(ui.ctx());
-        let narrow = ui.available_width() < 980.0;
+        let narrow = ui.available_width() < SFTP_SPLIT_VIEW_MIN_WIDTH;
         self.show_toolbar(ui, narrow);
         ui.add_space(8.0);
         if let Some(pending) = self.pending_host_key.as_ref() {
@@ -1161,7 +1175,7 @@ impl SftpFileManagerTab {
             let available_width = ui.available_width();
             let pane_width =
                 ((available_width - SFTP_TRANSFER_RAIL_WIDTH - SFTP_SECTION_GAP * 2.0) / 2.0)
-                    .max(280.0);
+                    .max(SFTP_PANE_MIN_WIDTH);
             let pane_height = ui.available_height().max(260.0);
             ui.horizontal_top(|ui| match self.pane_order {
                 SftpPaneOrderPreference::LocalLeft => {
@@ -4217,6 +4231,33 @@ mod tests {
         let transfer = harness.get_by_label("Upload to Remote").rect();
         assert_eq!(transfer.width(), 54.0);
         assert_eq!(transfer.height(), 57.0);
+    }
+
+    #[test]
+    fn split_view_min_width_matches_two_panes_and_rail() {
+        // The narrow/single-pane breakpoint must stay derived from the same
+        // minimum-pane-width math used to size the split view, not an
+        // independent magic number -- otherwise the two can drift out of
+        // sync and the split-pane layout becomes unreachable at realistic
+        // window sizes (see issue #121).
+        assert_eq!(
+            SFTP_SPLIT_VIEW_MIN_WIDTH,
+            SFTP_PANE_MIN_WIDTH * 2.0 + SFTP_TRANSFER_RAIL_WIDTH + SFTP_SECTION_GAP * 2.0
+        );
+
+        // fesTerm's default application window (80 columns at the approximate
+        // monospace cell metrics used in `main.rs`, minus the tab body's
+        // 16px symmetric inner margin) must be wide enough to show the
+        // split-pane SFTP layout without requiring the user to manually
+        // resize the window first.
+        const APPROX_DEFAULT_WINDOW_WIDTH: f32 = 80.0 * 9.0 + 16.0 * 2.0;
+        const APPROX_TAB_INNER_MARGIN: f32 = 16.0 * 2.0;
+        let default_tab_content_width = APPROX_DEFAULT_WINDOW_WIDTH - APPROX_TAB_INNER_MARGIN;
+        assert!(
+            default_tab_content_width >= SFTP_SPLIT_VIEW_MIN_WIDTH,
+            "the split-pane view must fit within fesTerm's default window width \
+             ({default_tab_content_width}px available vs {SFTP_SPLIT_VIEW_MIN_WIDTH}px needed)"
+        );
     }
 
     #[test]
