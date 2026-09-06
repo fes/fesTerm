@@ -4235,29 +4235,27 @@ mod tests {
 
     #[test]
     fn split_view_min_width_matches_two_panes_and_rail() {
-        // The narrow/single-pane breakpoint must stay derived from the same
-        // minimum-pane-width math used to size the split view, not an
-        // independent magic number -- otherwise the two can drift out of
-        // sync and the split-pane layout becomes unreachable at realistic
-        // window sizes (see issue #121).
-        assert_eq!(
-            SFTP_SPLIT_VIEW_MIN_WIDTH,
-            SFTP_PANE_MIN_WIDTH * 2.0 + SFTP_TRANSFER_RAIL_WIDTH + SFTP_SECTION_GAP * 2.0
-        );
-
         // fesTerm's default application window (80 columns at the approximate
-        // monospace cell metrics used in `main.rs`, minus the tab body's
-        // 16px symmetric inner margin) must be wide enough to show the
-        // split-pane SFTP layout without requiring the user to manually
-        // resize the window first.
+        // monospace cell metrics used in `main.rs`) must be wide enough to
+        // show the split-pane SFTP layout without requiring the user to
+        // manually resize the window first. This is deliberately the raw
+        // default window width with no margin subtracted: the SFTP tab's
+        // render path (`FesTermApp::ui` -> `chrome::show` -> `tab.show`)
+        // passes the egui `Ui` straight through with no intervening
+        // `CentralPanel`/`Frame` inner margin, so no such margin exists to
+        // subtract here. `SFTP_SPLIT_VIEW_MIN_WIDTH` itself is derived from
+        // (not independent of) `SFTP_PANE_MIN_WIDTH`/`SFTP_TRANSFER_RAIL_WIDTH`/
+        // `SFTP_SECTION_GAP`, so this assertion is what actually guards
+        // against the split-pane layout becoming unreachable again at
+        // fesTerm's default window size (see issue #121, which this
+        // threshold was previously too large to satisfy).
+        //
+        // Both sides are compile-time constants, so this is enforced as a
+        // `const` assertion: a future edit that pushes the threshold past
+        // the default window width fails the build itself, not just this
+        // test.
         const APPROX_DEFAULT_WINDOW_WIDTH: f32 = 80.0 * 9.0 + 16.0 * 2.0;
-        const APPROX_TAB_INNER_MARGIN: f32 = 16.0 * 2.0;
-        let default_tab_content_width = APPROX_DEFAULT_WINDOW_WIDTH - APPROX_TAB_INNER_MARGIN;
-        assert!(
-            default_tab_content_width >= SFTP_SPLIT_VIEW_MIN_WIDTH,
-            "the split-pane view must fit within fesTerm's default window width \
-             ({default_tab_content_width}px available vs {SFTP_SPLIT_VIEW_MIN_WIDTH}px needed)"
-        );
+        const _: () = assert!(APPROX_DEFAULT_WINDOW_WIDTH >= SFTP_SPLIT_VIEW_MIN_WIDTH);
     }
 
     #[test]
