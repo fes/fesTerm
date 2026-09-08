@@ -526,6 +526,15 @@ The following tracks remain intentionally outside the initial critical path. Arc
 - Password-encrypted profile export/import.
 - Advanced graphics protocols.
 - Persistent, explicitly enabled terminal history.
+- A mobile (iOS/Android) port has an exploratory, non-binding design in
+  ADR 0031 (Proposed) and its companions `docs/mobile-port-plan.md`,
+  `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`.
+  It reuses `festerm-core`/`festerm-ui-egui`, excludes local shell/PTY
+  sessions and mandatory cloud sync, and requires store-mediated
+  distribution instead of ADR 0021's desktop updater. Implementation is not
+  scheduled: Phase 1's rendering-feasibility spike is a go/no-go gate before
+  further phases, and each concrete crate/dependency change still requires
+  its own ADR under the 0.1 Architecture-Stability Period.
 
 Each future track requires the remaining design/security review appropriate to
 its risk and an ADR for material architectural decisions. Serial does not need

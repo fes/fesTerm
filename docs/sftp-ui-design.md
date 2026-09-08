@@ -91,6 +91,17 @@ Keyboard behavior when a file list has focus:
 
 Use the approved blue-graphite roles (`surface.terminal #11161e`, `surface.tab.inactive #1a222c`, `surface.tab.active #29333e`, `text.primary #e8edf2`, `accent.primary #42bfd0`) with cyan reserved for focus and high-information accents. Keep 16 px icons inside at least 24 × 24 logical hit targets, compact row density, visible focus outlines, status text paired with color, and accessible names that include pane identity (for example, “Refresh Remote folder”). At narrow widths, keep the two-pane model by allowing a focused-pane mode toggle rather than crushing both tables; the user can switch Local/Remote while the transfer queue remains available.
 
+This narrow-width fallback is the precedent `docs/mobile-layout-design.md`
+generalizes into breakpoint-driven Wide/Compact/Minimal tiers for a possible
+future mobile client (see ADR 0031, exploratory/not scheduled): Compact
+renders this same two-pane model stacked top/bottom instead of left/right,
+and Minimal reuses this exact focused-pane toggle unchanged. That document
+also reframes `SftpPaneOrderPreference` as orientation-neutral
+Local-primary/Remote-primary — this pane order preference remains the one
+mechanism controlling which side (or, on a future mobile client, which
+top/bottom position) Local and Remote occupy; no separate mobile preference
+should be introduced.
+
 ## Acceptance sequence
 
 1. From a running `production-db` SSH chip, invoke **Open SFTP**; a sibling SFTP chip appears and reuses trusted host/profile context.
