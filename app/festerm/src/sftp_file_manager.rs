@@ -1441,6 +1441,25 @@ impl SftpFileManagerTab {
                                         request_navigate_text = true;
                                     }
                                 } else {
+                                    // Pre-register a click-sensing background BEFORE the
+                                    // breadcrumb buttons are painted. egui resolves overlapping
+                                    // same-layer widgets by picking whichever was registered
+                                    // last, so if this background sense were registered *after*
+                                    // the buttons (as it previously was, via
+                                    // `bar.response.interact(Sense::click())` following the
+                                    // Frame::show call), it would shadow every button
+                                    // underneath and permanently break single-click
+                                    // breadcrumb navigation. Registering it first lets the
+                                    // buttons (added afterwards) win the hit test, while empty
+                                    // space in the bar still supports double-click-to-edit.
+                                    let bar_rect = egui::Rect::from_min_size(
+                                        ui.cursor().min,
+                                        egui::vec2(ui.available_width(), SFTP_BREADCRUMB_HEIGHT),
+                                    );
+                                    let bar_bg_id =
+                                        ui.make_persistent_id((focus, "breadcrumb-bg"));
+                                    let bar_bg_response =
+                                        ui.interact(bar_rect, bar_bg_id, Sense::click());
                                     let bar = egui::Frame::new()
                                         .fill(theme::SURFACE_TAB_INACTIVE)
                                         .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
@@ -1488,8 +1507,8 @@ impl SftpFileManagerTab {
                                                 }
                                             });
                                         });
-                                    let response = bar.response.interact(Sense::click());
-                                    response.widget_info(|| {
+                                    let _ = bar.response;
+                                    bar_bg_response.widget_info(|| {
                                         WidgetInfo::labeled(
                                             WidgetType::Button,
                                             true,
@@ -1500,7 +1519,7 @@ impl SftpFileManagerTab {
                                             ),
                                         )
                                     });
-                                    if response.double_clicked() {
+                                    if bar_bg_response.double_clicked() {
                                         pane.editing_path = true;
                                         pane.path_focus_requested = true;
                                     }
@@ -1654,6 +1673,12 @@ impl SftpFileManagerTab {
                                                     egui::vec2(columns[0], SFTP_TABLE_ROW_HEIGHT),
                                                     Layout::left_to_right(Align::Center),
                                                     |ui| {
+                                                        // See show_table_text_cell: force the
+                                                        // full column width so the following
+                                                        // Size/Modified/Type cells line up under
+                                                        // their headers instead of collapsing
+                                                        // against the (usually much shorter) name.
+                                                        ui.set_min_width(columns[0]);
                                                         paint_sftp_glyph(
                                                             ui.painter(),
                                                             item_glyph(&item),
@@ -3050,6 +3075,12 @@ fn show_table_text_cell(ui: &mut Ui, width: f32, align: CellAlign, text: RichTex
             CellAlign::Right => Layout::right_to_left(Align::Center),
         },
         |ui| {
+            // Force the cell to claim its full column width even though the
+            // label content is narrower; otherwise egui shrinks the
+            // allocated rect to fit the label, and the parent `horizontal`
+            // layout packs the next column right up against this one
+            // instead of at its intended fixed offset.
+            ui.set_min_width(width);
             ui.label(text);
         },
     );
@@ -3149,33 +3180,23 @@ fn paint_sftp_glyph(painter: &egui::Painter, glyph: SftpGlyph, rect: egui::Rect,
             );
         }
         SftpGlyph::Folder => {
+            // Mirrors the mockup's folder glyph path (`M3 7h7l2 2h9v10H3z` in a
+            // 24x24 viewBox): a small tab notch above a boxy, mostly-square
+            // body. Using straight corners (rather than a heavily rounded
+            // rect) keeps the body from collapsing into a pill/capsule shape
+            // at this icon's small (15x15) render size.
             let stroke = egui::Stroke::new(1.5, color);
-            let body = egui::Rect::from_min_max(
-                egui::pos2(rect.left() + 2.0, rect.top() + 7.0),
-                egui::pos2(rect.right() - 2.0, rect.bottom() - 3.0),
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.left() + 2.0, rect.top() + 9.0),
-                    egui::pos2(rect.left() + 7.0, rect.top() + 9.0),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.left() + 7.0, rect.top() + 9.0),
-                    egui::pos2(rect.left() + 9.0, rect.top() + 6.0),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.left() + 9.0, rect.top() + 6.0),
-                    egui::pos2(rect.right() - 2.0, rect.top() + 6.0),
-                ],
-                stroke,
-            );
-            painter.rect_stroke(body, 2.5, stroke, egui::StrokeKind::Inside);
+            let scale = rect.width() / 24.0;
+            let pt = |x: f32, y: f32| egui::pos2(rect.left() + x * scale, rect.top() + y * scale);
+            let points = vec![
+                pt(3.0, 7.0),
+                pt(10.0, 7.0),
+                pt(12.0, 9.0),
+                pt(21.0, 9.0),
+                pt(21.0, 19.0),
+                pt(3.0, 19.0),
+            ];
+            painter.add(egui::Shape::closed_line(points, stroke));
         }
         SftpGlyph::File
         | SftpGlyph::Code
@@ -3763,6 +3784,7 @@ fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
         SftpPath::Local(path) => {
             let mut segments = Vec::new();
             let mut current = PathBuf::new();
+            let mut last_was_prefix = false;
             for component in path.components() {
                 use std::path::Component;
                 match component {
@@ -3773,14 +3795,29 @@ fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
                             path: SftpPath::local(current.clone()),
                             current: false,
                         });
+                        last_was_prefix = true;
                     }
                     Component::RootDir => {
                         current.push(Path::new("/"));
-                        segments.push(BreadcrumbSegment {
-                            label: "/".to_owned(),
-                            path: SftpPath::local(current.clone()),
-                            current: path.parent().is_none(),
-                        });
+                        // On Windows a drive prefix ("C:") is immediately
+                        // followed by a RootDir component; the prefix
+                        // segment already implies the root, so emitting a
+                        // separate "/" segment here would render as a
+                        // spurious extra slash in the breadcrumb (e.g.
+                        // "C: / / / Users"). Only Unix-style paths, which
+                        // have no preceding prefix, need their own "/"
+                        // segment.
+                        if !last_was_prefix {
+                            segments.push(BreadcrumbSegment {
+                                label: "/".to_owned(),
+                                path: SftpPath::local(current.clone()),
+                                current: path.parent().is_none(),
+                            });
+                        } else if let Some(last) = segments.last_mut() {
+                            last.path = SftpPath::local(current.clone());
+                            last.current = path.parent().is_none();
+                        }
+                        last_was_prefix = false;
                     }
                     Component::Normal(part) => {
                         current.push(part);
@@ -3789,6 +3826,7 @@ fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
                             path: SftpPath::local(current.clone()),
                             current: current == *path,
                         });
+                        last_was_prefix = false;
                     }
                     Component::CurDir | Component::ParentDir => {}
                 }
@@ -4071,6 +4109,20 @@ mod tests {
             vec!["/", "srv", "releases", "2026.09"]
         );
         assert!(remote.last().is_some_and(|segment| segment.current));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn breadcrumb_segments_do_not_duplicate_slash_after_drive_prefix() {
+        let local = breadcrumb_segments(&SftpPath::local(r"C:\Users\fes\src\fesTerm"));
+        assert_eq!(
+            local
+                .iter()
+                .map(|segment| segment.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["C:", "Users", "fes", "src", "fesTerm"]
+        );
+        assert!(local.last().is_some_and(|segment| segment.current));
     }
 
     #[test]
