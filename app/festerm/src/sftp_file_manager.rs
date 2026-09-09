@@ -8,7 +8,7 @@ use std::{
         Arc,
     },
     thread,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use eframe::egui::{
@@ -27,12 +27,37 @@ use festerm_ssh::{
     SshConnectionProfile, SshPrivateKey,
 };
 use festerm_ui_egui::{
+    chrome::ChipStatus,
     icon::{self, Icon},
     theme,
 };
 
+/// How often the browsing session's worker checks that the remote
+/// connection is still alive, so a dropped connection (network blip, VPN
+/// hiccup, the host machine coming back from sleep, etc.) is detected and
+/// silently reconnected in the background rather than only surfacing as a
+/// failure the next time the user tries to navigate or run a command.
+const SFTP_LIVENESS_CHECK_INTERVAL: Duration = Duration::from_secs(20);
+
 const SFTP_SECTION_GAP: f32 = 8.0;
+const SFTP_PANE_OUTER_INSET: f32 = 4.0;
+/// Width of every hairline rule fesTerm draws inside an SFTP pane: the pane's
+/// own border and each internal divider.
+///
+/// This is load-bearing for layout, not just cosmetics. egui's
+/// [`egui::Frame::total_margin`] adds `stroke.width` to a frame's margin, so a
+/// bordered pane hands its children `pane_width - 2 * SFTP_HAIRLINE`. Sizing
+/// those children to the pane's *outer* width instead is what previously
+/// pushed the remote pane past the viewport, so every child width/height here
+/// is derived from the constants below rather than sampled from
+/// `ui.available_*` inside a frame.
+const SFTP_HAIRLINE: f32 = 1.0;
 const SFTP_PANE_INNER_PADDING: i8 = 0;
+/// Radius of the pane/rail cards. The panes carry zero inner padding, so their
+/// header and footer frames sit flush against this arc; both must repeat the
+/// matching corners or their square fill paints over it and the card reads as
+/// having its corner tips sliced off.
+const SFTP_PANE_CORNER_RADIUS: u8 = 8;
 const SFTP_PANE_HEADER_HEIGHT: f32 = 35.0;
 const SFTP_PANE_TOOLBAR_HEIGHT: f32 = 39.0;
 const SFTP_PANE_FILTER_ROW_HEIGHT: f32 = 37.0;
@@ -42,24 +67,111 @@ const SFTP_BREADCRUMB_HEIGHT: f32 = 28.0;
 const SFTP_FILTER_FIELD_HEIGHT: f32 = 26.0;
 const SFTP_TABLE_HEADER_HEIGHT: f32 = 27.0;
 const SFTP_TABLE_ROW_HEIGHT: f32 = 31.0;
+const SFTP_TABLE_CELL_PADDING: f32 = 7.0;
+/// Floors for the file table's metadata columns, in addition to the mockup's
+/// 53/15/22/10 proportions. Wide enough for "4.0 KiB", "Yesterday" and
+/// "Folder" plus each cell's 7px insets.
+const SFTP_NAME_COLUMN_MIN_WIDTH: f32 = 120.0;
+const SFTP_SIZE_COLUMN_MIN_WIDTH: f32 = 72.0;
+const SFTP_MODIFIED_COLUMN_MIN_WIDTH: f32 = 104.0;
+const SFTP_TYPE_COLUMN_MIN_WIDTH: f32 = 66.0;
+/// Horizontal insets for the pane's fixed chrome rows, taken from the mockup:
+/// `.fsftp-pane-head { padding: 0 11px }`, `.fsftp-toolbar { padding: 5px 7px }`
+/// and `.fsftp-filterrow { padding: 5px 8px }`. Each row applies its value to
+/// *both* edges; the right-hand inset used to be omitted, so the header's
+/// status text and the filter field ran into the pane border.
+///
+/// The toolbar deliberately uses the filter row's 8px rather than the mockup's
+/// 7px. The mockup can afford the 1px difference because its filter field is
+/// followed by an overflow ("...") button, so the two fields never share an
+/// edge. fesTerm has no such button, which leaves the breadcrumb and filter
+/// fields stacked directly on top of each other -- where a 3px difference in
+/// their right edges reads as a straightforward misalignment bug.
+const SFTP_PANE_HEAD_PADDING: f32 = 11.0;
+const SFTP_TOOLBAR_PADDING: f32 = 8.0;
+const SFTP_FILTER_ROW_PADDING: f32 = 8.0;
+/// Gap between the toolbar's navigation buttons and the breadcrumb field.
+const SFTP_TOOLBAR_NAV_GAP: f32 = 2.0;
+/// Mockup `.fsftp-pane-foot { padding: 0 9px; gap: 8px }`.
+const SFTP_PANE_FOOTER_PADDING: f32 = 9.0;
+const SFTP_PANE_FOOTER_GAP: f32 = 8.0;
+/// Gap between a sortable column's label and its direction arrow.
+const SFTP_SORT_INDICATOR_GAP: f32 = 4.0;
+/// Fixed chrome above a pane's file table: header, divider, toolbar, divider,
+/// filter row. The table gets whatever is left after this and the footer.
+const SFTP_PANE_CHROME_HEIGHT: f32 = SFTP_PANE_HEADER_HEIGHT
+    + SFTP_HAIRLINE
+    + SFTP_PANE_TOOLBAR_HEIGHT
+    + SFTP_HAIRLINE
+    + SFTP_PANE_FILTER_ROW_HEIGHT;
+/// The shortest a pane can render: its fixed chrome, the table's column
+/// header, and the footer, with a zero-height listing between them.
+const SFTP_PANE_MIN_HEIGHT: f32 = SFTP_HAIRLINE * 2.0
+    + SFTP_PANE_CHROME_HEIGHT
+    + SFTP_TABLE_HEADER_HEIGHT
+    + SFTP_HAIRLINE
+    + SFTP_PANE_FOOTER_HEIGHT;
 const SFTP_TRANSFER_RAIL_WIDTH: f32 = 76.0;
+const SFTP_TRANSFER_RAIL_PADDING: f32 = 8.0;
+const SFTP_TRANSFER_RAIL_BUTTON_GAP: f32 = 12.0;
 const SFTP_TRANSFER_BUTTON_WIDTH: f32 = 54.0;
 const SFTP_TRANSFER_BUTTON_HEIGHT: f32 = 57.0;
+/// Height of the stacked (narrow) layout's transfer bar. The two buttons sit
+/// side by side there, so one button's height plus the rail's padding and
+/// border is all it needs.
+const SFTP_NARROW_RAIL_HEIGHT: f32 =
+    SFTP_TRANSFER_BUTTON_HEIGHT + SFTP_TRANSFER_RAIL_PADDING * 2.0 + SFTP_HAIRLINE * 2.0;
+
+/// Whether the transfer rail runs down the gap between two side-by-side panes
+/// or across the bottom of a single stacked pane.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TransferRailLayout {
+    Vertical,
+    Horizontal,
+}
 const SFTP_STATUS_DOT_SIZE: f32 = 7.0;
+/// Left inset applied to the SFTP tab's toolbar heading/connection-state
+/// text and the connection-error banner beneath it. Unlike the split-pane
+/// body below (which deliberately has no `Frame` margin -- see
+/// `split_view_min_width_matches_two_panes_and_rail`), this heading row
+/// otherwise renders flush against the window's left edge since fesTerm's
+/// tab content area has no ambient `CentralPanel` inner margin.
+const SFTP_TOOLBAR_LEFT_PADDING: f32 = 12.0;
+/// Breathing room around the "SFTP · <target>" heading, measured to the
+/// *glyphs* rather than to the text row's box.
+///
+/// Two intrinsic offsets make a naive symmetric `add_space` look lopsided, and
+/// they were the "padding on the bottom is noticeably larger than above it"
+/// defect: the tab strip already leaves `SFTP_HEADING_INHERITED_TOP_GAP` above
+/// the ascenders, and `ui.heading` reserves `SFTP_HEADING_TEXT_DESCENT` of
+/// unused descent below the baseline. Subtracting each from the target gap is
+/// what makes the heading sit optically centred in its band; before this the
+/// gaps measured 5.8px above against 12.5px below.
+const SFTP_HEADING_GAP: f32 = 9.0;
+const SFTP_HEADING_INHERITED_TOP_GAP: f32 = 5.8;
+const SFTP_HEADING_TEXT_DESCENT: f32 = 4.5;
+/// Leading gap the tab body already places above its first widget (measured
+/// at ppp 2.25 with no heading row present). Subtracted from the pane row's
+/// top inset so the row is framed by `SFTP_PANE_OUTER_INSET` on all four
+/// sides rather than being 1px tighter at the top than at the bottom.
+const SFTP_TAB_BODY_LEADING_GAP: f32 = 3.1;
 /// Minimum usable width for a single Local/Remote pane before its table
 /// columns and breadcrumb start clipping. Matches the mockup's `.fsftp-pane`
 /// intent (which itself imposes no hard floor, `min-width: 0`, relying on
 /// its grid to distribute space) while keeping fesTerm's columns legible.
 const SFTP_PANE_MIN_WIDTH: f32 = 280.0;
 /// The narrowest content width at which two panes (each at their minimum
-/// width) plus the transfer rail and its gaps can be shown side by side.
+/// width), the transfer rail, and the intentional outer/inter-pane gaps can
+/// be shown side by side.
 /// Derived directly from [`SFTP_PANE_MIN_WIDTH`] and [`SFTP_TRANSFER_RAIL_WIDTH`]
 /// so the "switch to single-pane" breakpoint always stays consistent with
 /// the actual space the split-pane layout needs, rather than an arbitrary
 /// cutoff that could leave the split view unreachable at common window
 /// sizes (see issue #121).
-const SFTP_SPLIT_VIEW_MIN_WIDTH: f32 =
-    SFTP_PANE_MIN_WIDTH * 2.0 + SFTP_TRANSFER_RAIL_WIDTH + SFTP_SECTION_GAP * 2.0;
+const SFTP_SPLIT_VIEW_MIN_WIDTH: f32 = SFTP_PANE_MIN_WIDTH * 2.0
+    + SFTP_TRANSFER_RAIL_WIDTH
+    + SFTP_SECTION_GAP * 2.0
+    + SFTP_PANE_OUTER_INSET * 2.0;
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -206,6 +318,70 @@ struct AuthenticationFormState {
     passphrase: String,
     mode: AuthMode,
     feedback: Option<String>,
+    /// Destination fields are only meaningful (and only shown as editable)
+    /// for an ad-hoc, not-saved-profile destination -- see
+    /// `show_authentication_required`. Initialized once from `target` the
+    /// first time this state is created, then left alone so the user's
+    /// edits survive across frames.
+    destination_initialized: bool,
+    username: String,
+    host: String,
+    port: String,
+    /// One-shot request to focus the credential field for the current
+    /// [`AuthMode`], armed whenever this screen is entered (including a
+    /// return trip through "Edit connection…" after a failure) and whenever
+    /// the mode changes. Arriving here always means "the connection needs a
+    /// secret", so the secret box -- not the first widget in tab order -- is
+    /// what should be ready to type into. It has to be one-shot: calling
+    /// `request_focus` every frame would trap focus and break Tab.
+    focus_secret: bool,
+    /// Pass number of the most recent frame this screen rendered on, used to
+    /// tell "still here" from "just came back". A gap means the tab showed
+    /// something else in between (the connecting spinner, a failure notice,
+    /// the host-key prompt), which counts as a fresh arrival.
+    last_rendered_pass: Option<u64>,
+}
+
+/// Parses the (possibly user-edited) destination fields back into a
+/// [`SftpFileManagerLaunchTarget`]. A saved-profile target's destination
+/// isn't editable here (see `show_authentication_required`), so it's passed
+/// through unchanged; only an ad-hoc destination's fields are actually
+/// read from `state`.
+fn resolve_edited_target(
+    target: &SftpFileManagerLaunchTarget,
+    state: &AuthenticationFormState,
+) -> Result<SftpFileManagerLaunchTarget, String> {
+    if target.profile_id.is_some() {
+        return Ok(target.clone());
+    }
+    let username = state.username.trim();
+    if username.is_empty() {
+        return Err("Enter a username.".to_owned());
+    }
+    let host = state.host.trim();
+    if host.is_empty() {
+        return Err("Enter a host.".to_owned());
+    }
+    let port = state
+        .port
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| "Port must be a number between 1 and 65535.".to_owned())?;
+    // The host or port may have just changed (that's the whole point of
+    // "Edit connection…"), so any previously-known host-key trust no
+    // longer necessarily applies; only keep it when the destination is
+    // unchanged from what it was originally.
+    let known_host_persisted =
+        target.known_host_persisted && host == target.host && port == target.port;
+    Ok(SftpFileManagerLaunchTarget {
+        label: format!("{username}@{host}"),
+        username: username.to_owned(),
+        host: host.to_owned(),
+        port,
+        profile_id: None,
+        stored_credential_kind: None,
+        known_host_persisted,
+    })
 }
 
 pub(crate) fn show_authentication_required(
@@ -218,6 +394,19 @@ pub(crate) fn show_authentication_required(
         data.get_temp::<AuthenticationFormState>(state_id)
             .unwrap_or_default()
     });
+    if !state.destination_initialized {
+        state.username = target.username.clone();
+        state.host = target.host.clone();
+        state.port = target.port.to_string();
+        state.destination_initialized = true;
+    }
+    let pass = ui.ctx().cumulative_pass_nr();
+    // Consecutive passes mean the user never left; anything else means this
+    // screen was just (re)entered.
+    if state.last_rendered_pass != Some(pass.saturating_sub(1)) {
+        state.focus_secret = true;
+    }
+    state.last_rendered_pass = Some(pass);
     let mut command = None;
     egui::Frame::new()
         .inner_margin(egui::Margin::same(16))
@@ -225,31 +414,75 @@ pub(crate) fn show_authentication_required(
             ui.vertical(|ui| {
                 ui.add_space(24.0);
                 ui.heading("Open GUI SFTP");
-                ui.label(format!(
-                    "Destination: {}@{}:{}",
-                    target.username, target.host, target.port
-                ));
+                if target.profile_id.is_some() {
+                    ui.label(format!(
+                        "Destination: {}@{}:{}",
+                        target.username, target.host, target.port
+                    ));
+                } else {
+                    // Editable, unlike a saved profile's destination: this
+                    // is the surface a failed connection's "Edit
+                    // connection…" action sends the user back to, so a
+                    // typo'd host/port/username can be fixed here instead
+                    // of only ever being able to retry the exact same
+                    // (possibly wrong) destination.
+                    ui.label("Destination");
+                    ui.horizontal(|ui| {
+                        ui.label("Username");
+                        ui.add(
+                            TextEdit::singleline(&mut state.username).desired_width(120.0),
+                        );
+                        ui.label("Host");
+                        ui.add(TextEdit::singleline(&mut state.host).desired_width(160.0));
+                        ui.label("Port");
+                        ui.add(TextEdit::singleline(&mut state.port).desired_width(60.0));
+                    });
+                }
                 if !target.known_host_persisted {
                     ui.label(
                         "If this host is new or its key changed, fesTerm will pause for host-key verification before opening the file manager.",
                     );
                 }
                 ui.add_space(10.0);
+                let previous_mode = state.mode;
                 ui.horizontal(|ui| {
                     ui.radio_value(&mut state.mode, AuthMode::Password, "Password");
                     ui.radio_value(&mut state.mode, AuthMode::PrivateKey, "Private key");
                 });
+                if state.mode != previous_mode {
+                    state.focus_secret = true;
+                }
                 ui.add_space(6.0);
+                // Read-and-clear: the flag is consumed by whichever field
+                // this frame's mode renders, so the other mode's field
+                // doesn't inherit a stale request when the user switches.
+                let focus_secret = std::mem::take(&mut state.focus_secret);
+                let mut enter_pressed = false;
                 match state.mode {
                     AuthMode::Password => {
                         ui.label("Password");
-                        ui.add(TextEdit::singleline(&mut state.password).password(true));
+                        let response =
+                            ui.add(TextEdit::singleline(&mut state.password).password(true));
+                        if focus_secret {
+                            response.request_focus();
+                        }
+                        enter_pressed |= response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     }
                     AuthMode::PrivateKey => {
                         ui.label("OpenSSH private key");
-                        ui.add(TextEdit::multiline(&mut state.private_key).desired_rows(8));
+                        // The key box, not the passphrase, is the field the
+                        // user still has to fill in this mode.
+                        let key_response =
+                            ui.add(TextEdit::multiline(&mut state.private_key).desired_rows(8));
+                        if focus_secret {
+                            key_response.request_focus();
+                        }
                         ui.label("Passphrase (optional)");
-                        ui.add(TextEdit::singleline(&mut state.passphrase).password(true));
+                        let response =
+                            ui.add(TextEdit::singleline(&mut state.passphrase).password(true));
+                        enter_pressed |= response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter));
                     }
                 }
                 if let Some(feedback) = &state.feedback {
@@ -276,7 +509,14 @@ pub(crate) fn show_authentication_required(
                     ui.add_space(6.0);
                 }
                 let connect = ui.add(egui::Button::new("Open SFTP file manager"));
-                if connect.clicked() {
+                if connect.clicked() || enter_pressed {
+                    let resolved_target = match resolve_edited_target(target, &state) {
+                        Ok(resolved_target) => Some(resolved_target),
+                        Err(feedback) => {
+                            state.feedback = Some(feedback);
+                            None
+                        }
+                    };
                     let authentication = match state.mode {
                         AuthMode::Password if state.password.is_empty() => {
                             state.feedback = Some("Enter a password.".to_owned());
@@ -295,10 +535,12 @@ pub(crate) fn show_authentication_required(
                                 .then(|| std::mem::take(&mut state.passphrase)),
                         }),
                     };
-                    if let Some(authentication) = authentication {
+                    if let (Some(target), Some(authentication)) =
+                        (resolved_target, authentication)
+                    {
                         state.feedback = None;
                         command = Some(crate::tabs::AppCommand::StartSftpFileManager {
-                            target: target.clone(),
+                            target,
                             authentication,
                         });
                     }
@@ -460,15 +702,73 @@ fn show_host_key_prompt(
     }
 }
 
-fn show_connection_status_banner(ui: &mut Ui, connection_state: &SftpConnectionState) {
+/// Which recovery action (if any) the user requested from
+/// [`show_connection_status_banner_ui`]. Kept as a separate, pure-`Ui`
+/// function (rather than a method taking `&mut SftpFileManagerTab`
+/// directly) so the banner's rendering/labels stay unit-testable without
+/// needing a live worker/tab -- see `failed_connection_banner_*` tests.
+#[derive(Default)]
+struct ConnectionStatusBannerAction {
+    retry: bool,
+    edit_connection: bool,
+}
+
+fn show_connection_status_banner_ui(
+    ui: &mut Ui,
+    connection_state: &SftpConnectionState,
+) -> ConnectionStatusBannerAction {
+    let mut action = ConnectionStatusBannerAction::default();
     if let SftpConnectionState::Failed { summary, details }
     | SftpConnectionState::Disconnected { summary, details } = connection_state
     {
-        ui.colored_label(theme::STATUS_ERROR, summary);
-        if !details.is_empty() {
-            ui.label(RichText::new(details).small().color(theme::TEXT_MUTED));
-        }
+        let is_failed = matches!(connection_state, SftpConnectionState::Failed { .. });
+        ui.horizontal(|ui| {
+            ui.add_space(SFTP_TOOLBAR_LEFT_PADDING);
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(theme::STATUS_ERROR, summary);
+                    ui.add_space(8.0);
+                    if ui.small_button("Retry").clicked() {
+                        action.retry = true;
+                    }
+                    if is_failed {
+                        ui.add_space(4.0);
+                        if ui.small_button("Edit connection…").clicked() {
+                            action.edit_connection = true;
+                        }
+                    }
+                });
+                if !details.is_empty() {
+                    ui.label(RichText::new(details).small().color(theme::TEXT_MUTED));
+                }
+            });
+        });
     }
+    action
+}
+
+/// Shown in place of the local/remote browser panes before the very first
+/// successful connect (see `SftpFileManagerTab::has_connected_once`).
+/// There's nothing meaningful to browse yet, so we avoid flashing empty or
+/// stale-looking panes while connecting or after an initial connect
+/// failure -- the toolbar/banner above already show status and, on
+/// failure, the Retry/Edit connection… actions.
+fn show_pre_connect_placeholder(ui: &mut Ui, connection_state: &SftpConnectionState) {
+    let message = match connection_state {
+        SftpConnectionState::Connecting => "Connecting…",
+        SftpConnectionState::AwaitingHostKey => "Waiting for host key trust decision…",
+        SftpConnectionState::Ready => return,
+        SftpConnectionState::Failed { .. } => "Connection failed.",
+        SftpConnectionState::Disconnected { .. } => "Disconnected.",
+    };
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() / 3.0);
+        if matches!(connection_state, SftpConnectionState::Connecting) {
+            ui.spinner();
+            ui.add_space(8.0);
+        }
+        ui.label(RichText::new(message).color(theme::TEXT_MUTED));
+    });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -547,7 +847,7 @@ impl SftpPaneState {
         let path_text = path.display();
         Self {
             current_path: path.clone(),
-            previous_valid_path: path,
+            previous_valid_path: path.clone(),
             snapshot: None,
             directory_metadata: None,
             filter: String::new(),
@@ -555,7 +855,14 @@ impl SftpPaneState {
             selected_paths: BTreeSet::new(),
             selected_anchor: None,
             cursor_path: None,
-            history: Vec::new(),
+            // Seed the back/forward history with the pane's starting
+            // directory. Without this, the very first navigation away
+            // (via a breadcrumb click, opening a folder, or "up") pushes
+            // that destination in as the *only* history entry, leaving
+            // history_index at 0 with nothing before it - so "Back"
+            // silently does nothing even though the user just navigated
+            // away from a real previous location.
+            history: vec![path.clone()],
             history_index: 0,
             loading: true,
             stale: false,
@@ -1052,9 +1359,21 @@ pub(crate) struct SftpFileManagerTab {
     pub(crate) local_pane: SftpPaneState,
     pub(crate) remote_pane: SftpPaneState,
     pub(crate) pane_order: SftpPaneOrderPreference,
+    /// Whether the bottom status bar is currently on screen. It carries this
+    /// tab's endpoints and transport state, so the heading above the panes
+    /// only renders when the bar is hidden -- see `show_toolbar`.
+    status_bar_visible: bool,
     pub(crate) focused_pane: PaneFocus,
     pub(crate) narrow_focus: PaneFocus,
     pub(crate) connection_state: SftpConnectionState,
+    /// Whether the remote session has ever reached `Ready` at least once.
+    /// The local/remote browser panes are only rendered once this is true
+    /// -- before the first successful connect, there's nothing meaningful
+    /// to browse yet, so we show a connecting/failed status placeholder
+    /// instead (see `show`). Once true, it stays true even across a later
+    /// drop/reconnect, since the previously-loaded panes remain valid to
+    /// show (optionally overlaid with the disconnected banner).
+    has_connected_once: bool,
     pub(crate) transfer_drawer: TransferDrawerState,
     pub(crate) collision_dialog: Option<SftpCollisionDialogState>,
     command_sender: tokio::sync::mpsc::UnboundedSender<WorkerCommand>,
@@ -1109,9 +1428,11 @@ impl SftpFileManagerTab {
             local_pane,
             remote_pane,
             pane_order,
+            status_bar_visible: true,
             focused_pane: PaneFocus::Local,
             narrow_focus: PaneFocus::Local,
             connection_state: SftpConnectionState::Connecting,
+            has_connected_once: false,
             transfer_drawer: TransferDrawerState::default(),
             collision_dialog: None,
             command_sender,
@@ -1134,6 +1455,40 @@ impl SftpFileManagerTab {
 
     pub(crate) fn set_pane_order(&mut self, pane_order: SftpPaneOrderPreference) {
         self.pane_order = pane_order;
+    }
+
+    pub(crate) fn set_status_bar_visible(&mut self, status_bar_visible: bool) {
+        self.status_bar_visible = status_bar_visible;
+    }
+
+    /// The two endpoints this tab bridges, for the bottom status bar. Mirrors
+    /// the mockup's `SFTP · Local + ops@prod-03.example` status line rather
+    /// than restating the heading: the heading names the remote target, this
+    /// names the pair the panes actually show.
+    pub(crate) fn status_bar_endpoints(&self) -> String {
+        format!("Local + {}", self.label)
+    }
+
+    /// Transport state for the bottom status bar's dot, using the same
+    /// vocabulary as a session chip so SFTP and terminal tabs read alike.
+    pub(crate) fn chip_status(&self) -> ChipStatus {
+        match self.connection_state {
+            SftpConnectionState::Ready => ChipStatus::Connected,
+            SftpConnectionState::Connecting => ChipStatus::Starting,
+            SftpConnectionState::AwaitingHostKey => ChipStatus::AuthRequired,
+            SftpConnectionState::Disconnected { .. } => ChipStatus::Disconnected,
+            SftpConnectionState::Failed { .. } => ChipStatus::Failed,
+        }
+    }
+
+    pub(crate) fn status_bar_label(&self) -> &'static str {
+        match self.connection_state {
+            SftpConnectionState::Ready => "Connected",
+            SftpConnectionState::Connecting => "Connecting",
+            SftpConnectionState::AwaitingHostKey => "Trust required",
+            SftpConnectionState::Disconnected { .. } => "Disconnected",
+            SftpConnectionState::Failed { .. } => "Failed",
+        }
     }
 
     pub(crate) fn host_key_prompt(&self) -> Option<&HostKeyPrompt> {
@@ -1164,97 +1519,249 @@ impl SftpFileManagerTab {
         self.poll();
         self.handle_keyboard(ui.ctx());
         let narrow = ui.available_width() < SFTP_SPLIT_VIEW_MIN_WIDTH;
-        self.show_toolbar(ui, narrow);
-        ui.add_space(8.0);
+        let toolbar_command = self.show_toolbar(ui, narrow, tab_id);
         if let Some(pending) = self.pending_host_key.as_ref() {
-            return show_host_key_prompt(ui, tab_id, &self.launch_target, &pending.prompt);
+            return show_host_key_prompt(ui, tab_id, &self.launch_target, &pending.prompt)
+                .or(toolbar_command);
+        }
+        if !self.has_connected_once {
+            // Nothing has ever been browsed yet, so don't show empty/stale
+            // local+remote panes underneath the "Connecting…"/"Connection
+            // failed" status -- the banner above already carries the
+            // Retry/Edit connection… actions.
+            show_pre_connect_placeholder(ui, &self.connection_state);
+            return toolbar_command;
         }
         if narrow {
             self.show_narrow(ui);
         } else {
             let available_width = ui.available_width();
-            let pane_width =
-                ((available_width - SFTP_TRANSFER_RAIL_WIDTH - SFTP_SECTION_GAP * 2.0) / 2.0)
-                    .max(SFTP_PANE_MIN_WIDTH);
-            let pane_height = ui.available_height().max(260.0);
-            ui.horizontal_top(|ui| match self.pane_order {
-                SftpPaneOrderPreference::LocalLeft => {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(pane_width, pane_height),
-                        Layout::top_down(Align::Min),
-                        |ui| self.show_pane(ui, PaneFocus::Local),
-                    );
-                    ui.add_space(SFTP_SECTION_GAP);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(SFTP_TRANSFER_RAIL_WIDTH, pane_height),
-                        Layout::top_down(Align::Center),
-                        |ui| self.show_transfer_rail(ui),
-                    );
-                    ui.add_space(SFTP_SECTION_GAP);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(pane_width, pane_height),
-                        Layout::top_down(Align::Min),
-                        |ui| self.show_pane(ui, PaneFocus::Remote),
-                    );
-                }
-                SftpPaneOrderPreference::RemoteLeft => {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(pane_width, pane_height),
-                        Layout::top_down(Align::Min),
-                        |ui| self.show_pane(ui, PaneFocus::Remote),
-                    );
-                    ui.add_space(SFTP_SECTION_GAP);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(SFTP_TRANSFER_RAIL_WIDTH, pane_height),
-                        Layout::top_down(Align::Center),
-                        |ui| self.show_transfer_rail(ui),
-                    );
-                    ui.add_space(SFTP_SECTION_GAP);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(pane_width, pane_height),
-                        Layout::top_down(Align::Min),
-                        |ui| self.show_pane(ui, PaneFocus::Local),
-                    );
+            // The narrow/split decision above and this allocation share the
+            // same width budget. Do not re-apply a minimum here: a child
+            // wider than the remaining budget pushes the remote pane beyond
+            // the window instead of allowing the responsive narrow layout.
+            let pane_width = (available_width
+                - SFTP_TRANSFER_RAIL_WIDTH
+                - SFTP_SECTION_GAP * 2.0
+                - SFTP_PANE_OUTER_INSET * 2.0)
+                / 2.0;
+            // `show_transfer_drawer` below renders a variable-height block
+            // only when transfers are queued/running, so its height isn't
+            // known until *after* it's drawn. Reserve space for it up
+            // front using its height from the previous frame (egui's
+            // standard two-pass-via-cache trick) so the fixed-height pane
+            // row doesn't claim the drawer's space and push it past the
+            // window into the status bar.
+            let drawer_height_id = ui.id().with("sftp_transfer_drawer_height");
+            let reserved_drawer_height =
+                ui.data(|data| data.get_temp::<f32>(drawer_height_id).unwrap_or(0.0));
+            // The available UI is already bounded above the status panel.
+            // Respect that bound rather than forcing a 260px minimum that
+            // can overlap the status bar in a short window. Reserve the same
+            // inset used on the left and right so the pane row sits in a
+            // uniform frame instead of butting up against the status bar.
+            let pane_height =
+                (ui.available_height() - reserved_drawer_height - SFTP_PANE_OUTER_INSET).max(0.0);
+            ui.horizontal_top(|ui| {
+                // Keep the intended, measured gutters explicit and disable
+                // egui's implicit spacing so it cannot silently expand the
+                // width budget.
+                ui.style_mut().spacing.item_spacing.x = 0.0;
+                ui.add_space(SFTP_PANE_OUTER_INSET);
+                match self.pane_order {
+                    SftpPaneOrderPreference::LocalLeft => {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(pane_width, pane_height),
+                            Layout::top_down(Align::Min),
+                            |ui| self.show_pane(ui, PaneFocus::Local),
+                        );
+                        ui.add_space(SFTP_SECTION_GAP);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(SFTP_TRANSFER_RAIL_WIDTH, pane_height),
+                            Layout::top_down(Align::Center),
+                            |ui| {
+                                self.show_transfer_rail(
+                                    ui,
+                                    pane_height,
+                                    TransferRailLayout::Vertical,
+                                )
+                            },
+                        );
+                        ui.add_space(SFTP_SECTION_GAP);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(pane_width, pane_height),
+                            Layout::top_down(Align::Min),
+                            |ui| self.show_pane(ui, PaneFocus::Remote),
+                        );
+                    }
+                    SftpPaneOrderPreference::RemoteLeft => {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(pane_width, pane_height),
+                            Layout::top_down(Align::Min),
+                            |ui| self.show_pane(ui, PaneFocus::Remote),
+                        );
+                        ui.add_space(SFTP_SECTION_GAP);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(SFTP_TRANSFER_RAIL_WIDTH, pane_height),
+                            Layout::top_down(Align::Center),
+                            |ui| {
+                                self.show_transfer_rail(
+                                    ui,
+                                    pane_height,
+                                    TransferRailLayout::Vertical,
+                                )
+                            },
+                        );
+                        ui.add_space(SFTP_SECTION_GAP);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(pane_width, pane_height),
+                            Layout::top_down(Align::Min),
+                            |ui| self.show_pane(ui, PaneFocus::Local),
+                        );
+                    }
                 }
             });
         }
         self.show_transfer_drawer(ui);
         self.show_collision_dialog(ui.ctx());
+        toolbar_command
+    }
+
+    fn show_toolbar(
+        &mut self,
+        ui: &mut Ui,
+        narrow: bool,
+        tab_id: crate::tabs::TabId,
+    ) -> Option<crate::tabs::AppCommand> {
+        // Relocate, don't duplicate. When the bottom status bar is on screen
+        // it already names this tab's endpoints and transport state, and the
+        // tab chip names the target too, so repeating "SFTP · <target>
+        // Connected" here put the same identity on screen three times and the
+        // state twice -- and cost the file lists a whole band of height the
+        // reference mockup doesn't spend (it has no heading above the panes,
+        // only the `.fsftp-statusline` footer). The heading returns when the
+        // bar is hidden (focus mode, or View ▸ Status bar off) so the state
+        // never simply disappears. This mirrors how the session `detail`
+        // relocates into the bar only while chips are compact.
+        let show_heading = !self.status_bar_visible;
+        if show_heading || narrow {
+            ui.add_space(SFTP_HEADING_GAP - SFTP_HEADING_INHERITED_TOP_GAP);
+            ui.horizontal(|ui| {
+                ui.add_space(SFTP_TOOLBAR_LEFT_PADDING);
+                if show_heading {
+                    self.show_heading(ui);
+                }
+                if narrow {
+                    if show_heading {
+                        ui.add_space(16.0);
+                    }
+                    ui.selectable_value(&mut self.narrow_focus, PaneFocus::Local, "Local");
+                    ui.selectable_value(&mut self.narrow_focus, PaneFocus::Remote, "Remote");
+                }
+            });
+            // A `selectable_value` is its own visual box, so it needs no
+            // descent compensation; `ui.heading` does.
+            ui.add_space(if show_heading {
+                SFTP_HEADING_GAP - SFTP_HEADING_TEXT_DESCENT
+            } else {
+                SFTP_HEADING_GAP
+            });
+        } else {
+            // No heading row: the tab body's own leading gap already supplies
+            // most of the pane row's top inset.
+            ui.add_space((SFTP_PANE_OUTER_INSET - SFTP_TAB_BODY_LEADING_GAP).max(0.0));
+        }
+        self.show_connection_status_banner(ui, tab_id)
+    }
+
+    fn show_heading(&self, ui: &mut Ui) {
+        ui.heading(format!("SFTP · {}", self.label));
+        ui.label(
+            RichText::new(match &self.connection_state {
+                SftpConnectionState::Connecting => "Connecting…",
+                SftpConnectionState::AwaitingHostKey => "Trust required",
+                SftpConnectionState::Ready => "Connected",
+                SftpConnectionState::Failed { .. } => "Connection failed",
+                SftpConnectionState::Disconnected { .. } => "Disconnected",
+            })
+            .color(match self.connection_state {
+                SftpConnectionState::Ready => theme::ACCENT_PRIMARY,
+                SftpConnectionState::Connecting => theme::TEXT_SECONDARY,
+                SftpConnectionState::AwaitingHostKey => theme::STATUS_ERROR,
+                SftpConnectionState::Failed { .. } | SftpConnectionState::Disconnected { .. } => {
+                    theme::STATUS_ERROR
+                }
+            }),
+        );
+    }
+
+    /// Renders the "Connection failed"/"Disconnected" banner along with its
+    /// recovery actions:
+    /// - **Retry** re-attempts the connection with the same destination and
+    ///   credentials -- useful for a transient failure (network blip,
+    ///   momentarily unreachable host) once the underlying problem has
+    ///   cleared. Works for both a totally-failed initial connect and a
+    ///   later drop, since `run_worker` keeps listening for
+    ///   `WorkerCommand::Reconnect` even after the first connect attempt
+    ///   fails.
+    /// - **Edit connection…** (only offered for an initial connect failure,
+    ///   since that's the only case where the destination itself might be
+    ///   wrong, e.g. a typo'd host/port) sends the tab back to the
+    ///   pre-connect authentication screen with the destination fields
+    ///   editable, instead of only ever being able to retry the exact same
+    ///   (possibly wrong) destination.
+    fn show_connection_status_banner(
+        &mut self,
+        ui: &mut Ui,
+        tab_id: crate::tabs::TabId,
+    ) -> Option<crate::tabs::AppCommand> {
+        let action = show_connection_status_banner_ui(ui, &self.connection_state);
+        if action.retry {
+            self.connection_state = SftpConnectionState::Connecting;
+            self.remote_pane.loading = true;
+            let _ = self.command_sender.send(WorkerCommand::Reconnect);
+        }
+        if action.edit_connection {
+            return Some(crate::tabs::AppCommand::RetrySftpFileManagerConnection {
+                tab_id,
+                target: self.launch_target.clone(),
+            });
+        }
         None
     }
 
-    fn show_toolbar(&mut self, ui: &mut Ui, narrow: bool) {
-        ui.horizontal(|ui| {
-            ui.heading(format!("SFTP · {}", self.label));
-            ui.label(
-                RichText::new(match &self.connection_state {
-                    SftpConnectionState::Connecting => "Connecting…",
-                    SftpConnectionState::AwaitingHostKey => "Trust required",
-                    SftpConnectionState::Ready => "Connected",
-                    SftpConnectionState::Failed { .. } => "Connection failed",
-                    SftpConnectionState::Disconnected { .. } => "Disconnected",
-                })
-                .color(match self.connection_state {
-                    SftpConnectionState::Ready => theme::ACCENT_PRIMARY,
-                    SftpConnectionState::Connecting => theme::TEXT_SECONDARY,
-                    SftpConnectionState::AwaitingHostKey => theme::STATUS_ERROR,
-                    SftpConnectionState::Failed { .. }
-                    | SftpConnectionState::Disconnected { .. } => theme::STATUS_ERROR,
-                }),
-            );
-            if narrow {
-                ui.add_space(16.0);
-                ui.selectable_value(&mut self.narrow_focus, PaneFocus::Local, "Local");
-                ui.selectable_value(&mut self.narrow_focus, PaneFocus::Remote, "Remote");
-            }
-        });
-        show_connection_status_banner(ui, &self.connection_state);
-    }
-
     fn show_narrow(&mut self, ui: &mut Ui) {
-        self.show_pane(ui, self.narrow_focus);
-        ui.add_space(SFTP_SECTION_GAP);
-        self.show_transfer_rail(ui);
+        // The pane used to be handed `ui.available_height()` -- i.e. all of
+        // it -- which left the transfer rail below it nothing to occupy, so
+        // the rail rendered past the bottom of the window. Budget the rail
+        // first and give the pane only what is left.
+        //
+        // `min_inner_size` lets the window get shorter than the pane's own
+        // fixed chrome plus the rail, and a pane cannot shrink below that, so
+        // the leftovers scroll instead of spilling over the window edge.
+        let available_height = ui.available_height();
+        let width = ui.available_width();
+        let rail_height = SFTP_NARROW_RAIL_HEIGHT;
+        let pane_height =
+            (available_height - rail_height - SFTP_SECTION_GAP).max(SFTP_PANE_MIN_HEIGHT);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height(available_height)
+            .show(ui, |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, pane_height),
+                    Layout::top_down(Align::Min),
+                    |ui| self.show_pane(ui, self.narrow_focus),
+                );
+                ui.add_space(SFTP_SECTION_GAP);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(width, rail_height),
+                    Layout::top_down(Align::Min),
+                    |ui| {
+                        self.show_transfer_rail(ui, rail_height, TransferRailLayout::Horizontal);
+                    },
+                );
+            });
     }
 
     fn show_pane(&mut self, ui: &mut Ui, focus: PaneFocus) {
@@ -1278,17 +1785,42 @@ impl SftpFileManagerTab {
             self.connection_state,
             SftpConnectionState::Disconnected { .. }
         );
+        // `allocate_ui_with_layout` gives this pane an exact column in split
+        // mode. Everything below is sized from that column *minus this frame's
+        // own border*, because egui folds `Frame::stroke.width` into the
+        // frame's margin: children sized to the outer width are 2px too wide
+        // and cascade into the transfer rail and the neighbouring pane.
+        let outer_width = ui.available_width();
+        let outer_height = ui.available_height();
+        let pane_width = (outer_width - SFTP_HAIRLINE * 2.0).max(0.0);
+        let pane_height = (outer_height - SFTP_HAIRLINE * 2.0).max(0.0);
+        // Header, toolbar, filter, and footer are fixed-height pane chrome.
+        // The directory listing is the only flexible region, and must never
+        // grow past this budget into the application status bar. `list_height`
+        // is the ScrollArea's viewport specifically, so it also excludes the
+        // table's own column header and the divider beneath it.
+        let table_height =
+            (pane_height - SFTP_PANE_CHROME_HEIGHT - SFTP_PANE_FOOTER_HEIGHT).max(0.0);
+        let available_list_height =
+            (table_height - SFTP_TABLE_HEADER_HEIGHT - SFTP_HAIRLINE).max(0.0);
+        // Snap the viewport down to a whole number of rows. Otherwise the
+        // bottom of the list lands mid-row and the footer's border slices the
+        // last entry's text in half, which reads as the listing spilling into
+        // the chrome below it. The rounded-off remainder stays as pane
+        // background between the list and the footer.
+        let list_height =
+            (available_list_height / SFTP_TABLE_ROW_HEIGHT).floor() * SFTP_TABLE_ROW_HEIGHT;
+        let list_bottom_slack = available_list_height - list_height;
         let frame = egui::Frame::new()
             .fill(theme::SURFACE_WINDOW)
-            .stroke(egui::Stroke::new(
-                1.0,
-                if pane_focused {
-                    theme::BORDER_ACTIVE
-                } else {
-                    theme::BORDER_SUBTLE
-                },
-            ))
-            .corner_radius(8.0)
+            // The mockup uses the same subtle border for every pane
+            // regardless of focus (`.fsftp-pane { border-left: 1px solid
+            // var(--fsftp-border); }`); highlighting the focused pane with
+            // an accent border made LOCAL/REMOTE look inconsistently
+            // outlined depending on which pane last had focus, so both
+            // panes now always use the subtle border.
+            .stroke(egui::Stroke::new(SFTP_HAIRLINE, theme::BORDER_SUBTLE))
+            .corner_radius(egui::CornerRadius::same(SFTP_PANE_CORNER_RADIUS))
             .inner_margin(egui::Margin::same(SFTP_PANE_INNER_PADDING));
         frame.show(ui, |ui| {
             ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 0.0);
@@ -1302,32 +1834,46 @@ impl SftpFileManagerTab {
             ui.vertical(|ui| {
                 egui::Frame::new()
                     .fill(theme::SURFACE_TERMINAL)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .corner_radius(8.0)
-                    .inner_margin(egui::Margin::symmetric(11, 0))
+                    .stroke(egui::Stroke::NONE)
+                    // Repeat the pane's top corners; see
+                    // `SFTP_PANE_CORNER_RADIUS`.
+                    .corner_radius(egui::CornerRadius {
+                        nw: SFTP_PANE_CORNER_RADIUS,
+                        ne: SFTP_PANE_CORNER_RADIUS,
+                        sw: 0,
+                        se: 0,
+                    })
+                    .inner_margin(egui::Margin::ZERO)
                     .show(ui, |ui| {
-                        ui.set_min_height(SFTP_PANE_HEADER_HEIGHT);
-                        ui.set_max_height(SFTP_PANE_HEADER_HEIGHT);
-                        ui.horizontal(|ui| {
+                        pane_chrome_row(ui, pane_width, SFTP_PANE_HEADER_HEIGHT, |ui| {
+                            ui.add_space(SFTP_PANE_HEAD_PADDING);
+                            let (icon_rect, _) = ui
+                                .allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
                             paint_sftp_glyph(
                                 ui.painter(),
                                 match focus {
                                     PaneFocus::Local => SftpGlyph::LocalPane,
                                     PaneFocus::Remote => SftpGlyph::RemotePane,
                                 },
-                                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(16.0, 16.0)),
+                                icon_rect,
                                 if focus == PaneFocus::Remote {
                                     theme::ACCENT_PRIMARY
                                 } else {
                                     theme::TEXT_SECONDARY
                                 },
                             );
-                            ui.add_space(20.0);
+                            ui.add_space(7.0);
                             ui.label(
                                 RichText::new(focus.label().to_ascii_uppercase())
                                     .font(font_for_text_role(SftpTextRole::PaneLabel))
                                     .strong(),
                             );
+                            // The pane's `item_spacing` is zeroed so the fixed
+                            // row heights stay predictable, so the gap that the
+                            // mockup shows around the "LOCAL · This computer"
+                            // separator has to be added explicitly. Without it
+                            // the label ran together as "LOCAL· This computer".
+                            ui.add_space(7.0);
                             ui.label(
                                 RichText::new(match focus {
                                     PaneFocus::Local => "· This computer".to_owned(),
@@ -1336,55 +1882,54 @@ impl SftpFileManagerTab {
                                 .font(font_for_text_role(SftpTextRole::PaneMeta))
                                 .color(theme::TEXT_SECONDARY),
                             );
-                            ui.add_space((ui.available_width() - 140.0).max(0.0));
-                            if let Some((state, color)) = remote_state {
-                                let dot_rect = egui::Rect::from_center_size(
-                                    egui::pos2(
-                                        ui.cursor().min.x + SFTP_STATUS_DOT_SIZE,
-                                        ui.max_rect().center().y,
-                                    ),
-                                    egui::vec2(SFTP_STATUS_DOT_SIZE, SFTP_STATUS_DOT_SIZE),
-                                );
-                                ui.painter().circle_filled(
-                                    dot_rect.center(),
-                                    SFTP_STATUS_DOT_SIZE / 2.0,
-                                    color,
-                                );
-                                ui.add_space(14.0);
-                                ui.label(
-                                    RichText::new(state)
-                                        .font(font_for_text_role(SftpTextRole::PaneMeta))
-                                        .color(theme::TEXT_SECONDARY),
-                                );
-                                if reconnect_visible {
-                                    ui.add_space(8.0);
-                                    if ui.small_button("Reconnect").clicked() {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                // Mockup `.fsftp-pane-head { padding: 0 11px }`
+                                // -- the right inset has to be added by hand
+                                // because this reversed layout starts at the
+                                // row's right edge.
+                                ui.add_space(SFTP_PANE_HEAD_PADDING);
+                                if let Some((state, color)) = remote_state {
+                                    if reconnect_visible && ui.small_button("Reconnect").clicked() {
                                         request_reconnect = true;
                                     }
+                                    ui.label(
+                                        RichText::new(state)
+                                            .font(font_for_text_role(SftpTextRole::PaneMeta))
+                                            .color(theme::TEXT_SECONDARY),
+                                    );
+                                    let (dot_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(SFTP_STATUS_DOT_SIZE, SFTP_STATUS_DOT_SIZE),
+                                        Sense::hover(),
+                                    );
+                                    ui.painter().circle_filled(
+                                        dot_rect.center(),
+                                        SFTP_STATUS_DOT_SIZE / 2.0,
+                                        color,
+                                    );
+                                } else {
+                                    ui.label(
+                                        RichText::new(if pane.is_writable() {
+                                            "Writable"
+                                        } else {
+                                            "Read only"
+                                        })
+                                        .font(font_for_text_role(SftpTextRole::PaneMeta))
+                                        .color(theme::TEXT_SECONDARY),
+                                    );
                                 }
-                            } else {
-                                ui.label(
-                                    RichText::new(if pane.is_writable() {
-                                        "Writable"
-                                    } else {
-                                        "Read only"
-                                    })
-                                    .font(font_for_text_role(SftpTextRole::PaneMeta))
-                                    .color(theme::TEXT_SECONDARY),
-                                );
-                            }
+                            });
                         });
                     });
+                pane_divider(ui, pane_width);
                 ui.add_enabled_ui(interactions_enabled, |ui| {
                     egui::Frame::new()
                         .fill(theme::SURFACE_WINDOW)
-                        .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                        .corner_radius(5.0)
-                        .inner_margin(egui::Margin::symmetric(7, 5))
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(0.0)
+                        .inner_margin(egui::Margin::ZERO)
                         .show(ui, |ui| {
-                            ui.set_min_height(SFTP_PANE_TOOLBAR_HEIGHT);
-                            ui.set_max_height(SFTP_PANE_TOOLBAR_HEIGHT);
-                            ui.horizontal(|ui| {
+                            pane_chrome_row(ui, pane_width, SFTP_PANE_TOOLBAR_HEIGHT, |ui| {
+                                ui.add_space(SFTP_TOOLBAR_PADDING);
                                 if toolbar_icon_button(
                                     ui,
                                     SftpGlyph::Back,
@@ -1421,7 +1966,7 @@ impl SftpFileManagerTab {
                                 {
                                     request_refresh = true;
                                 }
-                                ui.add_space(2.0);
+                                ui.add_space(SFTP_TOOLBAR_NAV_GAP);
                                 if pane.editing_path {
                                     let response = ui.add(
                                         TextEdit::singleline(&mut pane.path_text)
@@ -1452,28 +1997,54 @@ impl SftpFileManagerTab {
                                     // breadcrumb navigation. Registering it first lets the
                                     // buttons (added afterwards) win the hit test, while empty
                                     // space in the bar still supports double-click-to-edit.
+                                    // The gap between the nav buttons and the
+                                    // breadcrumb has to be subtracted too, or
+                                    // the bar overshoots the toolbar's right
+                                    // inset and stops lining up with the filter
+                                    // field directly beneath it.
+                                    let breadcrumb_width = (pane_width
+                                        - SFTP_TOOL_BUTTON_SIZE * 4.0
+                                        - SFTP_TOOLBAR_NAV_GAP
+                                        - SFTP_TOOLBAR_PADDING * 2.0)
+                                        .max(0.0);
                                     let bar_rect = egui::Rect::from_min_size(
                                         ui.cursor().min,
-                                        egui::vec2(ui.available_width(), SFTP_BREADCRUMB_HEIGHT),
+                                        egui::vec2(breadcrumb_width, SFTP_BREADCRUMB_HEIGHT),
                                     );
-                                    let bar_bg_id =
-                                        ui.make_persistent_id((focus, "breadcrumb-bg"));
+                                    let bar_bg_id = ui.make_persistent_id((focus, "breadcrumb-bg"));
                                     let bar_bg_response =
                                         ui.interact(bar_rect, bar_bg_id, Sense::click());
                                     let bar = egui::Frame::new()
                                         .fill(theme::SURFACE_TAB_INACTIVE)
-                                        .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                        .stroke(egui::Stroke::new(
+                                            SFTP_HAIRLINE,
+                                            theme::BORDER_SUBTLE,
+                                        ))
                                         .corner_radius(5.0)
                                         .inner_margin(egui::Margin::symmetric(7, 0))
                                         .show(ui, |ui| {
+                                            // 7px inner margin per side plus
+                                            // this frame's own border, both of
+                                            // which egui counts as margin.
+                                            let content_width =
+                                                (breadcrumb_width - 14.0 - SFTP_HAIRLINE * 2.0)
+                                                    .max(0.0);
+                                            ui.set_min_width(content_width);
+                                            ui.set_max_width(content_width);
                                             ui.set_min_height(SFTP_BREADCRUMB_HEIGHT);
                                             ui.horizontal_wrapped(|ui| {
+                                                let mut previous_label_was_root_slash = false;
                                                 for (index, segment) in
                                                     breadcrumb_segments(&pane.current_path)
                                                         .into_iter()
                                                         .enumerate()
                                                 {
-                                                    if index > 0 {
+                                                    // The root segment's own label is already
+                                                    // "/" (see `breadcrumb_segments`), so adding
+                                                    // another "/" separator right after it would
+                                                    // render as "//" before the next segment
+                                                    // (e.g. "//config" instead of "/config").
+                                                    if index > 0 && !previous_label_was_root_slash {
                                                         ui.label(
                                                             RichText::new("/")
                                                                 .font(font_for_text_role(
@@ -1482,6 +2053,8 @@ impl SftpFileManagerTab {
                                                                 .color(theme::TEXT_MUTED),
                                                         );
                                                     }
+                                                    previous_label_was_root_slash =
+                                                        segment.label == "/";
                                                     let text = RichText::new(segment.label.clone())
                                                         .font(font_for_text_role(
                                                             SftpTextRole::Breadcrumb,
@@ -1526,16 +2099,28 @@ impl SftpFileManagerTab {
                                 }
                             });
                         });
+                    pane_divider(ui, pane_width);
                     egui::Frame::new()
                         .fill(theme::SURFACE_WINDOW)
-                        .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                        .corner_radius(5.0)
-                        .inner_margin(egui::Margin::symmetric(8, 5))
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(0.0)
+                        .inner_margin(egui::Margin::ZERO)
                         .show(ui, |ui| {
-                            ui.set_min_height(SFTP_PANE_FILTER_ROW_HEIGHT);
-                            ui.set_max_height(SFTP_PANE_FILTER_ROW_HEIGHT);
                             let mut filter_text = pane.filter.clone();
-                            let filter_response = show_filter_field(ui, &mut filter_text, focus);
+                            let filter_response = pane_chrome_row(
+                                ui,
+                                pane_width,
+                                SFTP_PANE_FILTER_ROW_HEIGHT,
+                                |ui| {
+                                    ui.add_space(SFTP_FILTER_ROW_PADDING);
+                                    show_filter_field(
+                                        ui,
+                                        &mut filter_text,
+                                        focus,
+                                        (pane_width - SFTP_FILTER_ROW_PADDING * 2.0).max(0.0),
+                                    )
+                                },
+                            );
                             if pane.filter_focus_requested {
                                 filter_response.request_focus();
                                 pane.filter_focus_requested = false;
@@ -1577,10 +2162,18 @@ impl SftpFileManagerTab {
                 }
                 egui::Frame::new()
                     .fill(theme::SURFACE_WINDOW)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .corner_radius(5.0)
+                    // No border here. The pane's own frame already outlines
+                    // this region, so a second stroke painted a doubled
+                    // hairline down the pane's left/right edges *and* stole
+                    // 2px from the table's width budget (egui folds
+                    // `stroke.width` into `Frame::total_margin`).
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(0.0)
+                    .inner_margin(egui::Margin::ZERO)
                     .show(ui, |ui| {
-                        let columns = sftp_table_columns(ui.available_width());
+                        ui.set_min_width(pane_width);
+                        ui.set_max_width(pane_width);
+                        let columns = sftp_table_columns(pane_width);
                         ui.horizontal(|ui| {
                             for (index, (title, column, align)) in [
                                 ("Name", SftpSortColumn::Name, CellAlign::Left),
@@ -1604,9 +2197,15 @@ impl SftpFileManagerTab {
                                 }
                             }
                         });
-                        ui.separator();
+                        pane_divider(ui, pane_width);
                         ScrollArea::vertical()
                             .id_salt(("sftp-pane", focus))
+                            .max_height(list_height)
+                            // Claim the whole listing viewport even when the
+                            // directory is short, so the footer stays pinned
+                            // to the pane's bottom edge instead of floating
+                            // up under a half-empty table.
+                            .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 if pane.loading {
                                     ui.add_space(8.0);
@@ -1655,16 +2254,16 @@ impl SftpFileManagerTab {
                                         } else {
                                             Color32::TRANSPARENT
                                         })
-                                        .stroke(egui::Stroke::new(
-                                            1.0,
-                                            if selected && pane_focused {
-                                                theme::ACCENT_PRIMARY
-                                            } else {
-                                                Color32::TRANSPARENT
-                                            },
-                                        ))
-                                        .corner_radius(4.0)
-                                        .inner_margin(egui::Margin::symmetric(7, 0))
+                                        // The selection outline is painted
+                                        // *inside* the row rect below rather
+                                        // than set as a `Frame` stroke: a
+                                        // stroke (even a transparent one)
+                                        // widens every row by 2px, which made
+                                        // the listing wider than its pane and
+                                        // forced a horizontal scrollbar.
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(0.0)
+                                        .inner_margin(egui::Margin::symmetric(0, 0))
                                         .show(ui, |ui| {
                                             ui.set_min_height(SFTP_TABLE_ROW_HEIGHT);
                                             ui.set_max_height(SFTP_TABLE_ROW_HEIGHT);
@@ -1679,26 +2278,42 @@ impl SftpFileManagerTab {
                                                         // their headers instead of collapsing
                                                         // against the (usually much shorter) name.
                                                         ui.set_min_width(columns[0]);
+                                                        ui.set_max_width(
+                                                            (columns[0] - SFTP_TABLE_CELL_PADDING)
+                                                                .max(0.0),
+                                                        );
+                                                        ui.add_space(SFTP_TABLE_CELL_PADDING);
+                                                        // See `show_filter_field`: paint the
+                                                        // icon through an allocated rect (not
+                                                        // directly at `ui.cursor().min`) so this
+                                                        // row's `Align::Center` layout actually
+                                                        // vertically centers it against the name
+                                                        // label beside it.
+                                                        let (icon_rect, _) = ui
+                                                            .allocate_exact_size(
+                                                                egui::vec2(15.0, 15.0),
+                                                                egui::Sense::hover(),
+                                                            );
                                                         paint_sftp_glyph(
                                                             ui.painter(),
                                                             item_glyph(&item),
-                                                            egui::Rect::from_min_size(
-                                                                ui.cursor().min,
-                                                                egui::vec2(15.0, 15.0),
-                                                            ),
+                                                            icon_rect,
                                                             if selected {
                                                                 theme::TEXT_PRIMARY
                                                             } else {
                                                                 theme::TEXT_SECONDARY
                                                             },
                                                         );
-                                                        ui.add_space(20.0);
-                                                        ui.label(
-                                                            RichText::new(&item.name)
-                                                                .font(font_for_text_role(
-                                                                    SftpTextRole::TableBody,
-                                                                ))
-                                                                .color(theme::TEXT_PRIMARY),
+                                                        ui.add_space(5.0);
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                RichText::new(&item.name)
+                                                                    .font(font_for_text_role(
+                                                                        SftpTextRole::TableBody,
+                                                                    ))
+                                                                    .color(theme::TEXT_PRIMARY),
+                                                            )
+                                                            .truncate(),
                                                         );
                                                     },
                                                 );
@@ -1749,6 +2364,26 @@ impl SftpFileManagerTab {
                                             });
                                         });
                                     let response = row.response.interact(Sense::click());
+                                    // Mockup `.fsftp-table td { border-bottom:
+                                    // 1px solid rgba(53,65,78,.46) }` -- the
+                                    // row rules the mockup uses to keep long
+                                    // listings scannable.
+                                    ui.painter().hline(
+                                        response.rect.x_range(),
+                                        response.rect.bottom() - 0.5,
+                                        egui::Stroke::new(
+                                            SFTP_HAIRLINE,
+                                            theme::BORDER_SUBTLE.gamma_multiply(0.46),
+                                        ),
+                                    );
+                                    if selected && pane_focused {
+                                        ui.painter().rect_stroke(
+                                            response.rect,
+                                            0.0,
+                                            egui::Stroke::new(SFTP_HAIRLINE, theme::ACCENT_PRIMARY),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
                                     response.widget_info(|| {
                                         WidgetInfo::labeled(
                                             WidgetType::SelectableLabel,
@@ -1798,33 +2433,64 @@ impl SftpFileManagerTab {
                                     }
                                 }
                             });
+                        // ScrollArea only claims the height its content
+                        // needs. Reserve its remaining viewport explicitly
+                        // so the footer is anchored to the pane bottom,
+                        // instead of floating beneath a short listing.
+                        // ScrollArea now claims its full viewport via
+                        // `auto_shrink([false, false])`, so no residual space
+                        // needs reserving here.
                     });
-                egui::Frame::new()
-                    .fill(theme::SURFACE_TERMINAL)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .corner_radius(5.0)
-                    .inner_margin(egui::Margin::symmetric(9, 0))
+                ui.add_space(list_bottom_slack);
+                // A full bordered "chip" here (as previously drawn with
+                // `.stroke(...)` on all sides plus rounded corners) reads as
+                // an unrelated boxed-in outline sitting awkwardly below the
+                // file list. The mockup instead uses a flat `border-top`
+                // divider, so match that: no corner radius/side borders, and
+                // a single hairline painted along the top edge only.
+                let footer_response = egui::Frame::new()
+                    .fill(theme::SURFACE_WINDOW)
+                    .stroke(egui::Stroke::NONE)
+                    // Repeat the pane's bottom corners; see
+                    // `SFTP_PANE_CORNER_RADIUS`.
+                    .corner_radius(egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: SFTP_PANE_CORNER_RADIUS,
+                        se: SFTP_PANE_CORNER_RADIUS,
+                    })
+                    .inner_margin(egui::Margin::ZERO)
                     .show(ui, |ui| {
-                        ui.set_min_height(SFTP_PANE_FOOTER_HEIGHT);
-                        ui.set_max_height(SFTP_PANE_FOOTER_HEIGHT);
-                        ui.horizontal(|ui| {
+                        pane_chrome_row(ui, pane_width, SFTP_PANE_FOOTER_HEIGHT, |ui| {
+                            ui.add_space(SFTP_PANE_FOOTER_PADDING);
                             ui.label(
                                 RichText::new(format!("{footer_items} items"))
                                     .font(font_for_text_role(SftpTextRole::Footer))
                                     .color(theme::TEXT_MUTED),
                             );
+                            // Mockup `.fsftp-pane-foot { gap: 8px }`. The
+                            // pane zeroes `item_spacing`, so without these the
+                            // footer ran together as "35 items\u{b7}0 selected".
+                            ui.add_space(SFTP_PANE_FOOTER_GAP);
                             ui.label(
                                 RichText::new("·")
                                     .font(font_for_text_role(SftpTextRole::Footer))
                                     .color(theme::TEXT_MUTED),
                             );
+                            ui.add_space(SFTP_PANE_FOOTER_GAP);
                             ui.label(
                                 RichText::new(footer_selection)
                                     .font(font_for_text_role(SftpTextRole::Footer))
                                     .color(theme::TEXT_MUTED),
                             );
                         });
-                    });
+                    })
+                    .response;
+                ui.painter().hline(
+                    footer_response.rect.x_range(),
+                    footer_response.rect.top(),
+                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                );
             });
         });
         if focused_this_pane {
@@ -1858,7 +2524,17 @@ impl SftpFileManagerTab {
         }
     }
 
-    fn show_transfer_rail(&mut self, ui: &mut Ui) {
+    fn show_transfer_rail(&mut self, ui: &mut Ui, rail_height: f32, layout: TransferRailLayout) {
+        // In split mode this is rendered inside an explicitly allocated
+        // `SFTP_TRANSFER_RAIL_WIDTH` column. `vertical_centered` can
+        // otherwise inherit the parent window's unconstrained width and
+        // cause its Frame to grow, pushing the remote pane off-screen.
+        let rail_width = match layout {
+            TransferRailLayout::Vertical => SFTP_TRANSFER_RAIL_WIDTH,
+            TransferRailLayout::Horizontal => ui.available_width(),
+        };
+        ui.set_min_width(rail_width);
+        ui.set_max_width(rail_width);
         let upload = transfer_action(
             PaneFocus::Local,
             &self.local_pane,
@@ -1871,14 +2547,35 @@ impl SftpFileManagerTab {
             &self.local_pane,
             &self.connection_state,
         );
+        // Mockup `.fsftp-transferrail` is a *full-height* column with
+        // `justify-content: center`, so the two buttons sit as a centred
+        // group. The previous fixed 24px top pad left visibly more space
+        // above the buttons than below them.
+        let rail_padding = SFTP_TRANSFER_RAIL_PADDING;
+        let inner_width = (rail_width - rail_padding * 2.0 - SFTP_HAIRLINE * 2.0).max(0.0);
+        let content_height = match layout {
+            TransferRailLayout::Vertical => {
+                SFTP_TRANSFER_BUTTON_HEIGHT * 2.0 + SFTP_TRANSFER_RAIL_BUTTON_GAP
+            }
+            TransferRailLayout::Horizontal => SFTP_TRANSFER_BUTTON_HEIGHT,
+        };
+        let content_width = SFTP_TRANSFER_BUTTON_WIDTH * 2.0 + SFTP_TRANSFER_RAIL_BUTTON_GAP;
+        let inner_height =
+            (rail_height - rail_padding * 2.0 - SFTP_HAIRLINE * 2.0).max(content_height);
         egui::Frame::new()
             .fill(theme::SURFACE_TERMINAL)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-            .corner_radius(7.0)
-            .inner_margin(egui::Margin::same(8))
+            .stroke(egui::Stroke::new(SFTP_HAIRLINE, theme::BORDER_SUBTLE))
+            .corner_radius(egui::CornerRadius::same(SFTP_PANE_CORNER_RADIUS))
+            .inner_margin(egui::Margin::same(rail_padding as i8))
             .show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(24.0);
+                // The 8px inner margin per side *plus* this frame's own
+                // border, which egui counts as margin too. Without the
+                // border term the rail rendered 78px wide inside its 76px
+                // column and nudged both panes outward.
+                ui.set_min_width(inner_width);
+                ui.set_max_width(inner_width);
+                ui.set_min_height(inner_height);
+                let mut add_buttons = |ui: &mut Ui, gap: f32| {
                     let upload_button = transfer_button(
                         ui,
                         SftpGlyph::TransferToRemote,
@@ -1892,7 +2589,7 @@ impl SftpFileManagerTab {
                     if upload_button.clicked() {
                         self.queue_transfer(PaneFocus::Local);
                     }
-                    ui.add_space(12.0);
+                    ui.add_space(gap);
                     let download_button = transfer_button(
                         ui,
                         SftpGlyph::TransferToLocal,
@@ -1906,14 +2603,34 @@ impl SftpFileManagerTab {
                     if download_button.clicked() {
                         self.queue_transfer(PaneFocus::Remote);
                     }
-                });
+                };
+                match layout {
+                    TransferRailLayout::Vertical => {
+                        ui.add_space(((inner_height - content_height) / 2.0).max(0.0));
+                        ui.vertical_centered(|ui| {
+                            add_buttons(ui, SFTP_TRANSFER_RAIL_BUTTON_GAP);
+                        });
+                    }
+                    // Stacked (narrow) mode puts the rail under the pane as a
+                    // short bar, so the buttons run across it instead of down
+                    // it and are centred horizontally as a group.
+                    TransferRailLayout::Horizontal => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(((inner_width - content_width) / 2.0).max(0.0));
+                            add_buttons(ui, SFTP_TRANSFER_RAIL_BUTTON_GAP);
+                        });
+                    }
+                }
             });
     }
 
     fn show_transfer_drawer(&mut self, ui: &mut Ui) {
+        let drawer_height_id = ui.id().with("sftp_transfer_drawer_height");
         if !self.transfer_drawer.has_work() {
+            ui.data_mut(|data| data.remove::<f32>(drawer_height_id));
             return;
         }
+        let top = ui.cursor().top();
         let summary = self
             .transfer_drawer
             .summary()
@@ -2048,6 +2765,8 @@ impl SftpFileManagerTab {
                     });
                 }
             });
+        let height = ui.cursor().top() - top;
+        ui.data_mut(|data| data.insert_temp(drawer_height_id, height));
     }
 
     fn show_collision_dialog(&mut self, ctx: &egui::Context) {
@@ -2366,6 +3085,7 @@ impl SftpFileManagerTab {
                 remote_metadata,
             } => {
                 self.connection_state = SftpConnectionState::Ready;
+                self.has_connected_once = true;
                 self.pending_host_key = None;
                 self.remote_pane
                     .set_snapshot(remote_directory, remote_metadata);
@@ -2608,6 +3328,24 @@ enum WorkerEvent {
     Transfer(SftpTransferEvent),
 }
 
+/// Waits for the next `WorkerCommand`, ignoring anything except
+/// `Reconnect` (nothing else is meaningful before the very first connect
+/// attempt has ever succeeded -- there's no session yet to load a
+/// directory into or enqueue a transfer on). Returns `true` once a retry is
+/// requested, or `false` if the command channel closed (the tab was
+/// dropped/closed), so the caller can give up instead of waiting forever.
+async fn wait_for_initial_connect_retry(
+    command_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<WorkerCommand>,
+) -> bool {
+    loop {
+        match command_receiver.recv().await {
+            Some(WorkerCommand::Reconnect) => return true,
+            Some(_) => continue,
+            None => return false,
+        }
+    }
+}
+
 async fn run_worker(
     target: SftpFileManagerLaunchTarget,
     authentication: SftpFileManagerAuthentication,
@@ -2617,50 +3355,71 @@ async fn run_worker(
     repaint: egui::Context,
 ) {
     let mut session_known_host_fingerprint = known_host_fingerprint;
-    let (mut browsing, accepted_fingerprint) = match connect_remote_session(
-        &target,
-        &authentication,
-        session_known_host_fingerprint.as_deref(),
-        &event_sender,
-        &repaint,
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = event_sender.send(WorkerEvent::ConnectionFailed {
-                summary: "Could not connect the SFTP file manager.".to_owned(),
-                details: error,
-            });
-            repaint.request_repaint();
-            return;
-        }
+    // Retry the initial connect (both the browsing session and the
+    // dedicated transfer session) in place, instead of giving up and
+    // letting the whole worker task -- and with it the command channel --
+    // end the moment the first attempt fails. This is what lets a
+    // `WorkerCommand::Reconnect` (sent when the user clicks "Retry" on the
+    // connection-failed banner) recover from a failed first attempt (a
+    // momentarily unreachable host, a typo the user just fixed via "Edit
+    // connection", etc.) without needing to spin up a brand new worker/tab.
+    let (mut browsing, transfer_session) = loop {
+        let browsing = match connect_remote_session(
+            &target,
+            &authentication,
+            session_known_host_fingerprint.as_deref(),
+            &event_sender,
+            &repaint,
+        )
+        .await
+        {
+            Ok((session, accepted_fingerprint)) => {
+                if let Some(fingerprint) = accepted_fingerprint {
+                    session_known_host_fingerprint = Some(fingerprint);
+                }
+                session
+            }
+            Err(error) => {
+                let _ = event_sender.send(WorkerEvent::ConnectionFailed {
+                    summary: "Could not connect the SFTP file manager.".to_owned(),
+                    details: error,
+                });
+                repaint.request_repaint();
+                if !wait_for_initial_connect_retry(&mut command_receiver).await {
+                    return;
+                }
+                continue;
+            }
+        };
+        let transfer_session = match connect_remote_session(
+            &target,
+            &authentication,
+            session_known_host_fingerprint.as_deref(),
+            &event_sender,
+            &repaint,
+        )
+        .await
+        {
+            Ok((session, accepted_fingerprint)) => {
+                if let Some(fingerprint) = accepted_fingerprint {
+                    session_known_host_fingerprint = Some(fingerprint);
+                }
+                session
+            }
+            Err(error) => {
+                let _ = event_sender.send(WorkerEvent::ConnectionFailed {
+                    summary: "Could not start the SFTP transfer worker.".to_owned(),
+                    details: error,
+                });
+                repaint.request_repaint();
+                if !wait_for_initial_connect_retry(&mut command_receiver).await {
+                    return;
+                }
+                continue;
+            }
+        };
+        break (browsing, transfer_session);
     };
-    if let Some(fingerprint) = accepted_fingerprint {
-        session_known_host_fingerprint = Some(fingerprint);
-    }
-    let (transfer_session, accepted_fingerprint) = match connect_remote_session(
-        &target,
-        &authentication,
-        session_known_host_fingerprint.as_deref(),
-        &event_sender,
-        &repaint,
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = event_sender.send(WorkerEvent::ConnectionFailed {
-                summary: "Could not start the SFTP transfer worker.".to_owned(),
-                details: error,
-            });
-            repaint.request_repaint();
-            return;
-        }
-    };
-    if let Some(fingerprint) = accepted_fingerprint {
-        session_known_host_fingerprint = Some(fingerprint);
-    }
     let mut transfer_manager = SftpTransferManager::new(transfer_session);
     let mut current_remote = browsing.remote_working_directory().to_owned();
     if let Ok(snapshot) = browsing.remote_directory_snapshot(None).await {
@@ -2675,6 +3434,17 @@ async fn run_worker(
         });
         repaint.request_repaint();
     }
+
+    // Fires periodically so a connection that silently died (dropped
+    // network, VPN hiccup, or the whole machine coming back from sleep) is
+    // noticed and reconnected in the background, instead of only being
+    // discovered the next time the user happens to navigate or run a
+    // command. `Delay` (rather than the default `Burst`) means a long gap
+    // -- e.g. the laptop sleeping for hours -- produces one immediate tick
+    // on wake instead of a burst of queued-up ticks firing back to back.
+    let mut liveness_interval = tokio::time::interval(SFTP_LIVENESS_CHECK_INTERVAL);
+    liveness_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    liveness_interval.reset();
 
     loop {
         tokio::select! {
@@ -2692,10 +3462,54 @@ async fn run_worker(
                                 });
                             }
                             Err(error) => {
-                                let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
-                                    summary: "Could not load the remote folder.".to_owned(),
-                                    details: error.to_string(),
-                                });
+                                // The session may have died silently (e.g.
+                                // the machine slept, or the network blipped)
+                                // since the last successful operation.
+                                // Transparently try one reconnect-and-retry
+                                // before bothering the user with a failure:
+                                // if the underlying connection really is
+                                // gone, this recovers it without the user
+                                // having to click "Reconnect" themselves; if
+                                // the error was something else entirely
+                                // (e.g. the path really doesn't exist), the
+                                // retry fails the same way and the original
+                                // failure is still reported below.
+                                match reconnect_browsing_session(
+                                    &target,
+                                    &authentication,
+                                    &mut session_known_host_fingerprint,
+                                    &event_sender,
+                                    &repaint,
+                                )
+                                .await
+                                {
+                                    Ok(session) => {
+                                        browsing = session;
+                                        liveness_interval.reset();
+                                        match browsing.remote_directory_snapshot(Some(&path)).await {
+                                            Ok(snapshot) => {
+                                                current_remote = path;
+                                                let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
+                                                let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                                    snapshot,
+                                                    metadata,
+                                                });
+                                            }
+                                            Err(retry_error) => {
+                                                let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
+                                                    summary: "Could not load the remote folder.".to_owned(),
+                                                    details: retry_error.to_string(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
+                                            summary: "Could not load the remote folder.".to_owned(),
+                                            details: error.to_string(),
+                                        });
+                                    }
+                                }
                             }
                         }
                         repaint.request_repaint();
@@ -2710,20 +3524,18 @@ async fn run_worker(
                         let _ = transfer_manager.resolve_collision(resolution);
                     }
                     WorkerCommand::Reconnect => {
-                        match connect_remote_session(
+                        match reconnect_browsing_session(
                             &target,
                             &authentication,
-                            session_known_host_fingerprint.as_deref(),
+                            &mut session_known_host_fingerprint,
                             &event_sender,
                             &repaint,
                         )
                         .await
                         {
-                            Ok((session, accepted_fingerprint)) => {
-                                if let Some(fingerprint) = accepted_fingerprint {
-                                    session_known_host_fingerprint = Some(fingerprint);
-                                }
+                            Ok(session) => {
                                 browsing = session;
+                                liveness_interval.reset();
                                 match browsing.remote_directory_snapshot(Some(&current_remote)).await {
                                     Ok(snapshot) => {
                                         let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
@@ -2753,8 +3565,60 @@ async fn run_worker(
                 let _ = event_sender.send(WorkerEvent::Transfer(transfer_event));
                 repaint.request_repaint();
             }
+            _ = liveness_interval.tick() => {
+                if browsing.remote_path_metadata(&current_remote).await.is_err() {
+                    // Reconnect silently in the background: this path is
+                    // meant to catch problems (dropped network, sleep/wake)
+                    // before the user notices, not to interrupt them with a
+                    // failure banner every 20 seconds while offline. If the
+                    // reconnect itself fails, just leave `browsing` as-is
+                    // and try again on the next tick or the next time the
+                    // user issues a command.
+                    if let Ok(session) = reconnect_browsing_session(
+                        &target,
+                        &authentication,
+                        &mut session_known_host_fingerprint,
+                        &event_sender,
+                        &repaint,
+                    )
+                    .await
+                    {
+                        browsing = session;
+                        if let Ok(snapshot) = browsing.remote_directory_snapshot(Some(&current_remote)).await {
+                            let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
+                            let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded { snapshot, metadata });
+                            repaint.request_repaint();
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+/// Reconnects the long-lived browsing session used for directory listings
+/// and metadata lookups, updating the accepted host-key fingerprint (if the
+/// host key changed since the last connect) so subsequent reconnects don't
+/// re-prompt unnecessarily.
+async fn reconnect_browsing_session(
+    target: &SftpFileManagerLaunchTarget,
+    authentication: &SftpFileManagerAuthentication,
+    known_host_fingerprint: &mut Option<String>,
+    event_sender: &mpsc::Sender<WorkerEvent>,
+    repaint: &egui::Context,
+) -> Result<festerm_ssh::SftpSession, String> {
+    let (session, accepted_fingerprint) = connect_remote_session(
+        target,
+        authentication,
+        known_host_fingerprint.as_deref(),
+        event_sender,
+        repaint,
+    )
+    .await?;
+    if let Some(fingerprint) = accepted_fingerprint {
+        *known_host_fingerprint = Some(fingerprint);
+    }
+    Ok(session)
 }
 
 async fn connect_remote_session(
@@ -2807,8 +3671,8 @@ async fn connect_remote_session(
         GuiSftpSessionConnectError::HostKeyRejected => {
             "The SSH host key was rejected or the trust prompt expired.".to_owned()
         }
-        GuiSftpSessionConnectError::ConnectionFailed => {
-            "The SSH/SFTP connection could not be established.".to_owned()
+        GuiSftpSessionConnectError::ConnectionFailed(detail) => {
+            format!("The SSH/SFTP connection could not be established: {detail}")
         }
     })? {
         GuiSftpSessionConnectOutcome::Connected(session) => Ok((session, None)),
@@ -2827,8 +3691,8 @@ async fn connect_remote_session(
                     GuiSftpSessionConnectError::HostKeyRejected => {
                         "The SSH host key was rejected or the trust prompt expired.".to_owned()
                     }
-                    GuiSftpSessionConnectError::ConnectionFailed => {
-                        "The SSH/SFTP connection could not be established.".to_owned()
+                    GuiSftpSessionConnectError::ConnectionFailed(detail) => {
+                        format!("The SSH/SFTP connection could not be established: {detail}")
                     }
                 },
             )
@@ -2923,72 +3787,146 @@ fn transfer_button(
     enabled: bool,
 ) -> egui::Response {
     let ready_fill = theme::SURFACE_TAB_INACTIVE;
-    let response = ui.add_enabled(
-        enabled,
-        egui::Button::new(
-            RichText::new(label)
-                .font(font_for_text_role(SftpTextRole::TransferButton))
-                .color(if enabled {
-                    theme::TEXT_PRIMARY
-                } else {
-                    theme::TEXT_SECONDARY
-                }),
-        )
-        .min_size(egui::vec2(
-            SFTP_TRANSFER_BUTTON_WIDTH,
-            SFTP_TRANSFER_BUTTON_HEIGHT,
-        ))
-        .fill(if enabled {
-            theme::SURFACE_TAB_ACTIVE
+    // Build the button as an explicit icon-above-text vertical stack instead
+    // of an `egui::Button` with a manually painted icon overlaid on top:
+    // `egui::Button` centers its (two-line) label across the *entire*
+    // button height, so a fixed-position icon painted near the top ended up
+    // drawn directly over the vertically-centered label text.
+    let size = egui::vec2(SFTP_TRANSFER_BUTTON_WIDTH, SFTP_TRANSFER_BUTTON_HEIGHT);
+    ui.add_enabled_ui(enabled, |ui| {
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+        let is_hovered = response.hovered() && enabled;
+        let fill = if enabled {
+            if is_hovered {
+                theme::SURFACE_TAB_ACTIVE.gamma_multiply(1.08)
+            } else {
+                theme::SURFACE_TAB_ACTIVE
+            }
         } else {
             ready_fill
-        })
-        .stroke(egui::Stroke::new(
-            1.0,
-            if enabled {
-                theme::ACCENT_PRIMARY
-            } else {
-                theme::BORDER_SUBTLE
-            },
-        ))
-        .corner_radius(7.0),
-    );
-    paint_sftp_glyph(
-        ui.painter(),
-        glyph,
-        egui::Rect::from_center_size(
-            egui::pos2(response.rect.center().x, response.rect.top() + 18.0),
-            egui::vec2(16.0, 16.0),
-        ),
-        if enabled {
+        };
+        let stroke_color = if enabled {
+            theme::ACCENT_PRIMARY
+        } else {
+            theme::BORDER_SUBTLE
+        };
+        let text_color = if enabled {
             theme::TEXT_PRIMARY
         } else {
             theme::TEXT_SECONDARY
-        },
-    );
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, accessible_label));
-    response
+        };
+        ui.painter().rect(
+            rect,
+            7.0,
+            fill,
+            egui::Stroke::new(1.0, stroke_color),
+            egui::StrokeKind::Inside,
+        );
+        let icon_size = egui::vec2(16.0, 16.0);
+        let icon_rect =
+            egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 16.0), icon_size);
+        paint_sftp_glyph(ui.painter(), glyph, icon_rect, text_color);
+        let text_pos = egui::pos2(rect.center().x, icon_rect.bottom() + 4.0);
+        ui.painter().text(
+            text_pos,
+            egui::Align2::CENTER_TOP,
+            label,
+            font_for_text_role(SftpTextRole::TransferButton),
+            text_color,
+        );
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, accessible_label));
+        response
+    })
+    .inner
 }
 
-fn show_filter_field(ui: &mut Ui, filter_text: &mut String, focus: PaneFocus) -> egui::Response {
+/// Draws a full-width hairline rule of exactly [`SFTP_HAIRLINE`] height.
+///
+/// `ui.separator()` is deliberately avoided inside SFTP panes: it claims
+/// `Spacing::item_spacing` plus its own 6px extent, so the pane's fixed height
+/// budget could not be computed up front and the file table overflowed into
+/// the application status bar.
+fn pane_divider(ui: &mut Ui, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, SFTP_HAIRLINE), egui::Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(SFTP_HAIRLINE, theme::BORDER_SUBTLE),
+    );
+}
+
+/// Lays out one of a pane's fixed-height chrome rows (header, toolbar, filter)
+/// with its contents vertically centred inside the row box.
+///
+/// `ui.horizontal` inside a frame with `set_min_height` does *not* do this:
+/// the horizontal row only ever knows its own natural height, so it centres
+/// children against each other and then the frame grows underneath them. That
+/// left every chrome row's text flush with its top edge and dumped all of the
+/// slack below it -- the "not vertically centered / more padding below than
+/// above" defect. Allocating the row's exact rect up front and running the
+/// contents in a child `Ui` whose `max_rect` *is* that rect gives
+/// `Align::Center` the full row height to centre against.
+fn pane_chrome_row<R>(
+    ui: &mut Ui,
+    width: f32,
+    height: f32,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let mut row = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    add_contents(&mut row)
+}
+
+fn show_filter_field(
+    ui: &mut Ui,
+    filter_text: &mut String,
+    focus: PaneFocus,
+    outer_width: f32,
+) -> egui::Response {
     let frame = egui::Frame::new()
         .fill(theme::SURFACE_TERMINAL)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+        .stroke(egui::Stroke::new(SFTP_HAIRLINE, theme::BORDER_SUBTLE))
         .corner_radius(5.0)
-        .inner_margin(egui::Margin::symmetric(8, 4));
+        .inner_margin(egui::Margin::symmetric(8, 0));
     let inner = frame.show(ui, |ui| {
+        // The field is sized explicitly rather than via
+        // `desired_width(INFINITY)`: letting the inner `TextEdit` expand made
+        // it swallow the filter row's right-hand inset, so its right edge sat
+        // ~5px past the breadcrumb field directly above it.
+        let content_width = (outer_width - 16.0 - SFTP_HAIRLINE * 2.0).max(0.0);
+        ui.set_min_width(content_width);
+        ui.set_max_width(content_width);
         ui.set_min_height(SFTP_FILTER_FIELD_HEIGHT);
+        ui.set_max_height(SFTP_FILTER_FIELD_HEIGHT);
         ui.horizontal(|ui| {
+            // `ui.horizontal` vertically centers each child it lays out,
+            // but only for widgets that go through its layout allocator.
+            // Painting the search glyph directly at `ui.cursor().min`
+            // bypassed that centering and always anchored it to the row's
+            // top, leaving it visibly misaligned with the (correctly
+            // centered) text beside it. Allocating the icon's rect through
+            // the horizontal layout fixes that.
+            let (icon_rect, _) =
+                ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
             paint_sftp_glyph(
                 ui.painter(),
                 SftpGlyph::Search,
-                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(13.0, 13.0)),
+                icon_rect,
                 theme::TEXT_MUTED,
             );
-            ui.add_space(19.0);
+            ui.add_space(6.0);
             ui.scope(|ui| {
                 ui.style_mut().visuals.extreme_bg_color = Color32::TRANSPARENT;
                 ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                // The enclosing `Frame` already draws this field's border;
+                // egui's default focus ring on the embedded `TextEdit`
+                // otherwise draws a second, slightly different outline
+                // around the field whenever it has focus.
+                ui.style_mut().visuals.selection.stroke = egui::Stroke::NONE;
                 ui.style_mut().spacing.item_spacing.x = 0.0;
                 ui.add(
                     TextEdit::singleline(filter_text)
@@ -3007,10 +3945,27 @@ fn show_filter_field(ui: &mut Ui, filter_text: &mut String, focus: PaneFocus) ->
 }
 
 fn sftp_table_columns(available_width: f32) -> [f32; 4] {
-    let width = available_width.max(260.0);
+    let width = available_width.max(0.0);
     let mut columns = [width * 0.53, width * 0.15, width * 0.22, width * 0.10];
-    let allocated = columns.iter().sum::<f32>();
-    columns[0] += width - allocated;
+    // The mockup's percentages assume a wide pane. In a split view on a
+    // smaller window they shrink the metadata columns until "4.0 KiB" and
+    // "Folder" ellipsise into "4.0 K..." and "Fo...", which is exactly the
+    // data those columns exist to show. Hold them at a legible minimum and
+    // let Name -- the one column whose entries are expected to be truncated
+    // -- absorb the difference instead.
+    let minimums = [
+        SFTP_NAME_COLUMN_MIN_WIDTH,
+        SFTP_SIZE_COLUMN_MIN_WIDTH,
+        SFTP_MODIFIED_COLUMN_MIN_WIDTH,
+        SFTP_TYPE_COLUMN_MIN_WIDTH,
+    ];
+    if width >= minimums.iter().sum::<f32>() {
+        for index in 1..columns.len() {
+            columns[index] = columns[index].max(minimums[index]);
+        }
+    }
+    let allocated = columns[1..].iter().sum::<f32>();
+    columns[0] = (width - allocated).max(0.0);
     columns
 }
 
@@ -3036,18 +3991,16 @@ fn show_table_header_cell(
     active: bool,
     descending: bool,
 ) -> egui::Response {
-    let suffix = if active {
-        if descending {
-            " ↓"
-        } else {
-            " ↑"
-        }
-    } else {
-        ""
-    };
-    let text = RichText::new(format!("{title}{suffix}"))
+    let text = RichText::new(title)
         .font(font_for_text_role(SftpTextRole::TableHeader))
         .color(theme::TEXT_MUTED);
+    // `egui::Button` always centers its own label text regardless of the
+    // parent `Ui`'s layout alignment, so a Button-based header cell ends up
+    // centered even though the data-row cells below it (built with
+    // `show_table_text_cell`, which manually lays out a `Label` inside a
+    // left/right-aligned layout) are left- or right-aligned. Use the same
+    // manual layout here, wrapped in a clickable `Frame`, so header text
+    // lines up with the column values beneath it.
     ui.allocate_ui_with_layout(
         egui::vec2(width, SFTP_TABLE_HEADER_HEIGHT),
         match align {
@@ -3055,13 +4008,73 @@ fn show_table_header_cell(
             CellAlign::Right => Layout::right_to_left(Align::Center),
         },
         |ui| {
-            ui.add(
-                egui::Button::new(text)
-                    .min_size(egui::vec2(width, SFTP_TABLE_HEADER_HEIGHT))
-                    .fill(theme::SURFACE_TERMINAL)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(0.0),
-            )
+            let response = egui::Frame::new()
+                .fill(theme::SURFACE_TERMINAL)
+                .stroke(egui::Stroke::NONE)
+                .corner_radius(0.0)
+                .show(ui, |ui| {
+                    ui.set_min_width(width);
+                    ui.set_max_width(width);
+                    ui.set_min_height(SFTP_TABLE_HEADER_HEIGHT);
+                    ui.set_max_height(SFTP_TABLE_HEADER_HEIGHT);
+                    // Add the label and the (optional) sort-direction
+                    // indicator directly to this frame's content `Ui`
+                    // rather than wrapping them in a nested
+                    // `ui.horizontal`, which always lays out left-to-right
+                    // and would silently break right alignment for the
+                    // "Size" column (whose content `Ui` inherits a
+                    // right-to-left layout from the `allocate_ui_with_layout`
+                    // call above). In a right-to-left layout the *first*
+                    // widget added ends up at the rightmost position, so
+                    // the add-order is flipped for `CellAlign::Right` to
+                    // keep the arrow trailing the text on screen either way.
+                    let indicator_size = egui::vec2(8.0, 12.0);
+                    let inner_width = (width - SFTP_TABLE_CELL_PADDING * 2.0).max(0.0);
+                    ui.add_space(SFTP_TABLE_CELL_PADDING);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(inner_width, SFTP_TABLE_HEADER_HEIGHT),
+                        match align {
+                            CellAlign::Left => Layout::left_to_right(Align::Center),
+                            CellAlign::Right => Layout::right_to_left(Align::Center),
+                        },
+                        |ui| {
+                            ui.set_min_width(inner_width);
+                            ui.set_max_width(inner_width);
+                            match align {
+                                CellAlign::Left => {
+                                    ui.add(egui::Label::new(text).truncate());
+                                    if active {
+                                        ui.add_space(SFTP_SORT_INDICATOR_GAP);
+                                        let (rect, _) =
+                                            ui.allocate_exact_size(indicator_size, Sense::hover());
+                                        paint_sort_indicator(
+                                            ui.painter(),
+                                            rect,
+                                            descending,
+                                            theme::TEXT_MUTED,
+                                        );
+                                    }
+                                }
+                                CellAlign::Right => {
+                                    if active {
+                                        let (rect, _) =
+                                            ui.allocate_exact_size(indicator_size, Sense::hover());
+                                        paint_sort_indicator(
+                                            ui.painter(),
+                                            rect,
+                                            descending,
+                                            theme::TEXT_MUTED,
+                                        );
+                                        ui.add_space(SFTP_SORT_INDICATOR_GAP);
+                                    }
+                                    ui.add(egui::Label::new(text).truncate());
+                                }
+                            }
+                        },
+                    );
+                })
+                .response;
+            response.interact(Sense::click())
         },
     )
     .inner
@@ -3079,9 +4092,31 @@ fn show_table_text_cell(ui: &mut Ui, width: f32, align: CellAlign, text: RichTex
             // label content is narrower; otherwise egui shrinks the
             // allocated rect to fit the label, and the parent `horizontal`
             // layout packs the next column right up against this one
-            // instead of at its intended fixed offset.
+            // instead of at its intended fixed offset. `set_max_width` plus
+            // `Label::truncate()` is the other half of that contract: a
+            // *wider* label (e.g. a long file name) must never grow past
+            // its column either, or it visually overflows into (and
+            // overlaps) the next column instead of eliding with "…".
             ui.set_min_width(width);
-            ui.label(text);
+            ui.set_max_width(width);
+            // Mockup `.fsftp-table td { padding: 0 7px }` -- symmetric on both
+            // edges. The inner region is sized explicitly so the trailing
+            // inset survives in a right-to-left (Size) column too, where a
+            // bare `add_space` would land on the wrong side.
+            ui.add_space(SFTP_TABLE_CELL_PADDING);
+            let text_width = (width - SFTP_TABLE_CELL_PADDING * 2.0).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(text_width, SFTP_TABLE_ROW_HEIGHT),
+                match align {
+                    CellAlign::Left => Layout::left_to_right(Align::Center),
+                    CellAlign::Right => Layout::right_to_left(Align::Center),
+                },
+                |ui| {
+                    ui.set_min_width(text_width);
+                    ui.set_max_width(text_width);
+                    ui.add(egui::Label::new(text).truncate());
+                },
+            );
         },
     );
 }
@@ -3122,62 +4157,118 @@ fn item_glyph(item: &SftpDirectoryItem) -> SftpGlyph {
     }
 }
 
+/// Paints a small filled triangle sort-direction indicator (point up for
+/// ascending, down for descending) inside `rect`. Used in table column
+/// headers instead of a literal "↑"/"↓" character, since the proportional
+/// font used for table headers doesn't include those glyphs and rendered
+/// them as a missing-glyph box.
+fn paint_sort_indicator(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    descending: bool,
+    color: Color32,
+) {
+    // The mockup writes the sort direction as a text arrow ("Name ↑"), so this
+    // draws a thin stemmed arrow rather than the solid triangle it used to.
+    // At 8x12 a filled triangle read as a featureless block -- the "sort order
+    // icon is just a box, not an arrow" defect.
+    let stroke = egui::Stroke::new(1.0, color);
+    let center_x = rect.center().x;
+    let top = rect.center().y - 4.0;
+    let bottom = rect.center().y + 4.0;
+    let (tip, tail, head_y) = if descending {
+        (bottom, top, bottom - 3.2)
+    } else {
+        (top, bottom, top + 3.2)
+    };
+    painter.line_segment(
+        [egui::pos2(center_x, tail), egui::pos2(center_x, tip)],
+        stroke,
+    );
+    painter.add(egui::Shape::line(
+        vec![
+            egui::pos2(center_x - 2.4, head_y),
+            egui::pos2(center_x, tip),
+            egui::pos2(center_x + 2.4, head_y),
+        ],
+        stroke,
+    ));
+}
+
 fn paint_sftp_glyph(painter: &egui::Painter, glyph: SftpGlyph, rect: egui::Rect, color: Color32) {
     match glyph {
         SftpGlyph::Back => icon::paint(painter, Icon::Back, rect, color),
         SftpGlyph::Search => icon::paint(painter, Icon::Search, rect, color),
         SftpGlyph::LocalPane => icon::paint(painter, Icon::LocalTerminal, rect, color),
         SftpGlyph::RemotePane => icon::paint(painter, Icon::SshRemote, rect, color),
-        SftpGlyph::Refresh => icon::paint(painter, Icon::Reconnect, rect, color),
-        SftpGlyph::Up => {
+        SftpGlyph::Refresh => {
+            // Mirrors the mockup's `#fi-refresh`: two opposing arcs around a
+            // shared centre, each capped with an arrowhead. The shared
+            // `Icon::Reconnect` glyph used here previously rendered as a
+            // lopsided "C" with a stray notch at this size.
             let stroke = egui::Stroke::new(1.5, color);
-            painter.line_segment(
-                [
-                    egui::pos2(rect.center().x, rect.top() + 3.0),
-                    egui::pos2(rect.center().x, rect.bottom() - 3.0),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.center().x, rect.top() + 3.0),
-                    egui::pos2(rect.left() + 4.0, rect.top() + 9.0),
-                ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.center().x, rect.top() + 3.0),
-                    egui::pos2(rect.right() - 4.0, rect.top() + 9.0),
-                ],
-                stroke,
-            );
+            let scale = rect.width() / 24.0;
+            let center = egui::pos2(rect.left() + 12.0 * scale, rect.top() + 12.0 * scale);
+            let radius = 7.0 * scale;
+            let polar = |degrees: f32, r: f32| {
+                let radians = degrees.to_radians();
+                egui::pos2(center.x + r * radians.cos(), center.y + r * radians.sin())
+            };
+            let arc = |from: f32, to: f32| {
+                let steps = 16;
+                let points = (0..=steps)
+                    .map(|step| polar(from + (to - from) * step as f32 / steps as f32, radius))
+                    .collect::<Vec<_>>();
+                painter.add(egui::Shape::line(points, stroke));
+            };
+            arc(195.0, 325.0);
+            arc(15.0, 145.0);
+            // Arrowheads continue each arc's clockwise sweep, so the pair
+            // reads as a single cycle rather than two detached strokes.
+            for (tip, base) in [(345.0, 322.0), (165.0, 142.0)] {
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        polar(tip, radius),
+                        polar(base, radius - 3.0 * scale),
+                        polar(base, radius + 3.0 * scale),
+                    ],
+                    color,
+                    egui::Stroke::NONE,
+                ));
+            }
+        }
+        SftpGlyph::Up => {
+            // The mockup's `#fi-up` is a chevron (`m5 15 7-7 7 7`), not the
+            // full stemmed arrow this used to draw.
+            let scale = rect.width() / 24.0;
+            let pt = |x: f32, y: f32| egui::pos2(rect.left() + x * scale, rect.top() + y * scale);
+            painter.add(egui::Shape::line(
+                vec![pt(5.0, 15.0), pt(12.0, 8.0), pt(19.0, 15.0)],
+                egui::Stroke::new(1.5, color),
+            ));
         }
         SftpGlyph::Home => {
-            let stroke = egui::Stroke::new(1.5, color);
-            painter.line_segment(
-                [
-                    egui::pos2(rect.left() + 3.0, rect.center().y),
-                    egui::pos2(rect.center().x, rect.top() + 3.0),
+            // Traces the mockup's `#fi-home` path
+            // (`m4 11 8-7 8 7v9h-6v-6h-4v6H4z`): a gabled roof over a body
+            // with a doorway. The previous version drew a roof above a
+            // rounded `rect_stroke`, which collapsed into an indistinct blob
+            // at this glyph's render size.
+            let scale = rect.width() / 24.0;
+            let pt = |x: f32, y: f32| egui::pos2(rect.left() + x * scale, rect.top() + y * scale);
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    pt(4.0, 11.0),
+                    pt(12.0, 4.0),
+                    pt(20.0, 11.0),
+                    pt(20.0, 20.0),
+                    pt(14.0, 20.0),
+                    pt(14.0, 14.0),
+                    pt(10.0, 14.0),
+                    pt(10.0, 20.0),
+                    pt(4.0, 20.0),
                 ],
-                stroke,
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(rect.center().x, rect.top() + 3.0),
-                    egui::pos2(rect.right() - 3.0, rect.center().y),
-                ],
-                stroke,
-            );
-            painter.rect_stroke(
-                egui::Rect::from_min_max(
-                    egui::pos2(rect.left() + 5.0, rect.center().y),
-                    egui::pos2(rect.right() - 5.0, rect.bottom() - 3.0),
-                ),
-                2.5,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
+                egui::Stroke::new(1.4, color),
+            ));
         }
         SftpGlyph::Folder => {
             // Mirrors the mockup's folder glyph path (`M3 7h7l2 2h9v10H3z` in a
@@ -3997,6 +5088,140 @@ mod tests {
     }
 
     #[test]
+    fn authentication_surface_focuses_the_password_field_on_arrival() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: true,
+        };
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+
+        harness.run();
+
+        assert!(
+            harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .is_focused(),
+            "arriving from the connection form should put the caret in the password box"
+        );
+
+        // One-shot: focus must be releasable, otherwise Tab and clicking
+        // another field would be permanently overridden.
+        harness
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .expect("the ad-hoc destination row renders editable fields")
+            .focus();
+        harness.run();
+        assert!(
+            !harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .is_focused(),
+            "the password focus request must not be re-issued every frame"
+        );
+    }
+
+    #[test]
+    fn authentication_surface_refocuses_the_password_after_returning_from_a_failure() {
+        struct ReentryState {
+            visible: bool,
+        }
+
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: true,
+        };
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut ReentryState| {
+                if state.visible {
+                    show_authentication_required(ui, tab_id, &target);
+                } else {
+                    // Stands in for the connecting/failed surface the tab
+                    // swaps in while the form is away.
+                    ui.label("Connection failed.");
+                }
+            },
+            ReentryState { visible: true },
+        );
+
+        harness.run();
+        harness
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .expect("the ad-hoc destination row renders editable fields")
+            .focus();
+        harness.run();
+        assert!(!harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .is_focused());
+
+        // Leave for the failure surface, then come back via "Edit
+        // connection…": the password should be ready to retype.
+        harness.state_mut().visible = false;
+        harness.run();
+        harness.state_mut().visible = true;
+        harness.run();
+
+        assert!(
+            harness
+                .get_by_role(egui::accesskit::Role::PasswordInput)
+                .is_focused(),
+            "returning to the credential form should refocus the password box"
+        );
+    }
+
+    #[test]
+    fn authentication_surface_focuses_the_key_box_when_switching_to_private_key() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: true,
+        };
+        let tab_id = crate::tabs::AppState::for_test().active();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, command: &mut Option<crate::tabs::AppCommand>| {
+                if let Some(next) = show_authentication_required(ui, tab_id, &target) {
+                    *command = Some(next);
+                }
+            },
+            None,
+        );
+
+        harness.run();
+        harness.get_by_label("Private key").click();
+        harness.run();
+
+        assert!(
+            harness
+                .get_by_role(egui::accesskit::Role::MultilineTextInput)
+                .is_focused(),
+            "switching auth mode should move focus to that mode's first empty field"
+        );
+    }
+
+    #[test]
     fn unknown_host_key_prompt_shows_inline_trust_actions() {
         let target = SftpFileManagerLaunchTarget {
             label: "production".to_owned(),
@@ -4029,7 +5254,7 @@ mod tests {
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                show_connection_status_banner(ui, &state);
+                show_connection_status_banner_ui(ui, &state);
                 *command = None;
             },
             None,
@@ -4041,6 +5266,14 @@ mod tests {
         assert!(harness
             .query_by_label("The SSH host key was rejected or the trust prompt expired.")
             .is_some());
+        assert!(
+            harness.query_by_label("Retry").is_some(),
+            "a failed connection must offer a Retry action"
+        );
+        assert!(
+            harness.query_by_label("Edit connection…").is_some(),
+            "a failed (never-connected) attempt must offer a way to fix the destination"
+        );
     }
 
     #[test]
@@ -4051,7 +5284,7 @@ mod tests {
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, command: &mut Option<crate::tabs::AppCommand>| {
-                show_connection_status_banner(ui, &state);
+                show_connection_status_banner_ui(ui, &state);
                 *command = None;
             },
             None,
@@ -4060,6 +5293,14 @@ mod tests {
         harness.run();
 
         assert!(harness.query_by_label("Disconnected").is_some());
+        assert!(
+            harness.query_by_label("Retry").is_some(),
+            "a dropped connection must offer a Retry action"
+        );
+        assert!(
+            harness.query_by_label("Edit connection…").is_none(),
+            "the destination is already known-good once connected once, so editing it isn't offered"
+        );
         assert!(harness
             .query_by_label("The SSH/SFTP connection could not be established.")
             .is_some());
@@ -4314,6 +5555,35 @@ mod tests {
     fn table_columns_follow_mockup_proportions() {
         let columns = sftp_table_columns(1000.0);
         assert_eq!(columns, [530.0, 150.0, 220.0, 100.0]);
+    }
+
+    #[test]
+    fn narrow_table_columns_keep_metadata_legible() {
+        let columns = sftp_table_columns(372.0);
+        assert_eq!(columns[1], SFTP_SIZE_COLUMN_MIN_WIDTH);
+        assert_eq!(columns[2], SFTP_MODIFIED_COLUMN_MIN_WIDTH);
+        assert_eq!(columns[3], SFTP_TYPE_COLUMN_MIN_WIDTH);
+        assert!(columns[0] >= SFTP_NAME_COLUMN_MIN_WIDTH);
+        assert!((columns.iter().sum::<f32>() - 372.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn table_columns_never_exceed_available_width() {
+        for width in [0.0, 40.0, 120.0, 361.0, 362.0, 800.0, 1600.0] {
+            let columns = sftp_table_columns(width);
+            let total = columns.iter().sum::<f32>();
+            assert!(
+                total <= width + 0.01,
+                "columns {columns:?} overflow width {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn toolbar_and_filter_rows_share_horizontal_padding() {
+        // Their boxes stack directly on top of each other, so unequal padding
+        // reads as a misaligned right edge.
+        assert_eq!(SFTP_TOOLBAR_PADDING, SFTP_FILTER_ROW_PADDING);
     }
 
     #[test]

@@ -28,6 +28,7 @@ use ssh_key::Certificate as OpenSshCertificate;
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroize;
 
+use sftp::GuiSftpConnectionKeepAlive;
 pub use sftp::{
     parse_sftp_command, SftpCommand, SftpCommandOutcome, SftpCommandParseError, SftpDirectoryEntry,
     SftpEntryType, SftpSession, SftpSessionError,
@@ -3946,11 +3947,15 @@ impl Drop for SftpTerminalSession {
 
 /// Why opening a raw GUI SFTP session failed before a terminal-backed
 /// `SftpTerminalSession` was involved.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GuiSftpSessionConnectError {
     InteractiveAuthenticationUnsupported,
     HostKeyRejected,
-    ConnectionFailed,
+    /// A GUI SFTP session could not be established, carrying a short,
+    /// human-readable detail (e.g. "connection refused", "SSH shell request
+    /// was rejected", "authentication failed") so the UI can surface a
+    /// diagnosable message instead of a generic one.
+    ConnectionFailed(String),
 }
 
 impl fmt::Display for GuiSftpSessionConnectError {
@@ -3960,7 +3965,9 @@ impl fmt::Display for GuiSftpSessionConnectError {
                 "GUI SFTP currently requires an explicit password, private key, or stored credential",
             ),
             Self::HostKeyRejected => formatter.write_str("SSH host key was rejected"),
-            Self::ConnectionFailed => formatter.write_str("could not establish GUI SFTP session"),
+            Self::ConnectionFailed(detail) => {
+                write!(formatter, "could not establish GUI SFTP session: {detail}")
+            }
         }
     }
 }
@@ -3984,7 +3991,9 @@ impl<T> GuiSftpConnectCompletion<T> {
             .await
         {
             Ok(result) => result,
-            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed),
+            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed(
+                "the connect task panicked before finishing".to_owned(),
+            )),
         }
     }
 }
@@ -4091,20 +4100,26 @@ async fn establish_gui_sftp_session(
         | AuthenticatedHandleAttempt::Retryable(ConnectionFailure::HostTrust, _) => {
             return Err(GuiSftpSessionConnectError::HostKeyRejected);
         }
-        AuthenticatedHandleAttempt::Retryable(_, _)
-        | AuthenticatedHandleAttempt::Permanent(_, _)
-        | AuthenticatedHandleAttempt::Shutdown => {
-            return Err(GuiSftpSessionConnectError::ConnectionFailed);
+        AuthenticatedHandleAttempt::Retryable(_, detail)
+        | AuthenticatedHandleAttempt::Permanent(_, detail) => {
+            return Err(GuiSftpSessionConnectError::ConnectionFailed(
+                detail.to_owned(),
+            ));
+        }
+        AuthenticatedHandleAttempt::Shutdown => {
+            return Err(GuiSftpSessionConnectError::ConnectionFailed(
+                "the connection was shut down before it finished".to_owned(),
+            ));
         }
     };
 
     match local_working_directory {
         Some(path) => sftp::SftpSession::connect_with_local_directory(&handle, path)
             .await
-            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+            .map_err(|error| GuiSftpSessionConnectError::ConnectionFailed(error.to_string())),
         None => sftp::SftpSession::connect(&handle)
             .await
-            .map_err(|_| GuiSftpSessionConnectError::ConnectionFailed),
+            .map_err(|error| GuiSftpSessionConnectError::ConnectionFailed(error.to_string())),
     }
 }
 
@@ -4129,7 +4144,9 @@ where
         result = &mut connect_task => match result {
             Ok(Ok(session)) => Ok(GuiSftpConnectOutcome::Connected(session)),
             Ok(Err(error)) => Err(error),
-            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed),
+            Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed(
+                "the connect task panicked before finishing".to_owned(),
+            )),
         },
         prompt = &mut prompt_listener => match prompt {
             Ok(Some(prompt)) => Ok(GuiSftpConnectOutcome::NeedsHostKeyDecision {
@@ -4140,7 +4157,9 @@ where
             Ok(None) | Err(_) => match connect_task.await {
                 Ok(Ok(session)) => Ok(GuiSftpConnectOutcome::Connected(session)),
                 Ok(Err(error)) => Err(error),
-                Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed),
+                Err(_) => Err(GuiSftpSessionConnectError::ConnectionFailed(
+                    "the connect task panicked before finishing".to_owned(),
+                )),
             },
         },
     }
@@ -4169,7 +4188,6 @@ pub async fn connect_gui_sftp_session(
 
     let (event_sender, event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
     let (command_sender, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
-    drop(command_sender);
     let shared = Arc::new(WorkerShared {
         id: SessionId::next(),
         lifecycle: Mutex::new(SessionLifecycle::Starting),
@@ -4192,21 +4210,90 @@ pub async fn connect_gui_sftp_session(
     let resolver = HostKeyDecisionResolver {
         gate: Arc::clone(&host_key_gate),
     };
+    let connect_id = shared.id;
+    // Bridge a dedicated OS thread's result into an awaitable
+    // `JoinHandle`, so the rest of the connect machinery below
+    // (`observe_gui_sftp_connect`'s host-key-prompt race,
+    // `GuiSftpConnectCompletion`, etc.) is unaffected by *how* the connect
+    // itself runs.
+    //
+    // This can't just be a plain `spawn_blocking` closure that builds a
+    // throw-away runtime, `block_on`s the connect, and returns the result
+    // directly (as this used to do): `russh::client::connect` spawns the
+    // connection's entire read/write dispatch loop via `tokio::spawn` onto
+    // whatever runtime is ambient at connect time, and returning drops that
+    // throw-away runtime immediately, which cancels the just-spawned
+    // dispatch task -- silently killing the connection a few moments after
+    // it reported "connected". The dedicated thread below instead keeps
+    // driving its runtime (via a second `block_on`) for as long as the
+    // resulting session's `GuiSftpConnectionKeepAlive` guard lives, so the
+    // dispatch task keeps making progress until the caller is actually done
+    // with the session.
+    let (result_sender, result_receiver) =
+        mpsc::sync_channel::<Result<SftpSession, GuiSftpSessionConnectError>>(1);
+    let thread_spawned = thread::Builder::new()
+        .name(format!("festerm-gui-sftp-connect-{connect_id}"))
+        .spawn(move || {
+            // Keep `command_sender` alive for the lifetime of the connect
+            // phase rather than dropping it immediately: see the matching
+            // comment on `GuiSftpConnectionKeepAlive` and
+            // `probe_remote_persistence_provider` for why a dropped sender
+            // makes `process_commands_before_running` abort the connect
+            // before it ever reaches the network.
+            let _command_sender_guard = command_sender;
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(_) => {
+                    let _ = result_sender.send(Err(GuiSftpSessionConnectError::ConnectionFailed(
+                        "GUI SFTP connect runtime could not start".to_owned(),
+                    )));
+                    return;
+                }
+            };
+            let connect_result =
+                runtime.block_on(establish_gui_sftp_session(GuiSftpConnectTaskConfig {
+                    profile,
+                    authentication,
+                    local_working_directory,
+                    shared,
+                    command_receiver,
+                    host_key_gate,
+                    password_gate,
+                    known_host_fingerprint,
+                }));
+            match connect_result {
+                Ok(session) => {
+                    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+                    let session = session
+                        .with_runtime_keepalive(GuiSftpConnectionKeepAlive::new(shutdown_sender));
+                    if result_sender.send(Ok(session)).is_err() {
+                        // The caller already gave up (e.g. the connect
+                        // future was dropped); nothing left to keep alive.
+                        return;
+                    }
+                    runtime.block_on(async move {
+                        let _ = shutdown_receiver.await;
+                    });
+                }
+                Err(error) => {
+                    let _ = result_sender.send(Err(error));
+                }
+            }
+        });
+    if thread_spawned.is_err() {
+        return Err(GuiSftpSessionConnectError::ConnectionFailed(
+            "could not start the GUI SFTP connect thread".to_owned(),
+        ));
+    }
     let connect_task = tokio::task::spawn_blocking(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("could not build tokio runtime for GUI SFTP connect")
-            .block_on(establish_gui_sftp_session(GuiSftpConnectTaskConfig {
-                profile,
-                authentication,
-                local_working_directory,
-                shared,
-                command_receiver,
-                host_key_gate,
-                password_gate,
-                known_host_fingerprint,
-            }))
+        result_receiver.recv().unwrap_or_else(|_| {
+            Err(GuiSftpSessionConnectError::ConnectionFailed(
+                "the GUI SFTP connect thread ended before finishing".to_owned(),
+            ))
+        })
     });
 
     match observe_gui_sftp_connect(event_receiver, resolver.clone(), connect_task).await? {
@@ -4267,8 +4354,13 @@ pub async fn probe_remote_persistence_provider(
     }
 
     let (event_sender, _event_receiver) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
-    let (command_sender, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
-    drop(command_sender);
+    let (_command_sender_guard, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
+    // Keep `command_sender` alive for this function's whole body (see the
+    // matching comment in `connect_gui_sftp_session`): dropping it
+    // immediately made the receiver look permanently disconnected, which
+    // `process_commands_before_running` treats identically to an explicit
+    // shutdown request, aborting the probe before it ever reached the
+    // network.
     let shared = Arc::new(WorkerShared {
         id: SessionId::next(),
         lifecycle: Mutex::new(SessionLifecycle::Starting),

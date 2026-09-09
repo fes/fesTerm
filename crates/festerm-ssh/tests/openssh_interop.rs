@@ -486,7 +486,9 @@ fn unique_sftp_artifact_root(label: &str) -> PathBuf {
         .and_then(Path::parent)
         .expect("festerm-ssh manifest must live under the workspace root");
     workspace_root
-        .join("target/test-artifacts/festerm-ssh-sftp-interop")
+        .join("target")
+        .join("test-artifacts")
+        .join("festerm-ssh-sftp-interop")
         .join(format!(
             "{label}-{}-{}",
             std::process::id(),
@@ -1144,7 +1146,15 @@ fn controlled_openssh_sftp_put_get_round_trip_and_tracks_working_directories() {
         assert_eq!(
             upload,
             SftpCommandOutcome::Uploaded {
-                local_path: fs::canonicalize(&local_upload).expect("canonical local upload path"),
+                // `put` reports the source path as resolved by
+                // `resolve_local_path`/`normalize_local_path`, which
+                // normalizes `.`/`..` segments but (unlike `lcd`/`lpwd`)
+                // does not canonicalize the filesystem path (e.g. it never
+                // adds the `\\?\` extended-length prefix Windows'
+                // `fs::canonicalize` adds). Since `local_upload` is already
+                // an absolute path with no `.`/`..` components, its
+                // resolved form is itself.
+                local_path: local_upload.clone(),
                 remote_path: format!("/home/festerm/{remote_root_name}/upload.bin"),
                 byte_count: upload_bytes.len() as u64,
             }

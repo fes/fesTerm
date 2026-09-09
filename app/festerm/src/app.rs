@@ -3713,7 +3713,7 @@ impl FesTermApp {
     /// Application surfaces keep the same 24 px geometry with empty content.
     fn show_status_bar(&self, ui: &mut egui::Ui) {
         let show_session_details = self.state.show_session_details();
-        let (dimensions, system, status, status_label, detail, port_forwards) =
+        let (context, dimensions, system, status, status_label, detail, port_forwards) =
             match &self.state.active_tab().content {
                 TabContent::Launcher
                 | TabContent::Settings
@@ -3721,10 +3721,22 @@ impl FesTermApp {
                 | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
-                | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::SftpFileManager(_) => {
-                    (None, None, ChipStatus::Neutral, "", None, None)
+                | TabContent::SftpFileManagerAuthenticationRequired(_) => {
+                    (None, None, None, ChipStatus::Neutral, "", None, None)
                 }
+                // The file manager has no terminal grid to report, but it
+                // does have two endpoints and a transport state, so it fills
+                // the bar the way the mockup's `.fsftp-statusline` does
+                // rather than leaving 24px of empty chrome under the panes.
+                TabContent::SftpFileManager(tab) => (
+                    Some("SFTP"),
+                    None,
+                    Some(std::borrow::Cow::Owned(tab.status_bar_endpoints())),
+                    tab.chip_status(),
+                    tab.status_bar_label(),
+                    None,
+                    None,
+                ),
                 TabContent::Session(session) => {
                     let status = session.chip_status();
                     // Only relocate the detail here while chips are compact
@@ -3745,8 +3757,9 @@ impl FesTermApp {
                         })
                         .flatten();
                     (
+                        None,
                         session.view.dimensions_label(),
-                        Some(session.system_label()),
+                        Some(std::borrow::Cow::Borrowed(session.system_label())),
                         status,
                         session.status_bar_label(),
                         detail,
@@ -3762,8 +3775,9 @@ impl FesTermApp {
                 festerm_ui_egui::statusbar::show(
                     ui,
                     festerm_ui_egui::statusbar::StatusBarContent {
+                        context,
                         dimensions: dimensions.as_deref(),
-                        system,
+                        system: system.as_deref(),
                         status,
                         status_label,
                         detail: detail.as_deref(),
@@ -4191,6 +4205,8 @@ impl FesTermApp {
         let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
         let terminal_font_set = self.terminal_font_set();
         let sftp_pane_order = self.state.sftp_pane_order();
+        // Matches the guard used above when the bar is actually drawn.
+        let status_bar_visible = self.state.status_bar_visible() && !self.focus_mode;
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -4279,6 +4295,7 @@ impl FesTermApp {
                 }
                 TabContent::SftpFileManager(tab) => {
                     tab.set_pane_order(sftp_pane_order);
+                    tab.set_status_bar_visible(status_bar_visible);
                     screen_command = tab.show(ui, active_tab_id);
                 }
                 TabContent::Session(session) => {

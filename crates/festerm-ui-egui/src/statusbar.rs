@@ -38,6 +38,13 @@ const OPTICAL_VERTICAL_NUDGE: f32 = 1.0;
 /// supplied by the caller (this crate owns no session/tab state); `None`
 /// simply omits that segment rather than fabricating a placeholder.
 pub struct StatusBarContent<'a> {
+    /// Leading context for surfaces that aren't a terminal session and so
+    /// have no grid/locality to report — currently the SFTP file manager,
+    /// which uses it for `"SFTP"` ahead of its `system` endpoints. Mirrors
+    /// the mockup's `SFTP · Local + ops@prod-03.example` status line
+    /// (`docs/images/gui-mockups/sftp-workflow.html`, `.fsftp-statusline`).
+    /// Rendered first, in the same weight as `dimensions`.
+    pub context: Option<&'a str>,
     /// Grid dimensions of the active session's terminal (e.g. `"80×24"`),
     /// when one is active. This is the one piece of the old per-terminal
     /// diagnostics panel that was genuinely useful at a glance, so it now
@@ -86,6 +93,9 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.add_space(STATUS_BAR_LEFT_INSET);
+            if let Some(context) = content.context {
+                ui.label(RichText::new(context).small().color(STATUS_BAR_TEXT));
+            }
             if let Some(dimensions) = content.dimensions {
                 ui.label(RichText::new(dimensions).small().color(STATUS_BAR_TEXT));
             }
@@ -142,6 +152,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        context: None,
                         dimensions: Some("80×24"),
                         system: Some("Local · Windows"),
                         status: ChipStatus::Connected,
@@ -165,6 +176,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        context: None,
                         dimensions: None,
                         system: None,
                         status: ChipStatus::Neutral,
@@ -190,6 +202,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        context: None,
                         dimensions: Some("80×24"),
                         system: Some("Local · macOS"),
                         status: ChipStatus::Connected,
@@ -211,6 +224,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        context: None,
                         dimensions: Some("80×24"),
                         system: Some("Remote"),
                         status: ChipStatus::Connected,

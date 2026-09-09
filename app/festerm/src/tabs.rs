@@ -1329,6 +1329,16 @@ pub enum AppCommand {
         target: SftpFileManagerLaunchTarget,
         authentication: SftpFileManagerAuthentication,
     },
+    /// Sends an existing GUI SFTP file-manager tab (identified by
+    /// `tab_id`) back to the pre-connect authentication surface, in place,
+    /// with the destination fields editable. Dispatched from the
+    /// "Edit connection…" action on a failed-to-connect tab's banner, so a
+    /// typo'd host/port/username can be fixed without abandoning the tab
+    /// for a brand new one.
+    RetrySftpFileManagerConnection {
+        tab_id: TabId,
+        target: SftpFileManagerLaunchTarget,
+    },
     /// Starts an existing configured SSH profile by resolving its native
     /// stored password on the SSH worker. This command has no password value.
     StartStoredPasswordSshProfile {
@@ -2318,6 +2328,9 @@ impl AppState {
                 target,
                 authentication,
             } => self.start_sftp_file_manager(target, authentication, context),
+            AppCommand::RetrySftpFileManagerConnection { tab_id, target } => {
+                self.retry_sftp_file_manager_connection(tab_id, target)
+            }
             AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StartStoredPasswordSftpProfile { .. }
             | AppCommand::StartStoredSftpFileManagerProfile { .. }
@@ -2765,6 +2778,30 @@ impl AppState {
             profile_id,
             context,
         ));
+    }
+
+    /// Sends the given tab back to the pre-connect authentication surface
+    /// with the same (possibly about-to-be-edited) destination, replacing
+    /// its content in place regardless of what it currently holds -- unlike
+    /// `open_sftp_file_manager`, which only replaces a `Launcher` tab and
+    /// otherwise opens a brand new one, this always targets one specific
+    /// existing tab (the failed connection the user is looking at) so
+    /// retrying never leaves behind an orphaned duplicate tab.
+    fn retry_sftp_file_manager_connection(
+        &mut self,
+        tab_id: TabId,
+        mut target: SftpFileManagerLaunchTarget,
+    ) {
+        target.known_host_persisted = self
+            .configuration
+            .known_host_fingerprint(&target.host, target.port)
+            .is_some();
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.content = TabContent::SftpFileManagerAuthenticationRequired(
+                SftpFileManagerAuthenticationRequiredTab { target },
+            );
+            self.workspace_dirty = true;
+        }
     }
 
     fn open_sftp_file_manager(&mut self, mut target: SftpFileManagerLaunchTarget) {

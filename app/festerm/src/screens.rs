@@ -669,6 +669,12 @@ struct SshLauncherForm {
     /// Set whenever the form is (re)opened so the Username field can claim
     /// initial keyboard focus once, without re-stealing it on every frame.
     focus_username: bool,
+    /// One-shot request to focus the Password field, armed when a form is
+    /// prefilled from a saved/restored profile. In that flow the destination
+    /// is already known and the credential is the only thing left to type,
+    /// so focus belongs on the secret rather than the first field in tab
+    /// order. One-shot because a per-frame `request_focus` traps focus.
+    focus_password: bool,
 }
 
 impl Default for SshLauncherForm {
@@ -697,6 +703,7 @@ impl Default for SshLauncherForm {
             remember_password: false,
             feedback: None,
             focus_username: false,
+            focus_password: false,
         }
     }
 }
@@ -752,6 +759,7 @@ impl SshLauncherForm {
             .credential_reference()
             .is_some()
             .then_some(profile.credential_kind());
+        self.focus_password = true;
     }
 
     fn prefill_restored_sftp_profile(&mut self, profile: &SshProfileConfiguration) {
@@ -1361,15 +1369,6 @@ fn show_ssh_quick_connect(
         ui.add_space(4.0);
         ui.colored_label(theme::STATUS_ERROR, feedback);
     }
-    ui.add_space(10.0);
-    let mut show_advanced = form.advanced_open;
-    if ui
-        .checkbox(&mut show_advanced, "Show advanced settings")
-        .changed()
-        && show_advanced
-    {
-        form.open_advanced_settings();
-    }
     result
 }
 
@@ -1416,15 +1415,6 @@ fn show_sftp_quick_connect(
     if let Some(feedback) = &form.feedback {
         ui.add_space(4.0);
         ui.colored_label(theme::STATUS_ERROR, feedback);
-    }
-    ui.add_space(10.0);
-    let mut show_advanced = form.advanced_open;
-    if ui
-        .checkbox(&mut show_advanced, "Show advanced settings")
-        .changed()
-        && show_advanced
-    {
-        form.open_advanced_settings();
     }
     result
 }
@@ -1629,6 +1619,9 @@ fn show_ssh_form(
     let mut result = None;
     let focus_username = form.focus_username;
     form.focus_username = false;
+    // Username wins if both are somehow armed: it is the earlier field, so
+    // focusing the password would strand the user mid-form.
+    let focus_password = std::mem::take(&mut form.focus_password) && !focus_username;
     egui::Frame::new()
         .fill(theme::SURFACE_TAB_INACTIVE)
         .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
@@ -1636,19 +1629,26 @@ fn show_ssh_form(
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(340.0);
-            if !form.advanced_open {
-                result = show_ssh_quick_connect(ui, tab_id, form, focus_username, configuration);
-                return;
-            }
+            // Rendered once, in a single fixed spot, regardless of which
+            // form (quick connect vs. advanced) is showing below it -- so
+            // toggling this checkbox never makes the checkbox itself jump
+            // to a different position.
             let mut show_advanced = form.advanced_open;
             if ui
                 .checkbox(&mut show_advanced, "Show advanced settings")
                 .changed()
-                && !show_advanced
             {
-                form.close_advanced_settings();
+                if show_advanced {
+                    form.open_advanced_settings();
+                } else {
+                    form.close_advanced_settings();
+                }
             }
             ui.add_space(10.0);
+            if !form.advanced_open {
+                result = show_ssh_quick_connect(ui, tab_id, form, focus_username, configuration);
+                return;
+            }
             ssh_section_heading(ui, "Connection");
             ssh_text_edit(
                 ui,
@@ -1711,7 +1711,7 @@ fn show_ssh_form(
                         "Password",
                         &mut form.password,
                         true,
-                        false,
+                        focus_password,
                     )
                     .lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -1845,6 +1845,8 @@ fn show_sftp_form(
     let mut result = None;
     let focus_username = form.focus_username;
     form.focus_username = false;
+    // See `show_ssh_form`: username wins if both are armed.
+    let focus_password = std::mem::take(&mut form.focus_password) && !focus_username;
     egui::Frame::new()
         .fill(theme::SURFACE_TAB_INACTIVE)
         .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
@@ -1852,19 +1854,24 @@ fn show_sftp_form(
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(340.0);
-            if !form.advanced_open {
-                result = show_sftp_quick_connect(ui, tab_id, form, focus_username);
-                return;
-            }
+            // See the matching comment in `show_ssh_form`: rendered once in
+            // a fixed spot so toggling never moves the checkbox itself.
             let mut show_advanced = form.advanced_open;
             if ui
                 .checkbox(&mut show_advanced, "Show advanced settings")
                 .changed()
-                && !show_advanced
             {
-                form.close_advanced_settings();
+                if show_advanced {
+                    form.open_advanced_settings();
+                } else {
+                    form.close_advanced_settings();
+                }
             }
             ui.add_space(10.0);
+            if !form.advanced_open {
+                result = show_sftp_quick_connect(ui, tab_id, form, focus_username);
+                return;
+            }
             ssh_section_heading(ui, "Connection");
             ssh_text_edit(
                 ui,
@@ -1931,7 +1938,7 @@ fn show_sftp_form(
                         "Password",
                         &mut form.password,
                         true,
-                        false,
+                        focus_password,
                     )
                     .lost_focus()
                         && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -6514,6 +6521,63 @@ mod tests {
             Some(AppCommand::OpenProfileEditor { ref identifier })
                 if identifier == "host-0"
         ));
+    }
+
+    #[test]
+    fn restored_ssh_surface_focuses_the_password_field() {
+        #[derive(Default)]
+        struct RestoredSshHarnessState {
+            tab_id: Option<TabId>,
+            profile: Option<SshProfileConfiguration>,
+            command: Option<AppCommand>,
+        }
+
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            2200,
+            "deploy",
+            "xterm-256color",
+            100,
+            40,
+        )
+        .expect("test SSH profile is valid")
+        .as_ssh()
+        .expect("test profile is SSH")
+        .clone();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(520.0, 560.0))
+            .build_ui_state(
+                |ui, state: &mut RestoredSshHarnessState| {
+                    let tab_id = state.tab_id.expect("test tab id is set");
+                    let profile = state.profile.as_ref().expect("test profile is set");
+                    if let Some(command) =
+                        show_ssh_authentication_required(ui, tab_id, profile, true)
+                    {
+                        state.command = Some(command);
+                    }
+                },
+                RestoredSshHarnessState {
+                    tab_id: Some(AppState::for_test().active()),
+                    profile: Some(profile),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        // The destination is already restored, so the password is the only
+        // thing left to type: it should accept keystrokes without a click.
+        assert!(
+            harness.get_by_label("Password").is_focused(),
+            "a restored destination should focus the password field it still needs"
+        );
+
+        harness.get_by_label("Username").focus();
+        harness.run();
+        assert!(
+            !harness.get_by_label("Password").is_focused(),
+            "the password focus request must be one-shot so Tab still works"
+        );
     }
 
     #[test]

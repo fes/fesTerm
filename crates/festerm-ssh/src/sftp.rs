@@ -322,9 +322,59 @@ pub struct SftpSession {
     remote_working_directory: String,
     local_working_directory: PathBuf,
     closed: bool,
+    /// Keeps the connection's background transport task alive for as long
+    /// as this session lives. Only ever set by
+    /// [`Self::with_runtime_keepalive`], used exclusively by
+    /// `connect_gui_sftp_session` in `festerm-ssh::lib`; the terminal SFTP
+    /// path (`SftpTerminalSession`) doesn't need this because its dedicated
+    /// worker thread's `tokio` runtime already spans the whole session, not
+    /// just the connect phase.
+    runtime_keepalive: Option<GuiSftpConnectionKeepAlive>,
+}
+
+/// Drop guard that keeps a dedicated background thread's `tokio` runtime
+/// alive -- and therefore keeps polling whatever `russh` spawned onto it
+/// while connecting -- for as long as the [`SftpSession`] it's attached to
+/// lives.
+///
+/// `russh::client::connect` spawns the connection's entire read/write
+/// dispatch loop via `tokio::spawn`, onto whatever runtime happens to be
+/// ambient at the time. A connect path that builds a throw-away runtime
+/// just to `block_on` the connect handshake and then returns will drop that
+/// runtime as soon as it returns -- which cancels the just-spawned dispatch
+/// task, silently killing the connection a moment after it reports
+/// "connected". This guard's `Drop` signals the owning thread to stop
+/// keeping its runtime alive once (and only once) the session itself is
+/// dropped.
+pub(crate) struct GuiSftpConnectionKeepAlive {
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl GuiSftpConnectionKeepAlive {
+    pub(crate) fn new(shutdown: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            shutdown: Some(shutdown),
+        }
+    }
+}
+
+impl Drop for GuiSftpConnectionKeepAlive {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
 }
 
 impl SftpSession {
+    /// Attaches a [`GuiSftpConnectionKeepAlive`] guard to this session,
+    /// tying the guard's (and therefore its owning thread's runtime's)
+    /// lifetime to this session's.
+    pub(crate) fn with_runtime_keepalive(mut self, guard: GuiSftpConnectionKeepAlive) -> Self {
+        self.runtime_keepalive = Some(guard);
+        self
+    }
+
     /// Opens a dedicated SSH session channel on `handle`, requests the
     /// `"sftp"` subsystem, and starts the SFTP protocol client.
     pub async fn connect<H>(handle: &russh::client::Handle<H>) -> Result<Self, SftpSessionError>
@@ -387,6 +437,7 @@ impl SftpSession {
             remote_working_directory,
             local_working_directory,
             closed: false,
+            runtime_keepalive: None,
         })
     }
 
@@ -1258,7 +1309,16 @@ fn tokenize_command_line(line: &str) -> Result<Vec<String>, SftpCommandParseErro
             continue;
         }
         match character {
-            '\\' if !in_single_quote => escape_next = true,
+            // Only treat `\` as an escape character *outside* of quotes
+            // (e.g. to let an unquoted token contain an escaped space).
+            // Windows paths are full of literal backslashes
+            // (`C:\Users\name\...`), and users overwhelmingly type them
+            // inside double quotes (`lcd "C:\Users\name\Downloads"`); if `\`
+            // were still treated as an escape character there, every
+            // backslash-letter pair would be silently collapsed to just the
+            // letter, corrupting the path (see issue found via the
+            // `controlled_openssh_sftp_*` interop tests on Windows).
+            '\\' if !in_single_quote && !in_double_quote => escape_next = true,
             '\'' if !in_double_quote => in_single_quote = !in_single_quote,
             '"' if !in_single_quote => in_double_quote = !in_double_quote,
             character if character.is_whitespace() && !in_single_quote && !in_double_quote => {
@@ -1342,7 +1402,13 @@ pub(crate) fn normalize_local_path(path: PathBuf) -> PathBuf {
     for component in path.components() {
         match component {
             Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(Path::new("/")),
+            // Use the platform's native separator rather than a literal
+            // `/`, so the reconstructed path is consistent with the
+            // separators used for the `Normal` components pushed below
+            // (on Windows `PathBuf::push` always joins with `\`, so
+            // forcing `/` here left root-relative paths looking like
+            // `C:/Users\name\...` -- a jarring, inconsistent mix).
+            Component::RootDir => normalized.push(std::path::MAIN_SEPARATOR.to_string()),
             Component::CurDir => {}
             Component::ParentDir => {
                 let _ = normalized.pop();
@@ -1641,6 +1707,17 @@ mod tests {
             parse_sftp_command("lcd \"folder with spaces\""),
             Ok(SftpCommand::Lcd {
                 path: "folder with spaces".to_owned()
+            })
+        );
+        // Windows paths are full of literal backslashes and are typically
+        // typed inside double quotes; those backslashes must survive
+        // tokenization unchanged instead of being treated as shell-style
+        // escape characters (regression test for the interop failure where
+        // "C:\Users\fes\Downloads" was silently mangled to "C:UsersfesDownloads").
+        assert_eq!(
+            parse_sftp_command("lcd \"C:\\Users\\fes\\Downloads\""),
+            Ok(SftpCommand::Lcd {
+                path: "C:\\Users\\fes\\Downloads".to_owned()
             })
         );
         assert_eq!(parse_sftp_command("ls"), Ok(SftpCommand::Ls { path: None }));
