@@ -983,6 +983,10 @@ impl FesTermApp {
             return;
         }
         let active = self.state.active();
+        if self.state.sftp_file_manager_tab_mut(active).is_some() {
+            self.handle_dropped_files_on_sftp_tab(context, active, &dropped);
+            return;
+        }
         let Some(session) = self.state.session_tab_mut(active) else {
             self.reject_file_drop(context, "File drop needs an active session.");
             return;
@@ -1019,6 +1023,50 @@ impl FesTermApp {
             lifecycle_generation,
             cancel_focus_requested: false,
         });
+    }
+
+    /// The SFTP-file-manager half of `handle_dropped_files` (issue #137):
+    /// external OS drops onto the *remote* pane upload into its current
+    /// directory; drops onto the local pane (or anywhere else in the tab,
+    /// e.g. the transfer rail) are explicitly unsupported, matching the
+    /// terminal-session path's "never silently guess" stance. This tab's
+    /// body hasn't rendered yet this frame, so the target pane is resolved
+    /// from wherever `show_pane` last drew each pane, cached on the tab.
+    fn handle_dropped_files_on_sftp_tab(
+        &mut self,
+        context: &egui::Context,
+        active: crate::tabs::TabId,
+        dropped: &[egui::DroppedFileHandle],
+    ) {
+        let Some(tab) = self.state.sftp_file_manager_tab_mut(active) else {
+            return;
+        };
+        let drop_pos = context.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
+        let over_remote_pane = drop_pos.is_some_and(|pos| {
+            tab.last_remote_pane_rect
+                .is_some_and(|rect| rect.contains(pos))
+        });
+        if !over_remote_pane {
+            self.reject_file_drop(
+                context,
+                "Drop files onto the remote pane to upload them; the local pane doesn't accept file drops.",
+            );
+            return;
+        }
+        let paths: Vec<std::path::PathBuf> = dropped
+            .iter()
+            .map(|file| file.path().to_path_buf())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        match tab.enqueue_external_drop_upload(paths) {
+            Ok(0) => {}
+            Ok(_) => {
+                context.request_repaint();
+            }
+            Err(message) => self.reject_file_drop(context, &message),
+        }
     }
 
     fn reject_file_drop(&mut self, context: &egui::Context, message: &str) {
