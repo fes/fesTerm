@@ -858,7 +858,8 @@
         "SFTPG-01",
         "SFTPG-02",
         "SFTPG-03",
-        "SFTPG-04"
+        "SFTPG-04",
+        "SFTPG-05"
       ],
       "requirements": [
         "docs/sftp-ui-design.md#layout-and-navigation",
@@ -867,7 +868,8 @@
       ],
       "decisions": [
         "ADR-0020",
-        "ADR-0029"
+        "ADR-0029",
+        "ADR-0030"
       ],
       "automated_tests": [
         "authentication_surface_allows_connecting_before_host_trust_is_persisted",
@@ -885,7 +887,13 @@
         "collision_resolution_wires_apply_to_all_scope",
         "keyboard_shortcut_mapping_matches_expected_commands",
         "recursive_download_rejects_malicious_remote_entry_names",
-        "resolving_remaining_conflicts_after_cancelling_a_paused_item_does_not_panic"
+        "resolving_remaining_conflicts_after_cancelling_a_paused_item_does_not_panic",
+        "is_markdown_file_recognizes_md_and_markdown_extensions_case_insensitively",
+        "build_remote_markdown_source_pins_host_port_and_verified_fingerprint",
+        "build_remote_markdown_source_uses_profile_owner_when_a_profile_is_saved",
+        "build_remote_markdown_source_uses_username_owner_without_a_saved_profile",
+        "open_remote_markdown_snapshot_opens_a_new_tab",
+        "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating"
       ],
       "manual_scenarios": [],
       "status": "partial",
@@ -1305,14 +1313,19 @@
         "resource_approval_is_per_reference_and_clears",
         "markdown_source_errors_build_content_free_error_states",
         "markdown_load_errors_build_content_free_error_states",
-        "local_load_errors_build_actionable_error_states"
+        "local_load_errors_build_actionable_error_states",
+        "open_remote_parses_in_memory_bytes_without_touching_disk",
+        "matches_remote_path_ignores_owner_and_fingerprint",
+        "reload_on_a_remote_tab_reports_reload_unsupported_instead_of_reloading",
+        "open_remote_markdown_snapshot_opens_a_new_tab",
+        "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating"
       ],
       "manual_scenarios": [
         "CP-06"
       ],
       "status": "partial",
       "prerequisites": [
-        "Remote SSH-backed Markdown preview still depends on the planned GUI SFTP browser surface from ADR-0029"
+        "Reloading a remote-opened Markdown tab after a disconnect/reconnect is not yet implemented (reports RemoteReloadUnsupported); relative resource fetch within a remote-sourced document is also unimplemented"
       ]
     }
   ]

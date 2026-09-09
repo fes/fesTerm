@@ -16,6 +16,7 @@ use eframe::egui::{
     Ui, WidgetInfo, WidgetType,
 };
 use festerm_config::{CredentialKind, SftpPaneOrderPreference};
+use festerm_markdown::{MarkdownBounds, RemoteMarkdownSource, RemoteSourceOwner};
 use festerm_secret_store::{SecretReference, SecretStore};
 use festerm_session::HostKeyPrompt;
 use festerm_ssh::{
@@ -555,6 +556,25 @@ pub(crate) fn show_authentication_required(
 struct PendingHostKeyDecision {
     prompt: HostKeyPrompt,
     resolver: HostKeyDecisionResolver,
+}
+
+/// Tracks an in-flight `WorkerCommand::ReadMarkdownSnapshot` so a stale
+/// response (from a since-abandoned double-click) can be told apart from
+/// the request the user is actually still waiting on -- see
+/// `WorkerEvent::MarkdownSnapshotLoaded`/`Failed`.
+struct PendingMarkdownRequest {
+    request_id: u64,
+    #[allow(dead_code)]
+    path: String,
+}
+
+/// A fetched remote Markdown snapshot waiting to be turned into an
+/// `AppCommand::OpenRemoteMarkdownSnapshot` on the next `show()` call --
+/// see `SftpFileManagerTab::show`.
+struct PendingMarkdownOpen {
+    source: RemoteMarkdownSource,
+    display_path: String,
+    content: Vec<u8>,
 }
 
 fn host_key_destination(target: &SftpFileManagerLaunchTarget) -> String {
@@ -1382,6 +1402,23 @@ pub(crate) struct SftpFileManagerTab {
     repaint: egui::Context,
     next_local_request_id: u64,
     pending_host_key: Option<PendingHostKeyDecision>,
+    /// The host-key fingerprint accepted for this session, cached from
+    /// `WorkerEvent::Connected` so a remote Markdown open (issue #133) can
+    /// pin its `RemoteMarkdownSource` to the exact verified origin without
+    /// re-deriving it.
+    verified_host_key_fingerprint: Option<String>,
+    next_markdown_request_id: u64,
+    pending_markdown_request: Option<PendingMarkdownRequest>,
+    pending_markdown_open: Option<PendingMarkdownOpen>,
+    /// Set when opening a double-clicked Markdown file fails (fetch error,
+    /// or the connection isn't verified yet); rendered as a dismissible
+    /// banner from `show_toolbar` and cleared either by the user dismissing
+    /// it or by the next successful open.
+    markdown_open_error: Option<(String, String)>,
+    /// Set synchronously by `open_item` when a *local* Markdown file is
+    /// double-clicked (no worker roundtrip needed); consumed by `show`'s
+    /// tail, same as `pending_markdown_open` for the remote case.
+    pending_markdown_command: Option<crate::tabs::AppCommand>,
 }
 
 impl SftpFileManagerTab {
@@ -1441,6 +1478,12 @@ impl SftpFileManagerTab {
             repaint: context.clone(),
             next_local_request_id: 1,
             pending_host_key: None,
+            verified_host_key_fingerprint: None,
+            next_markdown_request_id: 1,
+            pending_markdown_request: None,
+            pending_markdown_open: None,
+            markdown_open_error: None,
+            pending_markdown_command: None,
         };
         let initial_local = tab.local_pane.current_path.clone();
         load_path(&mut tab, PaneFocus::Local, initial_local, false);
@@ -1624,7 +1667,24 @@ impl SftpFileManagerTab {
         }
         self.show_transfer_drawer(ui);
         self.show_collision_dialog(ui.ctx());
-        toolbar_command
+        self.take_pending_markdown_command().or(toolbar_command)
+    }
+
+    /// Consumes whichever pending Markdown-open state (issue #133) is set
+    /// for this frame -- the synchronous local case from `open_item`, or
+    /// the asynchronous remote case filled by `apply_event` earlier in this
+    /// same `poll()` call -- and turns it into the `AppCommand` that opens
+    /// (or refreshes) the corresponding viewer tab.
+    fn take_pending_markdown_command(&mut self) -> Option<crate::tabs::AppCommand> {
+        if let Some(command) = self.pending_markdown_command.take() {
+            return Some(command);
+        }
+        let pending = self.pending_markdown_open.take()?;
+        Some(crate::tabs::AppCommand::OpenRemoteMarkdownSnapshot {
+            source: pending.source,
+            display_path: pending.display_path,
+            content: pending.content,
+        })
     }
 
     fn show_toolbar(
@@ -1671,7 +1731,39 @@ impl SftpFileManagerTab {
             // most of the pane row's top inset.
             ui.add_space((SFTP_PANE_OUTER_INSET - SFTP_TAB_BODY_LEADING_GAP).max(0.0));
         }
+        self.show_markdown_open_error_banner(ui);
         self.show_connection_status_banner(ui, tab_id)
+    }
+
+    /// Shown when opening a double-clicked Markdown file failed (issue
+    /// #133) -- e.g. the remote fetch failed, or the connection's verified
+    /// identity wasn't cached yet. Unlike the connection-status banner,
+    /// this only ever needs a dismiss action: it doesn't gate the rest of
+    /// the UI on any pending decision, so it's rendered directly against
+    /// `&mut self` rather than returning an `AppCommand`.
+    fn show_markdown_open_error_banner(&mut self, ui: &mut Ui) {
+        let Some((summary, details)) = self.markdown_open_error.clone() else {
+            return;
+        };
+        let mut dismiss = false;
+        ui.horizontal(|ui| {
+            ui.add_space(SFTP_TOOLBAR_LEFT_PADDING);
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(theme::STATUS_ERROR, &summary);
+                    ui.add_space(8.0);
+                    if ui.small_button("Dismiss").clicked() {
+                        dismiss = true;
+                    }
+                });
+                if !details.is_empty() {
+                    ui.label(RichText::new(&details).small().color(theme::TEXT_MUTED));
+                }
+            });
+        });
+        if dismiss {
+            self.markdown_open_error = None;
+        }
     }
 
     fn show_heading(&self, ui: &mut Ui) {
@@ -3038,7 +3130,53 @@ impl SftpFileManagerTab {
     fn open_item(&mut self, focus: PaneFocus, item: &SftpDirectoryItem) {
         if item.file_type == SftpEntryType::Directory {
             load_path(self, focus, item.path.clone(), true);
+            return;
         }
+        if !is_markdown_file(item) {
+            return;
+        }
+        match &item.path {
+            SftpPath::Local(path) => {
+                self.pending_markdown_command =
+                    Some(crate::tabs::AppCommand::OpenLocalMarkdownFile { path: path.clone() });
+            }
+            SftpPath::Remote(path) => {
+                self.request_remote_markdown_snapshot(path.clone());
+            }
+        }
+    }
+
+    /// Kicks off fetching a remote Markdown file's full bytes so it can be
+    /// opened in the Markdown viewer (issue #133). The result comes back
+    /// asynchronously as `WorkerEvent::MarkdownSnapshotLoaded`/`Failed`,
+    /// consumed by `apply_event` and then surfaced as an `AppCommand` from
+    /// `show`'s tail.
+    fn request_remote_markdown_snapshot(&mut self, path: String) {
+        let request_id = self.next_markdown_request_id;
+        self.next_markdown_request_id += 1;
+        self.markdown_open_error = None;
+        self.pending_markdown_request = Some(PendingMarkdownRequest {
+            request_id,
+            path: path.clone(),
+        });
+        let _ = self
+            .command_sender
+            .send(WorkerCommand::ReadMarkdownSnapshot {
+                request_id,
+                path,
+                max_bytes: MarkdownBounds::default().max_source_bytes(),
+            });
+    }
+
+    /// Builds the `RemoteMarkdownSource` identity pinning a freshly fetched
+    /// snapshot to this tab's verified connection. Returns `None` if the
+    /// host-key fingerprint hasn't been cached yet (shouldn't happen in
+    /// practice -- a Markdown double-click can only reach a connected
+    /// remote pane -- but this keeps the identity's validated invariants
+    /// honest rather than fabricating a fingerprint).
+    fn remote_markdown_identity(&self, remote_path: &str) -> Option<RemoteMarkdownSource> {
+        let fingerprint = self.verified_host_key_fingerprint.as_deref()?;
+        build_remote_markdown_source(&self.launch_target, fingerprint, remote_path)
     }
 
     fn queue_transfer(&mut self, source_focus: PaneFocus) {
@@ -3083,10 +3221,12 @@ impl SftpFileManagerTab {
             WorkerEvent::Connected {
                 remote_directory,
                 remote_metadata,
+                verified_host_key_fingerprint,
             } => {
                 self.connection_state = SftpConnectionState::Ready;
                 self.has_connected_once = true;
                 self.pending_host_key = None;
+                self.verified_host_key_fingerprint = Some(verified_host_key_fingerprint);
                 self.remote_pane
                     .set_snapshot(remote_directory, remote_metadata);
                 self.remote_pane
@@ -3130,6 +3270,49 @@ impl SftpFileManagerTab {
                 self.pending_host_key = None;
                 self.connection_state = SftpConnectionState::Failed { summary, details };
                 self.remote_pane.loading = false;
+            }
+            WorkerEvent::MarkdownSnapshotLoaded {
+                request_id,
+                path,
+                content,
+            } => {
+                let Some(pending) = self.pending_markdown_request.as_ref() else {
+                    return;
+                };
+                if pending.request_id != request_id {
+                    return;
+                }
+                self.pending_markdown_request = None;
+                match self.remote_markdown_identity(&path) {
+                    Some(source) => {
+                        self.pending_markdown_open = Some(PendingMarkdownOpen {
+                            source,
+                            display_path: path,
+                            content,
+                        });
+                    }
+                    None => {
+                        self.markdown_open_error = Some((
+                            "Could not open this file in the Markdown viewer.".to_owned(),
+                            "The remote connection's verified identity is not available yet."
+                                .to_owned(),
+                        ));
+                    }
+                }
+            }
+            WorkerEvent::MarkdownSnapshotFailed {
+                request_id,
+                summary,
+                details,
+            } => {
+                let Some(pending) = self.pending_markdown_request.as_ref() else {
+                    return;
+                };
+                if pending.request_id != request_id {
+                    return;
+                }
+                self.pending_markdown_request = None;
+                self.markdown_open_error = Some((summary, details));
             }
         }
     }
@@ -3284,7 +3467,19 @@ impl Drop for SftpFileManagerTab {
 
 #[derive(Debug)]
 enum WorkerCommand {
-    LoadRemote { path: String },
+    LoadRemote {
+        path: String,
+    },
+    /// Fetches a remote file's full bytes for the Markdown viewer
+    /// (issue #133), bounded by `max_bytes` so a huge file can't be pulled
+    /// into memory whole. `request_id` lets the tab discard a stale
+    /// response if the user double-clicked a different file before this
+    /// one came back.
+    ReadMarkdownSnapshot {
+        request_id: u64,
+        path: String,
+        max_bytes: usize,
+    },
     Enqueue(Vec<SftpTransferRequest>),
     CancelTransfer(SftpTransferId),
     ResolveCollision(SftpCollisionResolution),
@@ -3300,6 +3495,11 @@ enum WorkerEvent {
     Connected {
         remote_directory: SftpDirectorySnapshot,
         remote_metadata: Option<SftpPathMetadata>,
+        /// The host-key fingerprint accepted for this session, cached so a
+        /// later remote Markdown open (issue #133) can pin its
+        /// `RemoteMarkdownSource` identity to the exact origin the user
+        /// verified, without re-deriving or re-prompting for it.
+        verified_host_key_fingerprint: String,
     },
     LocalDirectoryLoaded {
         focus: PaneFocus,
@@ -3322,6 +3522,16 @@ enum WorkerEvent {
         details: String,
     },
     ConnectionFailed {
+        summary: String,
+        details: String,
+    },
+    MarkdownSnapshotLoaded {
+        request_id: u64,
+        path: String,
+        content: Vec<u8>,
+    },
+    MarkdownSnapshotFailed {
+        request_id: u64,
         summary: String,
         details: String,
     },
@@ -3431,6 +3641,9 @@ async fn run_worker(
         let _ = event_sender.send(WorkerEvent::Connected {
             remote_directory: snapshot,
             remote_metadata: metadata,
+            verified_host_key_fingerprint: session_known_host_fingerprint
+                .clone()
+                .unwrap_or_default(),
         });
         repaint.request_repaint();
     }
@@ -3506,6 +3719,62 @@ async fn run_worker(
                                     Err(_) => {
                                         let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
                                             summary: "Could not load the remote folder.".to_owned(),
+                                            details: error.to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        repaint.request_repaint();
+                    }
+                    WorkerCommand::ReadMarkdownSnapshot { request_id, path, max_bytes } => {
+                        match browsing.read_markdown_snapshot(&path, max_bytes).await {
+                            Ok(content) => {
+                                let _ = event_sender.send(WorkerEvent::MarkdownSnapshotLoaded {
+                                    request_id,
+                                    path,
+                                    content,
+                                });
+                            }
+                            Err(error) => {
+                                // Same resilience pattern as `LoadRemote`
+                                // above: the session may have silently died
+                                // since the last operation, so try one
+                                // reconnect-and-retry before reporting a
+                                // failure to the user.
+                                match reconnect_browsing_session(
+                                    &target,
+                                    &authentication,
+                                    &mut session_known_host_fingerprint,
+                                    &event_sender,
+                                    &repaint,
+                                )
+                                .await
+                                {
+                                    Ok(session) => {
+                                        browsing = session;
+                                        liveness_interval.reset();
+                                        match browsing.read_markdown_snapshot(&path, max_bytes).await {
+                                            Ok(content) => {
+                                                let _ = event_sender.send(WorkerEvent::MarkdownSnapshotLoaded {
+                                                    request_id,
+                                                    path,
+                                                    content,
+                                                });
+                                            }
+                                            Err(retry_error) => {
+                                                let _ = event_sender.send(WorkerEvent::MarkdownSnapshotFailed {
+                                                    request_id,
+                                                    summary: "Could not open this file in the Markdown viewer.".to_owned(),
+                                                    details: retry_error.to_string(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let _ = event_sender.send(WorkerEvent::MarkdownSnapshotFailed {
+                                            request_id,
+                                            summary: "Could not open this file in the Markdown viewer.".to_owned(),
                                             details: error.to_string(),
                                         });
                                     }
@@ -4143,6 +4412,56 @@ fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
             }
         }
     }
+}
+
+/// Whether double-clicking this item should open the Markdown viewer
+/// (issue #133), rather than being a no-op (or, for directories, handled
+/// separately in `open_item`).
+fn is_markdown_file(item: &SftpDirectoryItem) -> bool {
+    if item.file_type != SftpEntryType::File {
+        return false;
+    }
+    let extension = Path::new(item.name.as_str())
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(extension.as_str(), "md" | "markdown")
+}
+
+/// Builds the `RemoteMarkdownSource` identity for a fetched remote Markdown
+/// snapshot, pinning it to `target`'s host/port/owner and the given
+/// already-verified `fingerprint` (issue #133). Split out from
+/// `SftpFileManagerTab::remote_markdown_identity` as a free function purely
+/// so it's unit-testable without spinning up a tab's worker thread.
+fn build_remote_markdown_source(
+    target: &SftpFileManagerLaunchTarget,
+    fingerprint: &str,
+    remote_path: &str,
+) -> Option<RemoteMarkdownSource> {
+    let owner = match &target.profile_id {
+        Some(profile_id) => {
+            RemoteSourceOwner::username_and_profile(target.username.clone(), profile_id.clone())
+        }
+        None => RemoteSourceOwner::username(target.username.clone()),
+    }
+    .ok()?;
+    // `lifecycle_generation` is currently inert: this implementation
+    // deliberately does not support reloading a remote-opened Markdown tab
+    // (see `MarkdownViewerLoadFailure::RemoteReloadUnsupported`), so there
+    // is nothing yet that needs to distinguish one transport episode from
+    // another. A future reload feature should replace this with a real
+    // counter (see ADR-0030).
+    const INERT_LIFECYCLE_GENERATION: u64 = 1;
+    RemoteMarkdownSource::new(
+        target.host.clone(),
+        target.port,
+        owner,
+        fingerprint.to_owned(),
+        remote_path.to_owned(),
+        INERT_LIFECYCLE_GENERATION,
+    )
+    .ok()
 }
 
 fn item_glyph(item: &SftpDirectoryItem) -> SftpGlyph {
@@ -5518,6 +5837,92 @@ mod tests {
         // Their boxes stack directly on top of each other, so unequal padding
         // reads as a misaligned right edge.
         assert_eq!(SFTP_TOOLBAR_PADDING, SFTP_FILTER_ROW_PADDING);
+    }
+
+    fn remote_item(name: &str, path: &str, file_type: SftpEntryType) -> SftpDirectoryItem {
+        SftpDirectoryItem {
+            name: name.to_owned(),
+            path: SftpPath::remote(path),
+            file_type,
+            size: Some(1),
+            modified_at: None,
+            permissions: None,
+        }
+    }
+
+    #[test]
+    fn is_markdown_file_recognizes_md_and_markdown_extensions_case_insensitively() {
+        assert!(is_markdown_file(&item(
+            "README.md",
+            SftpEntryType::File,
+            Some(1)
+        )));
+        assert!(is_markdown_file(&item(
+            "NOTES.MARKDOWN",
+            SftpEntryType::File,
+            Some(1)
+        )));
+        assert!(is_markdown_file(&remote_item(
+            "guide.md",
+            "/srv/docs/guide.md",
+            SftpEntryType::File
+        )));
+        assert!(!is_markdown_file(&item(
+            "README.txt",
+            SftpEntryType::File,
+            Some(1)
+        )));
+        assert!(!is_markdown_file(&item(
+            "docs",
+            SftpEntryType::Directory,
+            None
+        )));
+    }
+
+    fn test_launch_target(profile_id: Option<&str>) -> SftpFileManagerLaunchTarget {
+        SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: profile_id.map(str::to_owned),
+            stored_credential_kind: None,
+            known_host_persisted: true,
+        }
+    }
+
+    #[test]
+    fn build_remote_markdown_source_pins_host_port_and_verified_fingerprint() {
+        let target = test_launch_target(None);
+        let source = build_remote_markdown_source(&target, "SHA256:abc123", "/srv/docs/guide.md")
+            .expect("valid launch target and fingerprint produce a source");
+        assert_eq!(source.host(), "sftp.example.test");
+        assert_eq!(source.port(), 22);
+        assert_eq!(source.verified_host_key_fingerprint(), "SHA256:abc123");
+        assert_eq!(source.remote_path(), "/srv/docs/guide.md");
+    }
+
+    #[test]
+    fn build_remote_markdown_source_uses_profile_owner_when_a_profile_is_saved() {
+        let target = test_launch_target(Some("production"));
+        let source = build_remote_markdown_source(&target, "SHA256:abc123", "/etc/motd")
+            .expect("valid launch target and fingerprint produce a source");
+        assert_eq!(
+            source.owner(),
+            &RemoteSourceOwner::username_and_profile("deploy", "production")
+                .expect("valid owner fields")
+        );
+    }
+
+    #[test]
+    fn build_remote_markdown_source_uses_username_owner_without_a_saved_profile() {
+        let target = test_launch_target(None);
+        let source = build_remote_markdown_source(&target, "SHA256:abc123", "/etc/motd")
+            .expect("valid launch target and fingerprint produce a source");
+        assert_eq!(
+            source.owner(),
+            &RemoteSourceOwner::username("deploy").expect("valid owner fields")
+        );
     }
 
     #[test]
