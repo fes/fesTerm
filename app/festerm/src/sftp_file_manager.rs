@@ -3254,9 +3254,14 @@ impl SftpFileManagerTab {
                     pane.set_error(summary, details);
                 }
             }
-            WorkerEvent::RemoteDirectoryLoaded { snapshot, metadata } => {
+            WorkerEvent::RemoteDirectoryLoaded {
+                snapshot,
+                metadata,
+                verified_host_key_fingerprint,
+            } => {
                 self.connection_state = SftpConnectionState::Ready;
                 self.pending_host_key = None;
+                self.verified_host_key_fingerprint = Some(verified_host_key_fingerprint);
                 self.remote_pane.set_snapshot(snapshot, metadata);
             }
             WorkerEvent::RemoteDirectoryFailed { summary, details } => {
@@ -3275,6 +3280,7 @@ impl SftpFileManagerTab {
                 request_id,
                 path,
                 content,
+                verified_host_key_fingerprint,
             } => {
                 let Some(pending) = self.pending_markdown_request.as_ref() else {
                     return;
@@ -3283,6 +3289,7 @@ impl SftpFileManagerTab {
                     return;
                 }
                 self.pending_markdown_request = None;
+                self.verified_host_key_fingerprint = Some(verified_host_key_fingerprint);
                 match self.remote_markdown_identity(&path) {
                     Some(source) => {
                         self.pending_markdown_open = Some(PendingMarkdownOpen {
@@ -3516,6 +3523,12 @@ enum WorkerEvent {
     RemoteDirectoryLoaded {
         snapshot: SftpDirectorySnapshot,
         metadata: Option<SftpPathMetadata>,
+        /// The fingerprint currently accepted for this session. A
+        /// reconnect (transparent or explicit) can legitimately update
+        /// this if the host key rotated and the user approved the new
+        /// key, so every load carries the current value rather than
+        /// relying solely on the one-time `Connected` event (see #135).
+        verified_host_key_fingerprint: String,
     },
     RemoteDirectoryFailed {
         summary: String,
@@ -3529,6 +3542,9 @@ enum WorkerEvent {
         request_id: u64,
         path: String,
         content: Vec<u8>,
+        /// See `RemoteDirectoryLoaded::verified_host_key_fingerprint`;
+        /// kept current across reconnects for the same reason (#135).
+        verified_host_key_fingerprint: String,
     },
     MarkdownSnapshotFailed {
         request_id: u64,
@@ -3672,6 +3688,9 @@ async fn run_worker(
                                 let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
                                     snapshot,
                                     metadata,
+                                    verified_host_key_fingerprint: session_known_host_fingerprint
+                                        .clone()
+                                        .unwrap_or_default(),
                                 });
                             }
                             Err(error) => {
@@ -3706,6 +3725,9 @@ async fn run_worker(
                                                 let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
                                                     snapshot,
                                                     metadata,
+                                                    verified_host_key_fingerprint: session_known_host_fingerprint
+                                                        .clone()
+                                                        .unwrap_or_default(),
                                                 });
                                             }
                                             Err(retry_error) => {
@@ -3734,6 +3756,9 @@ async fn run_worker(
                                     request_id,
                                     path,
                                     content,
+                                    verified_host_key_fingerprint: session_known_host_fingerprint
+                                        .clone()
+                                        .unwrap_or_default(),
                                 });
                             }
                             Err(error) => {
@@ -3760,6 +3785,9 @@ async fn run_worker(
                                                     request_id,
                                                     path,
                                                     content,
+                                                    verified_host_key_fingerprint: session_known_host_fingerprint
+                                                        .clone()
+                                                        .unwrap_or_default(),
                                                 });
                                             }
                                             Err(retry_error) => {
@@ -3808,7 +3836,13 @@ async fn run_worker(
                                 match browsing.remote_directory_snapshot(Some(&current_remote)).await {
                                     Ok(snapshot) => {
                                         let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
-                                        let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded { snapshot, metadata });
+                                        let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                            snapshot,
+                                            metadata,
+                                            verified_host_key_fingerprint: session_known_host_fingerprint
+                                                .clone()
+                                                .unwrap_or_default(),
+                                        });
                                     }
                                     Err(error) => {
                                         let _ = event_sender.send(WorkerEvent::RemoteDirectoryFailed {
@@ -3855,7 +3889,13 @@ async fn run_worker(
                         browsing = session;
                         if let Ok(snapshot) = browsing.remote_directory_snapshot(Some(&current_remote)).await {
                             let metadata = browsing.remote_path_metadata(&current_remote).await.ok().flatten();
-                            let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded { snapshot, metadata });
+                            let _ = event_sender.send(WorkerEvent::RemoteDirectoryLoaded {
+                                snapshot,
+                                metadata,
+                                verified_host_key_fingerprint: session_known_host_fingerprint
+                                    .clone()
+                                    .unwrap_or_default(),
+                            });
                             repaint.request_repaint();
                         }
                     }
@@ -5194,6 +5234,47 @@ mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
 
+    /// Builds a `SftpFileManagerTab` for unit tests without going through
+    /// `SftpFileManagerTab::new`, which spawns a real background worker
+    /// thread that attempts a live SSH connection -- impractical (and
+    /// network-dependent/flaky) in a unit test. Tests that need to feed
+    /// synthetic `WorkerEvent`s directly into `apply_event` construct the
+    /// struct literal here instead, with disconnected channels that no
+    /// worker thread will ever touch.
+    fn test_tab() -> SftpFileManagerTab {
+        let target = test_launch_target(None);
+        let (command_sender, _command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel();
+        let context = egui::Context::default();
+        SftpFileManagerTab {
+            label: target.label.clone(),
+            profile_identifier: target.profile_id.clone(),
+            launch_target: target,
+            local_pane: SftpPaneState::new(SftpPath::local(PathBuf::from("/tmp"))),
+            remote_pane: SftpPaneState::new(SftpPath::remote("/")),
+            pane_order: SftpPaneOrderPreference::default(),
+            status_bar_visible: true,
+            focused_pane: PaneFocus::Local,
+            narrow_focus: PaneFocus::Local,
+            connection_state: SftpConnectionState::Connecting,
+            has_connected_once: false,
+            transfer_drawer: TransferDrawerState::default(),
+            collision_dialog: None,
+            command_sender,
+            event_receiver,
+            event_sender,
+            repaint: context,
+            next_local_request_id: 1,
+            pending_host_key: None,
+            verified_host_key_fingerprint: None,
+            next_markdown_request_id: 1,
+            pending_markdown_request: None,
+            pending_markdown_open: None,
+            markdown_open_error: None,
+            pending_markdown_command: None,
+        }
+    }
+
     fn item(name: &str, file_type: SftpEntryType, size: Option<u64>) -> SftpDirectoryItem {
         SftpDirectoryItem {
             name: name.to_owned(),
@@ -5922,6 +6003,63 @@ mod tests {
         assert_eq!(
             source.owner(),
             &RemoteSourceOwner::username("deploy").expect("valid owner fields")
+        );
+    }
+
+    #[test]
+    fn remote_directory_loaded_refreshes_the_cached_verified_fingerprint() {
+        let mut tab = test_tab();
+        tab.verified_host_key_fingerprint = Some("SHA256:original".to_owned());
+        tab.apply_event(WorkerEvent::RemoteDirectoryLoaded {
+            snapshot: SftpDirectorySnapshot {
+                location: SftpLocation::Remote,
+                path: SftpPath::remote("/"),
+                loaded_at: SystemTime::now(),
+                entries: Vec::new(),
+            },
+            metadata: None,
+            // Simulates a mid-session host-key rotation: a transparent
+            // reconnect approved a new key, and the fingerprint that comes
+            // back with the next directory load reflects it.
+            verified_host_key_fingerprint: "SHA256:rotated".to_owned(),
+        });
+        assert_eq!(
+            tab.verified_host_key_fingerprint.as_deref(),
+            Some("SHA256:rotated"),
+            "a later RemoteDirectoryLoaded must update the cached fingerprint, \
+             not just the one-time Connected event (issue #135)"
+        );
+    }
+
+    #[test]
+    fn markdown_snapshot_loaded_refreshes_the_cached_verified_fingerprint() {
+        let mut tab = test_tab();
+        tab.verified_host_key_fingerprint = Some("SHA256:original".to_owned());
+        tab.pending_markdown_request = Some(PendingMarkdownRequest {
+            request_id: 7,
+            path: "/srv/docs/guide.md".to_owned(),
+        });
+        tab.apply_event(WorkerEvent::MarkdownSnapshotLoaded {
+            request_id: 7,
+            path: "/srv/docs/guide.md".to_owned(),
+            content: b"# Guide".to_vec(),
+            verified_host_key_fingerprint: "SHA256:rotated".to_owned(),
+        });
+        assert_eq!(
+            tab.verified_host_key_fingerprint.as_deref(),
+            Some("SHA256:rotated"),
+            "a Markdown snapshot fetched after a reconnect must refresh the \
+             cached fingerprint used to pin RemoteMarkdownSource (issue #135)"
+        );
+        // The refreshed fingerprint is what gets pinned into the resulting
+        // RemoteMarkdownSource for this open, not the stale one.
+        let opened = tab
+            .pending_markdown_open
+            .as_ref()
+            .expect("a successful snapshot with a cached fingerprint opens the file");
+        assert_eq!(
+            opened.source.verified_host_key_fingerprint(),
+            "SHA256:rotated"
         );
     }
 

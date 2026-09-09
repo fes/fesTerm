@@ -893,7 +893,9 @@
         "build_remote_markdown_source_uses_profile_owner_when_a_profile_is_saved",
         "build_remote_markdown_source_uses_username_owner_without_a_saved_profile",
         "open_remote_markdown_snapshot_opens_a_new_tab",
-        "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating"
+        "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating",
+        "remote_directory_loaded_refreshes_the_cached_verified_fingerprint",
+        "markdown_snapshot_loaded_refreshes_the_cached_verified_fingerprint"
       ],
       "manual_scenarios": [],
       "status": "partial",
