@@ -23,17 +23,78 @@ use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
-const OUTLINE_WIDTH: f32 = 220.0;
+const OUTLINE_WIDTH: f32 = 216.0;
+/// Narrower than this and the outline is hidden for the frame: the reading
+/// column matters more than the navigation aid on a cramped window.
+const OUTLINE_MIN_DOCUMENT_WIDTH: f32 = 360.0;
 const READING_WIDTH: f32 = 860.0;
+/// Horizontal breathing room kept on each side of the reading column, from
+/// the mockup's `width: min(720px, calc(100% - 54px))`: the column never
+/// runs edge to edge even in a narrow well.
+const READING_COLUMN_SIDE_GUTTER: f32 = 27.0;
+const READING_COLUMN_TOP_PADDING: f32 = 26.0;
+const READING_COLUMN_BOTTOM_PADDING: f32 = 56.0;
 const BODY_TEXT_SIZE: f32 = 15.0;
+/// `p / li { line-height: 1.55 }` in the mockup.
+const BODY_LINE_HEIGHT: f32 = BODY_TEXT_SIZE * 1.5;
+/// Headings set their own, tighter leading; 1.55 around a 30px H1 left a
+/// visible hole between the heading and its rule.
+const HEADING_LINE_HEIGHT_RATIO: f32 = 1.25;
 const PARAGRAPH_BLOCK_SPACING: f32 = 16.0;
 const HEADING_PARAGRAPH_SPACING: f32 = 8.0;
 const LIST_ITEM_SPACING: f32 = 6.0;
 const CODE_BLOCK_PADDING_X: i8 = 14;
 const CODE_BLOCK_PADDING_Y: i8 = 12;
+/// `CODE_LINE_HEIGHT` adds its extra leading *below* each row's glyphs, so
+/// the last line of a fenced block already carries part of the bottom
+/// padding with it. Measured against the top inset, the surplus is 4pt;
+/// taking it off the bottom margin makes the block's optical padding even.
+const CODE_BLOCK_TRAILING_LEAD: i8 = 4;
+const CODE_BLOCK_HEAD_HEIGHT: f32 = 30.0;
+/// Fenced-code text size. Slightly smaller than the 15px body, matching the
+/// mockup's `pre { font: 11px/1.55 }` against its 13px body.
+const CODE_TEXT_SIZE: f32 = 13.0;
+/// Line pitch inside a fenced block. Code lines are separate widgets, so the
+/// container's default vertical item spacing would double-space them.
+const CODE_LINE_SPACING: f32 = 0.0;
+/// `pre { font: 11px/1.55 }` in the mockup, applied here against the 13px
+/// code size.
+const CODE_LINE_HEIGHT: f32 = CODE_TEXT_SIZE * 1.55;
 const TABLE_CELL_PADDING_X: i8 = 10;
 const TABLE_CELL_PADDING_Y: i8 = 6;
 const MARKDOWN_PANEL_RADIUS: f32 = 6.0;
+/// Toolbar control metrics, from the mockup's `.fmd-tool` rule
+/// (`height: 30px; min-width: 30px; padding: 0 8px; border-radius: 5px`).
+const TOOLBAR_BUTTON_HEIGHT: f32 = 30.0;
+const TOOLBAR_BUTTON_PADDING_X: f32 = 8.0;
+const TOOLBAR_BUTTON_GAP: f32 = 5.0;
+const TOOLBAR_BUTTON_RADIUS: f32 = 5.0;
+const TOOLBAR_ICON_SIZE: f32 = 15.0;
+/// Gap between a toolbar control's icon and its text, matching the
+/// mockup's `gap: 5px`.
+const TOOLBAR_ICON_TEXT_GAP: f32 = 5.0;
+const TOOLBAR_TEXT_SIZE: f32 = 11.0;
+/// `.fmd-outline { padding: 13px 9px }` plus the title's own `0 7px 10px`.
+const OUTLINE_PADDING_X: f32 = 9.0;
+const OUTLINE_PADDING_Y: f32 = 13.0;
+const OUTLINE_TITLE_INSET_X: f32 = 7.0;
+const OUTLINE_TITLE_GAP_BELOW: f32 = 10.0;
+const OUTLINE_ITEM_PADDING_X: f32 = 7.0;
+const OUTLINE_ITEM_PADDING_Y: f32 = 6.0;
+/// `.fmd-outline-item.fmd-depth2 { padding-left: 19px }` measured from the
+/// item's own left edge, so each further level adds the same step.
+const OUTLINE_ITEM_INDENT: f32 = 12.0;
+const OUTLINE_ITEM_ACCENT_WIDTH: f32 = 2.0;
+const OUTLINE_ITEM_RADIUS: f32 = 3.0;
+/// Height reserved for the viewer's own footer, used only when the shared
+/// application status bar is hidden. Matches the status bar's own geometry
+/// so toggling it doesn't reflow the document.
+const VIEWER_FOOTER_HEIGHT: f32 = 25.0;
+/// Find is a floating card over the document, matching the mockup's
+/// `.fmd-find` (`position: absolute; top: 16px; right: 16px`).
+const FIND_CARD_WIDTH: f32 = 340.0;
+const FIND_CARD_HEIGHT: f32 = 36.0;
+const FIND_CARD_MARGIN: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MarkdownViewerMode {
@@ -337,6 +398,7 @@ pub struct MarkdownViewerTab {
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     outline_keyboard_focus: bool,
+    status_bar_visible: bool,
 }
 
 impl MarkdownViewerTab {
@@ -375,6 +437,7 @@ impl MarkdownViewerTab {
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
+            status_bar_visible: true,
         };
         tab.reload();
         tab
@@ -402,54 +465,141 @@ impl MarkdownViewerTab {
         matches!(&self.source, MarkdownSource::Local(local) if local.path() == &candidate)
     }
 
+    /// Left-hand status-bar context, mirroring the mockup's
+    /// `Local Markdown · UTF-8` / `Remote Markdown · production-db` line.
+    pub fn status_bar_context(&self) -> &'static str {
+        match self.source {
+            MarkdownSource::Local(_) => "Local Markdown",
+            MarkdownSource::Remote(_) => "Remote Markdown",
+        }
+    }
+
+    /// Encoding is fixed for v1 (`docs/markdown-viewer-design.md`: "The first
+    /// pass accepts UTF-8 with an optional BOM"), so this is a constant
+    /// rather than a decoded-per-document value.
+    pub fn status_bar_encoding(&self) -> &'static str {
+        "UTF-8"
+    }
+
+    /// Right-hand status-bar state. A stale snapshot or a load error outranks
+    /// the steady-state "Read only", because those are the states a reader
+    /// has to act on.
+    pub fn status_bar_label(&self) -> &'static str {
+        if let Some(error) = &self.error {
+            if error.source_unavailable {
+                return "Source unavailable";
+            }
+            return error.title;
+        }
+        if self.stale_snapshot {
+            return "Offline snapshot · stale";
+        }
+        if self.document.is_some() {
+            "Read only"
+        } else {
+            "Loading"
+        }
+    }
+
+    pub fn status_bar_status(&self) -> festerm_ui_egui::chrome::ChipStatus {
+        use festerm_ui_egui::chrome::ChipStatus;
+        // A healthy read-only document has nothing to act on, so it shows no
+        // status dot — the mockup's `.fmd-status` is plain text. The dot is
+        // reserved for the states a reader has to notice.
+        if self.error.is_some() {
+            ChipStatus::Failed
+        } else if self.stale_snapshot {
+            ChipStatus::Starting
+        } else {
+            ChipStatus::Neutral
+        }
+    }
+
+    /// Mirrors `SftpFileManagerTab`: the viewer's own footer only appears
+    /// when the shared status bar is hidden, so the same facts are never
+    /// shown twice.
+    pub fn set_status_bar_visible(&mut self, visible: bool) {
+        self.status_bar_visible = visible;
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
         self.poll_background_work(ui.ctx());
         let mut command = self.consume_shortcuts(ui.ctx(), tab_id);
         egui::Frame::new()
             .fill(theme::SURFACE_WINDOW)
-            .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    if command.is_none() {
-                        command = self.show_toolbar(ui, tab_id);
-                    }
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(8.0);
-                    if let Some(document) = self.document.as_ref() {
-                        if document.source_text().is_empty() {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    // `.fmd-toolbar { padding: 5px 9px }` over the full
+                    // width, with its own hairline: the outline and document
+                    // below run edge to edge, so the toolbar owns the inset
+                    // rather than the whole viewer sharing one margin.
+                    // `.fmd-toolbar` carries only a bottom hairline in the
+                    // mockup; a filled band read as a second title bar.
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(9, 5))
+                        .show(ui, |ui| {
+                            if command.is_none() {
+                                command = self.show_toolbar(ui, tab_id);
+                            }
+                        });
+                    let hairline = ui
+                        .allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover())
+                        .0;
+                    ui.painter().line_segment(
+                        [hairline.left_center(), hairline.right_center()],
+                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                    );
+
+                    let footer_height = if self.status_bar_visible {
+                        0.0
+                    } else {
+                        VIEWER_FOOTER_HEIGHT
+                    };
+                    let body_height = (ui.available_height() - footer_height).max(120.0);
+                    let mut document_rect = None;
+                    ui.allocate_ui(vec2(ui.available_width(), body_height), |ui| {
+                        ui.set_height(body_height);
+                        if let Some(document) = self.document.as_ref() {
+                            if document.source_text().is_empty() {
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(24.0);
+                                    ui.heading("This Markdown file is empty");
+                                });
+                            } else {
+                                let mut render_state = MarkdownRenderState {
+                                    mode: self.mode,
+                                    outline_open: self.outline_open,
+                                    outline_selected: &mut self.outline_selected,
+                                    find: &self.find,
+                                    resource_approvals: &self.resource_approvals,
+                                    loaded_images: &self.loaded_images,
+                                    pending_image_loads: &self.pending_image_loads,
+                                    image_errors: &self.image_errors,
+                                    pending_scroll: &mut self.pending_scroll,
+                                    line_heading_indices: &self.line_heading_indices,
+                                    outline_keyboard_focus: &mut self.outline_keyboard_focus,
+                                };
+                                document_rect =
+                                    Some(render_state.show_document(ui, document).document_rect);
+                            }
+                        } else if let Some(error) = self.error.as_ref().cloned() {
+                            self.show_error(ui, &error, tab_id, &mut command);
+                        } else {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(24.0);
-                                ui.heading("This Markdown file is empty");
+                                ui.heading("Loading Markdown");
                             });
-                        } else {
-                            let mut render_state = MarkdownRenderState {
-                                mode: self.mode,
-                                outline_open: self.outline_open,
-                                outline_selected: &mut self.outline_selected,
-                                find: &self.find,
-                                resource_approvals: &self.resource_approvals,
-                                loaded_images: &self.loaded_images,
-                                pending_image_loads: &self.pending_image_loads,
-                                image_errors: &self.image_errors,
-                                pending_scroll: &mut self.pending_scroll,
-                                line_heading_indices: &self.line_heading_indices,
-                                outline_keyboard_focus: &mut self.outline_keyboard_focus,
-                            };
-                            render_state.show_document(ui, document);
                         }
-                    } else if let Some(error) = self.error.as_ref().cloned() {
-                        self.show_error(ui, &error, tab_id, &mut command);
-                    } else {
-                        ui.vertical_centered(|ui| {
-                            ui.add_space(24.0);
-                            ui.heading("Loading Markdown");
-                        });
+                    });
+                    if let Some(rect) = document_rect {
+                        if let Some(find_command) = self.show_find_overlay(ui, rect) {
+                            command = Some(find_command);
+                        }
                     }
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                    self.show_footer(ui);
+                    if !self.status_bar_visible {
+                        self.show_footer(ui);
+                    }
                 });
             });
         command
@@ -701,100 +851,237 @@ impl MarkdownViewerTab {
 
     fn show_toolbar(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
         let mut command = None;
-        ui.horizontal_wrapped(|ui| {
-            icon_label(
-                ui,
-                Icon::MarkdownDocument,
-                match self.source {
-                    MarkdownSource::Local(_) => "Local",
-                    MarkdownSource::Remote(_) => "Remote",
-                },
-            );
-            ui.label(
-                RichText::new(elide_middle(self.display_path(), 72))
-                    .small()
-                    .monospace(),
-            );
-            ui.add_space(12.0);
-            if small_toolbar_button(
-                ui,
-                Icon::RenderedView,
-                match self.mode {
-                    MarkdownViewerMode::Preview => "Preview",
-                    MarkdownViewerMode::Source => "Rendered",
-                },
-                "Toggle Preview/Source (Ctrl/Cmd+Shift+V)",
-            ) {
-                command = Some(AppCommand::ToggleMarkdownPreviewSource);
-            }
-            if small_toolbar_button(
-                ui,
-                Icon::SourceView,
-                match self.mode {
-                    MarkdownViewerMode::Preview => "Source",
-                    MarkdownViewerMode::Source => "Preview",
-                },
-                "Toggle Preview/Source (Ctrl/Cmd+Shift+V)",
-            ) {
-                command = Some(AppCommand::ToggleMarkdownPreviewSource);
-            }
-            if small_toolbar_button(ui, Icon::Search, "Find", "Find (Ctrl/Cmd+F)") {
-                command = Some(AppCommand::OpenMarkdownFind);
-            }
-            if small_toolbar_button(
-                ui,
-                Icon::Outline,
-                if self.outline_open {
-                    "Hide outline"
-                } else {
-                    "Show outline"
-                },
-                "Toggle outline (Ctrl/Cmd+Shift+O)",
-            ) {
-                command = Some(AppCommand::ToggleMarkdownOutline);
-            }
-            if small_toolbar_button(ui, Icon::Reconnect, "Reload", "Reload (Ctrl/Cmd+R)") {
-                command = Some(AppCommand::ReloadMarkdown);
-            }
-            if small_toolbar_button(ui, Icon::Overflow, "Close", "Close viewer") {
-                command = Some(AppCommand::CloseTab(tab_id));
-            }
-        });
-        if self.find.is_open() {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let mut query = self.find.query().to_owned();
-                let response = ui.add_sized(
-                    vec2(220.0, 24.0),
-                    egui::TextEdit::singleline(&mut query)
-                        .id(egui::Id::new("markdown-find-query"))
-                        .hint_text("Find"),
-                );
-                response.widget_info(|| {
-                    WidgetInfo::labeled(WidgetType::TextEdit, true, "Find Markdown")
-                });
-                if self.find.take_focus_request() {
-                    response.request_focus();
-                }
-                if response.changed() {
-                    if let Some(document) = &self.document {
-                        self.find.set_query(document, query);
-                    } else {
-                        self.find.query = query;
+        // Origin and path claim the left edge; every control is right
+        // aligned, matching the mockup's `.fmd-toolbar` flex row rather than
+        // trailing the path in reading order.
+        ui.horizontal(|ui| {
+            ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_GAP;
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                // `docs/markdown-viewer-design.md`: the toolbar ends in an
+                // overflow menu, not a second close affordance - the tab
+                // chip already carries this tab's close control, so a bare
+                // "x" here duplicated it and displaced the menu the spec
+                // and mockup both put in this slot.
+                let overflow =
+                    toolbar_button_response(ui, Some(Icon::Overflow), "", "Viewer menu", false);
+                egui::Popup::menu(&overflow).show(|ui| {
+                    if ui.button("Copy path").clicked() {
+                        ui.ctx().copy_text(self.display_path().to_owned());
+                        ui.close();
                     }
+                    if ui.button("Reload").clicked() {
+                        command = Some(AppCommand::ReloadMarkdown);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Close viewer").clicked() {
+                        command = Some(AppCommand::CloseTab(tab_id));
+                        ui.close();
+                    }
+                });
+                if toolbar_button(
+                    ui,
+                    Some(Icon::Outline),
+                    "",
+                    if self.outline_open {
+                        "Hide outline (Ctrl/Cmd+Shift+O)"
+                    } else {
+                        "Show outline (Ctrl/Cmd+Shift+O)"
+                    },
+                    self.outline_open,
+                ) {
+                    command = Some(AppCommand::ToggleMarkdownOutline);
                 }
-                ui.label(self.find.current_label());
-                if ui.small_button("Previous").clicked() {
-                    command = Some(AppCommand::NavigateMarkdownFind { reverse: true });
+                if toolbar_button(
+                    ui,
+                    Some(Icon::Search),
+                    "",
+                    "Find (Ctrl/Cmd+F)",
+                    self.find.is_open(),
+                ) {
+                    command = Some(AppCommand::OpenMarkdownFind);
                 }
-                if ui.small_button("Next").clicked() {
-                    command = Some(AppCommand::NavigateMarkdownFind { reverse: false });
+                // One segmented Preview/Source pair whose active half is
+                // filled. The previous pair of buttons swapped their own
+                // labels, so in Source mode the toolbar read "Rendered |
+                // Preview" and neither half showed the current mode.
+                let source_mode = matches!(self.mode, MarkdownViewerMode::Source);
+                if toolbar_button(
+                    ui,
+                    Some(Icon::SourceView),
+                    "Source",
+                    "Show the Markdown source (Ctrl/Cmd+Shift+V)",
+                    source_mode,
+                ) && !source_mode
+                {
+                    command = Some(AppCommand::ToggleMarkdownPreviewSource);
                 }
-                if ui.small_button("Clear").clicked() {
-                    self.find.clear();
+                if toolbar_button(
+                    ui,
+                    Some(Icon::RenderedView),
+                    "Preview",
+                    "Show the rendered document (Ctrl/Cmd+Shift+V)",
+                    !source_mode,
+                ) && source_mode
+                {
+                    command = Some(AppCommand::ToggleMarkdownPreviewSource);
                 }
+                if toolbar_button(ui, Some(Icon::Refresh), "", "Reload (Ctrl/Cmd+R)", false) {
+                    command = Some(AppCommand::ReloadMarkdown);
+                }
+                ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                    icon_label(
+                        ui,
+                        // The same origin vocabulary the SFTP panes use, so
+                        // "local" and "remote" read identically everywhere.
+                        match self.source {
+                            MarkdownSource::Local(_) => Icon::LocalTerminal,
+                            MarkdownSource::Remote(_) => Icon::SshRemote,
+                        },
+                        RichText::new(match self.source {
+                            MarkdownSource::Local(_) => "LOCAL",
+                            MarkdownSource::Remote(_) => "REMOTE",
+                        })
+                        .size(TOOLBAR_TEXT_SIZE)
+                        .color(theme::TEXT_PRIMARY),
+                        theme::TEXT_SECONDARY,
+                    );
+                    // `.fmd-path { overflow: hidden; text-overflow:
+                    // ellipsis }`. Eliding to a fixed character count
+                    // ignored how much room the controls had actually left,
+                    // so on a narrow window the path drew straight through
+                    // the Preview/Source/Find buttons.
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(elide_middle(self.display_path(), 72))
+                                .size(TOOLBAR_TEXT_SIZE)
+                                .monospace()
+                                .color(theme::TEXT_SECONDARY),
+                        )
+                        .truncate(),
+                    );
+                });
             });
+        });
+        command
+    }
+
+    /// Find is a compact card floating over the top-right of the document,
+    /// as in the mockup, not a full-width bar wedged between the toolbar and
+    /// the body: a bar pushed the whole document down every time Find opened
+    /// and its default-framed buttons read as a different application.
+    fn show_find_overlay(
+        &mut self,
+        ui: &mut egui::Ui,
+        document_rect: egui::Rect,
+    ) -> Option<AppCommand> {
+        if !self.find.is_open() {
+            return None;
         }
+        let mut command = None;
+        let card_size = vec2(FIND_CARD_WIDTH, FIND_CARD_HEIGHT);
+        let origin = egui::pos2(
+            (document_rect.right() - FIND_CARD_MARGIN - card_size.x).max(document_rect.left()),
+            document_rect.top() + FIND_CARD_MARGIN,
+        );
+        egui::Area::new(egui::Id::new("markdown-find-overlay"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(origin)
+            .constrain_to(document_rect)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(theme::SURFACE_OVERLAY)
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .corner_radius(TOOLBAR_BUTTON_RADIUS + 1.0)
+                    .inner_margin(egui::Margin::symmetric(10, 4))
+                    .show(ui, |ui| {
+                        // `set_width` sizes the *content*, so the card's own
+                        // margins and border have to come off or the card
+                        // overhangs the right edge it was inset from.
+                        ui.set_width(card_size.x - 22.0);
+                        ui.horizontal(|ui| {
+                            // 4px margins top and bottom plus the 1px border
+                            // make up the card's declared height.
+                            ui.set_height(card_size.y - 10.0);
+                            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_GAP;
+                            // The controls are declared first, right to left,
+                            // so they claim their intrinsic width and the
+                            // query field absorbs whatever is left. Sizing
+                            // the field first instead let the controls push
+                            // the card past `set_width`, which ate the inset
+                            // it was positioned with.
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                if toolbar_button(ui, Some(Icon::Close), "", "Close Find", false) {
+                                    self.find.clear();
+                                }
+                                if toolbar_button(
+                                    ui,
+                                    Some(Icon::NextMatch),
+                                    "",
+                                    "Next match (Enter)",
+                                    false,
+                                ) {
+                                    command =
+                                        Some(AppCommand::NavigateMarkdownFind { reverse: false });
+                                }
+                                if toolbar_button(
+                                    ui,
+                                    Some(Icon::PreviousMatch),
+                                    "",
+                                    "Previous match (Shift+Enter)",
+                                    false,
+                                ) {
+                                    command =
+                                        Some(AppCommand::NavigateMarkdownFind { reverse: true });
+                                }
+                                ui.label(
+                                    RichText::new(self.find.current_label())
+                                        .size(TOOLBAR_TEXT_SIZE)
+                                        .color(theme::TEXT_SECONDARY),
+                                );
+                                ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                                    ui.spacing_mut().item_spacing.x = TOOLBAR_ICON_TEXT_GAP;
+                                    let (icon_rect, _) = ui.allocate_exact_size(
+                                        vec2(TOOLBAR_ICON_SIZE, TOOLBAR_ICON_SIZE),
+                                        Sense::hover(),
+                                    );
+                                    icon::paint(
+                                        ui.painter(),
+                                        Icon::Search,
+                                        icon_rect,
+                                        theme::TEXT_SECONDARY,
+                                    );
+                                    let mut query = self.find.query().to_owned();
+                                    let response = ui.add(
+                                        egui::TextEdit::singleline(&mut query)
+                                            .id(egui::Id::new("markdown-find-query"))
+                                            .desired_width(ui.available_width())
+                                            .frame(egui::Frame::NONE)
+                                            .hint_text("Find"),
+                                    );
+                                    response.widget_info(|| {
+                                        WidgetInfo::labeled(
+                                            WidgetType::TextEdit,
+                                            true,
+                                            "Find Markdown",
+                                        )
+                                    });
+                                    if self.find.take_focus_request() {
+                                        response.request_focus();
+                                    }
+                                    if response.changed() {
+                                        if let Some(document) = &self.document {
+                                            self.find.set_query(document, query);
+                                        } else {
+                                            self.find.query = query;
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                    });
+            });
         command
     }
 
@@ -911,6 +1198,11 @@ struct InlineRenderStyle {
     strikethrough: bool,
     code_like: bool,
     link_like: bool,
+    /// Row height for this run. Body prose is laid out one inline widget at a
+    /// time, so the wrapped-row pitch comes from the tallest galley in the
+    /// row rather than from the container's item spacing - pinning it here is
+    /// the only lever that actually moves body leading.
+    line_height: Option<f32>,
 }
 
 impl InlineRenderStyle {
@@ -924,6 +1216,14 @@ impl InlineRenderStyle {
             strikethrough: false,
             code_like: false,
             link_like: false,
+            line_height: Some(BODY_LINE_HEIGHT),
+        }
+    }
+
+    fn with_line_height(self, line_height: f32) -> Self {
+        Self {
+            line_height: Some(line_height),
+            ..self
         }
     }
 
@@ -977,10 +1277,13 @@ fn heading_style(level: u8) -> HeadingStyle {
     // heading ladder. fesTerm keeps its own typeface, but matches that scale
     // against a 15px body size so documents keep the same visual hierarchy.
     match level {
+        // Only H2 carries a rule, as in the mockup (`.fmd-document h2 {
+        // border-bottom }`). An underlined H1 immediately above an
+        // underlined H2 read as two competing section dividers.
         1 => HeadingStyle {
             size: BODY_TEXT_SIZE * 2.0,
             text_color: theme::TEXT_PRIMARY,
-            underline: true,
+            underline: false,
         },
         2 => HeadingStyle {
             size: BODY_TEXT_SIZE * 1.5,
@@ -1046,68 +1349,162 @@ impl MarkdownRenderState<'_> {
         }
     }
 
+    /// Paints one outline row: a full-width band with a 2px leading accent
+    /// rail, per the mockup's `.fmd-outline-item`. `selectable_label` cannot
+    /// express this -- it sizes itself to its text and rounds a pill around
+    /// it, so the selection hugged the heading instead of marking the row.
+    fn show_outline_item(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        heading: &festerm_markdown::Heading,
+    ) {
+        let selected = *self.outline_selected == Some(index);
+        // `.fmd-outline-item` gives H1 and H2 the same inset and only steps
+        // in from `.fmd-depth2` onward: in a document whose H1 is the title,
+        // the H2 sections read as its peers in the outline, and indenting
+        // every level spent sidebar width the 216px pane does not have.
+        let indent = (heading.level().saturating_sub(2) as f32) * OUTLINE_ITEM_INDENT;
+        let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
+        let text_color = if selected {
+            theme::TEXT_PRIMARY
+        } else if heading.level() > 2 {
+            theme::TEXT_SECONDARY
+        } else {
+            theme::TEXT_PRIMARY.gamma_multiply(0.86)
+        };
+        let width = ui.available_width();
+        let text_left =
+            OUTLINE_ITEM_PADDING_X + OUTLINE_ITEM_ACCENT_WIDTH + OUTLINE_ITEM_PADDING_X + indent;
+        let galley = ui.painter().layout(
+            heading.text().to_owned(),
+            font,
+            text_color,
+            (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
+        );
+        let height = galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0;
+        let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+        response.widget_info(|| {
+            WidgetInfo::selected(
+                WidgetType::Button,
+                true,
+                selected,
+                format!("Heading level {}: {}", heading.level(), heading.text()),
+            )
+        });
+
+        if selected || response.hovered() {
+            ui.painter().rect_filled(
+                rect,
+                OUTLINE_ITEM_RADIUS,
+                if selected {
+                    // The mockup's current outline item is a muted slate
+                    // wash (#1a303f), not the full-strength text-selection
+                    // blue, which read as a stray text selection in the
+                    // sidebar rather than a navigation state.
+                    theme::SURFACE_SELECTION.gamma_multiply(0.6)
+                } else {
+                    theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.5)
+                },
+            );
+        }
+        if selected {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), rect.top()),
+                    egui::pos2(rect.left() + OUTLINE_ITEM_ACCENT_WIDTH, rect.bottom()),
+                ),
+                0.0,
+                theme::ACCENT_PRIMARY,
+            );
+        }
+        ui.painter().galley(
+            egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
+            galley,
+            text_color,
+        );
+
+        if response.clicked() {
+            *self.outline_selected = Some(index);
+            *self.pending_scroll = Some(PendingScroll::Heading(index));
+            *self.outline_keyboard_focus = true;
+        }
+    }
+
+    fn show_outline(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &MarkdownDocument,
+        viewport_height: f32,
+    ) -> egui::Rect {
+        // A full-height panel divided from the document by a single hairline,
+        // not a floating card: the mockup's `.fmd-outline` uses only
+        // `border-right`, and a bordered card left an obvious gap above the
+        // status bar where the card stopped short.
+        let (panel_rect, _) =
+            ui.allocate_exact_size(vec2(OUTLINE_WIDTH, viewport_height), Sense::hover());
+        // `.fmd-outline { background: #0f151c }` is only a couple of levels
+        // above the body; the tab surface was a far bigger jump and made the
+        // outline read as a floating card.
+        ui.painter()
+            .rect_filled(panel_rect, 0.0, theme::SURFACE_TERMINAL);
+        ui.painter().line_segment(
+            [panel_rect.right_top(), panel_rect.right_bottom()],
+            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+        );
+
+        let content_rect = panel_rect
+            .shrink2(vec2(OUTLINE_PADDING_X, OUTLINE_PADDING_Y))
+            // Keep the hairline clear of the content.
+            .translate(vec2(-0.5, 0.0));
+        let mut content = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(content_rect)
+                .layout(egui::Layout::top_down(Align::Min)),
+        );
+        content.spacing_mut().item_spacing.y = 0.0;
+        content.horizontal(|ui| {
+            ui.add_space(OUTLINE_TITLE_INSET_X);
+            icon_label(
+                ui,
+                Icon::Outline,
+                RichText::new("OUTLINE")
+                    .size(10.0)
+                    .color(theme::TEXT_SECONDARY),
+                theme::TEXT_SECONDARY,
+            );
+        });
+        content.add_space(OUTLINE_TITLE_GAP_BELOW);
+        egui::ScrollArea::vertical()
+            .id_salt("markdown-outline")
+            .max_height(content.available_height())
+            .show(&mut content, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (index, heading) in document.headings().iter().enumerate() {
+                    self.show_outline_item(ui, index, heading);
+                }
+            });
+        panel_rect
+    }
+
     fn show_document(
         &mut self,
         ui: &mut egui::Ui,
         document: &MarkdownDocument,
     ) -> MarkdownDocumentLayout {
-        let viewport_height = (ui.available_height() - 40.0).max(120.0);
+        let viewport_height = ui.available_height().max(120.0);
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.set_height(viewport_height);
             let mut outline_rect = None;
-            if self.outline_open {
-                let outline = egui::Frame::new()
-                    .fill(theme::SURFACE_TAB_INACTIVE)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(OUTLINE_WIDTH);
-                        ui.set_max_width(OUTLINE_WIDTH);
-                        ui.set_height(viewport_height);
-                        ui.vertical(|ui| {
-                            icon_label(ui, Icon::Outline, "Outline");
-                            ui.add_space(6.0);
-                            egui::ScrollArea::vertical()
-                                .id_salt("markdown-outline")
-                                .max_height((viewport_height - 34.0).max(80.0))
-                                .show(ui, |ui| {
-                                    ui.vertical(|ui| {
-                                        for (index, heading) in
-                                            document.headings().iter().enumerate()
-                                        {
-                                            let selected = *self.outline_selected == Some(index);
-                                            ui.horizontal(|ui| {
-                                                ui.add_space(
-                                                    (heading.level().saturating_sub(1) as f32)
-                                                        * 12.0,
-                                                );
-                                                let response =
-                                                    ui.selectable_label(selected, heading.text());
-                                                response.widget_info(|| {
-                                                    WidgetInfo::labeled(
-                                                        WidgetType::Button,
-                                                        true,
-                                                        format!(
-                                                            "Heading level {}: {}",
-                                                            heading.level(),
-                                                            heading.text()
-                                                        ),
-                                                    )
-                                                });
-                                                if response.clicked() {
-                                                    *self.outline_selected = Some(index);
-                                                    *self.pending_scroll =
-                                                        Some(PendingScroll::Heading(index));
-                                                    *self.outline_keyboard_focus = true;
-                                                }
-                                            });
-                                        }
-                                    });
-                                });
-                        });
-                    });
-                outline_rect = Some(outline.response.rect);
-                ui.add_space(12.0);
+            // Below this the outline would starve the reading column (at 400
+            // logical points the 216pt outline left a 184pt well, which wraps
+            // prose to two or three words a row). Collapse it for the frame
+            // without disturbing the user's own toggle.
+            if self.outline_open
+                && ui.available_width() >= OUTLINE_WIDTH + OUTLINE_MIN_DOCUMENT_WIDTH
+            {
+                outline_rect = Some(self.show_outline(ui, document, viewport_height));
             }
             let document_width = ui.available_width();
             let mut document_rect = egui::Rect::NOTHING;
@@ -1120,20 +1517,43 @@ impl MarkdownRenderState<'_> {
                         .id_salt("markdown-document")
                         .max_height(viewport_height)
                         .min_scrolled_height(viewport_height)
+                        // Without this the scroll area shrinks to the width
+                        // of its content, which parks the scrollbar against
+                        // the reading column instead of the right edge of
+                        // the well.
+                        .auto_shrink([false, true])
                         .show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                ui.set_max_width(READING_WIDTH.min(ui.available_width()));
-                                match self.mode {
-                                    MarkdownViewerMode::Preview => self.render_blocks(
-                                        ui,
-                                        document.blocks(),
-                                        document,
-                                        InlineRenderStyle::body(),
-                                    ),
-                                    MarkdownViewerMode::Source => {
-                                        self.render_source(ui, document);
-                                    }
-                                }
+                            // The reading column is centred in the well, as
+                            // `.fmd-document { margin: 0 auto }` does. Laying
+                            // it out top-down from the left edge left the
+                            // whole right half of a wide window empty.
+                            let column_width = READING_WIDTH
+                                .min(ui.available_width() - READING_COLUMN_SIDE_GUTTER * 2.0)
+                                .max(160.0);
+                            let leading = ((ui.available_width() - column_width) / 2.0).max(0.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                ui.add_space(leading);
+                                ui.allocate_ui_with_layout(
+                                    vec2(column_width, 0.0),
+                                    egui::Layout::top_down(Align::Min),
+                                    |ui| {
+                                        ui.set_max_width(column_width);
+                                        ui.add_space(READING_COLUMN_TOP_PADDING);
+                                        match self.mode {
+                                            MarkdownViewerMode::Preview => self.render_blocks(
+                                                ui,
+                                                document.blocks(),
+                                                document,
+                                                InlineRenderStyle::body(),
+                                            ),
+                                            MarkdownViewerMode::Source => {
+                                                self.render_source(ui, document);
+                                            }
+                                        }
+                                        ui.add_space(READING_COLUMN_BOTTOM_PADDING);
+                                    },
+                                );
                             });
                         });
                 },
@@ -1174,9 +1594,14 @@ impl MarkdownRenderState<'_> {
                 // palette instead of introducing an unrelated Markdown theme.
                 let quote = egui::Frame::new()
                     .fill(theme::SURFACE_TAB_INACTIVE.gamma_multiply(0.45))
-                    .corner_radius(4.0)
-                    .inner_margin(egui::Margin::symmetric(16, 0))
+                    .corner_radius(MARKDOWN_PANEL_RADIUS)
+                    .inner_margin(egui::Margin::symmetric(16, 10))
                     .show(ui, |ui| {
+                        // Wrapped prose only reports the width of its widest
+                        // row, so without this the panel shrank to the
+                        // paragraph's ragged right edge and stopped short of
+                        // the reading column that every other block spans.
+                        ui.set_min_width(ui.available_width());
                         self.render_blocks(
                             ui,
                             block.blocks(),
@@ -1213,22 +1638,18 @@ impl MarkdownRenderState<'_> {
     ) {
         let style = heading_style(block.level());
         let heading_index = block.heading_index();
-        let selected = *self.outline_selected == Some(heading_index);
-        let mut job = inline_layout_job(
+        let job = inline_layout_job(
             block.inlines(),
             document,
             self.find,
             FontId::proportional(style.size),
             InlineRenderStyle {
                 text_color: style.text_color,
-                ..text_style.with_strong()
+                ..text_style
+                    .with_strong()
+                    .with_line_height(style.size * HEADING_LINE_HEIGHT_RATIO)
             },
         );
-        if selected {
-            for section in &mut job.sections {
-                section.format.background = theme::SURFACE_SELECTION;
-            }
-        }
         let response = ui.add(egui::Label::new(job).selectable(true).wrap());
         response.widget_info(|| {
             WidgetInfo::labeled(
@@ -1418,46 +1839,75 @@ impl MarkdownRenderState<'_> {
     }
 
     fn render_code_block(&mut self, ui: &mut egui::Ui, block: &CodeBlock) {
+        // The mockup separates the language/Copy head from the code with a
+        // hairline (`.fmd-code-head { border-bottom }`) instead of stacking
+        // both inside one padded box, which is what made the label look like
+        // a stray first line of code.
         egui::Frame::new()
-            .fill(theme::SURFACE_TAB_INACTIVE)
+            .fill(theme::SURFACE_TERMINAL)
             .corner_radius(MARKDOWN_PANEL_RADIUS)
             .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-            // VS Code's default preview uses roughly 16px of inset on fenced
-            // code; keeping close to that makes code blocks read as distinct
-            // panels instead of blending into the document background.
-            .inner_margin(egui::Margin::symmetric(
-                CODE_BLOCK_PADDING_X,
-                CODE_BLOCK_PADDING_Y,
-            ))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(block.language().unwrap_or("text"))
-                            .size(BODY_TEXT_SIZE - 2.0)
-                            .monospace()
-                            .color(theme::TEXT_SECONDARY),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        if ui.small_button("Copy").clicked() {
-                            ui.ctx().copy_text(block.code_text().to_owned());
-                        }
-                    });
-                });
-                ui.add_space(8.0);
-                egui::ScrollArea::horizontal().show(ui, |ui| {
-                    for line in block.highlighted_lines() {
-                        let response = ui.add(
-                            egui::Label::new(highlighted_line_job(line))
-                                .selectable(true)
-                                .wrap(),
-                        );
-                        if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
-                        {
-                            response.scroll_to_me(Some(Align::Center));
-                            *self.pending_scroll = None;
-                        }
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let head_rect = ui
+                    .allocate_exact_size(
+                        vec2(ui.available_width(), CODE_BLOCK_HEAD_HEIGHT),
+                        Sense::hover(),
+                    )
+                    .0;
+                let mut head = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(head_rect.shrink2(vec2(CODE_BLOCK_PADDING_X as f32, 0.0)))
+                        .layout(egui::Layout::left_to_right(Align::Center)),
+                );
+                head.label(
+                    RichText::new(block.language().unwrap_or("text"))
+                        .size(BODY_TEXT_SIZE - 4.0)
+                        .monospace()
+                        .color(theme::TEXT_SECONDARY),
+                );
+                head.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    if toolbar_button(
+                        ui,
+                        Some(Icon::Copy),
+                        "Copy",
+                        "Copy the code block",
+                        false,
+                    ) {
+                        ui.ctx().copy_text(block.code_text().to_owned());
                     }
                 });
+                ui.painter().line_segment(
+                    [head_rect.left_bottom(), head_rect.right_bottom()],
+                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                );
+
+                egui::Frame::new()
+                    .inner_margin(egui::Margin {
+                        left: CODE_BLOCK_PADDING_X,
+                        right: CODE_BLOCK_PADDING_X,
+                        top: CODE_BLOCK_PADDING_Y,
+                        bottom: CODE_BLOCK_PADDING_Y - CODE_BLOCK_TRAILING_LEAD,
+                    })
+                    .show(ui, |ui| {
+                        egui::ScrollArea::horizontal()
+                            .id_salt(("markdown-code", block.span().byte_range().start))
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
+                                for line in block.highlighted_lines() {
+                                    let response = ui.add(
+                                        egui::Label::new(highlighted_line_job(line))
+                                            .selectable(true)
+                                            .wrap(),
+                                    );
+                                    if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(block.span(), target))
+                                    {
+                                        response.scroll_to_me(Some(Align::Center));
+                                        *self.pending_scroll = None;
+                                    }
+                                }
+                            });
+                    });
             });
     }
 
@@ -1478,10 +1928,21 @@ impl MarkdownRenderState<'_> {
 
     fn render_source(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
         egui::Frame::new()
-            .fill(theme::SURFACE_TAB_INACTIVE)
+            .fill(theme::SURFACE_TERMINAL)
+            .corner_radius(MARKDOWN_PANEL_RADIUS)
             .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-            .inner_margin(egui::Margin::same(8))
+            .inner_margin(egui::Margin {
+                left: CODE_BLOCK_PADDING_X,
+                right: CODE_BLOCK_PADDING_X,
+                top: CODE_BLOCK_PADDING_Y,
+                bottom: CODE_BLOCK_PADDING_Y - CODE_BLOCK_TRAILING_LEAD,
+            })
             .show(ui, |ui| {
+                // Fill the reading column instead of shrinking to the widest
+                // source line, and use the same line pitch as a fenced block
+                // - the container default double-spaced every line.
+                ui.set_min_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let span = document
@@ -1653,6 +2114,15 @@ fn render_text_block(
 ) {
     let response = ui
         .horizontal_wrapped(|ui| {
+            // Inline runs are separate widgets, so egui's default item
+            // spacing would be injected between every one of them: text like
+            // "(see [#50](...))" rendered as "#50   )". The source text
+            // already carries the spaces that belong between runs.
+            ui.spacing_mut().item_spacing.x = 0.0;
+            // Row pitch comes from `TextFormat::line_height` on each section
+            // (see `InlineRenderStyle::line_height`). `item_spacing.y` does
+            // not move wrapped rows inside `horizontal_wrapped`.
+            ui.spacing_mut().item_spacing.y = 0.0;
             render_inline_flow(
                 ui,
                 block.inlines(),
@@ -1695,17 +2165,7 @@ fn render_inline_flow(
     for inline in inlines {
         match inline {
             Inline::Text(text) => {
-                ui.add(
-                    egui::Label::new(text_job(
-                        text.text(),
-                        text.text_span(),
-                        find,
-                        font.clone(),
-                        style,
-                    ))
-                    .selectable(true)
-                    .wrap(),
-                );
+                render_text_run(ui, text.text(), text.text_span(), find, font.clone(), style);
             }
             Inline::Code(text) => {
                 ui.add(
@@ -1801,7 +2261,22 @@ fn render_inline_flow(
                     .wrap(),
                 );
             }
-            Inline::SoftBreak { .. } | Inline::HardBreak { .. } => {
+            // CommonMark: a single newline inside a paragraph is a *soft*
+            // break and renders as a space, so the text reflows to the
+            // reading column's width. Treating it as a row break made every
+            // paragraph inherit the source file's hard wrapping and left a
+            // ragged right edge far short of the column. Advancing the
+            // cursor rather than adding a space-only widget keeps the space
+            // from being pushed onto the next row as a leading indent, and
+            // the space is dropped entirely when the row is already full for
+            // the same reason.
+            Inline::SoftBreak { .. } => {
+                let width = ui.ctx().fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
+                if ui.available_width() > width * 2.0 {
+                    ui.add_space(width);
+                }
+            }
+            Inline::HardBreak { .. } => {
                 ui.end_row();
             }
         }
@@ -2089,9 +2564,9 @@ fn append_inline_layout(
                 FontId::monospace(font.size),
                 style.as_inline_code(),
             ),
-            Inline::SoftBreak { .. } => {
-                job.append("\n", 0.0, base_text_format(font.clone(), style))
-            }
+            // See `render_inline_flow`: a soft break is a space, not a line
+            // break. Only an explicit hard break starts a new line.
+            Inline::SoftBreak { .. } => job.append(" ", 0.0, base_text_format(font.clone(), style)),
             Inline::HardBreak { .. } => {
                 job.append("\n", 0.0, base_text_format(font.clone(), style))
             }
@@ -2111,17 +2586,64 @@ fn text_job(
     job
 }
 
+/// Emits one text run inside a `horizontal_wrapped` flow.
+///
+/// A run that follows inline code or a link usually begins with the space
+/// that separated them. Left inside the wrapped `Label`, that space becomes
+/// the run's first glyph, so whenever the run is pushed onto a fresh row the
+/// paragraph gains a one-space hanging indent on that row only. Emitting the
+/// space as cursor advance instead - the same treatment `Inline::SoftBreak`
+/// gets, including dropping it when the row is already full - keeps every
+/// row flush with the reading column's left edge.
+fn render_text_run(
+    ui: &mut egui::Ui,
+    text: &str,
+    span: SourceSpan,
+    find: &MarkdownFindState,
+    font: FontId,
+    style: InlineRenderStyle,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let skip = text.len() - text.trim_start_matches(' ').len();
+    if skip > 0 {
+        let width = ui.ctx().fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
+        if ui.available_width() > width * 2.0 {
+            ui.add_space(width * skip as f32);
+        }
+    }
+    if skip >= text.len() {
+        return;
+    }
+    let mut job = LayoutJob::default();
+    append_text_segments_from(&mut job, text, span, find, font, style, skip);
+    ui.add(egui::Label::new(job).selectable(true).wrap());
+}
+
 fn source_line_job(line: &str, span: SourceSpan, find: &MarkdownFindState) -> LayoutJob {
     let mut job = LayoutJob::default();
+    let format = base_text_format(FontId::monospace(CODE_TEXT_SIZE), InlineRenderStyle::body());
     append_text_segments(
         &mut job,
-        line,
+        trim_line_ending(line),
         span,
         find,
-        FontId::monospace(14.0),
+        FontId::monospace(CODE_TEXT_SIZE),
         InlineRenderStyle::body(),
     );
+    ensure_code_line_body(&mut job, format);
+    apply_code_line_height(&mut job);
     job
+}
+
+/// A blank line lays out to nothing at all, which would collapse it away and
+/// misalign the document against its source. Give it one space so it keeps a
+/// full row.
+fn ensure_code_line_body(job: &mut LayoutJob, format: TextFormat) {
+    if job.sections.is_empty() {
+        job.append(" ", 0.0, format);
+    }
 }
 
 fn append_text_segments(
@@ -2132,18 +2654,36 @@ fn append_text_segments(
     font: FontId,
     style: InlineRenderStyle,
 ) {
-    if text.is_empty() {
+    append_text_segments_from(job, text, span, find, font, style, 0);
+}
+
+/// As `append_text_segments`, but starts appending at `skip` bytes into
+/// `text`. Find matches are still resolved against the whole `text` so the
+/// caller's `span` stays the source of truth for byte offsets; only the
+/// emitted glyphs are clipped. Callers use this to drop a run's leading
+/// space without having to rebase its `SourceSpan`, which the markdown crate
+/// does not expose a constructor for.
+fn append_text_segments_from(
+    job: &mut LayoutJob,
+    text: &str,
+    span: SourceSpan,
+    find: &MarkdownFindState,
+    font: FontId,
+    style: InlineRenderStyle,
+    skip: usize,
+) {
+    if skip >= text.len() {
         return;
     }
-    let mut cursor = 0usize;
+    let mut cursor = skip;
     let matches: Vec<(usize, usize, bool)> = find
         .matches()
         .iter()
         .enumerate()
         .filter_map(|(index, matched)| {
             overlap_with_relative_range(span, matched.span()).and_then(|range| {
-                (range.end <= text.len()).then_some((
-                    range.start,
+                (range.end <= text.len() && range.end > skip).then_some((
+                    range.start.max(skip),
                     range.end,
                     find.current_index == Some(index),
                 ))
@@ -2176,37 +2716,66 @@ fn highlighted_line_job(line: &HighlightedCodeLine) -> LayoutJob {
     let mut job = LayoutJob::default();
     if line.spans().is_empty() {
         job.append(
-            line.text(),
+            trim_line_ending(line.text()),
             0.0,
-            base_text_format(FontId::monospace(14.0), InlineRenderStyle::body()),
+            base_text_format(FontId::monospace(CODE_TEXT_SIZE), InlineRenderStyle::body()),
         );
-        return job;
+    } else {
+        for span in line.spans() {
+            job.append(
+                trim_line_ending(span.text()),
+                0.0,
+                text_format_from_highlight(span.style()),
+            );
+        }
     }
-    for span in line.spans() {
-        job.append(span.text(), 0.0, text_format_from_highlight(span.style()));
-    }
+    ensure_code_line_body(
+        &mut job,
+        base_text_format(FontId::monospace(CODE_TEXT_SIZE), InlineRenderStyle::body()),
+    );
+    apply_code_line_height(&mut job);
     job
+}
+
+/// `festerm_markdown` deliberately preserves exact source text, so each code
+/// line still carries its `\n`. Laying that out gives every line a second,
+/// empty row - the code read as double-spaced. The terminator is presentation
+/// only; the model keeps it for spans and Copy.
+fn trim_line_ending(text: &str) -> &str {
+    match text.strip_suffix('\n') {
+        Some(text) => text.strip_suffix('\r').unwrap_or(text),
+        None => text,
+    }
+}
+
+/// The bundled monospace face has generous vertical metrics, so a one-line
+/// galley is far taller than its font size. Pinning the row height keeps
+/// fenced code and Source view at the mockup's `1.55` pitch instead of
+/// rendering visibly double-spaced.
+fn apply_code_line_height(job: &mut LayoutJob) {
+    for section in &mut job.sections {
+        section.format.line_height = Some(CODE_LINE_HEIGHT);
+    }
 }
 
 fn text_format_from_highlight(style: HighlightStyle) -> TextFormat {
     let mut format = TextFormat {
-        font_id: FontId::monospace(14.0),
+        font_id: FontId::monospace(CODE_TEXT_SIZE),
         color: Color32::from_rgba_unmultiplied(
             style.foreground().red(),
             style.foreground().green(),
             style.foreground().blue(),
             style.foreground().alpha(),
         ),
-        background: Color32::from_rgba_unmultiplied(
-            style.background().red(),
-            style.background().green(),
-            style.background().blue(),
-            style.background().alpha(),
-        ),
+        // The fenced block already paints one continuous code surface.
+        // Painting the syntax theme's own per-span background on top of it
+        // drew a lighter pill around every token, which broke the block into
+        // ragged chips instead of the mockup's uniform `pre`.
+        background: Color32::TRANSPARENT,
         ..Default::default()
     };
     if style.bold() {
-        format.font_id = FontId::monospace(14.5);
+        format.font_id = FontId::monospace(CODE_TEXT_SIZE + 0.5);
     }
     if style.underline() {
         format.underline = egui::Stroke::new(1.0, format.color);
@@ -2231,6 +2800,7 @@ fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
         } else {
             Color32::TRANSPARENT
         },
+        line_height: style.line_height,
         ..Default::default()
     };
     if style.strong {
@@ -2248,27 +2818,107 @@ fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
     format
 }
 
-fn small_toolbar_button(
+/// A toolbar control shaped like the mockup's `.fmd-tool`: a fixed-height
+/// pill with an optional icon, muted until it is the active choice.
+///
+/// The icon and text are measured and laid out explicitly rather than handed
+/// to `Ui::button`, because egui sizes a button from its galley alone and
+/// leaves no room to paint a leading icon into.
+fn toolbar_button(
     ui: &mut egui::Ui,
-    icon_name: Icon,
+    icon_name: Option<Icon>,
     label: &str,
     accessible_label: &str,
+    active: bool,
 ) -> bool {
-    let response = ui.button(label);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, accessible_label));
-    let rect = response.rect.shrink2(vec2(
-        response.rect.width() - 16.0,
-        response.rect.height() - 16.0,
-    ));
-    icon::paint(ui.painter(), icon_name, rect, theme::TEXT_SECONDARY);
-    response.on_hover_text(accessible_label).clicked()
+    toolbar_button_response(ui, icon_name, label, accessible_label, active).clicked()
 }
 
-fn icon_label(ui: &mut egui::Ui, icon_name: Icon, text: &str) {
-    let (rect, response) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
-    icon::paint(ui.painter(), icon_name, rect, theme::TEXT_SECONDARY);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
-    ui.label(RichText::new(text).small().color(theme::TEXT_SECONDARY));
+/// As `toolbar_button`, but hands back the `Response` so a caller can anchor
+/// a popup to it.
+fn toolbar_button_response(
+    ui: &mut egui::Ui,
+    icon_name: Option<Icon>,
+    label: &str,
+    accessible_label: &str,
+    active: bool,
+) -> egui::Response {
+    let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        font,
+        if active {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
+    );
+    let icon_width = icon_name
+        .map(|_| TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP)
+        .unwrap_or(0.0);
+    let width =
+        (TOOLBAR_BUTTON_PADDING_X * 2.0 + icon_width + galley.size().x).max(TOOLBAR_BUTTON_HEIGHT);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(width, TOOLBAR_BUTTON_HEIGHT), Sense::click());
+    response
+        .widget_info(|| WidgetInfo::selected(WidgetType::Button, true, active, accessible_label));
+
+    if active || response.hovered() {
+        let fill = if active {
+            theme::SURFACE_TAB_ACTIVE
+        } else {
+            theme::SURFACE_TAB_INACTIVE
+        };
+        ui.painter().rect_filled(rect, TOOLBAR_BUTTON_RADIUS, fill);
+    }
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            TOOLBAR_BUTTON_RADIUS,
+            egui::Stroke::new(1.0, theme::BORDER_ACTIVE),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    let mut cursor = rect.left() + TOOLBAR_BUTTON_PADDING_X;
+    if let Some(icon_name) = icon_name {
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(cursor + TOOLBAR_ICON_SIZE / 2.0, rect.center().y),
+            egui::Vec2::splat(TOOLBAR_ICON_SIZE),
+        );
+        icon::paint(
+            ui.painter(),
+            icon_name,
+            icon_rect,
+            if active {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            },
+        );
+        cursor += TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP;
+    }
+    ui.painter().galley(
+        egui::pos2(cursor, rect.center().y - galley.size().y / 2.0),
+        galley,
+        theme::TEXT_SECONDARY,
+    );
+
+    response.on_hover_text(accessible_label)
+}
+
+/// An icon and its text on one baseline. The icon is allocated inside an
+/// explicit horizontal run so the pair stays on a single row even when the
+/// caller's layout is vertical, which is how the outline title is used.
+fn icon_label(ui: &mut egui::Ui, icon_name: Icon, text: RichText, color: Color32) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = TOOLBAR_ICON_TEXT_GAP;
+        let (rect, response) =
+            ui.allocate_exact_size(egui::Vec2::splat(TOOLBAR_ICON_SIZE), Sense::hover());
+        icon::paint(ui.painter(), icon_name, rect, color);
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text.text()));
+        ui.label(text);
+    });
 }
 
 fn elide_middle(value: &str, max_chars: usize) -> String {
@@ -2493,7 +3143,10 @@ mod tests {
         let layout = layout.expect("the Markdown document should be laid out");
         let outline = layout.outline_rect.expect("the outline should be visible");
         assert!(outline.width() <= OUTLINE_WIDTH + 18.0);
-        assert!(layout.document_rect.left() > outline.right());
+        // The document well starts exactly where the outline panel ends -
+        // they abut across a single hairline, so any overlap at all would
+        // put document content under the sidebar.
+        assert!(layout.document_rect.left() >= outline.right());
         assert!(
             layout.document_rect.width() > 500.0,
             "unexpected Markdown layout: {layout:?}"
@@ -2501,6 +3154,65 @@ mod tests {
         assert!(
             layout.document_rect.height() > 500.0,
             "unexpected Markdown layout: {layout:?}"
+        );
+    }
+
+    #[test]
+    fn a_narrow_window_hides_the_outline_so_the_reading_column_survives() {
+        // At 400 logical points the 216pt outline left a 184pt well, which
+        // wrapped prose to two or three words a row. The outline is a
+        // navigation aid; the document is the point, so the outline yields.
+        let document = document("# fesTerm\n\nIntro.\n\n## Goals\n\nGoals.");
+        let context = egui::Context::default();
+        let mut outline_selected = None;
+        let find = MarkdownFindState::default();
+        let approvals = ResourceApprovalState::default();
+        let loaded_images = BTreeMap::new();
+        let pending_image_loads = BTreeMap::new();
+        let image_errors = BTreeMap::new();
+        let mut pending_scroll = None;
+        let mut outline_keyboard_focus = false;
+        let mut layout = None;
+
+        let mut output = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(OUTLINE_WIDTH + OUTLINE_MIN_DOCUMENT_WIDTH - 40.0, 700.0),
+                )),
+                ..Default::default()
+            },
+            |context| {
+                egui::CentralPanel::default().show(context, |ui| {
+                    let mut render_state = MarkdownRenderState {
+                        mode: MarkdownViewerMode::Preview,
+                        // The user's own toggle stays on; only this frame
+                        // declines to draw the panel.
+                        outline_open: true,
+                        outline_selected: &mut outline_selected,
+                        find: &find,
+                        resource_approvals: &approvals,
+                        loaded_images: &loaded_images,
+                        pending_image_loads: &pending_image_loads,
+                        image_errors: &image_errors,
+                        pending_scroll: &mut pending_scroll,
+                        line_heading_indices: &[],
+                        outline_keyboard_focus: &mut outline_keyboard_focus,
+                    };
+                    layout = Some(render_state.show_document(ui, &document));
+                });
+            },
+        );
+        output.textures_delta.clear();
+
+        let layout = layout.expect("the Markdown document should be laid out");
+        assert!(
+            layout.outline_rect.is_none(),
+            "the outline should collapse on a narrow window: {layout:?}"
+        );
+        assert!(
+            layout.document_rect.width() > OUTLINE_MIN_DOCUMENT_WIDTH,
+            "the document should claim the whole well: {layout:?}"
         );
     }
 
@@ -2596,13 +3308,16 @@ mod tests {
     }
 
     #[test]
-    fn heading_scale_matches_vscode_preview_hierarchy() {
+    fn only_h2_carries_a_rule_under_the_heading() {
+        // The mockup gives `h2` a `border-bottom` and leaves `h1` bare, so
+        // the document title is not doubly separated from the first
+        // paragraph by both its own rule and the following section's.
         assert_eq!(
             heading_style(1),
             HeadingStyle {
                 size: 30.0,
                 text_color: theme::TEXT_PRIMARY,
-                underline: true,
+                underline: false,
             }
         );
         assert_eq!(
@@ -2653,6 +3368,148 @@ mod tests {
             theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.85)
         );
         assert_eq!(code.font_id.family, egui::FontFamily::Monospace);
+    }
+
+    #[test]
+    fn a_soft_break_lays_out_as_a_space_not_a_row_break() {
+        // CommonMark: a single newline inside a paragraph is a soft break
+        // and renders as a space. Emitting a row break instead made every
+        // paragraph inherit the source file's hard wrapping, so prose
+        // stopped reflowing to the reading column.
+        let document = document("alpha beta\ngamma delta\n");
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &MarkdownFindState::default(),
+            FontId::proportional(BODY_TEXT_SIZE),
+            InlineRenderStyle::body(),
+        );
+        assert_eq!(job.text, "alpha beta gamma delta");
+    }
+
+    #[test]
+    fn a_hard_break_still_lays_out_as_a_row_break() {
+        let document = document("alpha beta\\\ngamma delta\n");
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &MarkdownFindState::default(),
+            FontId::proportional(BODY_TEXT_SIZE),
+            InlineRenderStyle::body(),
+        );
+        assert_eq!(job.text, "alpha beta\ngamma delta");
+    }
+
+    #[test]
+    fn code_lines_drop_their_terminator_and_carry_the_fenced_line_height() {
+        // `festerm_markdown` keeps each code line's trailing newline so
+        // spans and Copy stay faithful to the source. Laying that newline
+        // out gives a one-line galley two rows, which is exactly the
+        // double-spacing fenced blocks and Source view used to show.
+        let document = document("```rust\nlet x = 1;\nlet y = 2;\n```\n");
+        let Block::CodeBlock(block) = &document.blocks()[0] else {
+            panic!("the first block should be a code block");
+        };
+        for line in block.highlighted_lines() {
+            let job = highlighted_line_job(line);
+            assert!(
+                !job.text.contains('\n'),
+                "code line laid out with its terminator: {:?}",
+                job.text
+            );
+            for section in &job.sections {
+                assert_eq!(section.format.line_height, Some(CODE_LINE_HEIGHT));
+            }
+        }
+    }
+
+    #[test]
+    fn body_prose_carries_the_mockup_line_height() {
+        // Wrapped rows inside `horizontal_wrapped` take their pitch from
+        // `TextFormat::line_height`; `item_spacing.y` measurably does not
+        // move them.
+        let document = document("alpha beta gamma\n");
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+        let job = inline_layout_job(
+            paragraph.inlines(),
+            &document,
+            &MarkdownFindState::default(),
+            FontId::proportional(BODY_TEXT_SIZE),
+            InlineRenderStyle::body(),
+        );
+        assert_eq!(job.sections[0].format.line_height, Some(BODY_LINE_HEIGHT));
+    }
+
+    #[test]
+    fn a_text_run_can_skip_its_leading_space_without_losing_find_offsets() {
+        // A run following inline code usually starts with the separating
+        // space. It is emitted as cursor advance so a wrapped row never
+        // gains a hanging indent, but the find highlight still has to line
+        // up with the untrimmed source offsets.
+        let document = document("`code` needle here\n");
+        let mut find = MarkdownFindState::default();
+        find.set_query(&document, "needle".to_owned());
+        let Block::Paragraph(paragraph) = &document.blocks()[0] else {
+            panic!("the first block should be a paragraph");
+        };
+        let Inline::Text(text) = &paragraph.inlines()[1] else {
+            panic!("the run after the code span should be text");
+        };
+        assert!(text.text().starts_with(' '));
+
+        let mut job = LayoutJob::default();
+        append_text_segments_from(
+            &mut job,
+            text.text(),
+            text.text_span(),
+            &find,
+            FontId::proportional(BODY_TEXT_SIZE),
+            InlineRenderStyle::body(),
+            1,
+        );
+        assert_eq!(job.text, "needle here");
+        assert_eq!(
+            highlighted_sections(&job),
+            vec![(0..6, "needle".to_owned())]
+        );
+    }
+
+    #[test]
+    fn the_status_bar_reports_the_viewer_as_read_only_without_a_state_dot() {
+        // `.fmd-status` in the mockup is the application status bar showing
+        // `Local Markdown - UTF-8` and `Read only`, with no state dot: the
+        // viewer has no live transport to report. A failed load is the only
+        // thing that lights the dot.
+        let dir =
+            std::env::temp_dir().join(format!("festerm-markdown-status-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("temp directory should be creatable");
+        let path = dir.join("readme.md");
+        fs::write(&path, b"# Title\n").expect("temp file should be writable");
+
+        let mut tab = MarkdownViewerTab::open_local(path.clone());
+        assert_eq!(tab.status_bar_context(), "Local Markdown");
+        assert_eq!(tab.status_bar_encoding(), "UTF-8");
+        assert_eq!(tab.status_bar_label(), "Read only");
+        assert_eq!(
+            tab.status_bar_status(),
+            festerm_ui_egui::chrome::ChipStatus::Neutral
+        );
+
+        fs::remove_file(&path).ok();
+        tab.reload();
+        assert_eq!(
+            tab.status_bar_status(),
+            festerm_ui_egui::chrome::ChipStatus::Failed
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

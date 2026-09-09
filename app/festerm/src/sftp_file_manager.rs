@@ -4201,75 +4201,9 @@ fn paint_sftp_glyph(painter: &egui::Painter, glyph: SftpGlyph, rect: egui::Rect,
         SftpGlyph::Search => icon::paint(painter, Icon::Search, rect, color),
         SftpGlyph::LocalPane => icon::paint(painter, Icon::LocalTerminal, rect, color),
         SftpGlyph::RemotePane => icon::paint(painter, Icon::SshRemote, rect, color),
-        SftpGlyph::Refresh => {
-            // Mirrors the mockup's `#fi-refresh`: two opposing arcs around a
-            // shared centre, each capped with an arrowhead. The shared
-            // `Icon::Reconnect` glyph used here previously rendered as a
-            // lopsided "C" with a stray notch at this size.
-            let stroke = egui::Stroke::new(1.5, color);
-            let scale = rect.width() / 24.0;
-            let center = egui::pos2(rect.left() + 12.0 * scale, rect.top() + 12.0 * scale);
-            let radius = 7.0 * scale;
-            let polar = |degrees: f32, r: f32| {
-                let radians = degrees.to_radians();
-                egui::pos2(center.x + r * radians.cos(), center.y + r * radians.sin())
-            };
-            let arc = |from: f32, to: f32| {
-                let steps = 16;
-                let points = (0..=steps)
-                    .map(|step| polar(from + (to - from) * step as f32 / steps as f32, radius))
-                    .collect::<Vec<_>>();
-                painter.add(egui::Shape::line(points, stroke));
-            };
-            arc(195.0, 325.0);
-            arc(15.0, 145.0);
-            // Arrowheads continue each arc's clockwise sweep, so the pair
-            // reads as a single cycle rather than two detached strokes.
-            for (tip, base) in [(345.0, 322.0), (165.0, 142.0)] {
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        polar(tip, radius),
-                        polar(base, radius - 3.0 * scale),
-                        polar(base, radius + 3.0 * scale),
-                    ],
-                    color,
-                    egui::Stroke::NONE,
-                ));
-            }
-        }
-        SftpGlyph::Up => {
-            // The mockup's `#fi-up` is a chevron (`m5 15 7-7 7 7`), not the
-            // full stemmed arrow this used to draw.
-            let scale = rect.width() / 24.0;
-            let pt = |x: f32, y: f32| egui::pos2(rect.left() + x * scale, rect.top() + y * scale);
-            painter.add(egui::Shape::line(
-                vec![pt(5.0, 15.0), pt(12.0, 8.0), pt(19.0, 15.0)],
-                egui::Stroke::new(1.5, color),
-            ));
-        }
-        SftpGlyph::Home => {
-            // Traces the mockup's `#fi-home` path
-            // (`m4 11 8-7 8 7v9h-6v-6h-4v6H4z`): a gabled roof over a body
-            // with a doorway. The previous version drew a roof above a
-            // rounded `rect_stroke`, which collapsed into an indistinct blob
-            // at this glyph's render size.
-            let scale = rect.width() / 24.0;
-            let pt = |x: f32, y: f32| egui::pos2(rect.left() + x * scale, rect.top() + y * scale);
-            painter.add(egui::Shape::closed_line(
-                vec![
-                    pt(4.0, 11.0),
-                    pt(12.0, 4.0),
-                    pt(20.0, 11.0),
-                    pt(20.0, 20.0),
-                    pt(14.0, 20.0),
-                    pt(14.0, 14.0),
-                    pt(10.0, 14.0),
-                    pt(10.0, 20.0),
-                    pt(4.0, 20.0),
-                ],
-                egui::Stroke::new(1.4, color),
-            ));
-        }
+        SftpGlyph::Refresh => icon::paint(painter, Icon::Refresh, rect, color),
+        SftpGlyph::Up => icon::paint(painter, Icon::ParentDirectory, rect, color),
+        SftpGlyph::Home => icon::paint(painter, Icon::HomeDirectory, rect, color),
         SftpGlyph::Folder => {
             // Mirrors the mockup's folder glyph path (`M3 7h7l2 2h9v10H3z` in a
             // 24x24 viewBox): a small tab notch above a boxy, mostly-square

@@ -53,6 +53,100 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (15.0, 19.0),
             ]),
         ],
+        Icon::PreviousMatch => &[
+            Primitive::Polyline(&[
+                (5.0, 15.0),
+                (12.0, 8.0),
+                (19.0, 15.0),
+            ]),
+        ],
+        Icon::NextMatch => &[
+            Primitive::Polyline(&[
+                (5.0, 9.0),
+                (12.0, 16.0),
+                (19.0, 9.0),
+            ]),
+        ],
+        // Two opposing arcs around a shared centre, each capped with an
+        // arrowhead that continues its sweep, so the pair reads as one
+        // cycle. This is the geometry the SFTP file manager drew locally
+        // because the `Reconnect` glyph is a different concept (and read as
+        // a lopsided "C" at toolbar sizes); it now lives here so every
+        // surface that re-reads content in place shows the same mark.
+        Icon::Refresh => &[
+            Primitive::Polyline(&[
+                (5.2385, 10.1883),
+                (5.5624, 9.2508),
+                (6.0156, 8.3686),
+                (6.5889, 7.5592),
+                (7.2709, 6.8391),
+                (8.0478, 6.2225),
+                (8.9040, 5.7219),
+                (9.8224, 5.3473),
+                (10.7845, 5.1063),
+                (11.7710, 5.0037),
+                (12.7621, 5.0416),
+                (13.7379, 5.2192),
+                (14.6788, 5.5328),
+                (15.5659, 5.9764),
+                (16.3815, 6.5408),
+                (17.1090, 7.2149),
+                (17.7341, 7.9850),
+            ]),
+            Primitive::Polyline(&[
+                (18.7615, 13.8117),
+                (18.4376, 14.7492),
+                (17.9844, 15.6314),
+                (17.4111, 16.4408),
+                (16.7291, 17.1609),
+                (15.9522, 17.7775),
+                (15.0960, 18.2781),
+                (14.1776, 18.6527),
+                (13.2155, 18.8937),
+                (12.2290, 18.9963),
+                (11.2379, 18.9584),
+                (10.2621, 18.7808),
+                (9.3212, 18.4672),
+                (8.4341, 18.0236),
+                (7.6185, 17.4592),
+                (6.8910, 16.7851),
+                (6.2659, 16.0150),
+            ]),
+            Primitive::FilledPolygon(&[
+                (18.7615, 10.1883),
+                (15.1520, 9.5374),
+                (19.8801, 5.8434),
+            ]),
+            Primitive::FilledPolygon(&[
+                (5.2385, 13.8117),
+                (8.8480, 14.4626),
+                (4.1199, 18.1566),
+            ]),
+        ],
+        Icon::ParentDirectory => &[
+            Primitive::Polyline(&[
+                (5.0, 15.0),
+                (12.0, 8.0),
+                (19.0, 15.0),
+            ]),
+        ],
+        // A gabled roof over a body with a doorway, tracing the SFTP
+        // mockup's `#fi-home`. A roof above a rounded `rect_stroke`
+        // collapsed into an indistinct blob at toolbar sizes.
+        Icon::HomeDirectory => &[
+            Primitive::Polyline(&[
+                (4.0, 11.0),
+                (12.0, 4.0),
+                (20.0, 11.0),
+                (20.0, 20.0),
+                (14.0, 20.0),
+                (14.0, 14.0),
+                (10.0, 14.0),
+                (10.0, 20.0),
+                (4.0, 20.0),
+                (4.0, 11.0),
+            ]),
+        ],
         Icon::Clear => &[
             Primitive::Polyline(&[
                 (4.0, 15.0),

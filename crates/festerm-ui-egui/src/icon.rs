@@ -47,11 +47,23 @@ pub enum Icon {
     RenderedView,
     SourceView,
     ExternalLink,
+    /// Chevron pointing up: "previous match" in the Markdown Find card.
+    PreviousMatch,
+    /// Chevron pointing down: "next match" in the Markdown Find card.
+    NextMatch,
+    /// Re-read the current content in place. Distinct from `Reconnect`,
+    /// which re-establishes a transport.
+    Refresh,
+    /// Navigate to the containing directory.
+    ParentDirectory,
+    /// Navigate to the account's home directory.
+    HomeDirectory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Primitive {
     Polyline(&'static [(f32, f32)]),
+    FilledPolygon(&'static [(f32, f32)]),
     Rectangle {
         x: f32,
         y: f32,
@@ -79,6 +91,7 @@ pub fn paint(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
     for primitive in icon_geometry(icon) {
         match *primitive {
             Primitive::Polyline(points) => g.poly(points),
+            Primitive::FilledPolygon(points) => g.filled_poly(points),
             Primitive::Rectangle {
                 x,
                 y,
@@ -119,6 +132,13 @@ impl<'a> Geometry<'a> {
             points.iter().map(|p| self.point(p.0, p.1)).collect(),
             self.stroke,
         );
+    }
+    fn filled_poly(&self, points: &[(f32, f32)]) {
+        self.painter.add(egui::Shape::convex_polygon(
+            points.iter().map(|p| self.point(p.0, p.1)).collect(),
+            self.stroke.color,
+            Stroke::NONE,
+        ));
     }
     fn rect(&self, x: f32, y: f32, w: f32, h: f32, radius: f32) {
         self.painter.rect_stroke(
@@ -189,8 +209,13 @@ mod tests {
             Icon::RenderedView,
             Icon::SourceView,
             Icon::ExternalLink,
+            Icon::PreviousMatch,
+            Icon::NextMatch,
+            Icon::Refresh,
+            Icon::ParentDirectory,
+            Icon::HomeDirectory,
         ];
-        assert_eq!(icons.len(), 38);
+        assert_eq!(icons.len(), 43);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

@@ -3718,12 +3718,25 @@ impl FesTermApp {
                 TabContent::Launcher
                 | TabContent::Settings
                 | TabContent::Profiles
-                | TabContent::MarkdownViewer(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_) => {
                     (None, None, None, ChipStatus::Neutral, "", None, None)
                 }
+                // Same reasoning as the file manager below: the viewer has
+                // source locality, encoding, and a read-only/stale state to
+                // report, which is exactly what the mockup's `.fmd-status`
+                // shows. Reporting it here instead of in a viewer-owned
+                // footer keeps one status band in the window.
+                TabContent::MarkdownViewer(tab) => (
+                    Some(tab.status_bar_context()),
+                    None,
+                    Some(std::borrow::Cow::Borrowed(tab.status_bar_encoding())),
+                    tab.status_bar_status(),
+                    tab.status_bar_label(),
+                    None,
+                    None,
+                ),
                 // The file manager has no terminal grid to report, but it
                 // does have two endpoints and a transport state, so it fills
                 // the bar the way the mockup's `.fsftp-statusline` does
@@ -4268,6 +4281,7 @@ impl FesTermApp {
                     );
                 }
                 TabContent::MarkdownViewer(tab) => {
+                    tab.set_status_bar_visible(status_bar_visible);
                     screen_command = tab.show(ui, active_tab_id);
                 }
                 TabContent::SshAuthenticationRequired(tab) => {

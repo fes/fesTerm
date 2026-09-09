@@ -114,12 +114,11 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(8.0);
+                // The dot and the label are independent: `Neutral` means
+                // "this surface has no live transport to report", not "say
+                // nothing". The Markdown viewer uses it to show a plain
+                // `Read only` with no dot, per the mockup.
                 if !matches!(content.status, ChipStatus::Neutral) {
-                    ui.label(
-                        RichText::new(content.status_label)
-                            .small()
-                            .color(STATUS_BAR_TEXT),
-                    );
                     // Sized to the surrounding small-text line height
                     // (rather than a bare fixed box) so the dot's own
                     // center lands on the same optical center line as the
@@ -132,6 +131,13 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
                     ui.painter()
                         .circle_filled(rect.center(), 3.5, content.status.color());
                     let _ = response;
+                }
+                if !content.status_label.is_empty() {
+                    ui.label(
+                        RichText::new(content.status_label)
+                            .small()
+                            .color(STATUS_BAR_TEXT),
+                    );
                 }
             });
         });
@@ -189,6 +195,31 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("Running").is_none());
         assert!(harness.query_by_label("80×24").is_none());
+    }
+
+    #[test]
+    fn status_bar_shows_a_label_without_a_dot_when_neutral() {
+        // The Markdown viewer has a state worth naming (`Read only`) but no
+        // transport to report, so the label and the dot are independent.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 60.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    StatusBarContent {
+                        context: Some("Local Markdown"),
+                        dimensions: None,
+                        system: Some("UTF-8"),
+                        status: ChipStatus::Neutral,
+                        status_label: "Read only",
+                        detail: None,
+                        port_forwards: None,
+                    },
+                );
+            });
+        harness.run();
+        assert!(harness.query_by_label("Read only").is_some());
+        assert!(harness.query_by_label("Local Markdown").is_some());
     }
 
     #[test]
