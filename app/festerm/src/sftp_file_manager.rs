@@ -5229,6 +5229,421 @@ fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
     }
 }
 
+/// What the user did in a [`MarkdownFilePicker`] this frame.
+pub(crate) enum MarkdownPickerOutcome {
+    /// Nothing decided yet; the picker stays open.
+    Pending,
+    /// A Markdown file was picked (double-click or Enter); the caller
+    /// should dispatch `AppCommand::OpenLocalMarkdownFile` with this path
+    /// and close the picker.
+    Open(PathBuf),
+    /// The user dismissed the picker (Cancel or Escape) without picking a
+    /// file.
+    Cancelled,
+}
+
+enum MarkdownPickerEvent {
+    Loaded {
+        request_id: u64,
+        snapshot: SftpDirectorySnapshot,
+        metadata: Option<SftpPathMetadata>,
+    },
+    Failed {
+        request_id: u64,
+        summary: String,
+        details: String,
+    },
+}
+
+/// Local-filesystem-only file picker for "Open Markdown File…" (#132),
+/// reusing the SFTP file manager's local-pane browsing model (breadcrumbs,
+/// up/home/refresh navigation, sortable columns, item icons, single
+/// selection) instead of the OS-native `rfd::FileDialog` previously used.
+/// Deliberately has no remote pane or transfer machinery: this widget only
+/// ever browses the local filesystem, so it owns its own directory-listing
+/// thread and event channel rather than reaching into a full
+/// `SftpFileManagerTab`/`WorkerEvent` pipeline built for a live SSH
+/// connection.
+pub(crate) struct MarkdownFilePicker {
+    pane: SftpPaneState,
+    event_sender: Sender<MarkdownPickerEvent>,
+    event_receiver: Receiver<MarkdownPickerEvent>,
+    repaint: egui::Context,
+    next_request_id: u64,
+}
+
+impl MarkdownFilePicker {
+    /// Opens the picker rooted at `start_dir`.
+    pub(crate) fn new(start_dir: PathBuf, repaint: egui::Context) -> Self {
+        let (event_sender, event_receiver) = mpsc::channel();
+        let mut picker = Self {
+            pane: SftpPaneState::new(SftpPath::local(start_dir)),
+            event_sender,
+            event_receiver,
+            repaint,
+            next_request_id: 0,
+        };
+        let start = picker.pane.current_path.clone();
+        picker.load(start, false);
+        picker
+    }
+
+    fn load(&mut self, path: SftpPath, push_history: bool) {
+        self.pane.loading = true;
+        self.pane.error = None;
+        self.pane.details = None;
+        self.pane.path_text = path.display();
+        self.pane.current_path = path.clone();
+        if push_history {
+            self.pane.push_history(path.clone());
+        }
+        self.next_request_id += 1;
+        let request_id = self.next_request_id;
+        self.pane.pending_request_id = request_id;
+        let sender = self.event_sender.clone();
+        let repaint = self.repaint.clone();
+        thread::Builder::new()
+            .name(format!("festerm-gui-markdown-picker-{request_id}"))
+            .spawn(move || {
+                let event = match local_snapshot_and_metadata(&path) {
+                    Ok((snapshot, metadata)) => MarkdownPickerEvent::Loaded {
+                        request_id,
+                        snapshot,
+                        metadata,
+                    },
+                    Err(error) => MarkdownPickerEvent::Failed {
+                        request_id,
+                        summary: "Could not load the folder.".to_owned(),
+                        details: error,
+                    },
+                };
+                let _ = sender.send(event);
+                repaint.request_repaint();
+            })
+            .expect("could not spawn markdown file picker loader thread");
+    }
+
+    /// Applies any directory-listing results that arrived since the last
+    /// frame. Must be called once per frame before `ui`.
+    pub(crate) fn poll(&mut self) {
+        while let Ok(event) = self.event_receiver.try_recv() {
+            match event {
+                MarkdownPickerEvent::Loaded {
+                    request_id,
+                    snapshot,
+                    metadata,
+                } => {
+                    if request_id == self.pane.pending_request_id {
+                        self.pane.set_snapshot(snapshot, metadata);
+                    }
+                }
+                MarkdownPickerEvent::Failed {
+                    request_id,
+                    summary,
+                    details,
+                } => {
+                    if request_id == self.pane.pending_request_id {
+                        self.pane.set_error(summary, details);
+                    }
+                }
+            }
+        }
+    }
+
+    fn navigate_back(&mut self) {
+        if self.pane.history_index == 0 {
+            return;
+        }
+        let next = self.pane.history_index - 1;
+        self.pane.history_index = next;
+        let target = self.pane.history[next].clone();
+        self.load(target, false);
+    }
+
+    fn navigate_up(&mut self) {
+        let path = self.pane.current_path.parent_directory();
+        self.load(path, true);
+    }
+
+    fn navigate_home(&mut self) {
+        // Matches `SftpFileManagerTab::navigate_home`'s Local branch.
+        let target = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        self.load(SftpPath::local(target), true);
+    }
+
+    fn navigate_to_breadcrumb(&mut self, path: SftpPath) {
+        self.load(path, true);
+    }
+
+    fn refresh(&mut self) {
+        let path = self.pane.current_path.clone();
+        self.load(path, false);
+    }
+
+    /// Opens `item`: navigates into it if it's a directory, or reports it as
+    /// picked if it's a recognized Markdown file. Any other file is a no-op,
+    /// same as the SFTP local pane's own double-click handling (#133).
+    fn open_item(&mut self, item: &SftpDirectoryItem) -> MarkdownPickerOutcome {
+        if item.file_type == SftpEntryType::Directory {
+            self.navigate_to_breadcrumb(item.path.clone());
+            return MarkdownPickerOutcome::Pending;
+        }
+        if !is_markdown_file(item) {
+            return MarkdownPickerOutcome::Pending;
+        }
+        match &item.path {
+            SftpPath::Local(path) => MarkdownPickerOutcome::Open(path.clone()),
+            SftpPath::Remote(_) => MarkdownPickerOutcome::Pending,
+        }
+    }
+
+    /// Renders the picker's content (toolbar, breadcrumbs, filter, table,
+    /// footer) into `ui`, which the caller wraps in an `egui::Modal`/`Frame`
+    /// of its own (see `FesTermApp::show_markdown_file_picker`).
+    pub(crate) fn ui(&mut self, ui: &mut Ui) -> MarkdownPickerOutcome {
+        let mut outcome = MarkdownPickerOutcome::Pending;
+        let width = ui.available_width();
+
+        ui.horizontal(|ui| {
+            if toolbar_icon_button(ui, SftpGlyph::Back, "Back").clicked() {
+                self.navigate_back();
+            }
+            if toolbar_icon_button(ui, SftpGlyph::Up, "Up one level").clicked() {
+                self.navigate_up();
+            }
+            if toolbar_icon_button(ui, SftpGlyph::Home, "Home").clicked() {
+                self.navigate_home();
+            }
+            if toolbar_icon_button(ui, SftpGlyph::Refresh, "Refresh folder").clicked() {
+                self.refresh();
+            }
+            ui.add_space(SFTP_TOOLBAR_NAV_GAP);
+            let mut breadcrumb_target = None;
+            ui.horizontal_wrapped(|ui| {
+                for (index, segment) in breadcrumb_segments(&self.pane.current_path)
+                    .into_iter()
+                    .enumerate()
+                {
+                    if index > 0 && segment.label != "/" {
+                        ui.label(
+                            RichText::new("/")
+                                .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                                .color(theme::TEXT_MUTED),
+                        );
+                    }
+                    let text = RichText::new(segment.label.clone())
+                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                        .color(if segment.current {
+                            theme::TEXT_PRIMARY
+                        } else {
+                            theme::TEXT_SECONDARY
+                        });
+                    if segment.current {
+                        ui.label(text);
+                    } else if ui
+                        .add(
+                            egui::Button::new(text)
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE)
+                                .min_size(egui::vec2(0.0, 18.0)),
+                        )
+                        .clicked()
+                    {
+                        breadcrumb_target = Some(segment.path);
+                    }
+                }
+            });
+            if let Some(path) = breadcrumb_target {
+                self.navigate_to_breadcrumb(path);
+            }
+        });
+        ui.add_space(6.0);
+
+        let mut filter_text = self.pane.filter.clone();
+        let filter_response = show_filter_field(ui, &mut filter_text, PaneFocus::Local, width);
+        if filter_response.changed() {
+            self.pane.set_filter(filter_text);
+        }
+        ui.add_space(6.0);
+
+        if let Some(summary) = self.pane.error.clone() {
+            ui.colored_label(theme::STATUS_ERROR, summary);
+            ui.add_space(6.0);
+        }
+
+        let columns = sftp_table_columns(width);
+        let mut sort_clicked = None;
+        ui.horizontal(|ui| {
+            if show_table_header_cell(
+                ui,
+                columns[0],
+                CellAlign::Left,
+                "Name",
+                self.pane.sort.column == SftpSortColumn::Name,
+                self.pane.sort.descending,
+            )
+            .clicked()
+            {
+                sort_clicked = Some(SftpSortColumn::Name);
+            }
+            if show_table_header_cell(
+                ui,
+                columns[1],
+                CellAlign::Right,
+                "Size",
+                self.pane.sort.column == SftpSortColumn::Size,
+                self.pane.sort.descending,
+            )
+            .clicked()
+            {
+                sort_clicked = Some(SftpSortColumn::Size);
+            }
+            if show_table_header_cell(
+                ui,
+                columns[2],
+                CellAlign::Left,
+                "Modified",
+                self.pane.sort.column == SftpSortColumn::Modified,
+                self.pane.sort.descending,
+            )
+            .clicked()
+            {
+                sort_clicked = Some(SftpSortColumn::Modified);
+            }
+            if show_table_header_cell(
+                ui,
+                columns[3],
+                CellAlign::Left,
+                "Type",
+                self.pane.sort.column == SftpSortColumn::Type,
+                self.pane.sort.descending,
+            )
+            .clicked()
+            {
+                sort_clicked = Some(SftpSortColumn::Type);
+            }
+        });
+        if let Some(column) = sort_clicked {
+            self.pane.set_sort(column);
+        }
+
+        let mut picked_item: Option<SftpDirectoryItem> = None;
+        let entries = self.pane.visible_entries().to_vec();
+        ScrollArea::vertical()
+            .id_salt("markdown_file_picker_rows")
+            .max_height(280.0)
+            .show(ui, |ui| {
+                for item in &entries {
+                    let key = path_key(&item.path);
+                    let selected = self.pane.selected_paths.contains(&key);
+                    let markdown_or_dir =
+                        item.file_type == SftpEntryType::Directory || is_markdown_file(item);
+                    let row = ui
+                        .horizontal(|ui| {
+                            let (icon_rect, _) =
+                                ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::hover());
+                            paint_sftp_glyph(
+                                ui.painter(),
+                                item_glyph(item),
+                                icon_rect,
+                                if markdown_or_dir {
+                                    theme::TEXT_SECONDARY
+                                } else {
+                                    theme::TEXT_MUTED
+                                },
+                            );
+                            let name_color = if !markdown_or_dir {
+                                theme::TEXT_MUTED
+                            } else if selected {
+                                theme::TEXT_PRIMARY
+                            } else {
+                                theme::TEXT_SECONDARY
+                            };
+                            show_table_text_cell(
+                                ui,
+                                columns[0] - 20.0,
+                                CellAlign::Left,
+                                RichText::new(item.name.clone()).color(name_color),
+                            );
+                            show_table_text_cell(
+                                ui,
+                                columns[1],
+                                CellAlign::Right,
+                                RichText::new(format_size(item.size)).color(theme::TEXT_MUTED),
+                            );
+                            show_table_text_cell(
+                                ui,
+                                columns[2],
+                                CellAlign::Left,
+                                RichText::new(format_modified(item.modified_at))
+                                    .color(theme::TEXT_MUTED),
+                            );
+                            show_table_text_cell(
+                                ui,
+                                columns[3],
+                                CellAlign::Left,
+                                RichText::new(item_type_label(item)).color(theme::TEXT_MUTED),
+                            );
+                        })
+                        .response;
+                    let row_rect = row.rect;
+                    let row_response = ui.interact(
+                        row_rect,
+                        ui.make_persistent_id(("markdown_file_picker_row", &key)),
+                        Sense::click(),
+                    );
+                    if selected {
+                        ui.painter().rect_filled(
+                            row_rect,
+                            0.0,
+                            theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.6),
+                        );
+                    }
+                    if row_response.clicked() {
+                        self.pane.select_single(&item.path);
+                    }
+                    if row_response.double_clicked() {
+                        picked_item = Some(item.clone());
+                    }
+                }
+            });
+
+        if ui.input(|input| input.key_pressed(Key::Enter)) {
+            if let Some(item) = self.pane.activate_cursor() {
+                picked_item = Some(item);
+            }
+        }
+        if ui.input(|input| input.key_pressed(Key::ArrowDown)) {
+            self.pane.move_cursor(1, false);
+        }
+        if ui.input(|input| input.key_pressed(Key::ArrowUp)) {
+            self.pane.move_cursor(-1, false);
+        }
+
+        if let Some(item) = picked_item {
+            outcome = self.open_item(&item);
+        }
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{} items", entries.len()))
+                    .font(font_for_text_role(SftpTextRole::Footer))
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Cancel").clicked() {
+                    outcome = MarkdownPickerOutcome::Cancelled;
+                }
+            });
+        });
+
+        outcome
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6089,5 +6504,106 @@ mod tests {
                 SftpCollisionDecision::MergeFolders,
             ]
         );
+    }
+
+    /// Polls `picker` until its pane finishes loading (or a bounded number
+    /// of attempts elapses), since directory listing happens on a spawned
+    /// background thread.
+    fn wait_for_picker_load(picker: &mut MarkdownFilePicker) {
+        for _ in 0..200 {
+            picker.poll();
+            if !picker.pane.loading {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("markdown file picker did not finish loading in time");
+    }
+
+    #[test]
+    fn markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "festerm-markdown-picker-load-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(dir.join("subdir")).expect("temp directories should be creatable");
+        fs::write(dir.join("readme.md"), b"# Title\n").expect("markdown file should be writable");
+        fs::write(dir.join("notes.txt"), b"plain text\n").expect("text file should be writable");
+
+        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+
+        let entries = picker.pane.visible_entries().to_vec();
+        let readme = entries
+            .iter()
+            .find(|item| item.name == "readme.md")
+            .expect("readme.md should be listed")
+            .clone();
+        assert!(is_markdown_file(&readme));
+        let notes = entries
+            .iter()
+            .find(|item| item.name == "notes.txt")
+            .expect("notes.txt should be listed")
+            .clone();
+        assert!(!is_markdown_file(&notes));
+        let subdir = entries
+            .iter()
+            .find(|item| item.name == "subdir")
+            .expect("subdir should be listed")
+            .clone();
+
+        // Picking the markdown file reports it as the open outcome...
+        match picker.open_item(&readme) {
+            MarkdownPickerOutcome::Open(path) => assert_eq!(path, dir.join("readme.md")),
+            _ => panic!("expected picking a Markdown file to report MarkdownPickerOutcome::Open"),
+        }
+        // ...a non-Markdown file is a no-op, matching the SFTP local pane's
+        // own double-click handling (issue #133)...
+        assert!(matches!(
+            picker.open_item(&notes),
+            MarkdownPickerOutcome::Pending
+        ));
+        // ...and a directory navigates into it instead of picking a file.
+        assert!(matches!(
+            picker.open_item(&subdir),
+            MarkdownPickerOutcome::Pending
+        ));
+        wait_for_picker_load(&mut picker);
+        assert_eq!(
+            picker.pane.current_path,
+            SftpPath::local(dir.join("subdir"))
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn markdown_file_picker_navigation_moves_up_home_and_back() {
+        let dir = std::env::temp_dir().join(format!(
+            "festerm-markdown-picker-nav-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(dir.join("child")).expect("temp directories should be creatable");
+
+        let mut picker = MarkdownFilePicker::new(dir.join("child"), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.pane.current_path, SftpPath::local(dir.join("child")));
+
+        picker.navigate_up();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.pane.current_path, SftpPath::local(dir.clone()));
+
+        picker.navigate_home();
+        wait_for_picker_load(&mut picker);
+        let expected_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        assert_eq!(picker.pane.current_path, SftpPath::local(expected_home));
+
+        picker.navigate_back();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.pane.current_path, SftpPath::local(dir.clone()));
+
+        fs::remove_dir_all(&dir).ok();
     }
 }
