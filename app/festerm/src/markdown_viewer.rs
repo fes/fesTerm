@@ -14,8 +14,8 @@ use festerm_markdown::{
     Block, CodeBlock, ContainerInline, HeadingBlock, HighlightStyle, HighlightedCodeLine,
     ImageInline, Inline, LinkInline, ListBlock, ListKind, LocalMarkdownSource, MarkdownDocument,
     MarkdownLoadError, MarkdownLoader, MarkdownSource, MarkdownSourceError, RawHtmlBlock,
-    ResourceReferenceClass, ResourceReferenceKind, SourceSpan, TableAlignment, TableBlock,
-    TaskState, TextBlock, TextMatch,
+    RemoteMarkdownSource, ResourceReferenceClass, ResourceReferenceKind, SourceSpan,
+    TableAlignment, TableBlock, TaskState, TextBlock, TextMatch,
 };
 use festerm_ui_egui::{icon, icon::Icon, theme};
 
@@ -138,6 +138,13 @@ enum MarkdownViewerLoadFailure {
     Source(MarkdownSourceError),
     Load(MarkdownLoadError),
     Local(LocalLoadError),
+    /// Reload isn't implemented for a Markdown file opened from a remote
+    /// SFTP snapshot (see issue #133): unlike a local file, refreshing it
+    /// would require locating (or re-establishing) a live SFTP transport to
+    /// the same verified origin the snapshot was pinned to, which the
+    /// viewer does not yet do. The initial open still succeeds; only the
+    /// explicit reload/refresh action hits this.
+    RemoteReloadUnsupported,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -243,6 +250,14 @@ impl MarkdownViewerErrorState {
             MarkdownViewerLoadFailure::Local(error) => {
                 Self::from_local_error(error, stale_snapshot)
             }
+            MarkdownViewerLoadFailure::RemoteReloadUnsupported => Self {
+                title: "Reloading isn't supported for this file yet",
+                detail: "This Markdown file was opened from a remote SFTP snapshot. Close and \
+                         double-click it again in the SFTP file manager to refresh its content."
+                    .to_owned(),
+                stale_snapshot,
+                source_unavailable: false,
+            },
         }
     }
 }
@@ -443,6 +458,48 @@ impl MarkdownViewerTab {
         tab
     }
 
+    /// Opens a Markdown document already fetched from a remote SFTP
+    /// session, holding its bytes in memory rather than writing them to a
+    /// temp file (issue #133). `content` is the file's full bytes as read
+    /// by `SftpSession::read_markdown_snapshot` over the caller's
+    /// already-authenticated connection; `display_path` is the canonical
+    /// remote path to show in the UI.
+    pub fn open_remote(
+        source: RemoteMarkdownSource,
+        display_path: String,
+        content: Vec<u8>,
+    ) -> Self {
+        let title = Path::new(source.remote_path())
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Markdown")
+            .to_owned();
+        let mut tab = Self {
+            source: MarkdownSource::from(source.clone()),
+            title,
+            display_path: display_path.clone(),
+            mode: MarkdownViewerMode::Preview,
+            outline_open: true,
+            outline_selected: None,
+            document: None,
+            error: None,
+            stale_snapshot: false,
+            find: MarkdownFindState::default(),
+            resource_approvals: ResourceApprovalState::default(),
+            loaded_images: BTreeMap::new(),
+            pending_image_loads: BTreeMap::new(),
+            image_errors: BTreeMap::new(),
+            pending_scroll: None,
+            line_heading_indices: Vec::new(),
+            outline_keyboard_focus: false,
+            status_bar_visible: true,
+        };
+        let result = load_remote_document(source, display_path, content);
+        tab.apply_load_result(result);
+        tab
+    }
+
     pub fn title(&self) -> &str {
         &self.title
     }
@@ -463,6 +520,17 @@ impl MarkdownViewerTab {
             return false;
         };
         matches!(&self.source, MarkdownSource::Local(local) if local.path() == &candidate)
+    }
+
+    /// Whether this tab already shows the remote file at `host:port` +
+    /// `remote_path`, so re-double-clicking the same remote Markdown file
+    /// refreshes the existing tab instead of opening a duplicate. Owner and
+    /// verified-fingerprint identity are deliberately not compared here:
+    /// they can legitimately change across a reconnect while still
+    /// referring to the same logical remote file.
+    pub fn matches_remote_path(&self, host: &str, port: u16, remote_path: &str) -> bool {
+        matches!(&self.source, MarkdownSource::Remote(remote)
+            if remote.host() == host && remote.port() == port && remote.remote_path() == remote_path)
     }
 
     /// Left-hand status-bar context, mirroring the mockup's
@@ -606,13 +674,24 @@ impl MarkdownViewerTab {
     }
 
     pub fn reload(&mut self) {
-        let anchor = self.current_anchor();
         let result = match &self.source {
             MarkdownSource::Local(local) => load_local_document(local.path().clone()),
-            MarkdownSource::Remote(_) => Err(MarkdownViewerLoadFailure::Source(
-                MarkdownSourceError::EmptyRemoteHost,
-            )),
+            MarkdownSource::Remote(_) => Err(MarkdownViewerLoadFailure::RemoteReloadUnsupported),
         };
+        self.apply_load_result(result);
+    }
+
+    /// Shared by `reload()` and `open_remote()`: applies a load outcome
+    /// (freshly parsed document or failure) to `self`, preserving the
+    /// current scroll/outline anchor across the swap when possible. On a
+    /// brand-new tab (`self.document` is still `None`), `current_anchor()`
+    /// resolves to the top of the document, so this doubles as the
+    /// "initial load" path without needing a separate first-load branch.
+    fn apply_load_result(
+        &mut self,
+        result: Result<(String, MarkdownDocument), MarkdownViewerLoadFailure>,
+    ) {
+        let anchor = self.current_anchor();
         match result {
             Ok((display_path, document)) => {
                 self.display_path = display_path;
@@ -2027,6 +2106,27 @@ fn load_local_document(
     Ok((display_local_path(&canonical), document))
 }
 
+/// Mirrors `load_local_document`, but for bytes already fetched from a
+/// remote SFTP session (issue #133) instead of the local filesystem: no
+/// disk I/O, no canonicalization, just parsing already-in-memory content
+/// against the caller-supplied `RemoteMarkdownSource` identity.
+fn load_remote_document(
+    source: RemoteMarkdownSource,
+    display_path: String,
+    content: Vec<u8>,
+) -> Result<(String, MarkdownDocument), MarkdownViewerLoadFailure> {
+    let byte_len = content.len();
+    let document = MarkdownLoader::default()
+        .load(
+            MarkdownSource::from(source),
+            byte_len,
+            &content,
+            &Default::default(),
+        )
+        .map_err(MarkdownViewerLoadFailure::Load)?;
+    Ok((display_path, document))
+}
+
 fn display_local_path(path: &Path) -> String {
     let display = path.display().to_string();
     #[cfg(target_os = "windows")]
@@ -3058,6 +3158,7 @@ pub fn take_viewer_commands(context: &egui::Context) -> Vec<AppCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use festerm_markdown::RemoteSourceOwner;
     use std::ops::Range;
 
     fn document(text: &str) -> MarkdownDocument {
@@ -3557,6 +3658,73 @@ mod tests {
             assert!(!state.detail.is_empty());
             assert!(state.stale_snapshot);
         }
+    }
+
+    fn test_remote_source(remote_path: &str) -> RemoteMarkdownSource {
+        RemoteMarkdownSource::new(
+            "sftp.example.test",
+            22,
+            RemoteSourceOwner::username("deploy").unwrap(),
+            "SHA256:abc123",
+            remote_path,
+            1,
+        )
+        .expect("valid remote source fields")
+    }
+
+    #[test]
+    fn open_remote_parses_in_memory_bytes_without_touching_disk() {
+        let source = test_remote_source("/srv/docs/guide.md");
+        let tab = MarkdownViewerTab::open_remote(
+            source,
+            "/srv/docs/guide.md".to_owned(),
+            b"# Remote Guide\n".to_vec(),
+        );
+        assert_eq!(tab.title(), "guide.md");
+        assert_eq!(tab.display_path(), "/srv/docs/guide.md");
+        assert_eq!(tab.chip_secondary(), "Markdown · Remote");
+        assert_eq!(
+            tab.status_bar_status(),
+            festerm_ui_egui::chrome::ChipStatus::Neutral
+        );
+    }
+
+    #[test]
+    fn matches_remote_path_ignores_owner_and_fingerprint() {
+        let tab = MarkdownViewerTab::open_remote(
+            test_remote_source("/etc/motd"),
+            "/etc/motd".to_owned(),
+            b"hello\n".to_vec(),
+        );
+        assert!(tab.matches_remote_path("sftp.example.test", 22, "/etc/motd"));
+        assert!(!tab.matches_remote_path("sftp.example.test", 2222, "/etc/motd"));
+        assert!(!tab.matches_remote_path("other.example.test", 22, "/etc/motd"));
+        assert!(!tab.matches_remote_path("sftp.example.test", 22, "/etc/other"));
+    }
+
+    #[test]
+    fn reload_on_a_remote_tab_reports_reload_unsupported_instead_of_reloading() {
+        let mut tab = MarkdownViewerTab::open_remote(
+            test_remote_source("/etc/motd"),
+            "/etc/motd".to_owned(),
+            b"hello\n".to_vec(),
+        );
+        assert_eq!(
+            tab.status_bar_status(),
+            festerm_ui_egui::chrome::ChipStatus::Neutral
+        );
+        tab.reload();
+        assert_eq!(
+            tab.status_bar_status(),
+            festerm_ui_egui::chrome::ChipStatus::Failed
+        );
+        let error = tab.error.as_ref().expect("reload should set an error");
+        assert!(!error.title.is_empty());
+        assert!(error.detail.contains("SFTP file manager"));
+        // The original snapshot is preserved (not cleared) on this failure,
+        // matching how a failed local reload keeps showing the last good
+        // content rather than blanking the viewer.
+        assert!(tab.document.is_some());
     }
 
     #[test]

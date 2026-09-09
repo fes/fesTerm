@@ -26,6 +26,7 @@ use festerm_config::{
     TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
+use festerm_markdown::RemoteMarkdownSource;
 use festerm_pty::{default_local_profile, LocalProfile, LocalPtySession};
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
@@ -1284,6 +1285,15 @@ pub enum AppCommand {
     OpenLocalMarkdownFile {
         path: PathBuf,
     },
+    /// Opens a Markdown file already fetched (in memory) from a remote SFTP
+    /// session — e.g. from double-clicking a `.md` file in the SFTP file
+    /// manager (issue #133). `source` pins the snapshot's verified remote
+    /// origin; `content` is the file's full bytes.
+    OpenRemoteMarkdownSnapshot {
+        source: RemoteMarkdownSource,
+        display_path: String,
+        content: Vec<u8>,
+    },
     /// Opens an explicit terminal hyperlink after application-owned URL
     /// validation. Terminal presentation emits intent only.
     OpenExternalLink {
@@ -2302,6 +2312,11 @@ impl AppState {
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
             AppCommand::OpenLocalMarkdownFile { path } => self.open_local_markdown(path),
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source,
+                display_path,
+                content,
+            } => self.open_remote_markdown(source, display_path, content),
             AppCommand::OpenExternalLink { target } => {
                 if let Some(target) = festerm_core::normalize_external_web_url(&target.into_inner())
                 {
@@ -2560,6 +2575,53 @@ impl AppState {
         self.tabs.push(Tab {
             id,
             content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(path))),
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
+    }
+
+    /// Opens a Markdown snapshot already fetched from a remote SFTP session
+    /// (issue #133). If a tab already shows the same remote file, its
+    /// content is replaced with the freshly fetched snapshot (refreshing
+    /// it) rather than opening a duplicate tab; otherwise a new tab is
+    /// pushed.
+    fn open_remote_markdown(
+        &mut self,
+        source: RemoteMarkdownSource,
+        display_path: String,
+        content: Vec<u8>,
+    ) {
+        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::MarkdownViewer(viewer)
+                if viewer.matches_remote_path(
+                    source.host(),
+                    source.port(),
+                    source.remote_path(),
+                ) =>
+            {
+                Some(tab.id)
+            }
+            _ => None,
+        }) {
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == existing) {
+                tab.content = TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_remote(
+                    source,
+                    display_path,
+                    content,
+                )));
+            }
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return;
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_remote(
+                source,
+                display_path,
+                content,
+            ))),
         });
         self.set_active(id);
         self.workspace_dirty = true;
@@ -3984,6 +4046,72 @@ mod tests {
 
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
         assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
+    }
+
+    fn test_remote_markdown_source(remote_path: &str) -> RemoteMarkdownSource {
+        RemoteMarkdownSource::new(
+            "sftp.example.test",
+            22,
+            festerm_markdown::RemoteSourceOwner::username("deploy").unwrap(),
+            "SHA256:abc123",
+            remote_path,
+            1,
+        )
+        .expect("valid remote source fields")
+    }
+
+    #[test]
+    fn open_remote_markdown_snapshot_opens_a_new_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let tabs_before = state.tabs().len();
+
+        state.dispatch(
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source: test_remote_markdown_source("/srv/docs/guide.md"),
+                display_path: "/srv/docs/guide.md".to_owned(),
+                content: b"# Guide\n".to_vec(),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_before + 1);
+        let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
+            panic!("expected the new tab to be the Markdown viewer");
+        };
+        assert_eq!(viewer.display_path(), "/srv/docs/guide.md");
+    }
+
+    #[test]
+    fn reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source: test_remote_markdown_source("/srv/docs/guide.md"),
+                display_path: "/srv/docs/guide.md".to_owned(),
+                content: b"# Guide v1\n".to_vec(),
+            },
+            &context,
+        );
+        let tabs_after_first_open = state.tabs().len();
+        let tab_id = state.active();
+
+        state.dispatch(
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source: test_remote_markdown_source("/srv/docs/guide.md"),
+                display_path: "/srv/docs/guide.md".to_owned(),
+                content: b"# Guide v2\n".to_vec(),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_after_first_open);
+        assert_eq!(state.active(), tab_id);
+        let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
+            panic!("expected the refreshed tab to still be the Markdown viewer");
+        };
+        assert!(viewer.matches_remote_path("sftp.example.test", 22, "/srv/docs/guide.md"));
     }
 
     #[test]
