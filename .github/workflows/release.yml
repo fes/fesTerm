@@ -66,6 +66,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Install Linux validation dependencies
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y libudev-dev mesa-vulkan-drivers pkg-config
       - run: cargo fmt --all -- --check
@@ -391,6 +392,7 @@ jobs:
           test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"
       - name: Install packaging dependencies
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y libfuse2t64 libudev-dev pkg-config
           cargo install cargo-packager --version "$CARGO_PACKAGER_VERSION" --locked
