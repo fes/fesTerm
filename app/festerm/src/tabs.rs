@@ -1513,7 +1513,10 @@ pub enum AppCommand {
     /// Toggles whether closing a live session requires confirmation.
     ToggleConfirmSessionClose,
     /// Toggles whether Windows default local sessions prefer the per-user
-    /// PowerShell app-execution alias over `%COMSPEC%`.
+    /// PowerShell app-execution alias over `%COMSPEC%`. Only the Windows
+    /// settings UI (`screens.rs`) ever constructs this, so non-Windows
+    /// builds would otherwise flag it as dead code.
+    #[cfg_attr(not(windows), allow(dead_code))]
     TogglePreferPowershell,
     /// Toggles whether the open-tab list and active tab persist across
     /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
