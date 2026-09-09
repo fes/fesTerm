@@ -73,6 +73,7 @@ jobs:
       - name: Install Linux packaging dependencies
         if: matrix.platform == 'linux'
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y libfuse2t64 libudev-dev pkg-config
       - name: Cache pinned cargo-packager binary
