@@ -859,7 +859,9 @@
         "SFTPG-02",
         "SFTPG-03",
         "SFTPG-04",
-        "SFTPG-05"
+        "SFTPG-05",
+        "SFTPG-06",
+        "SFTPG-07"
       ],
       "requirements": [
         "docs/sftp-ui-design.md#layout-and-navigation",
@@ -895,12 +897,22 @@
         "open_remote_markdown_snapshot_opens_a_new_tab",
         "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating",
         "remote_directory_loaded_refreshes_the_cached_verified_fingerprint",
-        "markdown_snapshot_loaded_refreshes_the_cached_verified_fingerprint"
+        "markdown_snapshot_loaded_refreshes_the_cached_verified_fingerprint",
+        "pane_drop_should_transfer_only_between_different_panes",
+        "cross_pane_drag_drop_enqueues_the_dragged_selection_but_same_pane_does_not",
+        "enqueue_external_drop_upload_rejects_when_remote_connection_is_not_ready",
+        "enqueue_external_drop_upload_rejects_a_read_only_remote_destination",
+        "enqueue_external_drop_upload_enqueues_one_request_per_dropped_path",
+        "build_reveal_command_targets_the_given_path_on_this_platform",
+        "reveal_in_file_manager_label_names_the_current_platform_action"
       ],
-      "manual_scenarios": [],
+      "manual_scenarios": [
+        "FD-05",
+        "FD-06"
+      ],
       "status": "partial",
       "prerequisites": [
-        "drag/drop and remote-disconnect recovery still need native/manual evidence"
+        "remote-disconnect recovery, the native Finder/Explorer drag gesture in both directions, and observing reveal-in-Finder/Explorer focus behavior still need native/manual evidence; native OS drag-out of a remote item is not implemented (egui/eframe has no drag-source primitive as of the pinned version)"
       ]
     },
     {

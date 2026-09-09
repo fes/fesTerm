@@ -570,3 +570,56 @@ entry point. Non-Markdown files are visible (so a user can see the full
 directory listing) but dimmed and inert; only directories and `.md`/
 `.markdown` files respond to a double-click or Enter. This removed the last
 use of the `rfd` dependency, which is now dropped from the workspace.
+
+## September 2026: SFTP drag-and-drop and Reveal in Finder/Explorer
+
+The GUI SFTP file manager already had toolbar/rail transfer buttons and a
+Finder-style local pane, but issue #137 asked for the interaction those
+buttons stand in for: dragging selections between panes, dragging files in
+from the OS, and revealing a local item in its native file manager.
+
+Pane-to-pane drag reuses `egui`'s built-in `DragAndDrop` plugin rather than
+inventing bespoke state: a dragged row sets an `SftpPaneDragPayload` naming
+only its source pane, and the *other* pane's frame response reads it back on
+release and calls the same `queue_transfer` path the toolbar/rail buttons
+already use for the current selection. Dropping on a pane's own source is a
+deliberate no-op. Dragging an unselected item first selects just that item,
+matching Finder/Explorer's own convention instead of silently moving whatever
+was selected before.
+
+External OS drops (Finder/Explorer dragged onto the tab) reuse the same
+`context.input(|i| i.raw.dropped_files)` mechanism the terminal-session path
+already used for inserting paths as typed input (see `docs/gui-design.md`
+"Drag-and-drop input"). Because the drop event is processed before this
+frame's tab body renders, the SFTP tab caches each pane's last-drawn rect so
+the drop handler can tell which pane the pointer was over; drops onto the
+remote pane upload into its current directory (gated by the same
+connection-readiness/writability rules as the buttons), and drops anywhere
+else in the tab -- most importantly, the local pane -- are rejected with a
+factual notice rather than silently accepted or misrouted.
+
+Dragging a remote item *out* to the OS was researched but not implemented:
+`egui`/`eframe` (pinned at 0.36.1) has no native drag-source primitive for
+exporting a drag from the application to the OS, on any of the three target
+platforms. Building that would mean bespoke `NSDraggingSource`/`IDropSource`/
+GTK DnD integration per platform, well beyond this issue's scope; downloading
+via the existing transfer buttons remains the supported path, and this gap is
+now recorded explicitly in `validation/traceability.json` and
+`docs/manual-validation.md` rather than left implicit.
+
+The follow-up "Reveal in Finder/Explorer" request is a local-pane-only
+context-menu action (a remote path has no local filesystem location to
+reveal) that shells out to `open -R` on macOS, `explorer.exe /select,` on
+Windows, or `xdg-open` on the containing folder elsewhere -- `xdg-open` has
+no cross-desktop equivalent of "select this exact file" -- acting on a single
+right-clicked item or the first of a multi-selection. Command construction
+is unit-tested per platform (each CI runner exercises its own branch);
+actually spawning and observing the native file manager remains manual.
+
+This did **not** use the VM evidence lab (`docs/vm-evidence-framework.md`):
+its `ui-workflow-smoke` mode only supports a fixed, incrementally-grown
+allowlist of declarative workflows, and drag-and-drop isn't one of them.
+Extending that allowlist would have been its own separate effort disconnected
+from this issue's scope, so the native OS-level pieces (the actual
+Finder/Explorer drag gesture, and observing reveal-in-Finder focus behavior)
+are tracked instead as ordinary manual-validation entries (`FD-05`, `FD-06`).
