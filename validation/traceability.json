@@ -1300,7 +1300,7 @@
       ],
       "automated_tests": [
         "command_palette_always_offers_open_markdown_file",
-        "markdown_palette_picker_selection_opens_the_selected_file",
+        "command_palette_open_markdown_file_opens_the_local_file_picker",
         "outline_and_preview_keep_separate_vertical_viewports",
         "local_markdown_display_paths_hide_windows_verbatim_prefixes",
         "find_highlighting_tracks_inline_code_text_offsets",
@@ -1320,7 +1320,9 @@
         "matches_remote_path_ignores_owner_and_fingerprint",
         "reload_on_a_remote_tab_reports_reload_unsupported_instead_of_reloading",
         "open_remote_markdown_snapshot_opens_a_new_tab",
-        "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating"
+        "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating",
+        "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files",
+        "markdown_file_picker_navigation_moves_up_home_and_back"
       ],
       "manual_scenarios": [
         "CP-06"

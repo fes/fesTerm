@@ -14,7 +14,10 @@ use std::{sync::mpsc, time::Instant};
 
 use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 
-use crate::{port_forward_draft::PortForwardDraft as LivePortForwardDraft, tabs::TabId};
+use crate::{
+    port_forward_draft::PortForwardDraft as LivePortForwardDraft,
+    sftp_file_manager::MarkdownFilePicker, tabs::TabId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloseConsequence {
@@ -178,6 +181,10 @@ pub(crate) struct OverlayState {
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
+    /// The "Open Markdown File…" picker (#132), reusing the SFTP file
+    /// manager's local-pane browsing widget instead of an OS-native file
+    /// dialog.
+    pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
     pub(crate) transient_notice: Option<(String, Instant)>,
     /// The About modal is open. Like the confirmation prompts above (and
     /// unlike the transient notice/password-store lookup), it is a
@@ -208,6 +215,7 @@ impl OverlayState {
             || self.pending_settings_reset.is_some()
             || self.port_forward_manager.is_some()
             || self.pending_quit.is_some()
+            || self.markdown_file_picker.is_some()
             || self.about_open
     }
 }

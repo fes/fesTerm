@@ -39,7 +39,7 @@ use crate::overlay_state::{
     PendingQuitConfirmation, PendingSettingsResetConfirmation, StoredCredentialLaunch,
 };
 use crate::screens;
-use crate::sftp_file_manager;
+use crate::sftp_file_manager::{self, MarkdownFilePicker, MarkdownPickerOutcome};
 use crate::tabs::{
     AppCommand, AppState, ExternalLinkTarget, HostKeyTrustDecision, InspectorTransport, TabContent,
     TabId,
@@ -746,18 +746,6 @@ impl FesTermApp {
             self.overlays.pending_close = Some(confirmation);
         } else {
             self.state.dispatch(AppCommand::CloseTab(id), context);
-        }
-    }
-
-    fn open_markdown_file_picker_with(
-        &mut self,
-        context: &egui::Context,
-        pick_file: impl FnOnce() -> Option<std::path::PathBuf>,
-    ) {
-        let picked = pick_file();
-        if let Some(path) = picked {
-            self.state
-                .dispatch(AppCommand::OpenLocalMarkdownFile { path }, context);
         }
     }
 
@@ -2378,24 +2366,11 @@ impl FesTermApp {
     /// Applies a selected command-palette item id, translating it back into
     /// the same `AppCommand` path used by chrome gestures and shortcuts.
     fn dispatch_palette_selection(&mut self, id: u64, context: &egui::Context) {
-        self.dispatch_palette_selection_with_picker(id, context, || {
-            rfd::FileDialog::new()
-                .add_filter("Markdown", &["md", "markdown"])
-                .pick_file()
-        });
-    }
-
-    fn dispatch_palette_selection_with_picker(
-        &mut self,
-        id: u64,
-        context: &egui::Context,
-        pick_markdown_file: impl FnOnce() -> Option<std::path::PathBuf>,
-    ) {
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
         match id {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
-            17 => self.open_markdown_file_picker_with(context, pick_markdown_file),
+            17 => self.open_markdown_file_picker(context),
             18 => self.state.dispatch(AppCommand::ReloadMarkdown, context),
             19 => self
                 .state
@@ -3040,6 +3015,60 @@ impl FesTermApp {
             self.close_port_forward_manager(context);
         } else {
             self.open_port_forward_manager(context);
+        }
+    }
+
+    /// Opens the "Open Markdown File…" picker (#132), reusing the SFTP
+    /// file manager's local-pane browsing widget instead of the OS-native
+    /// `rfd::FileDialog` previously used here.
+    fn open_markdown_file_picker(&mut self, context: &egui::Context) {
+        self.overlays.markdown_file_picker = Some(MarkdownFilePicker::new(
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("/")),
+            context.clone(),
+        ));
+        context.request_repaint();
+    }
+
+    fn close_markdown_file_picker(&mut self, context: &egui::Context) {
+        if self.overlays.markdown_file_picker.take().is_some() {
+            self.restore_active_terminal_focus();
+            context.request_repaint();
+        }
+    }
+
+    fn show_markdown_file_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+        let Some(picker) = self.overlays.markdown_file_picker.as_mut() else {
+            return;
+        };
+        picker.poll();
+        let width = (content_rect.width() - 32.0).clamp(420.0, 640.0);
+        let height = (content_rect.height() - 24.0).clamp(360.0, 560.0);
+        let mut outcome = None;
+        egui::Modal::new(egui::Id::new("markdown_file_picker")).show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.set_max_width(width);
+                    ui.set_max_height(height);
+                    ui.heading("Open Markdown File");
+                    ui.add_space(6.0);
+                    outcome = Some(picker.ui(ui));
+                });
+        });
+        match outcome {
+            Some(MarkdownPickerOutcome::Open(path)) => {
+                self.overlays.markdown_file_picker = None;
+                self.restore_active_terminal_focus();
+                self.state
+                    .dispatch(AppCommand::OpenLocalMarkdownFile { path }, ctx);
+            }
+            Some(MarkdownPickerOutcome::Cancelled) => {
+                self.close_markdown_file_picker(ctx);
+            }
+            Some(MarkdownPickerOutcome::Pending) | None => {}
         }
     }
 
@@ -4119,6 +4148,8 @@ impl FesTermApp {
                 || self.overlays.pending_quit.is_some());
         let port_forward_manager_escape =
             escape_pressed && self.overlays.port_forward_manager.is_some();
+        let markdown_file_picker_escape =
+            escape_pressed && self.overlays.markdown_file_picker.is_some();
         let about_escape = escape_pressed && self.overlays.about_open;
 
         if !self.focus_mode {
@@ -4580,6 +4611,12 @@ impl FesTermApp {
             self.close_port_forward_manager(ui.ctx());
         } else {
             self.show_port_forward_manager(ui.ctx(), content_rect);
+        }
+
+        if markdown_file_picker_escape {
+            self.close_markdown_file_picker(ui.ctx());
+        } else {
+            self.show_markdown_file_picker(ui.ctx(), content_rect);
         }
 
         self.show_about(ui.ctx(), about_escape);
@@ -5562,15 +5599,14 @@ mod tests {
     }
 
     #[test]
-    fn markdown_palette_picker_selection_opens_the_selected_file() {
+    fn command_palette_open_markdown_file_opens_the_local_file_picker() {
         let context = egui::Context::default();
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
-        app.dispatch_palette_selection_with_picker(17, &context, || {
-            Some(std::path::PathBuf::from("/docs/readme.md"))
-        });
+        assert!(app.overlays.markdown_file_picker.is_none());
 
-        let items = app.palette_items();
-        assert!(items.iter().any(|item| item.label == "Reload Markdown"));
+        app.dispatch_palette_selection(17, &context);
+
+        assert!(app.overlays.markdown_file_picker.is_some());
     }
 
     #[test]

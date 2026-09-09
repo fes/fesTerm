@@ -549,3 +549,24 @@ remote pane now keeps reconnect on its own identity line when a listing goes
 stale, table rows expose more specific file-type labels/icons instead of a
 generic "File" bucket, and the transfer drawer summarizes active/completed
 work in the same compact hierarchy as the reviewed workflow states.
+
+## September 2026: Markdown "Open" picker reuses the SFTP local browser
+
+The command palette's "Open Markdown File…" action opened the OS-native
+`rfd::FileDialog`, the one remaining local-filesystem browsing surface that
+didn't share the SFTP file manager's local-pane widget (breadcrumbs, up/home/
+refresh navigation, sortable columns, item icons). That inconsistency was
+called out as a deferred concern when #133 shipped double-click-to-open.
+
+The fix adds a self-contained `MarkdownFilePicker` that reuses the SFTP file
+manager's `SftpPaneState` model and rendering helpers (breadcrumb segments,
+filter field, sortable table cells, item glyphs) without pulling in any of
+the remote-pane/transfer machinery built for a live SSH connection: it owns
+its own local directory-listing thread and event channel. The picker opens
+as an `egui::Modal` from the composition root, same as the existing port
+forward manager, and still converges on `AppCommand::OpenLocalMarkdownFile`
+so a picked file opens through the same path as every other Markdown-open
+entry point. Non-Markdown files are visible (so a user can see the full
+directory listing) but dimmed and inert; only directories and `.md`/
+`.markdown` files respond to a double-click or Enter. This removed the last
+use of the `rfd` dependency, which is now dropped from the workspace.
