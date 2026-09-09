@@ -107,6 +107,7 @@ chip_layout = "single-row-scroll"
 status_bar_visible = true
 show_session_details = true
 confirm_session_close = true
+prefer_powershell = true
 restore_workspace = false
 terminal_font = "jetbrains-mono"
 terminal_ligatures = false
@@ -181,11 +182,12 @@ kinds and fields are rejected.
 
 ## Interface settings
 
-The optional `[settings]` table currently holds fourteen interface preferences:
+The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),
 `show_session_details` (default `true`), `confirm_session_close` (default
-`true`), `restore_workspace` (default `false`), `terminal_font`
+`true`), `prefer_powershell` (default `true`), `restore_workspace` (default
+`false`), `terminal_font`
 (`"jetbrains-mono"`, `"iosevka-term"`, `"julia-mono"`, or `"maple-mono"`;
 default `"jetbrains-mono"`), `terminal_ligatures` (default `false`),
 `emoji_presentation` (`"color"` or `"monochrome"`; default `"color"`),
@@ -199,7 +201,12 @@ mirror the current Settings controls for chip layout, chip details, the
 status bar, live-session close confirmation, workspace restoration, compact
 Launcher layout, background-output chip pulsing, resumable local-session
 surfacing, terminal-only typography, keyboard quick-switch overlays, and
-scrollback scroll speed. Font choice never changes application chrome.
+scrollback scroll speed. On Windows, `prefer_powershell` makes new default
+local sessions use `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` when that
+standard per-user app-execution alias exists; it never embeds a username or
+versioned package path, and falls back to the absolute `%COMSPEC%` executable
+when the alias is absent or the preference is disabled. Font choice never
+changes application chrome.
 The scrollback limit is a binary-byte payload budget applied when a session is
 created; changing it does not silently evict history from sessions that are
 already open. `disabled` gives subsequent sessions no retained history.

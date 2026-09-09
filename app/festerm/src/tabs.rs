@@ -27,7 +27,9 @@ use festerm_config::{
 };
 use festerm_core::{Dimensions, Terminal};
 use festerm_markdown::RemoteMarkdownSource;
-use festerm_pty::{default_local_profile, LocalProfile, LocalPtySession};
+use festerm_pty::{
+    default_local_profile_with_powershell_preference, LocalProfile, LocalPtySession,
+};
 use festerm_secret_store::{SecretBytes, SecretStore};
 use festerm_serial::{LineSettings, SerialSession, SerialSessionError};
 use festerm_session::{
@@ -595,16 +597,24 @@ impl SessionTab {
     /// already-sized window should start at that size rather than the
     /// application's baseline default, so it matches the window instead of
     /// visibly snapping it back to 80x24 on the very next resize.
-    fn start_default(context: &egui::Context, window_dimensions: Option<Dimensions>) -> Self {
+    fn start_default(
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+        prefer_powershell: bool,
+    ) -> Self {
         let dimensions = window_dimensions
             .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
-        let result = LocalPtySession::start_default_with_notifier(size, make_notifier(context));
+        let result = LocalPtySession::start_default_with_powershell_preference(
+            size,
+            make_notifier(context),
+            prefer_powershell,
+        );
         Self::from_local_session_result(
             result.map(ApplicationSession::Local),
             dimensions,
             "Local Shell",
-            default_local_profile()
+            default_local_profile_with_powershell_preference(prefer_powershell)
                 .ok()
                 .and_then(|profile| local_profile_secondary(&profile)),
             None,
@@ -618,6 +628,7 @@ impl SessionTab {
     pub(crate) fn start_primary(
         context: &egui::Context,
         smoke_profile: Option<LocalProfile>,
+        prefer_powershell: bool,
     ) -> Self {
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
         let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
@@ -626,13 +637,17 @@ impl SessionTab {
             .as_ref()
             .and_then(local_profile_secondary)
             .or_else(|| {
-                default_local_profile()
+                default_local_profile_with_powershell_preference(prefer_powershell)
                     .ok()
                     .and_then(|profile| local_profile_secondary(&profile))
             });
         let result = match smoke_profile {
             Some(profile) => LocalPtySession::start_with_notifier(profile, size, notifier),
-            None => LocalPtySession::start_default_with_notifier(size, notifier),
+            None => LocalPtySession::start_default_with_powershell_preference(
+                size,
+                notifier,
+                prefer_powershell,
+            ),
         };
         Self::from_local_session_result(
             result.map(ApplicationSession::Local),
@@ -1497,6 +1512,12 @@ pub enum AppCommand {
     ToggleShowSessionDetails,
     /// Toggles whether closing a live session requires confirmation.
     ToggleConfirmSessionClose,
+    /// Toggles whether Windows default local sessions prefer the per-user
+    /// PowerShell app-execution alias over `%COMSPEC%`. Only the Windows
+    /// settings UI (`screens.rs`) ever constructs this, so non-Windows
+    /// builds would otherwise flag it as dead code.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    TogglePreferPowershell,
     /// Toggles whether the open-tab list and active tab persist across
     /// restarts (`docs/gui-design.md` "Workspace restore" - explicit
     /// opt-in, off by default).
@@ -1695,6 +1716,7 @@ pub struct AppState {
     status_bar_visible: bool,
     show_session_details: bool,
     confirm_session_close: bool,
+    prefer_powershell: bool,
     /// Whether the open-tab list and active tab persist across restarts
     /// (`docs/gui-design.md` "Workspace restore"). Off by default and,
     /// unlike the other interface preferences here, deliberately explicit:
@@ -1753,6 +1775,7 @@ impl AppState {
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
+            prefer_powershell: settings.prefer_powershell(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
@@ -1783,9 +1806,10 @@ impl AppState {
         smoke_profile: Option<LocalProfile>,
         configuration: Configuration,
     ) -> (Self, TabId) {
-        let session = SessionTab::start_primary(context, smoke_profile);
-        let id = TabId::next();
         let settings = configuration.interface_settings().clone();
+        let session =
+            SessionTab::start_primary(context, smoke_profile, settings.prefer_powershell());
+        let id = TabId::next();
         let mut state = Self {
             tabs: vec![Tab {
                 id,
@@ -1798,6 +1822,7 @@ impl AppState {
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
+            prefer_powershell: settings.prefer_powershell(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
@@ -1924,6 +1949,7 @@ impl AppState {
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
             confirm_session_close: settings.confirm_session_close(),
+            prefer_powershell: settings.prefer_powershell(),
             restore_workspace: settings.restore_workspace(),
             terminal_font: settings.terminal_font(),
             terminal_ligatures: settings.terminal_ligatures(),
@@ -2132,6 +2158,10 @@ impl AppState {
         self.show_resumable_sessions
     }
 
+    pub const fn prefer_powershell(&self) -> bool {
+        self.prefer_powershell
+    }
+
     pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
         self.sftp_pane_order
     }
@@ -2152,6 +2182,7 @@ impl AppState {
             self.restore_workspace,
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
+        .with_prefer_powershell(self.prefer_powershell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
         .with_scrollback_limit(self.scrollback_limit)
@@ -2418,6 +2449,9 @@ impl AppState {
             AppCommand::ToggleConfirmSessionClose => {
                 self.confirm_session_close = !self.confirm_session_close;
             }
+            AppCommand::TogglePreferPowershell => {
+                self.prefer_powershell = !self.prefer_powershell;
+            }
             AppCommand::ToggleRestoreWorkspace => {
                 self.restore_workspace = !self.restore_workspace;
             }
@@ -2463,6 +2497,7 @@ impl AppState {
                 self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
                 self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
+                self.prefer_powershell = InterfaceSettings::DEFAULT.prefer_powershell();
                 self.restore_workspace = InterfaceSettings::DEFAULT.restore_workspace();
                 self.terminal_font = InterfaceSettings::DEFAULT.terminal_font();
                 self.terminal_ligatures = InterfaceSettings::DEFAULT.terminal_ligatures();
@@ -2653,7 +2688,11 @@ impl AppState {
 
     fn start_local_session(&mut self, context: &egui::Context) {
         let dimensions = self.current_session_dimensions();
-        self.place_session(SessionTab::start_default(context, dimensions));
+        self.place_session(SessionTab::start_default(
+            context,
+            dimensions,
+            self.prefer_powershell,
+        ));
     }
 
     fn start_resumed_session(&mut self, name: &str, context: &egui::Context) {
@@ -4543,6 +4582,32 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert!(state.confirm_session_close());
+    }
+
+    #[test]
+    fn toggle_powershell_preference_flips_state_and_resets_to_on() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(state.prefer_powershell(), "on by default");
+
+        state.dispatch(AppCommand::TogglePreferPowershell, &context);
+        assert!(!state.prefer_powershell());
+        assert!(!state.interface_settings().prefer_powershell());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(state.prefer_powershell());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn disabled_powershell_preference_labels_the_comspec_session() {
+        let context = egui::Context::default();
+        let session = SessionTab::start_default(&context, None, false);
+        let expected = default_local_profile_with_powershell_preference(false)
+            .ok()
+            .and_then(|profile| local_profile_secondary(&profile));
+
+        assert_eq!(session.launch_secondary, expected);
     }
 
     #[test]

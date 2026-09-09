@@ -571,6 +571,16 @@ directory listing) but dimmed and inert; only directories and `.md`/
 `.markdown` files respond to a double-click or Enter. This removed the last
 use of the `rfd` dependency, which is now dropped from the workspace.
 
+## September 2026 Windows default-shell preference
+
+Windows previously treated `%COMSPEC%` as the unconditional first choice for
+the built-in Local Shell, even when the user's standard `pwsh.exe`
+app-execution alias was installed. A default-on Settings preference now checks
+the per-user alias derived from `%LOCALAPPDATA%` rather than embedding a
+username or versioned WindowsApps package path. New default local sessions use
+that alias when available and safely fall back to the absolute `%COMSPEC%`
+executable when it is absent or the preference is turned off.
+
 ## September 2026: SFTP drag-and-drop and Reveal in Finder/Explorer
 
 The GUI SFTP file manager already had toolbar/rail transfer buttons and a

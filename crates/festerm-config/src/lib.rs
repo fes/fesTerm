@@ -513,6 +513,10 @@ pub struct InterfaceSettings {
     /// close behavior; users who prefer one-click closing may opt out.
     #[serde(default = "default_confirm_session_close")]
     confirm_session_close: bool,
+    /// Whether new default local sessions on Windows prefer the per-user
+    /// `WindowsApps\pwsh.exe` app-execution alias over `%COMSPEC%`.
+    #[serde(default = "default_prefer_powershell", skip_serializing_if = "is_true")]
+    prefer_powershell: bool,
     /// Whether the open-tab list and active tab persist across restarts.
     /// Off by default: unlike the other interface preferences here (which
     /// apply immediately and always autosave), workspace restoration is an
@@ -589,6 +593,7 @@ impl InterfaceSettings {
         status_bar_visible: true,
         show_session_details: true,
         confirm_session_close: true,
+        prefer_powershell: true,
         restore_workspace: false,
         terminal_font: TerminalFontPreference::JetBrainsMono,
         terminal_ligatures: false,
@@ -615,6 +620,7 @@ impl InterfaceSettings {
             status_bar_visible,
             show_session_details,
             confirm_session_close,
+            prefer_powershell: true,
             restore_workspace,
             terminal_font: TerminalFontPreference::JetBrainsMono,
             terminal_ligatures: false,
@@ -637,6 +643,11 @@ impl InterfaceSettings {
     ) -> Self {
         self.terminal_font = terminal_font;
         self.terminal_ligatures = terminal_ligatures;
+        self
+    }
+
+    pub const fn with_prefer_powershell(mut self, prefer_powershell: bool) -> Self {
+        self.prefer_powershell = prefer_powershell;
         self
     }
 
@@ -721,6 +732,10 @@ impl InterfaceSettings {
 
     pub const fn confirm_session_close(&self) -> bool {
         self.confirm_session_close
+    }
+
+    pub const fn prefer_powershell(&self) -> bool {
+        self.prefer_powershell
     }
 
     pub const fn restore_workspace(&self) -> bool {
@@ -967,6 +982,10 @@ const fn default_show_session_details() -> bool {
 }
 
 const fn default_confirm_session_close() -> bool {
+    true
+}
+
+const fn default_prefer_powershell() -> bool {
     true
 }
 
@@ -5033,6 +5052,31 @@ schema_version = 99
         assert_eq!(
             configuration.interface_settings().emoji_presentation(),
             EmojiPresentationPreference::Color
+        );
+    }
+
+    #[test]
+    fn powershell_preference_defaults_to_on_and_serializes_only_when_disabled() {
+        let default_configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .unwrap();
+        let default_serialized = default_configuration.to_toml().unwrap();
+        assert!(default_configuration
+            .interface_settings()
+            .prefer_powershell());
+        assert!(!default_serialized.contains("prefer_powershell"));
+
+        let disabled = InterfaceSettings::DEFAULT.with_prefer_powershell(false);
+        let configuration = Configuration::empty()
+            .with_interface_settings(disabled.clone())
+            .unwrap();
+        let serialized = configuration.to_toml().unwrap();
+        assert!(serialized.contains("prefer_powershell = false"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings(),
+            &disabled
         );
     }
 

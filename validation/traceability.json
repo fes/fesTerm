@@ -795,6 +795,12 @@
         "toggle_close_confirmation_flips_state_and_resets_to_on",
         "settings_close_confirmation_control_returns_the_toggle_command",
         "older_settings_tables_default_close_confirmation_to_on",
+        "toggle_powershell_preference_flips_state_and_resets_to_on",
+        "disabled_powershell_preference_labels_the_comspec_session",
+        "settings_powershell_preference_returns_the_toggle_command",
+        "powershell_preference_defaults_to_on_and_serializes_only_when_disabled",
+        "windows_default_shell_prefers_the_user_powershell_alias_when_enabled",
+        "windows_default_shell_falls_back_to_comspec_then_windows_powershell",
         "scroll_speed_changes_and_resets_to_normal",
         "scroll_speed_preference_round_trips_through_toml_and_defaults_to_normal",
         "scroll_speed_multiplier_scales_rows_moved_per_wheel_step"

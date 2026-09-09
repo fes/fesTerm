@@ -178,8 +178,17 @@ impl std::error::Error for LocalProfileError {}
 
 /// Returns an interactive platform default shell without using command parsing.
 pub fn default_local_profile() -> Result<LocalProfile, LocalProfileError> {
+    default_local_profile_with_powershell_preference(true)
+}
+
+/// Returns the platform default shell, optionally preferring the per-user
+/// Windows app-execution alias for PowerShell over `%COMSPEC%`.
+pub fn default_local_profile_with_powershell_preference(
+    prefer_powershell: bool,
+) -> Result<LocalProfile, LocalProfileError> {
     #[cfg(unix)]
     {
+        let _ = prefer_powershell;
         discover_unix_shell(std::env::var_os("SHELL").as_deref(), |path| {
             path.is_absolute() && path.is_file()
         })
@@ -188,6 +197,8 @@ pub fn default_local_profile() -> Result<LocalProfile, LocalProfileError> {
     #[cfg(windows)]
     {
         discover_windows_shell(
+            prefer_powershell,
+            std::env::var_os("LOCALAPPDATA").as_deref(),
             std::env::var_os("COMSPEC").as_deref(),
             std::env::var_os("SystemRoot").as_deref(),
             |path| path.is_absolute() && path.is_file(),
@@ -214,10 +225,23 @@ fn discover_unix_shell(
 
 #[cfg(windows)]
 fn discover_windows_shell(
+    prefer_powershell: bool,
+    local_app_data: Option<&OsStr>,
     comspec: Option<&OsStr>,
     system_root: Option<&OsStr>,
     exists: impl Fn(&Path) -> bool,
 ) -> Result<LocalProfile, LocalProfileError> {
+    if prefer_powershell {
+        let powershell_alias = local_app_data
+            .map(PathBuf::from)
+            .map(|root| root.join("Microsoft").join("WindowsApps").join("pwsh.exe"));
+        if let Some(powershell_alias) =
+            powershell_alias.filter(|path| path.is_absolute() && exists(path))
+        {
+            return Ok(LocalProfile::new(powershell_alias).with_arguments(["-NoLogo"]));
+        }
+    }
+
     if let Some(command_processor) = comspec
         .map(PathBuf::from)
         .filter(|path| path.is_absolute() && exists(path))
@@ -712,7 +736,20 @@ impl LocalPtySession {
 
     /// Starts the safe platform default interactive shell.
     pub fn start_default(size: TerminalSize) -> Result<Self, LocalPtyError> {
-        Self::start_default_with_notifier(size, noop_session_event_notifier())
+        Self::start_default_with_preference(size, true)
+    }
+
+    /// Starts the safe platform default shell with the caller's Windows
+    /// PowerShell preference.
+    pub fn start_default_with_preference(
+        size: TerminalSize,
+        prefer_powershell: bool,
+    ) -> Result<Self, LocalPtyError> {
+        Self::start_default_with_powershell_preference(
+            size,
+            noop_session_event_notifier(),
+            prefer_powershell,
+        )
     }
 
     /// Starts the default local shell and wakes `notifier` for each session event.
@@ -720,8 +757,18 @@ impl LocalPtySession {
         size: TerminalSize,
         event_notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, LocalPtyError> {
-        let profile =
-            default_local_profile().map_err(|error| LocalPtyError::new(error.to_string()))?;
+        Self::start_default_with_powershell_preference(size, event_notifier, true)
+    }
+
+    /// Starts the default local shell with the caller's Windows PowerShell
+    /// preference and wakes `event_notifier` for each session event.
+    pub fn start_default_with_powershell_preference(
+        size: TerminalSize,
+        event_notifier: Arc<dyn SessionEventNotifier>,
+        prefer_powershell: bool,
+    ) -> Result<Self, LocalPtyError> {
+        let profile = default_local_profile_with_powershell_preference(prefer_powershell)
+            .map_err(|error| LocalPtyError::new(error.to_string()))?;
         Self::start_with_notifier(profile, size, event_notifier)
     }
 }
@@ -1093,8 +1140,30 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_default_shell_prefers_an_absolute_comspec_then_powershell() {
+    fn windows_default_shell_prefers_the_user_powershell_alias_when_enabled() {
+        let powershell = discover_windows_shell(
+            true,
+            Some(OsStr::new(r"C:\Users\example\AppData\Local")),
+            Some(OsStr::new(r"C:\Windows\System32\cmd.exe")),
+            Some(OsStr::new(r"C:\Windows")),
+            |path| {
+                path == Path::new(r"C:\Users\example\AppData\Local\Microsoft\WindowsApps\pwsh.exe")
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            powershell.executable(),
+            Path::new(r"C:\Users\example\AppData\Local\Microsoft\WindowsApps\pwsh.exe")
+        );
+        assert_eq!(powershell.arguments(), [OsString::from("-NoLogo")]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_shell_falls_back_to_comspec_then_windows_powershell() {
         let command_processor = discover_windows_shell(
+            true,
+            Some(OsStr::new(r"C:\Users\example\AppData\Local")),
             Some(OsStr::new(r"C:\Windows\System32\cmd.exe")),
             Some(OsStr::new(r"C:\Windows")),
             |path| path == Path::new(r"C:\Windows\System32\cmd.exe"),
@@ -1107,6 +1176,8 @@ mod tests {
         assert_eq!(command_processor.arguments(), [OsString::from("/Q")]);
 
         let powershell = discover_windows_shell(
+            false,
+            Some(OsStr::new(r"C:\Users\example\AppData\Local")),
             Some(OsStr::new("cmd.exe")),
             Some(OsStr::new(r"C:\Windows")),
             |path| path.ends_with(r"WindowsPowerShell\v1.0\powershell.exe"),

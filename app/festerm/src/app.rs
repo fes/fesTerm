@@ -4326,6 +4326,7 @@ impl FesTermApp {
                             status_bar_visible: self.state.status_bar_visible(),
                             show_session_details: self.state.show_session_details(),
                             confirm_session_close: self.state.confirm_session_close(),
+                            prefer_powershell: self.state.prefer_powershell(),
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
                             terminal_ligatures: self.state.terminal_ligatures(),
@@ -4576,6 +4577,7 @@ impl FesTermApp {
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
+                | AppCommand::TogglePreferPowershell
                 | AppCommand::SetScrollSpeed(_)
                 | AppCommand::SetScrollbackLimit(_)
                 | AppCommand::SetDefaultSftpLocalDirectory(_)
