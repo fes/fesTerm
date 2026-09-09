@@ -2013,8 +2013,11 @@ mod tests {
     fn conpty_banner_survives_repeated_app_owned_resizes() {
         use festerm_pty::LocalPtySession;
 
-        let session = LocalPtySession::start_default(TerminalSize::new(80, 24).unwrap())
-            .expect("default Windows shell starts");
+        let session = LocalPtySession::start_default_with_preference(
+            TerminalSize::new(80, 24).unwrap(),
+            false,
+        )
+        .expect("Windows command processor starts");
         let mut terminal =
             Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -2128,8 +2131,11 @@ mod tests {
     fn conpty_default_shell_keeps_the_prompt_column_across_a_command_newline() {
         use festerm_pty::LocalPtySession;
 
-        let session = LocalPtySession::start_default(TerminalSize::new(87, 26).unwrap())
-            .expect("default Windows shell starts");
+        let session = LocalPtySession::start_default_with_preference(
+            TerminalSize::new(87, 26).unwrap(),
+            false,
+        )
+        .expect("Windows command processor starts");
         let mut controller = SessionController::with_session(session);
         let mut terminal =
             Terminal::new(Dimensions::new(87, 26).unwrap()).expect("terminal allocation");

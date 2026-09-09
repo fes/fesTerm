@@ -2841,6 +2841,7 @@ pub struct SettingsViewModel {
     pub status_bar_visible: bool,
     pub show_session_details: bool,
     pub confirm_session_close: bool,
+    pub prefer_powershell: bool,
     pub restore_workspace: bool,
     pub terminal_font: TerminalFontPreference,
     pub terminal_ligatures: bool,
@@ -2878,6 +2879,7 @@ pub fn show_settings(
         status_bar_visible,
         show_session_details,
         confirm_session_close,
+        prefer_powershell,
         restore_workspace,
         terminal_font,
         terminal_ligatures,
@@ -2891,6 +2893,8 @@ pub fn show_settings(
         default_sftp_local_directory,
         sftp_pane_order,
     } = settings;
+    #[cfg(not(windows))]
+    let _ = prefer_powershell;
     let state_id = ui.id().with("settings_state");
     let field_id = settings_sftp_directory_field_id(ui);
     let mut state = ui.data(|data| data.get_temp::<SettingsState>(state_id).unwrap_or_default());
@@ -3012,6 +3016,22 @@ pub fn show_settings(
                                 confirm_session_close,
                             ) {
                                 command = Some(AppCommand::ToggleConfirmSessionClose);
+                            }
+                            #[cfg(windows)]
+                            {
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.add_space(10.0);
+                                if settings_toggle_row(
+                                    ui,
+                                    "Prefer PowerShell when available",
+                                    "Use the current user's standard Windows app-execution \
+                                     alias for pwsh.exe when it exists. Turn this off to use \
+                                     COMSPEC for new default local sessions.",
+                                    prefer_powershell,
+                                ) {
+                                    command = Some(AppCommand::TogglePreferPowershell);
+                                }
                             }
                             ui.add_space(10.0);
                             ui.separator();
@@ -5037,6 +5057,7 @@ mod tests {
                             status_bar_visible: true,
                             show_session_details: true,
                             confirm_session_close: true,
+                            prefer_powershell: true,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
@@ -5363,6 +5384,27 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn settings_powershell_preference_returns_the_toggle_command() {
+        let mut harness = settings_harness();
+        harness.run();
+
+        let label = "Prefer PowerShell when available";
+        assert!(harness
+            .query_by_role_and_label(accesskit::Role::CheckBox, label)
+            .is_some());
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, label)
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::TogglePreferPowershell)
+        ));
+    }
+
     #[test]
     fn settings_exposes_terminal_font_ligature_and_emoji_controls() {
         let mut harness = settings_harness();
@@ -5422,7 +5464,7 @@ mod tests {
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1420.0))
+            .with_size(egui::vec2(520.0, 1510.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -5439,6 +5481,7 @@ mod tests {
                             status_bar_visible: true,
                             show_session_details: true,
                             confirm_session_close: true,
+                            prefer_powershell: true,
                             restore_workspace: false,
                             terminal_font: TerminalFontPreference::JetBrainsMono,
                             terminal_ligatures: false,
