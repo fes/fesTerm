@@ -1,6 +1,6 @@
 # Signing and release operations
 
-fesTerm releases use three independent trust layers:
+Direct-download fesTerm releases use three independent trust layers:
 
 1. Apple Developer ID signs and notarizes the macOS application and DMG.
 2. Microsoft Artifact Signing applies public-trust Authenticode signatures to
@@ -12,6 +12,16 @@ fesTerm releases use three independent trust layers:
 The private credentials are scoped to the GitHub `release` environment. They
 must never be committed, logged, attached to a workflow artifact, or supplied
 to pull-request jobs.
+
+## Store distribution planning
+
+The [desktop Store plan](app-store-distribution-plan.md) covers a proposed
+Microsoft Store MSIX track and a Mac App Store sandbox feasibility gate.
+Neither is implemented. ADR 0021 already gives managed packages update
+ownership: future Store builds must use their Store rather than install
+GitHub updater payloads. Store signing/submission identities differ from the
+direct credentials below. Retain Developer ID/notarized macOS distribution
+even if a Store edition is added.
 
 ## Microsoft Artifact Signing
 
