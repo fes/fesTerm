@@ -235,9 +235,11 @@ pub enum ChromeAction {
     Activate(ChipId),
     Close(ChipId),
     NewTab,
+    OpenMarkdownFile,
     OpenSettings,
     OpenProfiles,
     ToggleInspector,
+    OpenAbout,
     /// Emitted by the search-icon control; mirrors the `Ctrl+Shift+P`
     /// shortcut precedent (`app.rs::handle_shortcuts`) by asking the caller
     /// to toggle its transient, chrome-external command-palette overlay.
@@ -289,7 +291,7 @@ pub fn show(
     ui: &mut Ui,
     chips: &[ChipViewModel],
     active: ChipId,
-    inspector_open: bool,
+    _inspector_open: bool,
     inspector_available: bool,
     layout: ChipLayout,
     show_session_details: bool,
@@ -545,12 +547,9 @@ pub fn show(
                 paint_overflow_menu(
                     ui,
                     !show_search,
-                    inspector_available && !show_inspector,
+                    inspector_available,
                     &mut actions,
                 );
-                if show_inspector && paint_panel_icon(ui, inspector_open) {
-                    actions.push(ChromeAction::ToggleInspector);
-                }
                 if show_search && paint_search_icon(ui) {
                     actions.push(ChromeAction::TogglePalette);
                 }
@@ -905,29 +904,6 @@ fn paint_search_icon(ui: &mut Ui) -> bool {
     response.on_hover_text(accessible_label).clicked()
 }
 
-/// Painter-drawn side-panel icon toggling the session inspector. Returns
-/// whether it was clicked this frame; `open` paints it in an active state so
-/// the control's own affordance (not a text label) communicates whether the
-/// inspector is currently shown.
-fn paint_panel_icon(ui: &mut Ui, open: bool) -> bool {
-    let size = 22.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
-    response
-        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, "Toggle session inspector"));
-    let color = if open || response.hovered() {
-        CHROME_ICON_COLOR_HOVERED
-    } else {
-        CHROME_ICON_COLOR
-    };
-    icon::paint(
-        ui.painter(),
-        Icon::SessionInspector,
-        rect.shrink(3.0),
-        color,
-    );
-    response.on_hover_text("Toggle session inspector").clicked()
-}
-
 /// Painter-drawn "more" (vertical ellipsis) icon opening a small popup menu
 /// holding the deliberately few actions that don't warrant their own
 /// always-visible control (`docs/gui-design.md` "Application chrome and
@@ -951,23 +927,31 @@ fn paint_overflow_menu(
     let response = response.on_hover_text("More actions");
 
     Popup::menu(&response).show(|ui| {
-        if include_palette && ui.button("Command palette").clicked() {
-            actions.push(ChromeAction::TogglePalette);
+        if ui.button("Open Markdown File…").clicked() {
+            actions.push(ChromeAction::OpenMarkdownFile);
+            ui.close();
+        }
+        if ui.button("Open Profiles").clicked() {
+            actions.push(ChromeAction::OpenProfiles);
+            ui.close();
+        }
+        if ui.button("Open Settings").clicked() {
+            actions.push(ChromeAction::OpenSettings);
             ui.close();
         }
         if include_inspector && ui.button("Session inspector").clicked() {
             actions.push(ChromeAction::ToggleInspector);
             ui.close();
         }
-        if include_palette || include_inspector {
-            ui.separator();
-        }
-        if ui.button("Open Settings").clicked() {
-            actions.push(ChromeAction::OpenSettings);
+        if ui.button("About fesTerm").clicked() {
+            actions.push(ChromeAction::OpenAbout);
             ui.close();
         }
-        if ui.button("Open Profiles").clicked() {
-            actions.push(ChromeAction::OpenProfiles);
+        if include_palette {
+            ui.separator();
+        }
+        if include_palette && ui.button("Command palette").clicked() {
+            actions.push(ChromeAction::TogglePalette);
             ui.close();
         }
     });
@@ -2782,7 +2766,9 @@ mod tests {
             observed: Vec::new(),
         });
 
-        harness.get_by_label_contains("inspector").click();
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Session inspector").click();
         harness.run();
 
         assert!(harness

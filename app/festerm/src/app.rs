@@ -2018,6 +2018,7 @@ impl FesTermApp {
         for action in actions {
             match action {
                 ChromeAction::NewTab => self.state.dispatch(AppCommand::OpenLauncher, context),
+                ChromeAction::OpenMarkdownFile => self.open_markdown_file_picker(context),
                 ChromeAction::OpenSettings => {
                     self.state.dispatch(AppCommand::OpenSettings, context)
                 }
@@ -2025,6 +2026,11 @@ impl FesTermApp {
                     self.state.dispatch(AppCommand::OpenProfiles, context)
                 }
                 ChromeAction::ToggleInspector => self.toggle_inspector_from_current_focus(context),
+                ChromeAction::OpenAbout => {
+                    self.overlays.about_open = true;
+                    self.overlays.about_licenses_open = false;
+                    context.request_repaint();
+                }
                 ChromeAction::TogglePalette => self.palette.toggle(),
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
@@ -2104,20 +2110,17 @@ impl FesTermApp {
     fn palette_items(&self) -> Vec<PaletteItem> {
         const NEW_LAUNCHER_TAB: u64 = 1;
         const START_LOCAL_SESSION: u64 = 3;
-        const TOGGLE_INSPECTOR: u64 = 4;
         const CLOSE_ACTIVE_TAB: u64 = 5;
         const TOGGLE_FOCUS_MODE: u64 = 6;
         const ZOOM_IN: u64 = 7;
         const ZOOM_OUT: u64 = 8;
         const RESET_ZOOM: u64 = 9;
-        const ABOUT: u64 = 10;
         const RESET_TERMINAL: u64 = 11;
         const CLEAR_TERMINAL_HISTORY: u64 = 12;
         const COPY: u64 = 13;
         const PASTE: u64 = 14;
         const FIND_IN_TERMINAL: u64 = 15;
         const PORT_FORWARD_MANAGER: u64 = 16;
-        const OPEN_MARKDOWN_FILE: u64 = 17;
         const RELOAD_MARKDOWN: u64 = 18;
         const TOGGLE_MARKDOWN_MODE: u64 = 19;
         const FIND_IN_MARKDOWN: u64 = 20;
@@ -2144,26 +2147,8 @@ impl FesTermApp {
                 is_tab: false,
                 shortcut_label: None,
             },
-            PaletteItem {
-                id: OPEN_MARKDOWN_FILE,
-                label: "Open Markdown File…".to_owned(),
-                hint: None,
-                is_tab: false,
-                shortcut_label: None,
-            },
         ];
         if matches!(self.state.active_tab().content, TabContent::Session(_)) {
-            items.push(PaletteItem {
-                id: TOGGLE_INSPECTOR,
-                label: if self.state.inspector_open() {
-                    "Hide Session Inspector".to_owned()
-                } else {
-                    "Show Session Inspector".to_owned()
-                },
-                hint: None,
-                is_tab: false,
-                shortcut_label: None,
-            });
             items.extend([
                 PaletteItem {
                     id: TOGGLE_FOCUS_MODE,
@@ -2398,16 +2383,6 @@ impl FesTermApp {
                 shortcut_label: quick_switch_label(index),
             });
         }
-        // "About fesTerm" is deliberately the very last entry, after every
-        // tab, so the palette's action items (which people reach for far
-        // more often) aren't pushed down by it.
-        items.push(PaletteItem {
-            id: ABOUT,
-            label: "About fesTerm".to_owned(),
-            hint: None,
-            is_tab: false,
-            shortcut_label: None,
-        });
         items
     }
 
@@ -2418,7 +2393,6 @@ impl FesTermApp {
         match id {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
-            17 => self.open_markdown_file_picker(context),
             18 => self.state.dispatch(AppCommand::ReloadMarkdown, context),
             19 => self
                 .state
@@ -2427,13 +2401,6 @@ impl FesTermApp {
             21 => self
                 .state
                 .dispatch(AppCommand::ToggleMarkdownOutline, context),
-            4 => {
-                // The palette closes as its command is selected, so its text
-                // field is not a viable focus-restoration target.
-                self.inspector_restore_focus = None;
-                self.state
-                    .dispatch(AppCommand::ToggleSessionInspector, context);
-            }
             5 => {
                 let active = self.state.active();
                 self.request_close_tab(active, context);
@@ -2442,11 +2409,6 @@ impl FesTermApp {
             7 => self.zoom_active_session(ZoomCommand::In, context),
             8 => self.zoom_active_session(ZoomCommand::Out, context),
             9 => self.zoom_active_session(ZoomCommand::Reset, context),
-            10 => {
-                self.overlays.about_open = true;
-                self.overlays.about_licenses_open = false;
-                context.request_repaint();
-            }
             11 => self.reset_active_terminal(context),
             12 => self.clear_active_terminal(context),
             13 => self.copy_active_selection(context),
@@ -5630,33 +5592,24 @@ mod tests {
     }
 
     #[test]
-    fn about_festerm_is_always_the_last_palette_entry() {
+    fn command_palette_omits_more_actions_entries() {
         let context = egui::Context::default();
         let (app, _tab) = FesTermApp::for_test_with_live_session(&context);
         let items = app.palette_items();
-        assert_eq!(
-            items.last().map(|item| item.label.as_str()),
-            Some("About fesTerm"),
-            "About fesTerm must sort after every tab and action entry"
+        assert!(
+            !items.iter().any(|item| matches!(
+                item.label.as_str(),
+                "About fesTerm" | "Show Session Inspector" | "Hide Session Inspector"
+            )),
+            "More actions entries must not be duplicated in the command palette"
         );
     }
 
     #[test]
-    fn command_palette_always_offers_open_markdown_file() {
+    fn command_palette_omits_open_markdown_file() {
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let items = app.palette_items();
-        assert!(items.iter().any(|item| item.label == "Open Markdown File…"));
-    }
-
-    #[test]
-    fn command_palette_open_markdown_file_opens_the_local_file_picker() {
-        let context = egui::Context::default();
-        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
-        assert!(app.overlays.markdown_file_picker.is_none());
-
-        app.dispatch_palette_selection(17, &context);
-
-        assert!(app.overlays.markdown_file_picker.is_some());
+        assert!(!items.iter().any(|item| item.label == "Open Markdown File…"));
     }
 
     #[test]
