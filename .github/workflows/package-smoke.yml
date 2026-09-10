@@ -35,7 +35,7 @@ jobs:
             conpty_runtime: win-x64
           - name: windows-aarch64
             platform: windows
-            runner: windows-11-arm
+            runner: windows-11-vs2026-arm
             conpty_runtime: win-arm64
           - name: linux-x86_64
             platform: linux
@@ -46,8 +46,8 @@ jobs:
     env:
       FESTERM_UPDATE_PUBLIC_KEY: unsigned-package-smoke-key
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.x'
       - uses: dtolnay/rust-toolchain@stable

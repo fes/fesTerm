@@ -31,7 +31,7 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -96,7 +96,7 @@ jobs:
       FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
       - name: Require protected signing configuration
         shell: bash
@@ -158,7 +158,7 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
           hdiutil verify "$dmg"
           mv "$dmg" "dist/fesTerm-${VERSION}-macos-aarch64.dmg"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-macos
           path: dist/*
@@ -167,14 +167,14 @@ jobs:
   windows-arm-build:
     name: Build Windows (aarch64)
     needs: validate
-    runs-on: windows-11-arm
+    runs-on: windows-11-vs2026-arm
     timeout-minutes: 90
     environment: release
     env:
       FESTERM_INSTALLATION_KIND: nsis
       FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
       - name: Add native LLVM to PATH
         shell: pwsh
@@ -202,7 +202,7 @@ jobs:
       - name: Build and stage verified ARM64 ConPTY runtime
         shell: pwsh
         run: ./scripts/stage-conpty.ps1 -Configuration Release
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: windows-aarch64-package-input
           path: |
@@ -243,7 +243,7 @@ jobs:
       PACKAGE_ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
       - name: Require protected signing configuration
         shell: pwsh
@@ -281,7 +281,7 @@ jobs:
         run: ./scripts/stage-conpty.ps1 -Configuration Release
       - name: Download native ARM64 package input
         if: matrix.arch == 'aarch64'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: windows-aarch64-package-input
           path: target/release
@@ -353,7 +353,7 @@ jobs:
             throw 'NSIS installer does not have a valid Authenticode signature'
           }
           cargo packager signer sign $installer
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-windows-${{ matrix.arch }}
           path: dist/*
@@ -380,7 +380,7 @@ jobs:
       PACKAGE_ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
       - name: Require protected signing configuration
         shell: bash
@@ -420,7 +420,7 @@ jobs:
           test -n "$deb"
           mv "$deb" "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.deb"
           dpkg-deb --info "dist/fesTerm-${VERSION}-linux-${PACKAGE_ARCH}.deb"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-linux-${{ matrix.arch }}
           path: dist/*
@@ -440,8 +440,8 @@ jobs:
       TAG: ${{ needs.validate.outputs.tag }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: release-*
           path: dist
