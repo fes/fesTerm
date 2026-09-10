@@ -76,6 +76,9 @@ Production publication is triggered only by a `vMAJOR.MINOR.PATCH` tag whose
 version matches the workspace. Manual dispatch builds the same signed
 artifacts but does not publish.
 
+After a verified in-app install completes, fesTerm requests one normal
+application close so cargo-packager can replace and relaunch the application.
+
 The workflow:
 
 - pins third-party actions to full commit hashes and cargo-packager to 0.11.8;

@@ -347,6 +347,10 @@ pub struct FesTermApp {
     terminal_font_generation: TerminalFontGeneration,
     about_icon: Option<egui::TextureHandle>,
     updates: UpdateController,
+    /// A verified updater install has handed replacement and relaunch off to
+    /// cargo-packager. Request the normal application close exactly once so
+    /// the updater can replace the running bundle.
+    update_exit_requested: bool,
     /// Set once the aggregate quit confirmation has been deliberately
     /// confirmed, so the follow-up OS close request that actually tears
     /// down the window is let through instead of being intercepted again
@@ -582,6 +586,7 @@ impl FesTermApp {
             terminal_font_generation,
             about_icon: Some(about_icon),
             updates: UpdateController::from_build(),
+            update_exit_requested: false,
             quit_confirmed: false,
         }
     }
@@ -4122,6 +4127,12 @@ impl FesTermApp {
         }
         self.process_pending_password_store(ui.ctx());
         self.updates.poll();
+        if matches!(self.updates.status(), UpdateStatus::Installed(_))
+            && !self.update_exit_requested
+        {
+            self.update_exit_requested = true;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if self.updates.status().is_busy() {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
@@ -4681,6 +4692,7 @@ impl FesTermApp {
             terminal_font_generation: TerminalFontGeneration::default(),
             about_icon: None,
             updates: UpdateController::unavailable_for_test(),
+            update_exit_requested: false,
             quit_confirmed: false,
         }
     }
@@ -5613,6 +5625,20 @@ mod tests {
     }
 
     #[test]
+    fn more_actions_open_markdown_file_opens_the_local_file_picker() {
+        let mut harness = harness();
+        harness.run();
+
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Open Markdown File…").click();
+        harness.run();
+
+        assert!(harness.state().overlays.markdown_file_picker.is_some());
+        harness.get_by_label("Open Markdown File");
+    }
+
+    #[test]
     fn saved_sftp_profile_launches_its_configured_surface_mode() {
         let context = egui::Context::default();
         for (gui_mode, expected_gui_surface) in [(true, true), (false, false)] {
@@ -6116,7 +6142,6 @@ mod tests {
 
     #[test]
     fn about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface() {
-        let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 516.0))
@@ -6124,8 +6149,10 @@ mod tests {
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
 
-        harness.state_mut().dispatch_palette_selection(10, &context);
-        harness.step();
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("About fesTerm").click();
+        harness.run();
         assert!(harness.state().overlays.about_open);
         harness.get_by_label("About fesTerm");
         let version_label = format!("Version {}", env!("CARGO_PKG_VERSION"));
@@ -6173,6 +6200,50 @@ mod tests {
         harness.get_by_label("Check for Updates");
         harness
             .get_by_label_contains("Checks fesTerm’s public GitHub Releases only when requested");
+    }
+
+    #[test]
+    fn successful_update_install_requests_one_normal_application_close() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.updates = UpdateController::installed_for_test();
+        let context = egui::Context::default();
+        let mut first_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        assert!(
+            first_frame
+                .viewport_output
+                .values()
+                .flat_map(|viewport| &viewport.commands)
+                .all(|command| !matches!(command, egui::ViewportCommand::Close)),
+            "font installation must not request an update exit"
+        );
+        first_frame.textures_delta.clear();
+
+        let mut installed_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        let close_requests = installed_frame
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .filter(|command| matches!(command, egui::ViewportCommand::Close))
+            .count();
+        assert_eq!(close_requests, 1);
+        assert!(app.update_exit_requested);
+        installed_frame.textures_delta.clear();
+
+        let mut next_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        let close_requests = next_frame
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .filter(|command| matches!(command, egui::ViewportCommand::Close))
+            .count();
+        assert_eq!(close_requests, 0, "the close request must be one-shot");
+        next_frame.textures_delta.clear();
     }
 
     fn harness() -> Harness<'static, FesTermApp> {
@@ -6457,9 +6528,9 @@ mod tests {
     fn capture_session_inspector_for_mockup_review() {
         let output_path = std::env::temp_dir().join("festerm-gui-review");
         let mut harness = failed_local_profile_harness();
-        harness
-            .get_by_label_contains("Toggle session inspector")
-            .click();
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Session inspector").click();
         harness.run();
         harness.snapshot_options(
             "festerm-session-inspector-actual",
@@ -6554,9 +6625,9 @@ mod tests {
             _ => panic!("the configured profile must produce a session surface"),
         };
 
-        harness
-            .get_by_label_contains("Toggle session inspector")
-            .click();
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Session inspector").click();
         harness.run();
 
         assert!(harness.state().state.inspector_open());
@@ -6577,9 +6648,9 @@ mod tests {
     #[test]
     fn inspector_consumes_the_first_uncovered_terminal_click() {
         let mut harness = failed_local_profile_harness();
-        harness
-            .get_by_label_contains("Toggle session inspector")
-            .click();
+        harness.get_by_label("More actions").click();
+        harness.run();
+        harness.get_by_label("Session inspector").click();
         harness.run();
 
         // An interaction inside the foreground panel must not hit the

@@ -217,6 +217,16 @@ impl UpdateController {
     }
 
     #[cfg(test)]
+    pub(crate) fn installed_for_test() -> Self {
+        let mut controller = Self::configured_for_test();
+        controller.status = UpdateStatus::Installed(UpdateSummary {
+            version: "0.2.0".to_owned(),
+            notes: Some("Deterministic test release.".to_owned()),
+        });
+        controller
+    }
+
+    #[cfg(test)]
     fn with_test_backend(backend: Arc<dyn UpdateBackend>) -> Self {
         Self {
             status: UpdateStatus::Idle,

@@ -544,12 +544,7 @@ pub fn show(
                     paint_maximize_icon(ui, maximized);
                     paint_minimize_icon(ui);
                 }
-                paint_overflow_menu(
-                    ui,
-                    !show_search,
-                    inspector_available,
-                    &mut actions,
-                );
+                paint_overflow_menu(ui, !show_search, inspector_available, &mut actions);
                 if show_search && paint_search_icon(ui) {
                     actions.push(ChromeAction::TogglePalette);
                 }

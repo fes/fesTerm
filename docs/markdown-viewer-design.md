@@ -24,7 +24,7 @@ or take ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
-- **Local:** command palette **Open Markdown File…** opens the native file
+- **Local:** More actions **Open Markdown File…** opens the native file
   picker. An explicitly activated local `file:` link may offer **Preview
   Markdown** when it resolves to a readable Markdown file.
 - **SFTP:** a selected `.md`/`.markdown` row offers **Preview Markdown**. The
@@ -183,7 +183,7 @@ reading order, platform UI scaling, high contrast, and reduced motion.
 
 ## Acceptance sequence
 
-1. From `dev-shell`, invoke **Open Markdown File…** and select a local README;
+1. From `dev-shell`, select **Open Markdown File…** from More actions and select a local README;
    a sibling viewer chip opens without changing the terminal session.
 2. Navigate the heading outline, a table, task list, link, and code block using
    keyboard and screen reader; Copy a code block and verify exact plain text.

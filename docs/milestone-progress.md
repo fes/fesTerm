@@ -552,7 +552,7 @@ work in the same compact hierarchy as the reviewed workflow states.
 
 ## September 2026: Markdown "Open" picker reuses the SFTP local browser
 
-The command palette's "Open Markdown File…" action opened the OS-native
+The More actions "Open Markdown File…" action opened the OS-native
 `rfd::FileDialog`, the one remaining local-filesystem browsing surface that
 didn't share the SFTP file manager's local-pane widget (breadcrumbs, up/home/
 refresh navigation, sortable columns, item icons). That inconsistency was

@@ -63,7 +63,9 @@ and a signed static update manifest are published through **GitHub Releases**.
   fesTerm therefore needs no mutable application server.
 - **User control:** checking, downloading, and installing are distinct states.
   fesTerm never downloads or applies an update silently. Installation begins
-  only after an explicit user action and confirmation.
+  only after an explicit user action and confirmation. After the verified
+  installation succeeds, fesTerm requests one normal application close so the
+  updater can replace and relaunch the running application.
 - **Installation eligibility:** in-place updates apply only to package formats
   supported by the updater (`app`, `appimage`, `nsis`, or `wix`). A Debian or
   package-manager installation reports availability and directs the user to

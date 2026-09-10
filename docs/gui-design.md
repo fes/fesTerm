@@ -329,22 +329,24 @@ default contract.
 Global application actions and session-specific context are separate concerns.
 
 - The upper application chrome owns compact global actions: New Tab/Launcher,
-  command palette, session-inspector toggle, context-sensitive terminal search
-  when space permits, and a deliberately small overflow menu.
+  command palette, context-sensitive terminal search when space permits, and
+  More actions.
 - Global controls are icon-only, using the canonical first-party forms in [the icon system](icon-system.md), with accessible labels and hover text carrying their meaning. Painter-drawn implementations may remain while runtime SVG integration is incremental, but their geometry should converge on the canonical sources rather than creating a second icon vocabulary.
 - The session chips live inside the upper application chrome, in the same top-of-window band as New Tab and compact global controls. They are independent because each lozenge has visible space around it—not because the row is separated from the chrome.
 - The right-side session inspector is normally hidden and overlays rather than
   resizes the terminal viewport. It shows context for the active session:
   connection state, host/profile metadata, diagnostics, and relevant actions.
-- Global Settings do not live in the inspector. Settings open as an application surface represented by their own chip, and remain reachable from the command palette and compact overflow menu.
+- Global Settings do not live in the inspector. Settings open as an application
+  surface represented by their own chip and remain reachable from More actions.
 
-The overflow menu should stay intentionally small. Growth into a general-purpose action list is a design smell; less common actions belong in the command palette or their relevant application surface.
+More actions owns infrequent global application actions without duplicating them
+in the command palette.
 
-For a normal terminal session, its initial contents are **Find in terminal** and
-**Focus mode**, followed by a separator, **Settings**, and **Command palette**.
-When narrow-window collapse hides a dedicated control, **Session inspector**
-may also move into this menu. Find and Inspector should not appear in both the
-visible icon controls and the overflow menu merely to duplicate access.
+Its primary entries are **Open Markdown File…**, **Open Profiles**, **Open
+Settings**, **Session inspector** (when a session is active), and **About
+fesTerm**. Terminal-only **Find in terminal** and **Focus mode** may appear
+when applicable; **Command palette** follows after a separator only in compact
+layouts.
 
 The menu is not a second session switcher and does not contain Copy, Paste,
 Close session, Disconnect, Reconnect, host-trust, authentication, or appearance
@@ -638,7 +640,7 @@ their hit-test area, offsets them to the chip row's centered baseline, and
 does not render duplicate right-side controls.
 Implementation (`crates/festerm-ui-egui/src/chrome.rs::show`):
 
-- On Windows and Linux, the trailing icon block (right-to-left: close, maximize/restore, minimize, overflow menu, panel toggle, command palette) is painted in the same row as the chips through the semantic first-party [`Icon`](icon-system.md) layer. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
+- On Windows and Linux, the trailing icon block (right-to-left: close, maximize/restore, minimize, More actions, command palette) is painted in the same row as the chips through the semantic first-party [`Icon`](icon-system.md) layer. Each window-control icon calls `ui.ctx().send_viewport_cmd(ViewportCommand::Close/Maximized/Minimized)` directly rather than going through `ChromeAction`/`AppCommand`, since these are OS-window-level actions with no application-state implications.
 - The maximize/restore icon reads the viewport's real current state (`ui.input(|i| i.viewport().maximized)`) and paints a single square (maximize) or two overlapping squares (restore) accordingly, so the icon's own shape communicates state rather than a text label.
 - A background drag-to-move region is registered across the row's own compact content band (not the full remaining panel height, which - before any content is laid out - would otherwise swallow pointer events meant for the terminal view painted below) *before* the chips/icons are added, so those widgets' own click handling still takes priority over this catch-all background sense wherever they visually sit on top of it. Starting a primary-button drag on that background sends `ViewportCommand::StartDrag`; double-clicking it toggles `ViewportCommand::Maximized`.
 - `TRAILING_CONTROLS_RESERVED_WIDTH` accounts for platform-specific trailing icons so the chip row never overlaps them, extending the existing narrow-window overlap fix.
@@ -926,9 +928,9 @@ the retained title.
 
 The chip row and trailing controls share one horizontal band. The chip-strip
 budget must account for platform-specific trailing controls rather than
-rendering beneath them. Less-used global actions, starting with terminal Search
-and Session Inspector, collapse into overflow before the protected focused chip
-is compromised. New Session and required platform controls remain visible.
+rendering beneath them. Less-used terminal actions, starting with Search and
+Focus mode, may move into More actions before the protected focused chip is
+compromised. New Session and required platform controls remain visible.
 
 Full chip text remains available through accessible naming and hover help.
 Duplicate visible names are allowed and never receive fabricated numeric
@@ -1199,9 +1201,8 @@ name. OpenSSH import, if implemented, is a separate explicit operation and
 does not imply continued synchronization. Recent one-off destinations are not
 silently converted into profiles.
 
-A standalone **Profiles** surface (a singleton chip, opened from the chip-row
-overflow menu's "Open Profiles" button or the command palette's "Open
-Profiles" entry, mirroring Settings) lists every saved profile with its kind
+A standalone **Profiles** surface (a singleton chip, opened from More actions'
+"Open Profiles" button, mirroring Settings) lists every saved profile with its kind
 and a short description, plus "New Local Profile" and "New SSH Profile"
 buttons, plus "New Serial Profile" when serial support is available. Each row
 offers Edit, Duplicate, and Delete. Local editing currently covers
@@ -1928,10 +1929,9 @@ The initial command inventory, subject to actual implementation and active-
 surface applicability, is:
 
 - **New Session…** and **Start Local Shell**;
-- **Find in Terminal**, **Show Session Inspector** or **Hide Session
-  Inspector**, **Manage Port Forwards…** for a live SSH shell session,
-  **Rename Session…**, a capability-backed **Reconnect Session**, and
-  **Close Session…**;
+- **Find in Terminal**, **Manage Port Forwards…** for a live SSH shell session,
+  **Rename Session…**, a capability-backed **Reconnect Session**, and **Close
+  Session…**;
 - **Enter Focus Mode** or **Exit Focus Mode**, **Zoom In**, **Zoom Out**, and
   **Reset Zoom**; and
 - **Open Settings**.
@@ -2419,8 +2419,8 @@ When horizontal space is constrained, remove or collapse information in this ord
    been relocated to the status bar, that relocated value ellipsizes first.
 2. Inactive chip width toward its minimum, then inactive stable-identity
    ellipsis. The focused chip remains at its normal width.
-3. Less-used global actions into overflow, starting with terminal Search and
-   Session Inspector.
+3. Less-used terminal actions into More actions, starting with terminal Search
+   and Focus mode.
 4. Horizontal scrolling after all visible inactive chips have reached minimum
    width; never skip inactive compaction by creating a scroll area immediately.
 5. Status-bar locality/platform, retaining grid dimensions and accessible

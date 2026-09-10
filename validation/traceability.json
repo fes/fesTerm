@@ -1317,8 +1317,8 @@
         "ADR-0030"
       ],
       "automated_tests": [
-        "command_palette_always_offers_open_markdown_file",
-        "command_palette_open_markdown_file_opens_the_local_file_picker",
+        "command_palette_omits_open_markdown_file",
+        "more_actions_open_markdown_file_opens_the_local_file_picker",
         "outline_and_preview_keep_separate_vertical_viewports",
         "local_markdown_display_paths_hide_windows_verbatim_prefixes",
         "find_highlighting_tracks_inline_code_text_offsets",
