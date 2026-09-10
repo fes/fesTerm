@@ -826,3 +826,33 @@ Extending that allowlist would have been its own separate effort disconnected
 from this issue's scope, so the native OS-level pieces (the actual
 Finder/Explorer drag gesture, and observing reveal-in-Finder focus behavior)
 are tracked instead as ordinary manual-validation entries (`FD-05`, `FD-06`).
+
+## September 2026: bounded local browsing and updater restart consent
+
+Release follow-up review found two places where implemented safety policy did
+not yet cover the whole lifecycle. Local SFTP and Markdown browsing discarded
+stale results by request ID, but rapid navigation still created one operating
+system thread per directory read. Each browser now owns one loader thread and
+coalesces navigation to at most the newest pending request, bounding work
+without changing the stale-result guard.
+
+The updater also requested a normal close only after installation had already
+succeeded. With live sessions, the ordinary quit guard could cancel that close
+and leave the one-shot updater handoff stranded. Install and Restart now asks
+for aggregate session-loss consent before installation begins, keeps the
+verified download ready when consent is cancelled, and authorizes exactly the
+post-install close that cargo-packager needs. Signed-package replacement and
+relaunch remain native acceptance work under issue #62 rather than an
+automated-test claim.
+
+The same review found a deeper bound violation in the graphical SFTP transfer
+engine. Its manager accepted unlimited commands/events and built an entire
+recursive directory plan before copying, so a large or slow tree could grow
+memory and defer cancellation until enumeration ended. Transfer commands,
+events, admitted batches/items, and plan size now have explicit limits.
+Directory reads race against cancellation commands, progress updates coalesce
+under backpressure while terminal/collision events remain ordered, and the GUI
+reports saturation or planning failure without treating it as a connection
+loss. Per-directory backend snapshots are still materialized by the underlying
+filesystem/SFTP listing API before the aggregate planner budget is applied;
+the plan and cross-directory traversal are bounded.

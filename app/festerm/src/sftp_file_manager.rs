@@ -4,8 +4,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
         mpsc::{self, Receiver, Sender},
-        Arc,
+        Arc, Condvar, Mutex,
     },
     thread,
     time::{Duration, SystemTime},
@@ -39,6 +40,105 @@ use festerm_ui_egui::{
 /// silently reconnected in the background rather than only surfacing as a
 /// failure the next time the user tries to navigate or run a command.
 const SFTP_LIVENESS_CHECK_INTERVAL: Duration = Duration::from_secs(20);
+
+type LocalDirectoryLoadResult = Result<(SftpDirectorySnapshot, Option<SftpPathMetadata>), String>;
+
+struct LocalDirectoryLoadRequest {
+    path: SftpPath,
+    complete: Box<dyn FnOnce(LocalDirectoryLoadResult) + Send>,
+}
+
+struct LocalDirectoryLoadShared {
+    pending: Mutex<Option<LocalDirectoryLoadRequest>>,
+    wake: Condvar,
+    shutdown: AtomicBool,
+}
+
+/// One bounded loader per local browser. A request already being read may
+/// finish, while repeated navigation coalesces to only the newest pending
+/// path instead of spawning an OS thread for every click.
+struct LocalDirectoryLoader {
+    shared: Arc<LocalDirectoryLoadShared>,
+}
+
+impl LocalDirectoryLoader {
+    fn new(thread_name: String) -> Self {
+        let shared = Arc::new(LocalDirectoryLoadShared {
+            pending: Mutex::new(None),
+            wake: Condvar::new(),
+            shutdown: AtomicBool::new(false),
+        });
+        let worker_shared = Arc::clone(&shared);
+        thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || loop {
+                let request = {
+                    let mut pending = worker_shared
+                        .pending
+                        .lock()
+                        .expect("local directory loader lock is not poisoned");
+                    while pending.is_none() && !worker_shared.shutdown.load(AtomicOrdering::Acquire)
+                    {
+                        pending = worker_shared
+                            .wake
+                            .wait(pending)
+                            .expect("local directory loader lock is not poisoned");
+                    }
+                    if worker_shared.shutdown.load(AtomicOrdering::Acquire) {
+                        return;
+                    }
+                    pending.take().expect("pending request was checked")
+                };
+                let result = local_snapshot_and_metadata(&request.path);
+                (request.complete)(result);
+            })
+            .expect("could not spawn local directory loader thread");
+        Self { shared }
+    }
+
+    fn schedule(&self, request: LocalDirectoryLoadRequest) {
+        *self
+            .shared
+            .pending
+            .lock()
+            .expect("local directory loader lock is not poisoned") = Some(request);
+        self.shared.wake.notify_one();
+    }
+
+    #[cfg(test)]
+    fn paused_for_test() -> Self {
+        Self {
+            shared: Arc::new(LocalDirectoryLoadShared {
+                pending: Mutex::new(None),
+                wake: Condvar::new(),
+                shutdown: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_path_for_test(&self) -> Option<SftpPath> {
+        self.shared
+            .pending
+            .lock()
+            .expect("local directory loader lock is not poisoned")
+            .as_ref()
+            .map(|request| request.path.clone())
+    }
+}
+
+impl Drop for LocalDirectoryLoader {
+    fn drop(&mut self) {
+        let guard = self
+            .shared
+            .pending
+            .lock()
+            .expect("local directory loader lock is not poisoned");
+        self.shared.shutdown.store(true, AtomicOrdering::Release);
+        drop(guard);
+        self.shared.wake.notify_one();
+    }
+}
 
 const SFTP_SECTION_GAP: f32 = 8.0;
 const SFTP_PANE_OUTER_INSET: f32 = 4.0;
@@ -1420,6 +1520,7 @@ pub(crate) struct SftpFileManagerTab {
     command_sender: tokio::sync::mpsc::UnboundedSender<WorkerCommand>,
     event_receiver: Receiver<WorkerEvent>,
     event_sender: Sender<WorkerEvent>,
+    local_loader: LocalDirectoryLoader,
     repaint: egui::Context,
     next_local_request_id: u64,
     pending_host_key: Option<PendingHostKeyDecision>,
@@ -1431,11 +1532,10 @@ pub(crate) struct SftpFileManagerTab {
     next_markdown_request_id: u64,
     pending_markdown_request: Option<PendingMarkdownRequest>,
     pending_markdown_open: Option<PendingMarkdownOpen>,
-    /// Set when opening a double-clicked Markdown file fails (fetch error,
-    /// or the connection isn't verified yet); rendered as a dismissible
-    /// banner from `show_toolbar` and cleared either by the user dismissing
-    /// it or by the next successful open.
-    markdown_open_error: Option<(String, String)>,
+    /// A dismissible operation failure that does not invalidate the browsing
+    /// connection, such as a Markdown fetch or bounded transfer-queue
+    /// rejection.
+    operation_error: Option<(String, String)>,
     /// Set synchronously by `open_item` when a *local* Markdown file is
     /// double-clicked (no worker roundtrip needed); consumed by `show`'s
     /// tail, same as `pending_markdown_open` for the remote case.
@@ -1465,6 +1565,8 @@ impl SftpFileManagerTab {
         let remote_pane = SftpPaneState::new(SftpPath::remote("/"));
         let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
         let (event_sender, event_receiver) = mpsc::channel();
+        let local_loader =
+            LocalDirectoryLoader::new(format!("festerm-gui-sftp-local-{}", target.label));
         let repaint = context.clone();
         let launch_target = target.clone();
         let worker_event_sender = event_sender.clone();
@@ -1506,6 +1608,7 @@ impl SftpFileManagerTab {
             command_sender,
             event_receiver,
             event_sender,
+            local_loader,
             repaint: context.clone(),
             next_local_request_id: 1,
             pending_host_key: None,
@@ -1513,7 +1616,7 @@ impl SftpFileManagerTab {
             next_markdown_request_id: 1,
             pending_markdown_request: None,
             pending_markdown_open: None,
-            markdown_open_error: None,
+            operation_error: None,
             pending_markdown_command: None,
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
@@ -1764,18 +1867,13 @@ impl SftpFileManagerTab {
             // most of the pane row's top inset.
             ui.add_space((SFTP_PANE_OUTER_INSET - SFTP_TAB_BODY_LEADING_GAP).max(0.0));
         }
-        self.show_markdown_open_error_banner(ui);
+        self.show_operation_error_banner(ui);
         self.show_connection_status_banner(ui, tab_id)
     }
 
-    /// Shown when opening a double-clicked Markdown file failed (issue
-    /// #133) -- e.g. the remote fetch failed, or the connection's verified
-    /// identity wasn't cached yet. Unlike the connection-status banner,
-    /// this only ever needs a dismiss action: it doesn't gate the rest of
-    /// the UI on any pending decision, so it's rendered directly against
-    /// `&mut self` rather than returning an `AppCommand`.
-    fn show_markdown_open_error_banner(&mut self, ui: &mut Ui) {
-        let Some((summary, details)) = self.markdown_open_error.clone() else {
+    /// Shown for a failed operation that leaves the SFTP connection usable.
+    fn show_operation_error_banner(&mut self, ui: &mut Ui) {
+        let Some((summary, details)) = self.operation_error.clone() else {
             return;
         };
         let mut dismiss = false;
@@ -1795,7 +1893,7 @@ impl SftpFileManagerTab {
             });
         });
         if dismiss {
-            self.markdown_open_error = None;
+            self.operation_error = None;
         }
     }
 
@@ -3294,7 +3392,7 @@ impl SftpFileManagerTab {
     fn request_remote_markdown_snapshot(&mut self, path: String) {
         let request_id = self.next_markdown_request_id;
         self.next_markdown_request_id += 1;
-        self.markdown_open_error = None;
+        self.operation_error = None;
         self.pending_markdown_request = Some(PendingMarkdownRequest {
             request_id,
             path: path.clone(),
@@ -3470,7 +3568,7 @@ impl SftpFileManagerTab {
                         });
                     }
                     None => {
-                        self.markdown_open_error = Some((
+                        self.operation_error = Some((
                             "Could not open this file in the Markdown viewer.".to_owned(),
                             "The remote connection's verified identity is not available yet."
                                 .to_owned(),
@@ -3490,7 +3588,10 @@ impl SftpFileManagerTab {
                     return;
                 }
                 self.pending_markdown_request = None;
-                self.markdown_open_error = Some((summary, details));
+                self.operation_error = Some((summary, details));
+            }
+            WorkerEvent::TransferCommandFailed { action, details } => {
+                self.operation_error = Some((format!("Could not {action}."), details));
             }
         }
     }
@@ -3720,6 +3821,10 @@ enum WorkerEvent {
     MarkdownSnapshotFailed {
         request_id: u64,
         summary: String,
+        details: String,
+    },
+    TransferCommandFailed {
+        action: &'static str,
         details: String,
     },
     Transfer(SftpTransferEvent),
@@ -3983,13 +4088,31 @@ async fn run_worker(
                         repaint.request_repaint();
                     }
                     WorkerCommand::Enqueue(requests) => {
-                        let _ = transfer_manager.enqueue_batch(requests);
+                        if let Err(error) = transfer_manager.enqueue_batch(requests) {
+                            let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
+                                action: "queue the transfer",
+                                details: error.to_string(),
+                            });
+                            repaint.request_repaint();
+                        }
                     }
                     WorkerCommand::CancelTransfer(transfer_id) => {
-                        let _ = transfer_manager.cancel_transfer(transfer_id);
+                        if let Err(error) = transfer_manager.cancel_transfer(transfer_id) {
+                            let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
+                                action: "cancel the transfer",
+                                details: error.to_string(),
+                            });
+                            repaint.request_repaint();
+                        }
                     }
                     WorkerCommand::ResolveCollision(resolution) => {
-                        let _ = transfer_manager.resolve_collision(resolution);
+                        if let Err(error) = transfer_manager.resolve_collision(resolution) {
+                            let _ = event_sender.send(WorkerEvent::TransferCommandFailed {
+                                action: "resolve the transfer conflict",
+                                details: error.to_string(),
+                            });
+                            repaint.request_repaint();
+                        }
                     }
                     WorkerCommand::Reconnect => {
                         match reconnect_browsing_session(
@@ -4948,13 +5071,29 @@ fn load_path(tab: &mut SftpFileManagerTab, focus: PaneFocus, path: SftpPath, pus
             tab.next_local_request_id += 1;
             let request_id = tab.next_local_request_id;
             pane_mut(tab, focus).pending_request_id = request_id;
-            spawn_local_load(
-                tab.event_sender.clone(),
-                tab.repaint.clone(),
-                focus,
-                request_id,
+            let event_sender = tab.event_sender.clone();
+            let repaint = tab.repaint.clone();
+            tab.local_loader.schedule(LocalDirectoryLoadRequest {
                 path,
-            );
+                complete: Box::new(move |result| {
+                    let event = match result {
+                        Ok((snapshot, metadata)) => WorkerEvent::LocalDirectoryLoaded {
+                            focus,
+                            request_id,
+                            snapshot,
+                            metadata,
+                        },
+                        Err(error) => WorkerEvent::LocalDirectoryFailed {
+                            focus,
+                            request_id,
+                            summary: "Could not load the local folder.".to_owned(),
+                            details: error,
+                        },
+                    };
+                    let _ = event_sender.send(event);
+                    repaint.request_repaint();
+                }),
+            });
         }
         PaneFocus::Remote => {
             if let SftpPath::Remote(path) = path {
@@ -4962,36 +5101,6 @@ fn load_path(tab: &mut SftpFileManagerTab, focus: PaneFocus, path: SftpPath, pus
             }
         }
     }
-}
-
-fn spawn_local_load(
-    event_sender: Sender<WorkerEvent>,
-    repaint: egui::Context,
-    focus: PaneFocus,
-    request_id: u64,
-    path: SftpPath,
-) {
-    thread::Builder::new()
-        .name(format!("festerm-gui-sftp-local-{request_id}"))
-        .spawn(move || {
-            let event = match local_snapshot_and_metadata(&path) {
-                Ok((snapshot, metadata)) => WorkerEvent::LocalDirectoryLoaded {
-                    focus,
-                    request_id,
-                    snapshot,
-                    metadata,
-                },
-                Err(error) => WorkerEvent::LocalDirectoryFailed {
-                    focus,
-                    request_id,
-                    summary: "Could not load the local folder.".to_owned(),
-                    details: error,
-                },
-            };
-            let _ = event_sender.send(event);
-            repaint.request_repaint();
-        })
-        .expect("could not spawn GUI SFTP local loader thread");
 }
 
 fn local_snapshot_and_metadata(
@@ -5508,6 +5617,7 @@ pub(crate) struct MarkdownFilePicker {
     event_sender: Sender<MarkdownPickerEvent>,
     event_receiver: Receiver<MarkdownPickerEvent>,
     repaint: egui::Context,
+    local_loader: LocalDirectoryLoader,
     next_request_id: u64,
 }
 
@@ -5515,11 +5625,14 @@ impl MarkdownFilePicker {
     /// Opens the picker rooted at `start_dir`.
     pub(crate) fn new(start_dir: PathBuf, repaint: egui::Context) -> Self {
         let (event_sender, event_receiver) = mpsc::channel();
+        let local_loader =
+            LocalDirectoryLoader::new("festerm-gui-markdown-picker-local".to_owned());
         let mut picker = Self {
             pane: SftpPaneState::new(SftpPath::local(start_dir)),
             event_sender,
             event_receiver,
             repaint,
+            local_loader,
             next_request_id: 0,
         };
         let start = picker.pane.current_path.clone();
@@ -5539,12 +5652,12 @@ impl MarkdownFilePicker {
         self.next_request_id += 1;
         let request_id = self.next_request_id;
         self.pane.pending_request_id = request_id;
-        let sender = self.event_sender.clone();
+        let event_sender = self.event_sender.clone();
         let repaint = self.repaint.clone();
-        thread::Builder::new()
-            .name(format!("festerm-gui-markdown-picker-{request_id}"))
-            .spawn(move || {
-                let event = match local_snapshot_and_metadata(&path) {
+        self.local_loader.schedule(LocalDirectoryLoadRequest {
+            path,
+            complete: Box::new(move |result| {
+                let event = match result {
                     Ok((snapshot, metadata)) => MarkdownPickerEvent::Loaded {
                         request_id,
                         snapshot,
@@ -5556,10 +5669,10 @@ impl MarkdownFilePicker {
                         details: error,
                     },
                 };
-                let _ = sender.send(event);
+                let _ = event_sender.send(event);
                 repaint.request_repaint();
-            })
-            .expect("could not spawn markdown file picker loader thread");
+            }),
+        });
     }
 
     /// Applies any directory-listing results that arrived since the last
@@ -5918,6 +6031,7 @@ mod tests {
             command_sender,
             event_receiver,
             event_sender,
+            local_loader: LocalDirectoryLoader::paused_for_test(),
             repaint: context,
             next_local_request_id: 1,
             pending_host_key: None,
@@ -5925,7 +6039,7 @@ mod tests {
             next_markdown_request_id: 1,
             pending_markdown_request: None,
             pending_markdown_open: None,
-            markdown_open_error: None,
+            operation_error: None,
             pending_markdown_command: None,
             last_local_pane_rect: None,
             last_remote_pane_rect: None,
@@ -6799,6 +6913,7 @@ mod tests {
             MarkdownPickerOutcome::Open(path) => assert_eq!(path, dir.join("readme.md")),
             _ => panic!("expected picking a Markdown file to report MarkdownPickerOutcome::Open"),
         }
+
         // ...a non-Markdown file is a no-op, matching the SFTP local pane's
         // own double-click handling (issue #133)...
         assert!(matches!(
@@ -6817,6 +6932,42 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn local_directory_loader_coalesces_navigation_to_the_newest_pending_path() {
+        let loader = LocalDirectoryLoader::paused_for_test();
+        for path in ["/first", "/second", "/newest"] {
+            loader.schedule(LocalDirectoryLoadRequest {
+                path: SftpPath::local(path),
+                complete: Box::new(|_| {}),
+            });
+        }
+
+        assert_eq!(
+            loader.pending_path_for_test(),
+            Some(SftpPath::local("/newest"))
+        );
+    }
+
+    #[test]
+    fn bounded_transfer_rejection_is_exposed_without_disconnect() {
+        let mut tab = test_tab();
+        tab.connection_state = SftpConnectionState::Ready;
+
+        tab.apply_event(WorkerEvent::TransferCommandFailed {
+            action: "queue the transfer",
+            details: "SFTP transfer queue is saturated".to_owned(),
+        });
+
+        assert!(matches!(tab.connection_state, SftpConnectionState::Ready));
+        assert_eq!(
+            tab.operation_error,
+            Some((
+                "Could not queue the transfer.".to_owned(),
+                "SFTP transfer queue is saturated".to_owned(),
+            ))
+        );
     }
 
     #[test]

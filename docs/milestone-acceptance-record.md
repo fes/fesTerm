@@ -1,22 +1,23 @@
 # fesTerm Milestone Acceptance Record
 
 **Document status:** Active M6 evidence record
-**Candidate SHA:** `a113f0f` (`main`, 2026-08-24; supersedes the interim
+**Historical candidate SHA:** `a113f0f` (`main`, 2026-08-24; superseded the interim
 `0ca0858` and `59980f9` nominations in
 [#50](https://github.com/fes/fesTerm/issues/50) to refresh the acceptance
 candidate after bounded logical scrollback, resize reflow, disconnected-history
 read-only behavior, and the subsequent integrated-chrome geometry changes.
-See "Refreshed candidate — pending native re-run" below.)
+See "Historical refreshed candidate — native rerun never completed" below.)
 
-> **Staleness note (2026-08-31):** `main` is now 67 commits ahead of
-> `a113f0f`, including further `festerm-core` changes (parser/input/history),
-> the Windows rendering-performance ring-buffer rewrite, SSH interoperability
-> work, and the entire `festerm-sessiond` local-persistence daemon. `a113f0f`
+> **Staleness note (updated 2026-09-09):** `main` at `2d64f04` is 176 commits
+> ahead of `a113f0f`, including further terminal/core changes, the GUI SFTP
+> file manager and transfer engine, native Markdown viewer, local persistence
+> daemon, PowerShell-default local-shell behavior, and numerous fixes.
+> `a113f0f`
 > should be treated as a **historical** M6 terminal-compatibility candidate,
 > not as current-release certification: it can still ground the deterministic
 > evidence discussed below, but it cannot certify current `main` as a whole.
-> [#50](https://github.com/fes/fesTerm/issues/50) should nominate one fresh
-> post-v0.1.6/v0.1.7 SHA and run the real P3/P4/P5 native evidence against
+> [#50](https://github.com/fes/fesTerm/issues/50) still needs to nominate one
+> fresh SHA and run the real P3/P4/P5 native evidence against
 > that exact commit before M6 is reconsidered for acceptance, rather than
 > continuing to advance `a113f0f`'s status rhetorically.
 
@@ -61,9 +62,9 @@ reproduce the scriptable rows of this table on a given machine, and follow
 [`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md) for
 the P5 rows that require human judgment.
 
-### Refreshed candidate — pending native re-run ([#50](https://github.com/fes/fesTerm/issues/50))
+### Historical refreshed candidate — native rerun never completed ([#50](https://github.com/fes/fesTerm/issues/50))
 
-`a113f0f` is nominated as the current acceptance candidate because substantial
+`a113f0f` was nominated as the acceptance candidate because substantial
 terminal semantics landed since the prior `c55a202` candidate: bounded
 logical scrollback resize reflow (ADR 0017) is now implemented rather than
 "remains," a one-shot eviction notice was added, sessions become read-only
@@ -82,15 +83,15 @@ must be sampled; they do not themselves satisfy M6 acceptance.
 None of that closure is native-platform or reference-application evidence.
 Per this issue's own constraint ("do not treat headless, VM-only, or
 not-run results as native acceptance"), the rows below still reflect the
-**historical** `c55a202`/earlier native P3/P4/P5 runs and are not yet
-re-confirmed against `a113f0f`. Rerunning
+**historical** `c55a202`/earlier native P3/P4/P5 runs and were never
+re-confirmed against `a113f0f`. Nominate a current SHA, then rerun
 [`scripts/collect-m6-evidence.sh`/`.ps1`](m6-evidence-collection.md) and the
 manual P5 scenarios in
 [`m6-manual-evidence-instructions.md`](m6-manual-evidence-instructions.md)
-against `a113f0f` on real Linux/Windows/macOS desktops — with particular
+against that exact SHA on real Linux/Windows/macOS desktops — with particular
 attention to resize/output continuity now that reflow is live, and to the
 new read-only-after-disconnect behavior — remains open work, tracked by this
-issue. The current candidate also changes chrome height/width allocation,
+issue. Changes since the historical candidate also affect chrome allocation,
 ScrollArea geometry, Settings persistence, close policy, command-palette
 shortcut layout, and terminal typography. Native reruns must therefore include
 `AS-03`, `AS-06`, `AS-09`, `CP-08`, `CP-10`, and the relevant

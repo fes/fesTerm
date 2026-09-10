@@ -169,16 +169,22 @@ SftpTransferState
 Required behavior:
 
 - queue multiple independent items;
+- bound admitted batches, queued items, recursive-plan size, command delivery,
+  and event delivery with explicit observable backpressure;
 - process items without blocking unrelated queued work;
 - emit aggregate and per-item progress, including bytes transferred where
   knowable;
-- allow cancellation of pending items and the current running item;
+- allow cancellation of pending items, recursive planning, and the current
+  running item;
 - keep completed/failed/cancelled terminal states queryable for the drawer;
 - refresh the affected destination listing after each committed item; and
 - keep event payloads content-free, never embedding file contents.
 
-Progress delivery should be an event stream or callback sink invoked at chunk
-boundaries, not a polling UI that re-reads raw file sizes opportunistically.
+Progress delivery is a bounded event stream invoked at chunk boundaries.
+Intermediate progress may be coalesced to the newest value while collision,
+terminal-state, and destination-refresh events remain ordered and lossless.
+Recursive planning has explicit item and conservative memory-proxy ceilings;
+exceeding either fails the item before destination materialization.
 
 #### 3. Collision-decision API
 

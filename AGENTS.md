@@ -170,6 +170,8 @@ complete policy.
 - Treat terminal output and protocol input as untrusted. Preserve parser,
   allocation, and queue bounds.
 - Do not add scripting, plugins, persistent history, cloud synchronization, or
-  other deferred capabilities ahead of their documented milestones. Tabs and
-  native SSH are implemented. Serial's product/UI contract is approved, but
-  its backend remains a focused future capability track.
+  other deferred capabilities ahead of their documented milestones. Tabs,
+  native SSH, and serial are implemented. Serial's backend, profile fields,
+  and worker-thread transport have Linux loopback coverage; native
+  Windows/macOS adapter and permission-denied evidence remain open under
+  `docs/manual-validation.md` `CP-04`.

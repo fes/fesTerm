@@ -430,8 +430,14 @@
         "viewport_replay_preserves_cache_geometry_during_output_resizes",
         "about_dialog_is_bounded_truthful_and_escape_returns_to_prior_surface",
         "about_exposes_updates_only_for_a_configured_packaged_build",
+        "cancelling_update_restart_consent_keeps_the_update_installable",
+        "confirmed_update_restart_installs_then_closes_without_reprompting",
         "developer_builds_never_contact_the_update_endpoint",
-        "package_managers_can_check_but_cannot_install"
+        "failed_update_install_restores_ordinary_quit_protection",
+        "package_managers_can_check_but_cannot_install",
+        "successful_update_install_requests_one_normal_application_close",
+        "update_install_waits_for_live_session_restart_consent",
+        "window_close_during_update_consent_preserves_live_sessions"
       ],
       "manual_scenarios": [
         "NP-01",
@@ -894,6 +900,12 @@
         "transfer_action_requires_selection_connection_and_writable_destination",
         "collision_resolution_wires_apply_to_all_scope",
         "keyboard_shortcut_mapping_matches_expected_commands",
+        "transfer_capacity_rejections_are_typed_and_deterministic",
+        "recursive_planning_rejects_item_and_memory_proxy_limit_overflow",
+        "planning_limit_failure_is_terminal_and_observable",
+        "cancellation_interrupts_slow_recursive_enumeration",
+        "local_directory_loader_coalesces_navigation_to_the_newest_pending_path",
+        "bounded_transfer_rejection_is_exposed_without_disconnect",
         "recursive_download_rejects_malicious_remote_entry_names",
         "resolving_remaining_conflicts_after_cancelling_a_paused_item_does_not_panic",
         "is_markdown_file_recognizes_md_and_markdown_extensions_case_insensitively",
