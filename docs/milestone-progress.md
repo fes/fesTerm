@@ -550,6 +550,199 @@ stale, table rows expose more specific file-type labels/icons instead of a
 generic "File" bucket, and the transfer drawer summarizes active/completed
 work in the same compact hierarchy as the reviewed workflow states.
 
+## September 2026 GUI SFTP layout: three models, twenty-eight rounds, and why measurement won
+
+The split-pane SFTP file manager was the first surface where visual
+polish, rather than behavior, became the thing that would not converge.
+The backend, the trust flow, and the browsing/transfer semantics were all
+accepted. What remained was making the pane geometry match
+`docs/images/gui-mockups/sftp-workflow.html`, and that took twenty-eight
+review rounds across three different underlying models before it landed.
+It is worth recording why, because the failure was methodological rather
+than a matter of any one model being unable to write layout code.
+
+### The evidence the rounds were working from
+
+Three artifacts were in play, and confusing their authority was part of
+the problem:
+
+- **The reference mockup** —
+  `docs/images/gui-mockups/sftp-workflow.html`, authoritative for the
+  contract described by its adjacent `docs/gui-design.md` section. It
+  states intent: pane insets, the 53/15/22/10 column grid, shared cell
+  padding, one hairline divider between header and list. Being a
+  multi-state *workflow* mockup rather than a single image, it was also a
+  source of ambiguity — turn 138 had to explicitly instruct the agent to
+  "make sure to understand which one is the reference mockup," because
+  earlier rounds had been comparing against the wrong state.
+- **The project owner's annotated screenshots** — captures of the
+  *running* application with handwritten marks on the specific defects.
+  These are the ground truth for "is it fixed," and unlike the mockup
+  they carry information a static image cannot: which defects persist
+  across window widths, and which of several plausible readings of the
+  mockup the owner actually meant.
+- **The agent's own screenshots** — captures the agent took to check its
+  work. These turned out to be the weakest link, and the reason is the
+  whole lesson below.
+
+### Round one: Claude Sonnet 5 (turns 115–129)
+
+Sonnet 5 landed the functional SFTP work in this stretch — the back
+button after breadcrumb navigation, Enter-to-connect in the password
+field, column justification, resisting widget resize on long paths,
+auto-reconnect, deferring the file browser until a first successful
+connect. All of that stuck.
+
+The layout work did not. Each round produced a confident, plausible,
+well-written summary of fixes, and each round the same annotated defects
+came back. After fourteen turns the project owner switched models with
+the note: *"Claude didn't seem to be able to do the alignment and visual
+polish."*
+
+### Round two: GPT-5.6 Terra (turns 130–137)
+
+The second model was noticeably better at *reading* the problem. Asked to
+enumerate the annotations before touching code, it produced an accurate
+nine-item list: rounded outer pane corners lost, missing outer left
+inset, remote pane overflowing the right edge at every width, inter-pane
+gutters removed entirely instead of evened out, breadcrumb and filter
+fields not ending on a shared right-alignment axis, off nav glyphs, a
+doubled header/list divider, a pane region continuing down into the
+status bar, and no shared inset model across header/toolbar/filter/table/
+footer rows.
+
+That list was correct. The fixes still did not close it. Eight turns
+later the owner's assessment was *"Several issues are still not getting
+fixed,"* and then, switching models again, *"Many of the issues remain
+unresolved even with repeated turns using other models."*
+
+The instructive part is that correct analysis and correct repair are
+different skills here. Terra could name the defect from the annotation;
+it could not reliably tell whether its own change had removed it,
+because it was checking its work the same way the previous model had —
+by looking at a screenshot.
+
+### Round three: Claude Opus 5 at high reasoning effort (turns 138–143)
+
+The third model spent its first productive turn not editing layout code
+but building a harness, and that is the entire difference:
+
+1. **Render the reference deterministically.** The mockup was rasterized
+   to PNG so it could be sampled numerically rather than described.
+2. **Drive the real release build.** The application was launched and
+   navigated with Win32 automation — synthesized keystrokes and mouse
+   clicks — and captured with `PrintWindow`, so the evidence came from
+   the same binary the owner was running, in the same states.
+3. **Measure, don't look.** Every capture was cropped and sampled with
+   Pillow. A defect was not "fixed" until a number matched: pane outer
+   insets 4.9/4.9 logical points symmetric, inter-pane gaps 10.7 and
+   10.2, breadcrumb and filter right edges both at **584.44** exactly,
+   row pitch 31.0–31.1 against the declared `SFTP_TABLE_ROW_HEIGHT`,
+   zero horizontal overflow, zero vertical spill into the status bar.
+4. **Fix causes, not symptoms.** Once measured, most of the recurring
+   defects had a single structural cause rather than a spacing error —
+   for example, the remote pane's overflow came from a post-calculation
+   minimum width applied *after* the bounded width budget, so it could
+   always push the pane past the window edge no matter what padding was
+   adjusted, and the status-bar spill came from a forced pane height
+   rather than a margin.
+5. **Pin the number in a test.** Each measured invariant became a
+   regression test — narrow-column minimums, the no-overflow invariant,
+   toolbar/filter padding equality — so the right-edge regression in
+   particular cannot return silently.
+
+The owner's response to the first Opus round was *"significantly better,
+thanks,"* followed by four genuinely minor nits (clipped corner tips,
+pane-to-status-bar padding, promoting the per-pane item counts into the
+status bar, asymmetric header padding) rather than another repeat of the
+same nine defects.
+
+### Why the first twenty-two rounds failed
+
+Not because the models could not write correct egui layout code — the
+individual fixes each round were mostly reasonable. They failed because
+**a language model reading its own screenshot is doing the same thing a
+human does when squinting at one**, and this project had already
+documented that exact failure mode: `docs/gui-design.md`'s
+mockup-comparison section records an earlier case where two independent
+visual passes over the same screenshot region produced materially
+different numbers, and a flagged 18px-vs-24px asymmetry turned out to be
+a false positive once actually measured.
+
+The SFTP rounds re-learned it the expensive way. Visual self-review has
+no error signal: a model that believes it has fixed the alignment will
+produce a screenshot, read it as aligned, and report success — and the
+report will be sincere. Only an external number breaks the loop. The
+same harness, reused immediately afterward on the Markdown viewer,
+surfaced a comparable stack of causes that were invisible to inspection
+(a toolbar icon rect computing a negative width so no icon had *ever*
+rendered; `ScrollArea` auto-shrinking to content width and parking the
+scrollbar against the reading column; `item_spacing.y` having no effect
+at all on wrapped-row pitch, where the only working lever is
+`TextFormat::line_height`; a `Frame` around wrapped prose shrinking to
+its widest actual row).
+
+### What the rounds cost
+
+Recorded per-model usage for these rounds, from the session store. AIU is
+the billing unit the store records; token counts include cache reads,
+which dominate an agentic session's input volume.
+
+| Phase | Turns | Model | API calls | Input tok | Output tok | AIU | Wall clock |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SFTP UI rounds | 115–129 (14) | Claude Sonnet 5 | 537 | 66.1 M | 300 K | 1,873 | 59 min |
+| SFTP UI rounds | 130–137 (8) | GPT-5.6 Terra | 102 | 14.6 M | 42 K | 440 | 10 min |
+| SFTP UI rounds | 138–143 (6) | Claude Opus 5 (high) | 496 | 58.8 M | 287 K | 4,460 | 69 min |
+| Markdown viewer + icon unification | 144–147 (4) | Claude Opus 5 (high) | 414 | 50.1 M | 224 K | 3,440 | 56 min |
+
+Normalizing those to per-unit rates makes the trade explicit:
+
+| Model | AIU per M input tok | API calls per turn | AIU per turn |
+| --- | --- | --- | --- |
+| GPT-5.6 Terra | 30.0 | 13 | 55 |
+| Claude Sonnet 5 | 28.3 | 38 | 134 |
+| Claude Opus 5 (high) | 75.8 | 83 | 743 |
+
+Two separate multipliers compound. Opus costs roughly **2.7×** Sonnet per
+input token, and at high reasoning effort it *chose* to do roughly **2×**
+Sonnet's and **6×** Terra's tool calls per turn — building the harness,
+re-driving the app, re-measuring after every change. An Opus round
+therefore cost about **5.5×** a Sonnet round and **13.5×** a Terra round.
+The second multiplier, not the price per token, is where the money went,
+and it is also precisely what produced the result.
+
+Against that: **2,313 AIU over 22 turns across two models did not close
+the defects; 4,460 AIU over 6 turns did.** Total spend on SFTP layout was
+6,773 AIU, of which **34% bought rounds that did not converge**. The
+project owner also had to top up a quota mid-round (turn 138 terminated
+without completing) to continue.
+
+### Honest caveats on that comparison
+
+This is one uncontrolled observation, not a benchmark, and it should not
+be read as a clean model ranking:
+
+- **The later rounds inherited the earlier ones' work.** Sonnet's
+  fourteen turns fixed the functional defects, and Terra's nine-item
+  enumeration at turn 136 was an accurate, reusable defect list. Opus
+  started from a much better-specified problem than Sonnet did.
+- **Reasoning effort is confounded with model identity.** Opus ran at
+  high effort; the earlier rounds did not run the same configuration.
+  Part of the delta is plausibly effort, not architecture.
+- **The prompt changed too.** Turn 138 explicitly asked for iteration
+  with screenshotting and comparison, and to identify which mockup was
+  the reference — instructions the earlier rounds did not receive in that
+  form.
+- **The harness is now reusable and its cost is amortized.** Building it
+  was most of the first Opus round's expense; the Markdown viewer rounds
+  reused it directly and converged in four turns rather than twenty-two.
+
+The defensible conclusion is narrower than "use the biggest model": for
+pixel-accurate UI work, **budget for a measurement harness before
+budgeting for more review rounds**, and prefer whichever model will
+actually spend its turn building and running one. Rounds that end in a
+screenshot and a confident summary are the expensive kind.
+
 ## September 2026: Markdown "Open" picker reuses the SFTP local browser
 
 The More actions "Open Markdown File…" action opened the OS-native
