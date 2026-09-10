@@ -13,6 +13,7 @@ const FRAME_MAGIC: &[u8; 4] = b"FSD1";
 const FRAME_INPUT: u8 = 1;
 const STOLEN_NOTICE: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
+const EXITED_NOTICE: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
 trait ClientStream: Read + Write {}
 impl<T: Read + Write> ClientStream for T {}
@@ -179,13 +180,113 @@ fn native_start_command_with_piped_stderr_does_not_hang_when_the_daemon_stays_al
     assert_success("start", &output);
 }
 
+/// Regression test for the Windows zombie daemon reported in September 2026.
+///
+/// A ConPTY keeps its pseudoconsole (and the `conhost` process behind it) open
+/// for as long as the daemon holds the master handle, so the pseudoterminal
+/// reader never reports end of file when the shell exits. The daemon used to
+/// rely on that end of file alone, so when the shell exited it kept running
+/// forever: it stayed in the registry, `process_alive` still reported it, and
+/// the Launcher went on offering a session that could be attached but would
+/// never respond again. Killing the daemon by hand was the only way out.
+///
+/// This test drives a shell that exits by itself and asserts that the daemon
+/// notices, tells the client, exits, and deregisters.
+#[test]
+#[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
+fn native_daemon_exits_and_deregisters_when_its_shell_exits() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let name = format!("native-exit-{suffix}");
+    let runtime_root = short_runtime_root(&suffix);
+    fs::create_dir_all(&runtime_root).unwrap();
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime_root.clone(),
+        name: name.clone(),
+    };
+
+    let shell = exiting_test_shell(&executable);
+    let arguments = exiting_test_shell_arguments();
+    #[cfg(unix)]
+    launch_session_with(&executable, &runtime_root, &name, &shell, &arguments);
+    #[cfg(windows)]
+    let mut daemon = launch_session_with(&executable, &runtime_root, &name, &shell, &arguments);
+
+    let registry = runtime_root.join("festerm").join("sessiond");
+    let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
+    let mut client = connect(&endpoint);
+    #[cfg(windows)]
+    assert_windows_ready(&mut *client);
+
+    // The shell consumes this line and exits.
+    send_input(&mut *client, &test_input("goodbye")).unwrap();
+    assert_contains(&mut *client, EXITED_NOTICE);
+    drop(client);
+
+    #[cfg(windows)]
+    wait_for(
+        Duration::from_secs(15),
+        "the daemon did not exit after its shell exited",
+        || daemon.try_wait().unwrap().is_some(),
+    );
+
+    wait_for(
+        Duration::from_secs(15),
+        "the exited session stayed in the registry, so the Launcher would keep offering it",
+        || {
+            let output = daemon_command(&executable, &runtime_root)
+                .arg("list")
+                .output()
+                .unwrap();
+            assert_success("list", &output);
+            String::from_utf8(output.stdout).unwrap().trim() == "no live sessions"
+        },
+    );
+}
+
+fn wait_for(timeout: Duration, message: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if condition() {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "{message}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[cfg(unix)]
 fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
+    launch_session_with(
+        executable,
+        runtime_root,
+        name,
+        &test_shell(executable),
+        &test_shell_arguments(),
+    )
+}
+
+#[cfg(unix)]
+fn launch_session_with(
+    executable: &Path,
+    runtime_root: &Path,
+    name: &str,
+    shell: &Path,
+    arguments: &[&str],
+) {
     let mut command = daemon_command(executable, runtime_root);
     command
         .args(["start", "--name", name, "--shell"])
-        .arg(test_shell(executable));
-    for argument in test_shell_arguments() {
+        .arg(shell);
+    for argument in arguments {
         command.arg("--arg").arg(argument);
     }
     let output = command.output().unwrap();
@@ -194,13 +295,30 @@ fn launch_session(executable: &Path, runtime_root: &Path, name: &str) {
 
 #[cfg(windows)]
 fn launch_session(executable: &Path, runtime_root: &Path, name: &str) -> std::process::Child {
+    launch_session_with(
+        executable,
+        runtime_root,
+        name,
+        &test_shell(executable),
+        &test_shell_arguments(),
+    )
+}
+
+#[cfg(windows)]
+fn launch_session_with(
+    executable: &Path,
+    runtime_root: &Path,
+    name: &str,
+    shell: &Path,
+    arguments: &[&str],
+) -> std::process::Child {
     use std::{process::Stdio, thread};
 
     let mut command = daemon_command(executable, runtime_root);
     command
         .args(["daemon", "--name", name, "--shell"])
-        .arg(test_shell(executable));
-    for argument in test_shell_arguments() {
+        .arg(shell);
+    for argument in arguments {
         command.arg("--arg").arg(argument);
     }
     let mut daemon = command
@@ -272,6 +390,28 @@ fn test_shell(daemon: &Path) -> PathBuf {
 #[cfg(unix)]
 fn test_shell_arguments() -> Vec<&'static str> {
     Vec::new()
+}
+
+/// A shell that exits on its own once it has consumed a single line of input,
+/// used to exercise the daemon's shell-exit shutdown path.
+#[cfg(unix)]
+fn exiting_test_shell(_daemon: &Path) -> PathBuf {
+    PathBuf::from("/bin/sh")
+}
+
+#[cfg(unix)]
+fn exiting_test_shell_arguments() -> Vec<&'static str> {
+    vec!["-c", "read line; exit 0"]
+}
+
+#[cfg(windows)]
+fn exiting_test_shell(daemon: &Path) -> PathBuf {
+    test_shell(daemon)
+}
+
+#[cfg(windows)]
+fn exiting_test_shell_arguments() -> Vec<&'static str> {
+    vec!["emit:READY", "read-line", "exit:0"]
 }
 
 #[cfg(windows)]
@@ -369,7 +509,13 @@ fn assert_contains(stream: &mut dyn ClientStream, expected: &[u8]) {
         .windows(expected.len())
         .any(|window| window == expected)
     {
-        let count = stream.read(&mut buffer).unwrap();
+        let count = stream.read(&mut buffer).unwrap_or_else(|error| {
+            panic!(
+                "reading until {:?} failed: {error}; received so far: {:?}",
+                String::from_utf8_lossy(expected),
+                String::from_utf8_lossy(&received)
+            )
+        });
         assert_ne!(count, 0, "stream closed before expected marker arrived");
         received.extend_from_slice(&buffer[..count]);
     }

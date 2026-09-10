@@ -856,3 +856,86 @@ reports saturation or planning failure without treating it as a connection
 loss. Per-directory backend snapshots are still materialized by the underlying
 filesystem/SFTP listing API before the aggregate planner budget is applied;
 the plan and cross-directory traversal are bounded.
+
+## September 2026: the Windows session daemon that outlived its shell
+
+A bug report arrived as five screenshots rather than a stack trace, and the
+five told a story that at first looked like three different faults. A local
+`festerm-dev` session connected, printed its PowerShell banner, and then went
+`Disconnected` with `persistent-session transport failed: No process is on
+the other end of the pipe. (os error 233)`. Task Manager showed both
+`festerm` and a `festerm-sessiond` still running -- the daemon at a suspicious
+1.2 MB. Starting the session again failed differently: `Local shell
+unavailable: could not connect to session daemon: The system cannot find the
+file specified. (os error 2)`, and it kept failing, permanently.
+
+### Reproducing it before theorising about it
+
+The first two hypotheses were wrong, and cheap experiments said so. Two
+hundred rapid connect/disconnect cycles produced two hundred clean attaches,
+so it was not an accept race. Flooding a client that had stopped reading left
+the daemon healthy, so it was not backpressure. A healthy daemon measured 12
+MB across nine or ten threads, which made the reported 1.2 MB look like a
+process that had been stuck long enough to have its working set trimmed.
+
+What broke it open was pointing a daemon at a real shell, killing that shell,
+and watching what the daemon did: nothing at all. Five seconds later the
+daemon was still running, its named pipe was still listening, and its registry
+record was still there. `conhost.exe` was still alive too. Writing input to
+the now-dead shell still *succeeded*.
+
+That is the whole bug. A ConPTY keeps its pseudoconsole -- and the console
+host process behind it -- open for as long as the daemon holds the master
+handle. The pseudoterminal reader therefore never reports end of file when the
+shell exits, and the daemon had no other way of noticing. On Unix the master
+read returns and everything unwinds; on Windows the daemon simply lived
+forever with a dead shell inside it. Because `process_alive` still said yes,
+`list_unattached_local_sessions` kept advertising the corpse as resumable, and
+because `resume` surfaces its connect error verbatim, the user got os error 2
+every time. Nothing self-healed, and `save_registry_record` refused to reuse
+the name while that pid was alive, so the session was wedged for good.
+
+### The second defect the first one was hiding
+
+Fixing the detection alone would have converted a silent zombie into a hang.
+Shutdown joined the pseudoterminal reader thread -- but that thread is parked
+in a blocking read on a handle that is only released when the pseudoconsole
+closes, and the pseudoconsole could only close after shutdown returned.
+Joining a thread that cannot finish until after the join is a deadlock by
+construction, and it sat directly in front of `drop_registry_record`. Worse,
+shutdown tore the listener down *first*, so a daemon that hit that path became
+unreachable and un-deregisterable at the same moment: exactly the 233-then-2
+pair from the screenshots.
+
+So the fix is four changes that only make sense together. The Windows loop
+polls `Child::try_wait` and treats shell exit as its own shutdown trigger,
+draining remaining output for a moment so the last screenful still arrives.
+Shutdown deregisters *before* it joins anything, so a departing daemon is
+never advertised. It closes the pseudoconsole explicitly, and joins every
+worker with a bounded timeout, detaching stragglers -- the process is exiting
+anyway, so a detached thread costs nothing while a blocked join costs
+everything. And `kill` now removes the registry record even when terminating
+the process fails, which is precisely the case where a leftover record is most
+harmful.
+
+### Guarding it
+
+The regression test drives a shell that exits by itself and asserts the daemon
+notices, tells the client, exits, and deregisters. It was checked the only way
+a regression test is worth anything: it fails against the unfixed daemon. Unit
+tests cover the bounded joins directly -- a worker that never finishes must be
+detached rather than waited on, while one that finishes in time must still
+report its failure -- and `kill`'s record removal is now testable because the
+terminate step is injected.
+
+Two smaller cuts fell out of the same reading. The `kill`/`attach` reachability
+probe connected to the daemon to see if it was alive, which on the daemon side
+is an ordinary client connect and therefore *evicted the attached GUI*; it is
+gone. And the accept thread could die silently when it failed to recreate its
+listener, sending nothing to the main loop, which is another way to produce a
+registered daemon with no pipe -- it now reports that failure.
+
+The end-to-end check is the one the user would run: start the saved profile,
+type `exit`, and watch the tab report `Exited` while the daemon disappears,
+the registry empties, and the same session name starts cleanly again a second
+later.

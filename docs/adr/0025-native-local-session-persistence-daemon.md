@@ -219,6 +219,36 @@ review called for above is complete. User-facing documentation (`README.md`,
 `docs/milestone-progress.md`) continues to describe this capability as
 experimental rather than as a validated feature until (b) and (c) close.
 
+## Status update (2026-09-10): the ConPTY end-of-file constraint
+
+The "shell has already exited" self-termination above is not something a
+Windows daemon can get for free by watching its pseudoterminal. A ConPTY
+keeps its pseudoconsole -- and the `conhost.exe`/`OpenConsole.exe` process
+behind it -- alive for as long as *this* process holds the master handle, so
+the reader half never reports end of file when the shell exits, and writes to
+a dead shell still succeed. `festerm-sessiond` originally relied on that end
+of file alone, so on Windows it never noticed its shell exiting: it kept
+running, kept its registry record, and `process_alive` kept saying yes, so the
+Launcher went on offering a session that could be attached but would never
+respond again.
+
+Two constraints follow for anyone changing the daemon's lifecycle:
+
+- **Poll the child, do not wait for the pseudoterminal.** The Windows client
+  loop calls `Child::try_wait` every iteration and treats shell exit as its
+  own shutdown trigger, draining any remaining output first.
+- **Never join the pseudoterminal reader unconditionally.** That thread is
+  parked in a blocking read on a handle that is only released when the
+  pseudoconsole closes, which cannot happen until the loop's caller drops the
+  master -- so joining it from inside the loop is a deadlock by construction.
+  Shutdown closes the pseudoconsole explicitly and joins every worker with a
+  bounded timeout, detaching stragglers, because the process is exiting anyway.
+
+Shutdown also deregisters *before* it joins anything, so a daemon that is
+going away can never remain advertised as resumable, and `kill` now drops the
+registry record even when terminating the process fails -- that is precisely
+the case where a leftover record is most harmful.
+
 ## Alternatives considered
 
 - **Do nothing; local persistence remains Unix-only via `tmux`/`screen`.**

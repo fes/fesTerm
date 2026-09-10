@@ -10,7 +10,7 @@ use std::{
         mpsc, Arc,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -71,6 +71,19 @@ fn sessiond_trace(message: impl std::fmt::Display) {
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 #[cfg(windows)]
 const WINDOWS_CLIENT_READ_TIMEOUT: Duration = Duration::from_millis(250);
+/// How long shutdown waits for a worker thread before detaching it.
+///
+/// The pseudoterminal reader can be parked in a blocking read on a handle that
+/// only releases when the pseudoterminal closes, so shutdown must never join a
+/// worker unconditionally. The process is exiting either way, so detaching a
+/// straggler is strictly better than hanging forever.
+const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long shutdown waits for the shell to be reaped before giving up on it.
+const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long the daemon keeps draining pseudoterminal output after it observes
+/// that the shell exited, so the last screenful still reaches the client.
+#[cfg(windows)]
+const SHELL_EXIT_DRAIN: Duration = Duration::from_millis(250);
 const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 const CLIENT_QUEUE_CAPACITY: usize = 64;
 const CLIENT_FRAME_HEADER_BYTES: usize = 9;
@@ -135,7 +148,61 @@ struct ShellSpec {
 
 struct SpawnedShell {
     child: Box<dyn portable_pty::Child + Send>,
-    master: Box<dyn portable_pty::MasterPty + Send>,
+    /// The pseudoterminal master, kept in an [`Option`] so shutdown can close
+    /// it explicitly. On Windows the reader half of a ConPTY only reports end
+    /// of file once the pseudoconsole is closed, so a daemon that never drops
+    /// this handle can never observe the reader finishing.
+    master: Option<Box<dyn portable_pty::MasterPty + Send>>,
+}
+
+impl SpawnedShell {
+    fn master(&self) -> io::Result<&(dyn portable_pty::MasterPty + Send)> {
+        match self.master.as_deref() {
+            Some(master) => Ok(master),
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the session pseudoterminal is closed",
+            )),
+        }
+    }
+
+    /// Closes the pseudoterminal so blocking readers observe end of file.
+    fn close_master(&mut self) {
+        self.master = None;
+    }
+
+    /// Terminates the shell and reaps it, without blocking forever if the
+    /// termination request does not take effect.
+    fn terminate(&mut self) {
+        let _ = self.child.kill();
+        let deadline = Instant::now() + CHILD_EXIT_TIMEOUT;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) if Instant::now() >= deadline => return,
+                Ok(None) => thread::sleep(CLIENT_POLL_INTERVAL),
+            }
+        }
+    }
+}
+
+/// Resizes `master`, reporting a closed pseudoterminal as a broken pipe.
+///
+/// This takes the master directly rather than a [`SpawnedShell`] so callers can
+/// borrow the pseudoterminal and the child process independently.
+fn resize_master(
+    master: Option<&(dyn portable_pty::MasterPty + Send)>,
+    size: PtySize,
+) -> io::Result<()> {
+    match master {
+        Some(master) => master
+            .resize(size)
+            .map_err(|error| io::Error::other(error.to_string())),
+        None => Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "the session pseudoterminal is closed",
+        )),
+    }
 }
 
 fn main() {
@@ -533,8 +600,8 @@ fn run_daemon(
             return Err(error);
         }
 
-        let reader = spawned.master.try_clone_reader()?;
-        let writer = spawned.master.take_writer()?;
+        let reader = spawned.master()?.try_clone_reader()?;
+        let writer = spawned.master()?.take_writer()?;
         daemon_client_loop(listener, reader, writer, &mut spawned, &name)?;
         let _ = fs::remove_file(socket_path);
     }
@@ -562,8 +629,8 @@ fn run_daemon(
             return Err(error);
         }
 
-        let reader = spawned.master.try_clone_reader()?;
-        let writer = spawned.master.take_writer()?;
+        let reader = spawned.master()?.try_clone_reader()?;
+        let writer = spawned.master()?.take_writer()?;
         daemon_client_loop_windows(
             &pipe_name,
             initial_listener,
@@ -605,27 +672,31 @@ fn daemon_client_loop<R: Read + Send + 'static>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pid = process::id();
     let name_owned = name.to_owned();
-    let result = session_client_loop(
-        listener,
-        reader,
-        None,
-        |command| match command {
-            ClientCommand::Input(data) => writer.write_all(&data).and_then(|()| writer.flush()),
-            ClientCommand::Resize(size) => spawned
-                .master
-                .resize(size)
-                .map_err(|error| io::Error::other(error.to_string())),
-        },
-        || {
-            let _ = spawned.child.kill();
-        },
-        move |attached| set_registry_attached(&name_owned, pid, attached),
-    );
-    if result.is_err() {
-        let _ = spawned.child.kill();
-    }
-    let _ = spawned.child.wait();
-    drop_registry_record(name, process::id())?;
+    let result = {
+        // Borrow the pseudoterminal and the child process separately so the
+        // command and shutdown closures below do not both borrow `spawned`.
+        let master = spawned.master.as_deref();
+        let child = &mut spawned.child;
+        session_client_loop(
+            listener,
+            reader,
+            None,
+            |command| match command {
+                ClientCommand::Input(data) => writer.write_all(&data).and_then(|()| writer.flush()),
+                ClientCommand::Resize(size) => resize_master(master, size),
+            },
+            || {
+                let _ = child.kill();
+            },
+            move |attached| set_registry_attached(&name_owned, pid, attached),
+        )
+    };
+    // Deregister first: a daemon that has stopped serving its session must
+    // never stay advertised as resumable while the rest of shutdown runs.
+    let deregistered = drop_registry_record(name, process::id());
+    spawned.terminate();
+    spawned.close_master();
+    deregistered?;
     Ok(result?)
 }
 
@@ -724,9 +795,9 @@ fn session_client_loop<R: Read + Send + 'static>(
     retire_active(&mut active, &mut retired_clients, false);
     report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
     for client in retired_clients {
-        join_client_thread(client)?;
+        join_client_thread_within(client, WORKER_JOIN_TIMEOUT)?;
     }
-    join_io_thread(reader_thread)?;
+    join_io_thread_within(reader_thread, WORKER_JOIN_TIMEOUT)?;
     result
 }
 
@@ -812,7 +883,20 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
         while accept_running.load(Ordering::Acquire) {
             let server = match initial_listener.take() {
                 Some(listener) => listener.wait(),
-                None => create_secure_pipe_listener(&accept_pipe_name, false)?.wait(),
+                None => match create_secure_pipe_listener(&accept_pipe_name, false) {
+                    Ok(listener) => listener.wait(),
+                    Err(error) => {
+                        // Without this the main loop never learns that the
+                        // listener is gone, and the daemon lingers with a
+                        // registry record but no way to reach it.
+                        let forwarded = io::Error::new(
+                            error.kind(),
+                            format!("named pipe listener could not be created: {error}"),
+                        );
+                        let _ = accept_tx.send(Err(forwarded));
+                        return Err(error);
+                    }
+                },
             };
             let server = match server {
                 Ok(server) => server,
@@ -844,7 +928,31 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let name_owned = name.to_owned();
     let mut on_attach_changed =
         move |attached: bool| set_registry_attached(&name_owned, pid, attached);
+    let mut shell_exited_at: Option<Instant> = None;
     let result = loop {
+        // Windows keeps the pseudoconsole open for as long as this process
+        // holds the master handle, so the pseudoterminal reader never reports
+        // end of file when the shell exits. Poll the child directly instead;
+        // without this the daemon outlives its shell forever and the launcher
+        // keeps offering a session that can be attached but never responds.
+        if shell_exited_at.is_none() {
+            match spawned.child.try_wait() {
+                Ok(Some(status)) => {
+                    sessiond_trace(format_args!("shell exited: {status:?}"));
+                    shell_exited_at = Some(Instant::now());
+                }
+                Ok(None) => {}
+                Err(error) => break Err(error),
+            }
+        }
+        if shell_exited_at.is_some_and(|exited_at| exited_at.elapsed() >= SHELL_EXIT_DRAIN) {
+            send_to_active(
+                &mut active,
+                &mut retired_clients,
+                EXITED_NOTICE_BYTES.to_vec(),
+            );
+            break Ok(());
+        }
         if let Err(error) = reap_client_threads(&mut retired_clients) {
             let _ = spawned.child.kill();
             break Err(error);
@@ -872,10 +980,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                     ClientCommand::Input(data) => {
                         writer.write_all(&data).and_then(|()| writer.flush())
                     }
-                    ClientCommand::Resize(size) => spawned
-                        .master
-                        .resize(size)
-                        .map_err(|error| io::Error::other(error.to_string())),
+                    ClientCommand::Resize(size) => resize_master(spawned.master.as_deref(), size),
                 }
             })
         {
@@ -923,17 +1028,26 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     };
 
     accepting.store(false, Ordering::Release);
+    sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
     retire_active(&mut active, &mut retired_clients, false);
     report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
+    // Deregister before the joins below. A daemon that has stopped serving its
+    // session must never stay advertised as resumable, however slowly the rest
+    // of shutdown proceeds.
+    let deregistered = drop_registry_record(name, process::id());
     let _ = named_pipe::PipeClient::connect_ms(&pipe_name, 100);
-    let reader_result = join_io_thread(reader_thread);
-    let accept_result = join_io_thread(accept_thread);
-    let client_result = retired_clients.into_iter().try_for_each(join_client_thread);
-    if result.is_err() {
-        let _ = spawned.child.kill();
-    }
-    let _ = spawned.child.wait();
-    drop_registry_record(name, process::id())?;
+    // The shell must not outlive the daemon that owns its pseudoterminal, and
+    // closing the pseudoconsole is what finally lets the reader see end of
+    // file. Both have to happen before any worker thread is joined.
+    spawned.terminate();
+    spawned.close_master();
+    let reader_result = join_io_thread_within(reader_thread, WORKER_JOIN_TIMEOUT);
+    let accept_result = join_io_thread_within(accept_thread, WORKER_JOIN_TIMEOUT);
+    let client_result = retired_clients
+        .into_iter()
+        .try_for_each(|client| join_client_thread_within(client, WORKER_JOIN_TIMEOUT));
+    sessiond_trace("shutdown: complete");
+    deregistered?;
     reader_result?;
     accept_result?;
     client_result?;
@@ -1309,6 +1423,45 @@ fn join_io_thread(thread: thread::JoinHandle<io::Result<()>>) -> io::Result<()> 
         .map_err(|_| io::Error::other("session daemon worker thread panicked"))?
 }
 
+/// Joins `thread` if it finishes within `timeout`, and otherwise detaches it.
+///
+/// Shutdown runs immediately before the process exits, so a straggling worker
+/// costs nothing once it is abandoned. Blocking on it, by contrast, strands the
+/// daemon: it stops serving clients but never deregisters, so the launcher keeps
+/// advertising a session that can no longer be attached.
+fn join_io_thread_within(
+    thread: thread::JoinHandle<io::Result<()>>,
+    timeout: Duration,
+) -> io::Result<()> {
+    if wait_for_thread(&thread, timeout) {
+        return join_io_thread(thread);
+    }
+    sessiond_trace("shutdown: detaching a worker thread that did not finish");
+    Ok(())
+}
+
+fn join_client_thread_within(
+    thread: thread::JoinHandle<io::Result<()>>,
+    timeout: Duration,
+) -> io::Result<()> {
+    if wait_for_thread(&thread, timeout) {
+        return join_client_thread(thread);
+    }
+    sessiond_trace("shutdown: detaching a client thread that did not finish");
+    Ok(())
+}
+
+fn wait_for_thread(thread: &thread::JoinHandle<io::Result<()>>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while !thread.is_finished() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(CLIENT_POLL_INTERVAL);
+    }
+    true
+}
+
 fn join_client_thread(thread: thread::JoinHandle<io::Result<()>>) -> io::Result<()> {
     let _ = thread
         .join()
@@ -1408,39 +1561,29 @@ fn run_list() -> Result<(), Box<dyn std::error::Error>> {
 fn run_kill(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
     with_registry_lock(|registry: &mut SessionRegistry| {
-        let Some(record) = registry.sessions.get(&name).cloned() else {
-            return Err(format!("session '{name}' is not registered").into());
-        };
-        if process_alive(record.pid) && endpoint_reachable(&record) {
-            terminate_pid(record.pid)?;
-        }
-        if registry
-            .sessions
-            .get(&name)
-            .is_some_and(|current| current.pid == record.pid)
-        {
-            registry.sessions.remove(&name);
-        }
-        Ok(())
+        kill_registered_session(registry, &name, terminate_pid)
     })
 }
 
-fn endpoint_reachable(record: &SessionRecord) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        #[cfg(unix)]
-        let connected = UnixStream::connect(&record.socket).is_ok();
-        #[cfg(windows)]
-        let connected = named_pipe::PipeClient::connect_ms(&record.socket, 50).is_ok();
-
-        if connected {
-            return true;
-        }
-        if !process_alive(record.pid) || std::time::Instant::now() >= deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
+fn kill_registered_session(
+    registry: &mut SessionRegistry,
+    name: &str,
+    terminate: impl FnOnce(u32) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(record) = registry.sessions.get(name).cloned() else {
+        return Err(format!("session '{name}' is not registered").into());
+    };
+    let terminated = if process_alive(record.pid) {
+        terminate(record.pid)
+    } else {
+        Ok(())
+    };
+    // Drop the record even when termination failed. Leaving it behind is what
+    // turns an unresponsive daemon into a session the Launcher keeps offering
+    // and no client can ever attach to, with no way back short of editing the
+    // registry by hand.
+    remove_registry_record_if_pid_matches(registry, name, record.pid);
+    terminated
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1868,7 +2011,10 @@ fn spawn_shell(
     command.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(command)?;
     let master = pair.master;
-    Ok(SpawnedShell { child, master })
+    Ok(SpawnedShell {
+        child,
+        master: Some(master),
+    })
 }
 
 fn process_alive(pid: u32) -> bool {
@@ -2304,10 +2450,126 @@ mod tests {
         assert_eq!(validate_name("session_2".to_owned()).unwrap(), "session_2");
     }
 
+    /// Shutdown used to join the pseudoterminal reader unconditionally. On
+    /// Windows that reader is parked in a blocking read on a ConPTY handle
+    /// that only releases when the pseudoconsole closes -- which cannot happen
+    /// until shutdown returns -- so the daemon hung forever with a live
+    /// registry record and no listener, and the Launcher kept offering a
+    /// session nothing could attach to.
+    #[test]
+    fn a_worker_that_never_finishes_is_detached_so_shutdown_cannot_hang() {
+        let (release, blocked) = mpsc::channel::<()>();
+        let worker = thread::spawn(move || -> io::Result<()> {
+            let _ = blocked.recv();
+            Ok(())
+        });
+
+        let started = Instant::now();
+        let result = join_io_thread_within(worker, Duration::from_millis(100));
+
+        assert!(result.is_ok());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "shutdown waited {:?} on a worker that never finishes",
+            started.elapsed()
+        );
+        drop(release);
+    }
+
+    #[test]
+    fn a_worker_that_finishes_in_time_still_reports_its_failure() {
+        let worker = thread::spawn(|| -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "worker failed"))
+        });
+
+        let error = join_io_thread_within(worker, Duration::from_secs(5)).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn a_client_worker_that_never_finishes_is_detached_so_shutdown_cannot_hang() {
+        let (release, blocked) = mpsc::channel::<()>();
+        let worker = thread::spawn(move || -> io::Result<()> {
+            let _ = blocked.recv();
+            Ok(())
+        });
+
+        assert!(join_client_thread_within(worker, Duration::from_millis(100)).is_ok());
+        drop(release);
+    }
+
+    /// A client worker that fails its own I/O is expected: the client simply
+    /// went away. Only a panic is a daemon bug worth surfacing.
+    #[test]
+    fn a_client_worker_that_finishes_in_time_ignores_its_io_failure_but_not_a_panic() {
+        let failed = thread::spawn(|| -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "client went away",
+            ))
+        });
+        assert!(join_client_thread_within(failed, Duration::from_secs(5)).is_ok());
+
+        let panicked = thread::spawn(|| -> io::Result<()> {
+            panic!("test client worker panic");
+        });
+        assert!(join_client_thread_within(panicked, Duration::from_secs(5)).is_err());
+    }
+
     #[test]
     fn invalid_names_are_rejected() {
         let err = validate_name("bad/name".to_owned()).unwrap_err();
         assert!(err.to_string().contains("persistent session name"));
+    }
+
+    /// `kill` used to abandon the registry entry when terminating the process
+    /// failed, which is exactly the case where the entry is most harmful: an
+    /// unresponsive daemon stayed advertised with no supported way to clear it.
+    #[test]
+    fn killing_a_session_drops_its_record_even_when_termination_fails() {
+        let mut registry = SessionRegistry::default();
+        registry
+            .sessions
+            .insert("demo".to_owned(), test_record("demo", process::id()));
+
+        let error = kill_registered_session(&mut registry, "demo", |_| {
+            Err("access is denied".to_owned().into())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("access is denied"));
+        assert!(
+            registry.sessions.is_empty(),
+            "a session that could not be terminated must still be deregistered"
+        );
+    }
+
+    #[test]
+    fn killing_an_unregistered_session_reports_that_it_is_not_registered() {
+        let mut registry = SessionRegistry::default();
+
+        let error = kill_registered_session(&mut registry, "missing", |_| {
+            panic!("an unregistered session must not be terminated")
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("is not registered"));
+    }
+
+    fn test_record(name: &str, pid: u32) -> SessionRecord {
+        SessionRecord {
+            name: name.to_owned(),
+            pid,
+            socket: format!("/tmp/festerm-sessiond/{name}.sock"),
+            shell: "/bin/bash".to_owned(),
+            arguments: Vec::new(),
+            working_directory: None,
+            cols: 80,
+            rows: 24,
+            created_at_unix_ms: 1_700_000_000_000,
+            attached: false,
+        }
     }
 
     #[test]
@@ -2347,7 +2609,7 @@ mod tests {
             24,
         )
         .unwrap();
-        let mut reader = spawned.master.try_clone_reader().unwrap();
+        let mut reader = spawned.master().unwrap().try_clone_reader().unwrap();
         let mut output = String::new();
         reader.read_to_string(&mut output).unwrap();
         let status = spawned.child.wait().unwrap();

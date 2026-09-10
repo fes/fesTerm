@@ -264,7 +264,15 @@ impl PersistentSession {
                 name.as_str()
             ))
         })?;
-        let stream = connect_record(record)?;
+        let stream = connect_record(record).map_err(|error| {
+            PersistentSessionError::new(format!(
+                "session '{}' is registered to process {} but is not accepting connections \
+                 ({error}); run `festerm-sessiond kill {}` to clear it",
+                name.as_str(),
+                record.pid,
+                name.as_str()
+            ))
+        })?;
         Self::from_stream(stream, notifier)
     }
 
