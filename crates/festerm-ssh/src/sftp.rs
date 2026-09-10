@@ -23,7 +23,9 @@ Supported commands:
   lpwd
   cd <remote-directory>
   lcd <local-directory>
-  ls [remote-path]
+  ls [-al] [remote-path]
+  lls
+  ldir
   mkdir <remote-directory>
   rmdir <remote-directory>
   rm <remote-path>
@@ -54,6 +56,7 @@ pub enum SftpCommand {
     Ls {
         path: Option<String>,
     },
+    Lls,
     Mkdir {
         path: String,
     },
@@ -102,6 +105,10 @@ pub enum SftpCommandOutcome {
     },
     DirectoryListing {
         path: String,
+        entries: Vec<SftpDirectoryEntry>,
+    },
+    LocalDirectoryListing {
+        path: PathBuf,
         entries: Vec<SftpDirectoryEntry>,
     },
     CreatedDirectory {
@@ -465,6 +472,7 @@ impl SftpSession {
             SftpCommand::Cd { path } => self.cd(&path).await,
             SftpCommand::Lcd { path } => self.lcd(&path).await,
             SftpCommand::Ls { path } => self.ls(path.as_deref()).await,
+            SftpCommand::Lls => self.lls().await,
             SftpCommand::Mkdir { path } => self.mkdir(&path).await,
             SftpCommand::Rmdir { path } => self.rmdir(&path).await,
             SftpCommand::Rm { path } => self.rm(&path).await,
@@ -663,6 +671,26 @@ impl SftpSession {
             path: resolved,
             entries,
         })
+    }
+
+    async fn lls(&self) -> Result<SftpCommandOutcome, SftpSessionError> {
+        let snapshot = self.current_local_directory_snapshot().await?;
+        let path = match snapshot.path {
+            SftpPath::Local(path) => path,
+            SftpPath::Remote(_) => unreachable!("local directory snapshots retain local paths"),
+        };
+        let entries = snapshot
+            .entries
+            .into_iter()
+            .map(|entry| SftpDirectoryEntry {
+                name: entry.name,
+                path: entry.path.display(),
+                file_type: entry.file_type,
+                size: entry.size,
+                permissions: entry.permissions,
+            })
+            .collect();
+        Ok(SftpCommandOutcome::LocalDirectoryListing { path, entries })
     }
 
     async fn mkdir(&mut self, path: &str) -> Result<SftpCommandOutcome, SftpSessionError> {
@@ -1171,16 +1199,8 @@ pub fn parse_sftp_command(line: &str) -> Result<SftpCommand, SftpCommandParseErr
             .map(|path| SftpCommand::Cd { path }),
         "lcd" => require_exactly_one("lcd", "lcd <local-directory>", arguments)
             .map(|path| SftpCommand::Lcd { path }),
-        "ls" => match arguments {
-            [] => Ok(SftpCommand::Ls { path: None }),
-            [path] => Ok(SftpCommand::Ls {
-                path: Some(path.clone()),
-            }),
-            _ => Err(SftpCommandParseError::InvalidArguments {
-                command: "ls",
-                usage: "ls [remote-path]",
-            }),
-        },
+        "ls" => parse_ls_command(arguments),
+        "lls" | "ldir" => require_no_arguments("lls", "lls", arguments).map(|()| SftpCommand::Lls),
         "mkdir" => require_exactly_one("mkdir", "mkdir <remote-directory>", arguments)
             .map(|path| SftpCommand::Mkdir { path }),
         "rmdir" => require_exactly_one("rmdir", "rmdir <remote-directory>", arguments)
@@ -1295,6 +1315,27 @@ fn parse_transfer_command(
     }
 }
 
+fn parse_ls_command(arguments: &[String]) -> Result<SftpCommand, SftpCommandParseError> {
+    let mut path = None;
+    for argument in arguments {
+        if argument.starts_with('-') {
+            let options = argument.trim_start_matches('-');
+            if options.is_empty() || !options.chars().all(|option| matches!(option, 'a' | 'l')) {
+                return Err(SftpCommandParseError::InvalidArguments {
+                    command: "ls",
+                    usage: "ls [-al] [remote-path]",
+                });
+            }
+        } else if path.replace(argument.clone()).is_some() {
+            return Err(SftpCommandParseError::InvalidArguments {
+                command: "ls",
+                usage: "ls [-al] [remote-path]",
+            });
+        }
+    }
+    Ok(SftpCommand::Ls { path })
+}
+
 fn tokenize_command_line(line: &str) -> Result<Vec<String>, SftpCommandParseError> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -1389,12 +1430,33 @@ pub(crate) fn resolve_local_path(base: &Path, input: &str) -> Result<PathBuf, Sf
         return Err(SftpSessionError::EmptyLocalPath);
     }
     let input_path = Path::new(input);
-    let candidate = if input_path.is_absolute() {
+    let home_expansion = local_home_directory()
+        .as_deref()
+        .and_then(|home| expand_local_home_path(input, home));
+    let candidate = if let Some(path) = home_expansion {
+        path
+    } else if input_path.is_absolute() {
         input_path.to_path_buf()
     } else {
         base.join(input_path)
     };
     Ok(normalize_local_path(candidate))
+}
+
+fn local_home_directory() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn expand_local_home_path(input: &str, home: &Path) -> Option<PathBuf> {
+    match input {
+        "~" => Some(home.to_path_buf()),
+        _ => input
+            .strip_prefix("~/")
+            .or_else(|| input.strip_prefix("~\\"))
+            .map(|suffix| home.join(suffix)),
+    }
 }
 
 pub(crate) fn normalize_local_path(path: PathBuf) -> PathBuf {
@@ -1722,6 +1784,18 @@ mod tests {
         );
         assert_eq!(parse_sftp_command("ls"), Ok(SftpCommand::Ls { path: None }));
         assert_eq!(
+            parse_sftp_command("ls -al"),
+            Ok(SftpCommand::Ls { path: None })
+        );
+        assert_eq!(
+            parse_sftp_command("ls -la ./child"),
+            Ok(SftpCommand::Ls {
+                path: Some("./child".to_owned())
+            })
+        );
+        assert_eq!(parse_sftp_command("lls"), Ok(SftpCommand::Lls));
+        assert_eq!(parse_sftp_command("ldir"), Ok(SftpCommand::Lls));
+        assert_eq!(
             parse_sftp_command("ls ./child"),
             Ok(SftpCommand::Ls {
                 path: Some("./child".to_owned())
@@ -1837,6 +1911,21 @@ mod tests {
                 .expect("remote path resolves"),
             "/srv/data"
         );
+    }
+
+    #[test]
+    fn local_home_abbreviations_expand_without_treating_tilde_as_a_literal_directory() {
+        let home = Path::new("/Users/fes");
+        assert_eq!(expand_local_home_path("~", home), Some(home.to_path_buf()));
+        assert_eq!(
+            expand_local_home_path("~/Downloads", home),
+            Some(PathBuf::from("/Users/fes/Downloads"))
+        );
+        assert_eq!(
+            expand_local_home_path("~\\Downloads", home),
+            Some(PathBuf::from("/Users/fes/Downloads"))
+        );
+        assert_eq!(expand_local_home_path("~other", home), None);
     }
 
     #[test]

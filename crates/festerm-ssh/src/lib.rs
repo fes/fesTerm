@@ -4442,7 +4442,7 @@ fn format_sftp_outcome(outcome: &sftp::SftpCommandOutcome) -> String {
     use sftp::SftpCommandOutcome as Outcome;
 
     match outcome {
-        Outcome::Help { text } => format!("{text}\r\n"),
+        Outcome::Help { text } => format!("{}\r\n", text.replace('\n', "\r\n")),
         Outcome::WorkingDirectory { path } => format!("Remote working directory: {path}\r\n"),
         Outcome::LocalWorkingDirectory { path } => {
             format!("Local working directory: {}\r\n", path.display())
@@ -4452,33 +4452,12 @@ fn format_sftp_outcome(outcome: &sftp::SftpCommandOutcome) -> String {
             format!("Local directory changed to {}\r\n", path.display())
         }
         Outcome::DirectoryListing { path, entries } => {
-            let mut output = format!("Listing for {path}:\r\n");
-            if entries.is_empty() {
-                output.push_str("(empty)\r\n");
-                return output;
-            }
-            for entry in entries {
-                let kind = match entry.file_type {
-                    sftp::SftpEntryType::Directory => "dir ",
-                    sftp::SftpEntryType::File => "file",
-                    sftp::SftpEntryType::Symlink => "link",
-                    sftp::SftpEntryType::Other => "other",
-                };
-                let permissions = entry
-                    .permissions
-                    .map(|permissions| format!("{permissions:04o}"))
-                    .unwrap_or_else(|| "----".to_owned());
-                let size = entry
-                    .size
-                    .map(|size| size.to_string())
-                    .unwrap_or_else(|| "-".to_owned());
-                output.push_str(&format!(
-                    "{kind} {permissions:>4} {size:>10} {}\r\n",
-                    entry.name
-                ));
-            }
-            output
+            format_sftp_directory_listing(&format!("Listing for {path}:"), entries)
         }
+        Outcome::LocalDirectoryListing { path, entries } => format_sftp_directory_listing(
+            &format!("Local listing for {}:", path.display()),
+            entries,
+        ),
         Outcome::CreatedDirectory { path } => format!("Created remote directory {path}\r\n"),
         Outcome::RemovedDirectory { path } => format!("Removed remote directory {path}\r\n"),
         Outcome::RemovedFile { path } => format!("Removed remote file {path}\r\n"),
@@ -4509,6 +4488,36 @@ fn format_sftp_outcome(outcome: &sftp::SftpCommandOutcome) -> String {
     }
 }
 
+fn format_sftp_directory_listing(heading: &str, entries: &[sftp::SftpDirectoryEntry]) -> String {
+    let mut output = format!("{heading}\r\n");
+    if entries.is_empty() {
+        output.push_str("(empty)\r\n");
+        return output;
+    }
+    for entry in entries {
+        output.push_str(&format_sftp_directory_entry(entry));
+    }
+    output
+}
+
+fn format_sftp_directory_entry(entry: &sftp::SftpDirectoryEntry) -> String {
+    let kind = match entry.file_type {
+        sftp::SftpEntryType::Directory => "dir ",
+        sftp::SftpEntryType::File => "file",
+        sftp::SftpEntryType::Symlink => "link",
+        sftp::SftpEntryType::Other => "other",
+    };
+    let permissions = entry
+        .permissions
+        .map(|permissions| format!("{permissions:04o}"))
+        .unwrap_or_else(|| "----".to_owned());
+    let size = entry
+        .size
+        .map(|size| size.to_string())
+        .unwrap_or_else(|| "-".to_owned());
+    format!("{kind} {permissions:>4} {size:>10} {}\r\n", entry.name)
+}
+
 fn emit_sftp_output(shared: &WorkerShared, text: impl AsRef<str>) {
     let _ = shared.try_emit(SessionEvent::Output(text.as_ref().as_bytes().to_vec()));
 }
@@ -4516,7 +4525,14 @@ fn emit_sftp_output(shared: &WorkerShared, text: impl AsRef<str>) {
 fn emit_sftp_outcome(shared: &WorkerShared, outcome: &sftp::SftpCommandOutcome) {
     match outcome {
         sftp::SftpCommandOutcome::DirectoryListing { path, entries } => {
-            emit_sftp_directory_listing(shared, path, entries);
+            emit_sftp_directory_listing(shared, &format!("Listing for {path}:"), entries);
+        }
+        sftp::SftpCommandOutcome::LocalDirectoryListing { path, entries } => {
+            emit_sftp_directory_listing(
+                shared,
+                &format!("Local listing for {}:", path.display()),
+                entries,
+            );
         }
         _ => emit_sftp_output(shared, format_sftp_outcome(outcome)),
     }
@@ -4524,10 +4540,10 @@ fn emit_sftp_outcome(shared: &WorkerShared, outcome: &sftp::SftpCommandOutcome) 
 
 fn emit_sftp_directory_listing(
     shared: &WorkerShared,
-    path: &str,
+    heading: &str,
     entries: &[sftp::SftpDirectoryEntry],
 ) {
-    let mut chunk = format!("Listing for {path}:\r\n");
+    let mut chunk = format!("{heading}\r\n");
     if entries.is_empty() {
         chunk.push_str("(empty)\r\n");
         emit_sftp_output(shared, chunk);
@@ -4535,21 +4551,7 @@ fn emit_sftp_directory_listing(
     }
 
     for entry in entries {
-        let kind = match entry.file_type {
-            sftp::SftpEntryType::Directory => "dir ",
-            sftp::SftpEntryType::File => "file",
-            sftp::SftpEntryType::Symlink => "link",
-            sftp::SftpEntryType::Other => "other",
-        };
-        let permissions = entry
-            .permissions
-            .map(|permissions| format!("{permissions:04o}"))
-            .unwrap_or_else(|| "----".to_owned());
-        let size = entry
-            .size
-            .map(|size| size.to_string())
-            .unwrap_or_else(|| "-".to_owned());
-        let line = format!("{kind} {permissions:>4} {size:>10} {}\r\n", entry.name);
+        let line = format_sftp_directory_entry(entry);
         if chunk.len() + line.len() > MAX_IO_CHUNK_BYTES {
             emit_sftp_output(shared, std::mem::take(&mut chunk));
         }
@@ -7141,6 +7143,34 @@ mod tests {
         assert!(output.starts_with("Listing for /remote:\r\n"));
         assert!(output.contains("dir  0755          - docs\r\n"));
         assert!(output.contains("file 0644         42 readme.txt\r\n"));
+    }
+
+    #[test]
+    fn sftp_help_uses_carriage_return_line_feed_for_every_line() {
+        let output = format_sftp_outcome(&sftp::SftpCommandOutcome::Help {
+            text: "Supported commands:\n  help\n  lls",
+        });
+
+        assert_eq!(output, "Supported commands:\r\n  help\r\n  lls\r\n");
+    }
+
+    #[test]
+    fn local_sftp_directory_listings_use_the_terminal_transcript_format() {
+        let output = format_sftp_outcome(&sftp::SftpCommandOutcome::LocalDirectoryListing {
+            path: PathBuf::from("/local"),
+            entries: vec![sftp::SftpDirectoryEntry {
+                name: "notes.txt".to_owned(),
+                path: "/local/notes.txt".to_owned(),
+                file_type: sftp::SftpEntryType::File,
+                size: Some(42),
+                permissions: Some(0o644),
+            }],
+        });
+
+        assert_eq!(
+            output,
+            "Local listing for /local:\r\nfile 0644         42 notes.txt\r\n"
+        );
     }
 
     #[test]
