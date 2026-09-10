@@ -103,17 +103,20 @@ impl LivePortForwardManager {
     }
 }
 
-/// Aggregate confirmation shown once, for the whole application, when the
-/// OS requests that the window close while any session still has something
-/// to lose (`docs/gui-design.md` "Closing sessions and quitting",
-/// `docs/gui-action-graph.md` `QUIT-01`/`QUIT-02`). Deliberately summarizes
-/// exact counts instead of per-session identity, unlike
-/// [`PendingCloseConfirmation`] - fesTerm has exactly one native window, so
-/// this same dialog serves both the window-close button and "Quit fesTerm".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum QuitConfirmationPurpose {
+    Quit,
+    InstallUpdate,
+}
+
+/// Aggregate confirmation shown once, for the whole application, before an
+/// action that will close every live session. Deliberately summarizes exact
+/// counts instead of per-session identity, unlike [`PendingCloseConfirmation`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PendingQuitConfirmation {
     pub(crate) counts: crate::tabs::LiveSessionCounts,
     pub(crate) cancel_focus_requested: bool,
+    pub(crate) purpose: QuitConfirmationPurpose,
 }
 
 impl PendingQuitConfirmation {
@@ -262,6 +265,7 @@ mod tests {
                     serial: 0,
                 },
                 cancel_focus_requested: false,
+                purpose: QuitConfirmationPurpose::Quit,
             }),
             ..OverlayState::default()
         };
@@ -288,6 +292,7 @@ mod tests {
                 serial: 0,
             },
             cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::Quit,
         };
         assert_eq!(pending.summary_message(), "1 local process is still open.");
     }
@@ -301,6 +306,7 @@ mod tests {
                 serial: 1,
             },
             cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::Quit,
         };
         assert_eq!(
             pending.summary_message(),
@@ -317,6 +323,7 @@ mod tests {
                 serial: 1,
             },
             cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::Quit,
         };
         assert_eq!(
             pending.summary_message(),

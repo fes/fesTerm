@@ -36,7 +36,8 @@ use crate::native_smoke::NativeWindowSmoke;
 use crate::overlay_state::{
     CloseConsequence, LivePortForwardManager, OverlayState, PendingCloseConfirmation,
     PendingFileDropConfirmation, PendingPasswordStore, PendingPasteConfirmation,
-    PendingQuitConfirmation, PendingSettingsResetConfirmation, StoredCredentialLaunch,
+    PendingQuitConfirmation, PendingSettingsResetConfirmation, QuitConfirmationPurpose,
+    StoredCredentialLaunch,
 };
 use crate::screens;
 use crate::sftp_file_manager::{self, MarkdownFilePicker, MarkdownPickerOutcome};
@@ -351,6 +352,10 @@ pub struct FesTermApp {
     /// cargo-packager. Request the normal application close exactly once so
     /// the updater can replace the running bundle.
     update_exit_requested: bool,
+    /// The user has consented to ending every live session after a verified
+    /// update is installed. Kept separate from `quit_confirmed` so an install
+    /// failure cannot disable ordinary quit protection.
+    update_restart_authorized: bool,
     /// Set once the aggregate quit confirmation has been deliberately
     /// confirmed, so the follow-up OS close request that actually tears
     /// down the window is let through instead of being intercepted again
@@ -587,6 +592,7 @@ impl FesTermApp {
             about_icon: Some(about_icon),
             updates: UpdateController::from_build(),
             update_exit_requested: false,
+            update_restart_authorized: false,
             quit_confirmed: false,
         }
     }
@@ -773,10 +779,17 @@ impl FesTermApp {
             // confirmation must not cancel that automation-owned close.
             return;
         }
-        if self.quit_confirmed || self.overlays.pending_quit.is_some() {
-            // Already deliberately confirmed, or a second close-requested
-            // event arrived while the confirmation is already showing -
-            // either way, do not open (or reopen) another dialog.
+        if self.quit_confirmed {
+            // Already deliberately confirmed: let the follow-up close proceed.
+            return;
+        }
+        if let Some(pending) = self.overlays.pending_quit {
+            // A second close while the ordinary Quit dialog is showing is the
+            // platform's follow-up teardown request. An update-consent dialog
+            // has not authorized quitting, so preserve the sessions instead.
+            if pending.purpose == QuitConfirmationPurpose::InstallUpdate {
+                context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
             return;
         }
         let counts = self.state.live_session_counts();
@@ -788,6 +801,21 @@ impl FesTermApp {
         self.overlays.pending_quit = Some(PendingQuitConfirmation {
             counts,
             cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::Quit,
+        });
+    }
+
+    fn request_update_install(&mut self) {
+        let counts = self.state.live_session_counts();
+        if counts.total() == 0 {
+            self.update_restart_authorized = true;
+            self.updates.begin_install();
+            return;
+        }
+        self.overlays.pending_quit = Some(PendingQuitConfirmation {
+            counts,
+            cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::InstallUpdate,
         });
     }
 
@@ -927,10 +955,22 @@ impl FesTermApp {
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
                 ui.set_width(confirmation_width(context.content_rect().width(), 360.0));
-                ui.heading("Quit fesTerm?");
+                let (heading, consequence, confirm_label) = match pending.purpose {
+                    QuitConfirmationPurpose::Quit => (
+                        "Quit fesTerm?",
+                        "Unsaved terminal history will be discarded.",
+                        "Quit fesTerm",
+                    ),
+                    QuitConfirmationPurpose::InstallUpdate => (
+                        "Install update and restart fesTerm?",
+                        "The update will close every session after installation succeeds.",
+                        "Install and Restart",
+                    ),
+                };
+                ui.heading(heading);
                 ui.add_space(6.0);
                 ui.label(pending.summary_message());
-                ui.label("Unsaved terminal history will be discarded.");
+                ui.label(consequence);
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     let cancel_button = ui.button("Cancel");
@@ -942,7 +982,7 @@ impl FesTermApp {
                     }
                     if ui
                         .add(egui::Button::new(
-                            egui::RichText::new("Quit fesTerm").color(theme::STATUS_ERROR),
+                            egui::RichText::new(confirm_label).color(theme::STATUS_ERROR),
                         ))
                         .clicked()
                     {
@@ -957,8 +997,16 @@ impl FesTermApp {
             self.overlays.pending_quit = None;
         } else if confirm {
             self.overlays.pending_quit = None;
-            self.quit_confirmed = true;
-            context.send_viewport_cmd(egui::ViewportCommand::Close);
+            match pending.purpose {
+                QuitConfirmationPurpose::Quit => {
+                    self.quit_confirmed = true;
+                    context.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                QuitConfirmationPurpose::InstallUpdate => {
+                    self.update_restart_authorized = true;
+                    self.updates.begin_install();
+                }
+            }
         }
     }
 
@@ -2925,7 +2973,7 @@ impl FesTermApp {
         match update_action {
             Some(UpdateAction::Check) => self.updates.begin_check(),
             Some(UpdateAction::Download) => self.updates.begin_download(),
-            Some(UpdateAction::Install) => self.updates.begin_install(),
+            Some(UpdateAction::Install) => self.request_update_install(),
             None => {}
         }
         if close {
@@ -4127,10 +4175,15 @@ impl FesTermApp {
         }
         self.process_pending_password_store(ui.ctx());
         self.updates.poll();
+        if matches!(self.updates.status(), UpdateStatus::Failed { .. }) {
+            self.update_restart_authorized = false;
+        }
         if matches!(self.updates.status(), UpdateStatus::Installed(_))
+            && self.update_restart_authorized
             && !self.update_exit_requested
         {
             self.update_exit_requested = true;
+            self.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if self.updates.status().is_busy() {
@@ -4693,6 +4746,7 @@ impl FesTermApp {
             about_icon: None,
             updates: UpdateController::unavailable_for_test(),
             update_exit_requested: false,
+            update_restart_authorized: false,
             quit_confirmed: false,
         }
     }
@@ -4972,6 +5026,28 @@ mod tests {
                 .expect("should still be pending")
                 .cancel_focus_requested
         );
+    }
+
+    #[test]
+    fn window_close_during_update_consent_preserves_live_sessions() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.updates = UpdateController::ready_to_install_for_test();
+        app.request_update_install();
+
+        app.evaluate_close_request(&context);
+        let mut output = context.end_pass();
+
+        assert!(app
+            .overlays
+            .pending_quit
+            .is_some_and(|pending| { pending.purpose == QuitConfirmationPurpose::InstallUpdate }));
+        assert!(output
+            .viewport_output
+            .values()
+            .flat_map(|viewport| &viewport.commands)
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose)));
+        output.textures_delta.clear();
     }
 
     #[test]
@@ -6206,6 +6282,7 @@ mod tests {
     fn successful_update_install_requests_one_normal_application_close() {
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
         app.updates = UpdateController::installed_for_test();
+        app.update_restart_authorized = true;
         let context = egui::Context::default();
         let mut first_frame = context.run_ui(egui::RawInput::default(), |context| {
             egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
@@ -6231,6 +6308,7 @@ mod tests {
             .count();
         assert_eq!(close_requests, 1);
         assert!(app.update_exit_requested);
+        assert!(app.quit_confirmed);
         installed_frame.textures_delta.clear();
 
         let mut next_frame = context.run_ui(egui::RawInput::default(), |context| {
@@ -6244,6 +6322,94 @@ mod tests {
             .count();
         assert_eq!(close_requests, 0, "the close request must be one-shot");
         next_frame.textures_delta.clear();
+    }
+
+    #[test]
+    fn update_install_waits_for_live_session_restart_consent() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.updates = UpdateController::ready_to_install_for_test();
+
+        app.request_update_install();
+
+        let pending = app
+            .overlays
+            .pending_quit
+            .expect("restart consent should be pending");
+        assert_eq!(pending.purpose, QuitConfirmationPurpose::InstallUpdate);
+        assert!(matches!(
+            app.updates.status(),
+            UpdateStatus::ReadyToInstall(_)
+        ));
+        assert!(!app.update_restart_authorized);
+    }
+
+    #[test]
+    fn cancelling_update_restart_consent_keeps_the_update_installable() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.updates = UpdateController::ready_to_install_for_test();
+        app.request_update_install();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.get_by_label("Cancel").click();
+        harness.step();
+
+        assert!(harness.state().overlays.pending_quit.is_none());
+        assert!(!harness.state().update_restart_authorized);
+        assert!(matches!(
+            harness.state().updates.status(),
+            UpdateStatus::ReadyToInstall(_)
+        ));
+    }
+
+    #[test]
+    fn confirmed_update_restart_installs_then_closes_without_reprompting() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.updates = UpdateController::ready_to_install_for_test();
+        app.request_update_install();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(420.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        harness.get_by_label("Install and Restart").click();
+        harness.step();
+        harness.step();
+
+        assert!(harness.state().update_restart_authorized);
+        assert!(harness.state().update_exit_requested);
+        assert!(harness.state().quit_confirmed);
+        assert!(harness.state().overlays.pending_quit.is_none());
+    }
+
+    #[test]
+    fn failed_update_install_restores_ordinary_quit_protection() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.updates = UpdateController::ready_to_fail_install_for_test();
+        app.request_update_install();
+        assert!(app.update_restart_authorized);
+
+        let context = egui::Context::default();
+        let mut first_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        first_frame.textures_delta.clear();
+        let mut failed_frame = context.run_ui(egui::RawInput::default(), |context| {
+            egui::CentralPanel::default().show(context, |ui| app.ui_content(ui));
+        });
+        failed_frame.textures_delta.clear();
+
+        assert!(matches!(app.updates.status(), UpdateStatus::Failed { .. }));
+        assert!(!app.update_restart_authorized);
+        assert!(!app.update_exit_requested);
+        assert!(!app.quit_confirmed);
     }
 
     fn harness() -> Harness<'static, FesTermApp> {

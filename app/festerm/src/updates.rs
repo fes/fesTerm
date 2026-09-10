@@ -227,6 +227,41 @@ impl UpdateController {
     }
 
     #[cfg(test)]
+    pub(crate) fn ready_to_install_for_test() -> Self {
+        Self::ready_to_install_result_for_test(Ok(()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ready_to_fail_install_for_test() -> Self {
+        Self::ready_to_install_result_for_test(Err(()))
+    }
+
+    #[cfg(test)]
+    fn ready_to_install_result_for_test(result: Result<(), ()>) -> Self {
+        struct Downloaded(Result<(), ()>);
+
+        impl DownloadedUpdate for Downloaded {
+            fn summary(&self) -> UpdateSummary {
+                UpdateSummary {
+                    version: "0.2.0".to_owned(),
+                    notes: Some("Deterministic test release.".to_owned()),
+                }
+            }
+
+            fn install(self: Box<Self>) -> Result<(), ()> {
+                self.0
+            }
+        }
+
+        let mut controller = Self::configured_for_test();
+        let downloaded = Downloaded(result);
+        controller.status = UpdateStatus::ReadyToInstall(downloaded.summary());
+        controller.downloaded_update = Some(Box::new(downloaded));
+        controller.worker_spawner = run_worker_inline;
+        controller
+    }
+
+    #[cfg(test)]
     fn with_test_backend(backend: Arc<dyn UpdateBackend>) -> Self {
         Self {
             status: UpdateStatus::Idle,

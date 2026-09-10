@@ -63,9 +63,12 @@ and a signed static update manifest are published through **GitHub Releases**.
   fesTerm therefore needs no mutable application server.
 - **User control:** checking, downloading, and installing are distinct states.
   fesTerm never downloads or applies an update silently. Installation begins
-  only after an explicit user action and confirmation. After the verified
-  installation succeeds, fesTerm requests one normal application close so the
-  updater can replace and relaunch the running application.
+  only after an explicit user action. If live sessions would be lost, an
+  aggregate restart confirmation is required before installation begins;
+  cancelling leaves the verified download ready to install. After a consented
+  installation succeeds, fesTerm requests one authorized application close so
+  ordinary quit interception cannot prevent the updater from replacing and
+  relaunching the running application.
 - **Installation eligibility:** in-place updates apply only to package formats
   supported by the updater (`app`, `appimage`, `nsis`, or `wix`). A Debian or
   package-manager installation reports availability and directs the user to
@@ -158,8 +161,9 @@ evidence remains validation pending under
 - **Automated tests required:** Release CI must validate package contents,
   checksums, signatures, feed completeness, and version agreement. Application
   tests must prove that checking cannot download, downloading cannot install,
-  confirmation gates installation, and ineligible package types are never
-  replaced.
+  live-session restart confirmation gates installation and remains safely
+  cancellable, successful installation closes exactly once without a second
+  quit prompt, and ineligible package types are never replaced.
 - **Native/manual evidence required:** Verify clean install, upgrade,
   cancellation, restart, uninstall, interrupted-download recovery, and
   signature rejection on each platform. Windows evidence must include

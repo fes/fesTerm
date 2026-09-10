@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::SystemTime,
@@ -13,7 +13,11 @@ use std::{
 
 use tokio::{
     fs,
-    sync::mpsc::{error::TryRecvError, unbounded_channel, UnboundedReceiver, UnboundedSender},
+    sync::mpsc::{
+        channel,
+        error::{TryRecvError, TrySendError},
+        Receiver, Sender,
+    },
     task::JoinHandle,
 };
 
@@ -23,6 +27,15 @@ use crate::sftp::{
 };
 
 const TEMP_SUFFIX: &str = ".festerm-part";
+const TRANSFER_COMMAND_QUEUE_CAPACITY: usize = 64;
+const TRANSFER_EVENT_QUEUE_CAPACITY: usize = 128;
+const TRANSFER_CALLBACK_EVENT_BUFFER_CAPACITY: usize = TRANSFER_COMMAND_QUEUE_CAPACITY + 1;
+const MAX_TRANSFER_BATCH_ITEMS: usize = 256;
+const MAX_QUEUED_TRANSFER_ITEMS: usize = 1_024;
+const MAX_TRANSFER_PLAN_ITEMS: usize = 65_536;
+const MAX_TRANSFER_PLAN_MEMORY_PROXY_BYTES: usize = 64 * 1024 * 1024;
+// Covers container/node bookkeeping beyond the source, destination, and name text.
+const TRANSFER_PLAN_ITEM_OVERHEAD_BYTES: usize = 512;
 
 /// Which filesystem a GUI SFTP path or snapshot refers to.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -350,6 +363,18 @@ pub enum SftpTransferEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SftpTransferManagerError {
     EmptyBatch,
+    BatchTooLarge {
+        requested: usize,
+        maximum: usize,
+    },
+    TransferQueueSaturated {
+        requested: usize,
+        available: usize,
+        capacity: usize,
+    },
+    CommandQueueSaturated {
+        capacity: usize,
+    },
     ManagerClosed,
     UnsupportedPathPair {
         source: SftpLocation,
@@ -368,6 +393,22 @@ impl fmt::Display for SftpTransferManagerError {
             Self::EmptyBatch => {
                 formatter.write_str("transfer batch must contain at least one item")
             }
+            Self::BatchTooLarge { requested, maximum } => write!(
+                formatter,
+                "transfer batch contains {requested} items, exceeding the maximum of {maximum}"
+            ),
+            Self::TransferQueueSaturated {
+                requested,
+                available,
+                capacity,
+            } => write!(
+                formatter,
+                "SFTP transfer queue is saturated: requested {requested} slots with {available} available out of {capacity}"
+            ),
+            Self::CommandQueueSaturated { capacity } => write!(
+                formatter,
+                "SFTP transfer command queue is saturated at its capacity of {capacity}"
+            ),
             Self::ManagerClosed => formatter.write_str("SFTP transfer manager is closed"),
             Self::UnsupportedPathPair {
                 source,
@@ -403,9 +444,10 @@ impl std::error::Error for SftpTransferManagerError {}
 /// time for deterministic progress ordering, and emits typed events through a
 /// receiver the UI can poll or await.
 pub struct SftpTransferManager {
-    command_sender: UnboundedSender<WorkerCommand>,
-    event_receiver: UnboundedReceiver<SftpTransferEvent>,
+    command_sender: Sender<WorkerCommand>,
+    event_receiver: Receiver<SftpTransferEvent>,
     snapshot: Arc<Mutex<SftpTransferQueueSnapshot>>,
+    admitted_items: Arc<AtomicUsize>,
     next_batch_id: AtomicU64,
     next_transfer_id: AtomicU64,
     worker: JoinHandle<()>,
@@ -413,16 +455,20 @@ pub struct SftpTransferManager {
 
 impl SftpTransferManager {
     pub fn new(session: SftpSession) -> Self {
-        let (command_sender, command_receiver) = unbounded_channel();
-        let (event_sender, event_receiver) = unbounded_channel();
+        let (command_sender, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+        let (event_sender, event_receiver) = channel(TRANSFER_EVENT_QUEUE_CAPACITY);
         let snapshot = Arc::new(Mutex::new(SftpTransferQueueSnapshot::default()));
+        let admitted_items = Arc::new(AtomicUsize::new(0));
         let worker_snapshot = Arc::clone(&snapshot);
+        let worker_admitted_items = Arc::clone(&admitted_items);
         let worker = tokio::spawn(async move {
             run_transfer_worker(
                 LiveTransferBackend { session },
                 worker_snapshot,
+                Some(worker_admitted_items),
                 command_receiver,
                 event_sender,
+                TransferPlanningLimits::default(),
             )
             .await;
         });
@@ -430,6 +476,7 @@ impl SftpTransferManager {
             command_sender,
             event_receiver,
             snapshot,
+            admitted_items,
             next_batch_id: AtomicU64::new(1),
             next_transfer_id: AtomicU64::new(1),
             worker,
@@ -443,6 +490,8 @@ impl SftpTransferManager {
         if requests.is_empty() {
             return Err(SftpTransferManagerError::EmptyBatch);
         }
+        validate_batch_size(requests.len())?;
+        reserve_transfer_slots(&self.admitted_items, requests.len())?;
         let batch_id = SftpTransferBatchId(self.next_batch_id.fetch_add(1, Ordering::Relaxed));
         let items = requests
             .into_iter()
@@ -452,9 +501,14 @@ impl SftpTransferManager {
             })
             .collect::<Vec<_>>();
         let transfer_ids = items.iter().map(|item| item.id).collect::<Vec<_>>();
-        self.command_sender
-            .send(WorkerCommand::EnqueueBatch { batch_id, items })
-            .map_err(|_| SftpTransferManagerError::ManagerClosed)?;
+        if let Err(error) = try_send_command(
+            &self.command_sender,
+            WorkerCommand::EnqueueBatch { batch_id, items },
+        ) {
+            self.admitted_items
+                .fetch_sub(transfer_ids.len(), Ordering::AcqRel);
+            return Err(error);
+        }
         Ok(SftpQueuedTransferBatch {
             batch_id,
             transfer_ids,
@@ -465,27 +519,27 @@ impl SftpTransferManager {
         &self,
         transfer_id: SftpTransferId,
     ) -> Result<(), SftpTransferManagerError> {
-        self.command_sender
-            .send(WorkerCommand::CancelTransfer(transfer_id))
-            .map_err(|_| SftpTransferManagerError::ManagerClosed)
+        try_send_command(
+            &self.command_sender,
+            WorkerCommand::CancelTransfer(transfer_id),
+        )
     }
 
     pub fn cancel_batch(
         &self,
         batch_id: SftpTransferBatchId,
     ) -> Result<(), SftpTransferManagerError> {
-        self.command_sender
-            .send(WorkerCommand::CancelBatch(batch_id))
-            .map_err(|_| SftpTransferManagerError::ManagerClosed)
+        try_send_command(&self.command_sender, WorkerCommand::CancelBatch(batch_id))
     }
 
     pub fn resolve_collision(
         &self,
         resolution: SftpCollisionResolution,
     ) -> Result<(), SftpTransferManagerError> {
-        self.command_sender
-            .send(WorkerCommand::ResolveCollision(resolution))
-            .map_err(|_| SftpTransferManagerError::ManagerClosed)
+        try_send_command(
+            &self.command_sender,
+            WorkerCommand::ResolveCollision(resolution),
+        )
     }
 
     pub async fn recv_event(&mut self) -> Option<SftpTransferEvent> {
@@ -510,6 +564,57 @@ impl Drop for SftpTransferManager {
     }
 }
 
+fn validate_batch_size(item_count: usize) -> Result<(), SftpTransferManagerError> {
+    if item_count > MAX_TRANSFER_BATCH_ITEMS {
+        return Err(SftpTransferManagerError::BatchTooLarge {
+            requested: item_count,
+            maximum: MAX_TRANSFER_BATCH_ITEMS,
+        });
+    }
+    Ok(())
+}
+
+fn reserve_transfer_slots(
+    admitted_items: &AtomicUsize,
+    requested: usize,
+) -> Result<(), SftpTransferManagerError> {
+    let mut current = admitted_items.load(Ordering::Acquire);
+    loop {
+        let available = MAX_QUEUED_TRANSFER_ITEMS.saturating_sub(current);
+        if requested > available {
+            return Err(SftpTransferManagerError::TransferQueueSaturated {
+                requested,
+                available,
+                capacity: MAX_QUEUED_TRANSFER_ITEMS,
+            });
+        }
+        match admitted_items.compare_exchange_weak(
+            current,
+            current + requested,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return Ok(()),
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+fn try_send_command(
+    command_sender: &Sender<WorkerCommand>,
+    command: WorkerCommand,
+) -> Result<(), SftpTransferManagerError> {
+    command_sender
+        .try_send(command)
+        .map_err(|error| match error {
+            TrySendError::Full(_) => SftpTransferManagerError::CommandQueueSaturated {
+                capacity: TRANSFER_COMMAND_QUEUE_CAPACITY,
+            },
+            TrySendError::Closed(_) => SftpTransferManagerError::ManagerClosed,
+        })
+}
+
+#[derive(Debug)]
 enum WorkerCommand {
     EnqueueBatch {
         batch_id: SftpTransferBatchId,
@@ -533,6 +638,8 @@ struct WorkerState {
     batches: HashMap<SftpTransferBatchId, BatchState>,
     collisions: HashMap<SftpCollisionId, SftpTransferId>,
     next_collision_id: u64,
+    admitted_items: Option<Arc<AtomicUsize>>,
+    pending_events: VecDeque<SftpTransferEvent>,
 }
 
 #[derive(Default)]
@@ -618,6 +725,134 @@ struct FileDecisionContext {
     destination: SftpPath,
     remaining_units: VecDeque<TransferUnit>,
     whole_item: bool,
+}
+
+struct RootDirectoryDecisionContext {
+    source: SftpPathMetadata,
+    destination: SftpPath,
+    decision: SftpCollisionDecision,
+}
+
+#[derive(Clone, Copy)]
+struct TransferPlanningLimits {
+    max_items: usize,
+    max_memory_proxy_bytes: usize,
+}
+
+impl Default for TransferPlanningLimits {
+    fn default() -> Self {
+        Self {
+            max_items: MAX_TRANSFER_PLAN_ITEMS,
+            max_memory_proxy_bytes: MAX_TRANSFER_PLAN_MEMORY_PROXY_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransferPlanningLimit {
+    Items,
+    MemoryProxyBytes,
+}
+
+#[derive(Debug)]
+enum TransferWorkError {
+    Operation(SftpSessionError),
+    PlanningLimitExceeded {
+        limit: TransferPlanningLimit,
+        observed: usize,
+        maximum: usize,
+    },
+    Cancelled,
+    Manager(SftpTransferManagerError),
+}
+
+impl fmt::Display for TransferWorkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Operation(error) => error.fmt(formatter),
+            Self::PlanningLimitExceeded {
+                limit,
+                observed,
+                maximum,
+            } => {
+                let resource = match limit {
+                    TransferPlanningLimit::Items => "items",
+                    TransferPlanningLimit::MemoryProxyBytes => "memory-proxy bytes",
+                };
+                write!(
+                    formatter,
+                    "recursive transfer planning exceeded its {resource} limit: observed {observed}, maximum {maximum}"
+                )
+            }
+            Self::Cancelled => formatter.write_str("transfer cancelled during planning"),
+            Self::Manager(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl From<SftpSessionError> for TransferWorkError {
+    fn from(error: SftpSessionError) -> Self {
+        Self::Operation(error)
+    }
+}
+
+impl From<SftpTransferManagerError> for TransferWorkError {
+    fn from(error: SftpTransferManagerError) -> Self {
+        Self::Manager(error)
+    }
+}
+
+struct TransferPlanBudget {
+    limits: TransferPlanningLimits,
+    items: usize,
+    memory_proxy_bytes: usize,
+}
+
+impl TransferPlanBudget {
+    fn new(limits: TransferPlanningLimits) -> Self {
+        Self {
+            limits,
+            items: 0,
+            memory_proxy_bytes: 0,
+        }
+    }
+
+    fn account(
+        &mut self,
+        source: &SftpPath,
+        destination: &SftpPath,
+        name_bytes: usize,
+    ) -> Result<(), TransferWorkError> {
+        self.items = self.items.saturating_add(1);
+        if self.items > self.limits.max_items {
+            return Err(TransferWorkError::PlanningLimitExceeded {
+                limit: TransferPlanningLimit::Items,
+                observed: self.items,
+                maximum: self.limits.max_items,
+            });
+        }
+
+        self.memory_proxy_bytes = self.memory_proxy_bytes.saturating_add(
+            TRANSFER_PLAN_ITEM_OVERHEAD_BYTES
+                .saturating_add(path_memory_proxy_bytes(source))
+                .saturating_add(path_memory_proxy_bytes(destination))
+                .saturating_add(name_bytes),
+        );
+        if self.memory_proxy_bytes > self.limits.max_memory_proxy_bytes {
+            return Err(TransferWorkError::PlanningLimitExceeded {
+                limit: TransferPlanningLimit::MemoryProxyBytes,
+                observed: self.memory_proxy_bytes,
+                maximum: self.limits.max_memory_proxy_bytes,
+            });
+        }
+        Ok(())
+    }
+}
+
+struct PlanningControl<'a> {
+    transfer_id: SftpTransferId,
+    command_receiver: &'a mut Receiver<WorkerCommand>,
+    event_sender: &'a Sender<SftpTransferEvent>,
 }
 
 type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SftpSessionError>> + Send + 'a>>;
@@ -793,13 +1028,20 @@ impl TransferBackend for LiveTransferBackend {
 async fn run_transfer_worker<B: TransferBackend>(
     mut backend: B,
     snapshot: Arc<Mutex<SftpTransferQueueSnapshot>>,
-    mut command_receiver: UnboundedReceiver<WorkerCommand>,
-    event_sender: UnboundedSender<SftpTransferEvent>,
+    admitted_items: Option<Arc<AtomicUsize>>,
+    mut command_receiver: Receiver<WorkerCommand>,
+    event_sender: Sender<SftpTransferEvent>,
+    planning_limits: TransferPlanningLimits,
 ) {
-    let mut state = WorkerState::default();
+    let mut state = WorkerState {
+        admitted_items,
+        ..WorkerState::default()
+    };
     loop {
         state.publish_snapshot(&snapshot);
-        state.drain_commands(&mut command_receiver, &event_sender);
+        state
+            .drain_commands(&mut command_receiver, &event_sender)
+            .await;
 
         if let Some(transfer_id) = state.ready.pop_front() {
             state
@@ -808,6 +1050,7 @@ async fn run_transfer_worker<B: TransferBackend>(
                     &mut backend,
                     &mut command_receiver,
                     &event_sender,
+                    planning_limits,
                 )
                 .await;
             continue;
@@ -818,7 +1061,7 @@ async fn run_transfer_worker<B: TransferBackend>(
         }
 
         match command_receiver.recv().await {
-            Some(command) => state.handle_command(command, &event_sender),
+            Some(command) => state.handle_command(command, &event_sender).await,
             None if state.items.is_empty() => break,
             None => break,
         }
@@ -826,11 +1069,18 @@ async fn run_transfer_worker<B: TransferBackend>(
 }
 
 impl WorkerState {
-    fn handle_command(
+    async fn handle_command(
         &mut self,
         command: WorkerCommand,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
+        let event = self.apply_command(command);
+        if let Some(event) = event {
+            self.emit_event(event_sender, event).await;
+        }
+    }
+
+    fn apply_command(&mut self, command: WorkerCommand) -> Option<SftpTransferEvent> {
         match command {
             WorkerCommand::EnqueueBatch { batch_id, items } => {
                 let transfer_ids = items.iter().map(|item| item.id).collect::<Vec<_>>();
@@ -864,103 +1114,179 @@ impl WorkerState {
                         },
                     );
                 }
-                let _ = event_sender.send(SftpTransferEvent::BatchQueued {
+                Some(SftpTransferEvent::BatchQueued {
                     batch_id,
                     transfer_ids,
-                });
+                })
             }
             WorkerCommand::CancelTransfer(transfer_id) => {
-                if let Some(item) = self.items.get_mut(&transfer_id) {
-                    item.cancel_requested = true;
-                    if matches!(
-                        item.state,
-                        SftpTransferState::Queued
-                            | SftpTransferState::Planning
-                            | SftpTransferState::AwaitingCollision(_)
-                    ) {
-                        self.finish_cancelled(transfer_id, event_sender);
-                    }
-                }
+                self.request_cancel(transfer_id);
+                None
             }
             WorkerCommand::CancelBatch(batch_id) => {
-                let ids = self
+                let mut ids = self
                     .items
                     .values()
                     .filter(|item| item.batch_id == batch_id)
                     .map(|item| item.id)
                     .collect::<Vec<_>>();
-                for transfer_id in ids {
-                    self.handle_command(WorkerCommand::CancelTransfer(transfer_id), event_sender);
+                ids.sort_by_key(|transfer_id| transfer_id.raw());
+                for transfer_id in ids.into_iter().rev() {
+                    self.request_cancel(transfer_id);
                 }
+                None
             }
             WorkerCommand::ResolveCollision(resolution) => {
-                if let Some(transfer_id) = self.collisions.remove(&resolution.collision_id) {
-                    let batch_id = if let Some(item) = self.items.get_mut(&transfer_id) {
+                self.apply_collision_resolution_command(resolution);
+                None
+            }
+        }
+    }
+
+    fn request_cancel(&mut self, transfer_id: SftpTransferId) {
+        if let Some(item) = self.items.get_mut(&transfer_id) {
+            item.cancel_requested = true;
+            self.ready.retain(|queued_id| *queued_id != transfer_id);
+            self.ready.push_front(transfer_id);
+        }
+    }
+
+    fn apply_collision_resolution_command(&mut self, resolution: SftpCollisionResolution) {
+        if let Some(transfer_id) = self.collisions.remove(&resolution.collision_id) {
+            let batch_id = if let Some(item) = self.items.get_mut(&transfer_id) {
+                item.active_collision = None;
+                item.pending_resolution = Some(resolution.clone());
+                item.state = SftpTransferState::Queued;
+                let batch_id = item.batch_id;
+                if matches!(
+                    resolution.scope,
+                    SftpCollisionScope::RemainingConflictsInBatch
+                ) {
+                    if let Some(batch) = self.batches.get_mut(&item.batch_id) {
+                        batch.default_decision = Some(resolution.decision);
+                    }
+                }
+                self.ready.push_back(transfer_id);
+                batch_id
+            } else {
+                return;
+            };
+            if matches!(
+                resolution.scope,
+                SftpCollisionScope::RemainingConflictsInBatch
+            ) {
+                let mut paused = self
+                    .items
+                    .values()
+                    .filter(|item| item.batch_id == batch_id && item.pending_resolution.is_none())
+                    .filter_map(|item| match &item.root_state {
+                        TransferRootState::WaitingCollision(collision)
+                            if collision.allowed_decisions().contains(&resolution.decision) =>
+                        {
+                            Some((item.id, collision.id()))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                paused.sort_by_key(|(transfer_id, _)| transfer_id.raw());
+                for (item_id, collision_id) in paused {
+                    self.collisions.remove(&collision_id);
+                    if let Some(item) = self.items.get_mut(&item_id) {
                         item.active_collision = None;
-                        item.pending_resolution = Some(resolution.clone());
+                        item.pending_resolution = Some(SftpCollisionResolution {
+                            collision_id,
+                            decision: resolution.decision,
+                            scope: SftpCollisionScope::ThisItem,
+                        });
                         item.state = SftpTransferState::Queued;
-                        let batch_id = item.batch_id;
-                        if matches!(
-                            resolution.scope,
-                            SftpCollisionScope::RemainingConflictsInBatch
-                        ) {
-                            if let Some(batch) = self.batches.get_mut(&item.batch_id) {
-                                batch.default_decision = Some(resolution.decision);
-                            }
-                        }
-                        self.ready.push_back(transfer_id);
-                        batch_id
-                    } else {
-                        return;
-                    };
-                    if matches!(
-                        resolution.scope,
-                        SftpCollisionScope::RemainingConflictsInBatch
-                    ) {
-                        let paused = self
-                            .items
-                            .values()
-                            .filter(|item| {
-                                item.batch_id == batch_id && item.pending_resolution.is_none()
-                            })
-                            .filter_map(|item| match &item.root_state {
-                                TransferRootState::WaitingCollision(collision)
-                                    if collision
-                                        .allowed_decisions()
-                                        .contains(&resolution.decision) =>
-                                {
-                                    Some((item.id, collision.id()))
-                                }
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>();
-                        for (item_id, collision_id) in paused {
-                            self.collisions.remove(&collision_id);
-                            if let Some(item) = self.items.get_mut(&item_id) {
-                                item.active_collision = None;
-                                item.pending_resolution = Some(SftpCollisionResolution {
-                                    collision_id,
-                                    decision: resolution.decision,
-                                    scope: SftpCollisionScope::ThisItem,
-                                });
-                                item.state = SftpTransferState::Queued;
-                                self.ready.push_back(item_id);
-                            }
-                        }
+                        self.ready.push_back(item_id);
                     }
                 }
             }
         }
     }
 
-    fn drain_commands(
+    async fn drain_commands(
         &mut self,
-        command_receiver: &mut UnboundedReceiver<WorkerCommand>,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
-        while let Ok(command) = command_receiver.try_recv() {
-            self.handle_command(command, event_sender);
+        for _ in 0..TRANSFER_COMMAND_QUEUE_CAPACITY {
+            let Ok(command) = command_receiver.try_recv() else {
+                break;
+            };
+            self.handle_command(command, event_sender).await;
         }
+    }
+
+    fn drain_commands_during_copy(
+        &mut self,
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
+    ) {
+        self.flush_pending_events_nonblocking(event_sender);
+        for _ in 0..TRANSFER_COMMAND_QUEUE_CAPACITY {
+            if self.pending_events.len() >= TRANSFER_CALLBACK_EVENT_BUFFER_CAPACITY - 1 {
+                break;
+            }
+            let Ok(command) = command_receiver.try_recv() else {
+                break;
+            };
+            if let Some(event) = self.apply_command(command) {
+                self.pending_events.push_back(event);
+            }
+        }
+    }
+
+    fn emit_progress(
+        &mut self,
+        event_sender: &Sender<SftpTransferEvent>,
+        event: SftpTransferEvent,
+    ) {
+        self.flush_pending_events_nonblocking(event_sender);
+        if let Some(SftpTransferEvent::ItemProgress { .. }) = self.pending_events.back() {
+            *self
+                .pending_events
+                .back_mut()
+                .expect("pending progress event exists") = event;
+        } else if let Err(error) = event_sender.try_send(event) {
+            match error {
+                TrySendError::Full(event) => {
+                    debug_assert!(
+                        self.pending_events.len() < TRANSFER_CALLBACK_EVENT_BUFFER_CAPACITY
+                    );
+                    self.pending_events.push_back(event);
+                }
+                TrySendError::Closed(_) => self.pending_events.clear(),
+            }
+        }
+    }
+
+    fn flush_pending_events_nonblocking(&mut self, event_sender: &Sender<SftpTransferEvent>) {
+        while let Some(event) = self.pending_events.pop_front() {
+            match event_sender.try_send(event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(event)) => {
+                    self.pending_events.push_front(event);
+                    break;
+                }
+                Err(TrySendError::Closed(_)) => {
+                    self.pending_events.clear();
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn emit_event(
+        &mut self,
+        event_sender: &Sender<SftpTransferEvent>,
+        event: SftpTransferEvent,
+    ) {
+        while let Some(pending) = self.pending_events.pop_front() {
+            let _ = event_sender.send(pending).await;
+        }
+        let _ = event_sender.send(event).await;
     }
 
     fn publish_snapshot(&self, snapshot: &Arc<Mutex<SftpTransferQueueSnapshot>>) {
@@ -989,23 +1315,32 @@ impl WorkerState {
         &mut self,
         transfer_id: SftpTransferId,
         backend: &mut B,
-        command_receiver: &mut UnboundedReceiver<WorkerCommand>,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
+        planning_limits: TransferPlanningLimits,
     ) {
         if !self.items.contains_key(&transfer_id) {
             return;
         }
         if self.items[&transfer_id].cancel_requested {
-            self.finish_cancelled(transfer_id, event_sender);
+            self.finish_cancelled(transfer_id, event_sender).await;
             return;
         }
 
         if let Some(resolution) = self.items[&transfer_id].pending_resolution.clone() {
             if let Err(error) = self
-                .apply_resolution(transfer_id, resolution, backend, event_sender)
+                .apply_resolution(
+                    transfer_id,
+                    resolution,
+                    backend,
+                    command_receiver,
+                    event_sender,
+                    planning_limits,
+                )
                 .await
             {
-                self.finish_failed(transfer_id, None, error.to_string(), event_sender);
+                self.finish_work_error(transfer_id, error, event_sender)
+                    .await;
             }
             return;
         }
@@ -1020,8 +1355,18 @@ impl WorkerState {
         );
         match root_state {
             TransferRootState::Pending => {
-                if let Err(error) = self.prepare_item(transfer_id, backend, event_sender).await {
-                    self.finish_failed(transfer_id, None, error.to_string(), event_sender);
+                if let Err(error) = self
+                    .prepare_item(
+                        transfer_id,
+                        backend,
+                        command_receiver,
+                        event_sender,
+                        planning_limits,
+                    )
+                    .await
+                {
+                    self.finish_work_error(transfer_id, error, event_sender)
+                        .await;
                 }
             }
             TransferRootState::Ready(plan) => {
@@ -1029,7 +1374,8 @@ impl WorkerState {
                     .execute_plan_step(transfer_id, plan, backend, command_receiver, event_sender)
                     .await
                 {
-                    self.finish_failed(transfer_id, None, error.to_string(), event_sender);
+                    self.finish_failed(transfer_id, None, error.to_string(), event_sender)
+                        .await;
                 }
             }
             TransferRootState::WaitingCollision(collision) => {
@@ -1045,8 +1391,10 @@ impl WorkerState {
         &mut self,
         transfer_id: SftpTransferId,
         backend: &mut B,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
-    ) -> Result<(), SftpSessionError> {
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
+        planning_limits: TransferPlanningLimits,
+    ) -> Result<(), TransferWorkError> {
         let request = self.items[&transfer_id].request.clone();
         let batch_id = self.items[&transfer_id].batch_id;
         self.items.get_mut(&transfer_id).expect("item exists").state = SftpTransferState::Planning;
@@ -1074,11 +1422,15 @@ impl WorkerState {
                 if let Some(decision) = self.batch_default_for(batch_id, &allowed) {
                     self.apply_root_directory_decision(
                         transfer_id,
-                        source,
-                        destination,
-                        decision,
+                        RootDirectoryDecisionContext {
+                            source,
+                            destination,
+                            decision,
+                        },
                         backend,
+                        command_receiver,
                         event_sender,
+                        planning_limits,
                     )
                     .await?;
                 } else {
@@ -1099,11 +1451,24 @@ impl WorkerState {
                             destination,
                         },
                     ));
-                    let _ = event_sender.send(SftpTransferEvent::Collision(collision));
+                    self.emit_event(event_sender, SftpTransferEvent::Collision(collision))
+                        .await;
                 }
             } else {
+                let mut control = PlanningControl {
+                    transfer_id,
+                    command_receiver,
+                    event_sender,
+                };
                 let plan = self
-                    .build_directory_plan(&source, &destination, false, backend)
+                    .build_directory_plan(
+                        &source,
+                        &destination,
+                        false,
+                        backend,
+                        Some(&mut control),
+                        planning_limits,
+                    )
                     .await?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.total_bytes = plan.total_bytes;
@@ -1126,7 +1491,8 @@ impl WorkerState {
                     backend,
                     event_sender,
                 )
-                .await?;
+                .await
+                .map_err(TransferWorkError::from)?;
             } else {
                 let collision = self.register_collision(
                     batch_id,
@@ -1146,7 +1512,8 @@ impl WorkerState {
                         remaining_units: VecDeque::new(),
                         whole_item: true,
                     }));
-                let _ = event_sender.send(SftpTransferEvent::Collision(collision));
+                self.emit_event(event_sender, SftpTransferEvent::Collision(collision))
+                    .await;
             }
         } else {
             let item = self.items.get_mut(&transfer_id).expect("item exists");
@@ -1166,22 +1533,32 @@ impl WorkerState {
     }
 
     async fn build_directory_plan<B: TransferBackend>(
-        &self,
+        &mut self,
         source_root: &SftpPathMetadata,
         destination_root: &SftpPath,
         replace_existing_non_directory: bool,
         backend: &mut B,
-    ) -> Result<TransferPlan, SftpSessionError> {
+        mut control: Option<&mut PlanningControl<'_>>,
+        limits: TransferPlanningLimits,
+    ) -> Result<TransferPlan, TransferWorkError> {
         let mut units = VecDeque::new();
         let mut total_bytes = 0_u64;
         let mut total_known = true;
+        let mut budget = TransferPlanBudget::new(limits);
+        budget.account(&source_root.path, destination_root, 0)?;
         units.push_back(TransferUnit::EnsureDirectory {
             destination: destination_root.clone(),
             replace_existing_non_directory,
         });
         let mut stack = vec![(source_root.path.clone(), destination_root.clone())];
         while let Some((source_directory, destination_directory)) = stack.pop() {
-            let snapshot = backend.read_directory(&source_directory).await?;
+            let snapshot = match control.as_deref_mut() {
+                Some(control) => {
+                    self.read_directory_during_planning(&source_directory, backend, control)
+                        .await?
+                }
+                None => backend.read_directory(&source_directory).await?,
+            };
             let mut child_directories = Vec::new();
             for entry in snapshot.entries {
                 if matches!(source_directory, SftpPath::Remote(_))
@@ -1191,6 +1568,7 @@ impl WorkerState {
                 }
                 let child_destination = destination_directory.join_child(&entry.name);
                 ensure_local_child_within_root(destination_root, &child_destination)?;
+                budget.account(&entry.path, &child_destination, entry.name.len())?;
                 if entry.file_type == SftpEntryType::Directory {
                     units.push_back(TransferUnit::EnsureDirectory {
                         destination: child_destination.clone(),
@@ -1199,7 +1577,13 @@ impl WorkerState {
                     child_directories.push((entry.path.clone(), child_destination));
                 } else {
                     if let Some(size) = entry.size {
-                        total_bytes += size;
+                        if total_known {
+                            if let Some(updated_total) = total_bytes.checked_add(size) {
+                                total_bytes = updated_total;
+                            } else {
+                                total_known = false;
+                            }
+                        }
                     } else {
                         total_known = false;
                     }
@@ -1220,25 +1604,73 @@ impl WorkerState {
         })
     }
 
+    async fn read_directory_during_planning<B: TransferBackend>(
+        &mut self,
+        path: &SftpPath,
+        backend: &mut B,
+        control: &mut PlanningControl<'_>,
+    ) -> Result<SftpDirectorySnapshot, TransferWorkError> {
+        let read = backend.read_directory(path);
+        tokio::pin!(read);
+        loop {
+            tokio::select! {
+                biased;
+                command = control.command_receiver.recv() => {
+                    match command {
+                        Some(command) => {
+                            self.handle_command(command, control.event_sender).await;
+                            if self
+                                .items
+                                .get(&control.transfer_id)
+                                .is_none_or(|item| item.cancel_requested)
+                            {
+                                return Err(TransferWorkError::Cancelled);
+                            }
+                        }
+                        None => return read.await.map_err(TransferWorkError::from),
+                    }
+                }
+                result = &mut read => return result.map_err(TransferWorkError::from),
+            }
+        }
+    }
+
     async fn apply_root_directory_decision<B: TransferBackend>(
         &mut self,
         transfer_id: SftpTransferId,
-        source: SftpPathMetadata,
-        destination: SftpPath,
-        decision: SftpCollisionDecision,
+        context: RootDirectoryDecisionContext,
         backend: &mut B,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
-    ) -> Result<(), SftpSessionError> {
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
+        planning_limits: TransferPlanningLimits,
+    ) -> Result<(), TransferWorkError> {
+        let RootDirectoryDecisionContext {
+            source,
+            destination,
+            decision,
+        } = context;
         match decision {
             SftpCollisionDecision::Skip => {
-                self.finish_skipped(transfer_id, event_sender);
+                self.finish_skipped(transfer_id, event_sender).await;
             }
             SftpCollisionDecision::KeepBoth => {
                 let target = self
                     .first_available_keep_both_destination(backend, &destination)
                     .await?;
+                let mut control = PlanningControl {
+                    transfer_id,
+                    command_receiver,
+                    event_sender,
+                };
                 let plan = self
-                    .build_directory_plan(&source, &target, false, backend)
+                    .build_directory_plan(
+                        &source,
+                        &target,
+                        false,
+                        backend,
+                        Some(&mut control),
+                        planning_limits,
+                    )
                     .await?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.destination = Some(target);
@@ -1248,8 +1680,20 @@ impl WorkerState {
                 self.ready.push_front(transfer_id);
             }
             SftpCollisionDecision::MergeFolders => {
+                let mut control = PlanningControl {
+                    transfer_id,
+                    command_receiver,
+                    event_sender,
+                };
                 let plan = self
-                    .build_directory_plan(&source, &destination, false, backend)
+                    .build_directory_plan(
+                        &source,
+                        &destination,
+                        false,
+                        backend,
+                        Some(&mut control),
+                        planning_limits,
+                    )
                     .await?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.total_bytes = plan.total_bytes;
@@ -1258,8 +1702,20 @@ impl WorkerState {
                 self.ready.push_front(transfer_id);
             }
             SftpCollisionDecision::Replace => {
+                let mut control = PlanningControl {
+                    transfer_id,
+                    command_receiver,
+                    event_sender,
+                };
                 let plan = self
-                    .build_directory_plan(&source, &destination, true, backend)
+                    .build_directory_plan(
+                        &source,
+                        &destination,
+                        true,
+                        backend,
+                        Some(&mut control),
+                        planning_limits,
+                    )
                     .await?;
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.total_bytes = plan.total_bytes;
@@ -1276,8 +1732,10 @@ impl WorkerState {
         transfer_id: SftpTransferId,
         resolution: SftpCollisionResolution,
         backend: &mut B,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
-    ) -> Result<(), SftpTransferManagerError> {
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
+        planning_limits: TransferPlanningLimits,
+    ) -> Result<(), TransferWorkError> {
         let pending = {
             let item = self.items.get_mut(&transfer_id).expect("item exists");
             item.pending_resolution = None;
@@ -1294,18 +1752,22 @@ impl WorkerState {
                         return Err(SftpTransferManagerError::InvalidCollisionDecision {
                             collision_id: collision.id,
                             decision: resolution.decision,
-                        });
+                        }
+                        .into());
                     }
                     self.apply_root_directory_decision(
                         transfer_id,
-                        source,
-                        destination,
-                        resolution.decision,
+                        RootDirectoryDecisionContext {
+                            source,
+                            destination,
+                            decision: resolution.decision,
+                        },
                         backend,
+                        command_receiver,
                         event_sender,
+                        planning_limits,
                     )
-                    .await
-                    .map_err(|_| SftpTransferManagerError::UnknownCollision(collision.id))?;
+                    .await?;
                 }
                 PendingCollision::File {
                     collision,
@@ -1318,7 +1780,8 @@ impl WorkerState {
                         return Err(SftpTransferManagerError::InvalidCollisionDecision {
                             collision_id: collision.id,
                             decision: resolution.decision,
-                        });
+                        }
+                        .into());
                     }
                     self.apply_file_decision(
                         transfer_id,
@@ -1333,7 +1796,7 @@ impl WorkerState {
                         event_sender,
                     )
                     .await
-                    .map_err(|_| SftpTransferManagerError::UnknownCollision(collision.id))?;
+                    .map_err(TransferWorkError::from)?;
                 }
             },
             other => {
@@ -1352,7 +1815,7 @@ impl WorkerState {
         context: FileDecisionContext,
         decision: SftpCollisionDecision,
         backend: &mut B,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) -> Result<(), SftpSessionError> {
         let FileDecisionContext {
             source,
@@ -1363,7 +1826,7 @@ impl WorkerState {
         match decision {
             SftpCollisionDecision::Skip => {
                 if whole_item && remaining_units.is_empty() {
-                    self.finish_skipped(transfer_id, event_sender);
+                    self.finish_skipped(transfer_id, event_sender).await;
                 } else {
                     let _ = (source, destination, whole_item);
                     let item = self.items.get_mut(&transfer_id).expect("item exists");
@@ -1428,11 +1891,11 @@ impl WorkerState {
         transfer_id: SftpTransferId,
         mut plan: TransferPlan,
         backend: &mut B,
-        command_receiver: &mut UnboundedReceiver<WorkerCommand>,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        command_receiver: &mut Receiver<WorkerCommand>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) -> Result<(), SftpSessionError> {
         let Some(unit) = plan.units.pop_front() else {
-            self.finish_completed(transfer_id, event_sender);
+            self.finish_completed(transfer_id, event_sender).await;
             return Ok(());
         };
         match unit {
@@ -1462,12 +1925,15 @@ impl WorkerState {
                 let item = self.items.get_mut(&transfer_id).expect("item exists");
                 item.root_state = TransferRootState::Ready(plan);
                 item.state = SftpTransferState::Queued;
-                let _ =
-                    event_sender.send(SftpTransferEvent::DestinationDirectoryRefreshRequested {
+                self.emit_event(
+                    event_sender,
+                    SftpTransferEvent::DestinationDirectoryRefreshRequested {
                         batch_id,
                         transfer_id,
                         directory: destination.parent_directory(),
-                    });
+                    },
+                )
+                .await;
                 self.ready.push_front(transfer_id);
             }
             TransferUnit::CopyFile {
@@ -1515,20 +1981,22 @@ impl WorkerState {
                                     whole_item,
                                 },
                             ));
-                            let _ = event_sender.send(SftpTransferEvent::Collision(collision));
+                            self.emit_event(event_sender, SftpTransferEvent::Collision(collision))
+                                .await;
                         }
                         return Ok(());
                     }
                 }
 
-                self.emit_started_if_needed(transfer_id, event_sender, &destination);
+                self.emit_started_if_needed(transfer_id, event_sender, &destination)
+                    .await;
                 let batch_id = self.items[&transfer_id].batch_id;
                 let base_bytes = self.items[&transfer_id].bytes_transferred;
                 let temp_destination = self
                     .first_available_temp_destination(backend, &destination)
                     .await?;
                 let mut progress = |copied_for_file: u64| -> Result<(), CopyInterrupted> {
-                    self.drain_commands(command_receiver, event_sender);
+                    self.drain_commands_during_copy(command_receiver, event_sender);
                     if self
                         .items
                         .get(&transfer_id)
@@ -1540,13 +2008,14 @@ impl WorkerState {
                     if let Some(item) = self.items.get_mut(&transfer_id) {
                         item.state = SftpTransferState::Running;
                         item.bytes_transferred = base_bytes + copied_for_file;
-                        let _ = event_sender.send(SftpTransferEvent::ItemProgress {
+                        let progress_event = SftpTransferEvent::ItemProgress {
                             batch_id,
                             transfer_id,
                             current_path: source.path.clone(),
                             bytes_transferred: item.bytes_transferred,
                             total_bytes: item.total_bytes,
-                        });
+                        };
+                        self.emit_progress(event_sender, progress_event);
                     }
                     Ok(())
                 };
@@ -1581,7 +2050,11 @@ impl WorkerState {
                                         whole_item,
                                     },
                                 ));
-                                let _ = event_sender.send(SftpTransferEvent::Collision(collision));
+                                self.emit_event(
+                                    event_sender,
+                                    SftpTransferEvent::Collision(collision),
+                                )
+                                .await;
                                 return Ok(());
                             }
                         }
@@ -1589,18 +2062,20 @@ impl WorkerState {
                         let item = self.items.get_mut(&transfer_id).expect("item exists");
                         item.root_state = TransferRootState::Ready(plan);
                         item.state = SftpTransferState::Queued;
-                        let _ = event_sender.send(
+                        self.emit_event(
+                            event_sender,
                             SftpTransferEvent::DestinationDirectoryRefreshRequested {
                                 batch_id,
                                 transfer_id,
                                 directory: destination.parent_directory(),
                             },
-                        );
+                        )
+                        .await;
                         self.ready.push_front(transfer_id);
                     }
                     Err(CopyFileError::Cancelled) => {
                         let _ = cleanup_temp_destination(backend, &temp_destination).await;
-                        self.finish_cancelled(transfer_id, event_sender);
+                        self.finish_cancelled(transfer_id, event_sender).await;
                     }
                     Err(CopyFileError::Operation(error)) => {
                         let _ = cleanup_temp_destination(backend, &temp_destination).await;
@@ -1612,10 +2087,10 @@ impl WorkerState {
         Ok(())
     }
 
-    fn emit_started_if_needed(
+    async fn emit_started_if_needed(
         &mut self,
         transfer_id: SftpTransferId,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
         destination: &SftpPath,
     ) {
         let item = self.items.get_mut(&transfer_id).expect("item exists");
@@ -1624,7 +2099,7 @@ impl WorkerState {
         }
         item.started = true;
         item.state = SftpTransferState::Running;
-        let _ = event_sender.send(SftpTransferEvent::ItemStarted {
+        let event = SftpTransferEvent::ItemStarted {
             batch_id: item.batch_id,
             transfer_id,
             source: item.request.source.clone(),
@@ -1634,7 +2109,8 @@ impl WorkerState {
                 .unwrap_or_else(|| destination.clone()),
             direction: item.direction,
             total_bytes: item.total_bytes,
-        });
+        };
+        self.emit_event(event_sender, event).await;
     }
 
     async fn first_available_keep_both_destination<B: TransferBackend>(
@@ -1718,90 +2194,131 @@ impl WorkerState {
         })
     }
 
-    fn finish_completed(
+    async fn finish_work_error(
         &mut self,
         transfer_id: SftpTransferId,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        error: TransferWorkError,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
-        if let Some(item) = self.remove_item(transfer_id) {
-            let _ = event_sender.send(SftpTransferEvent::ItemCompleted {
-                batch_id: item.batch_id,
-                transfer_id,
-                destination: item.destination.unwrap_or(item.request.destination),
-                bytes_transferred: item.bytes_transferred,
-                total_bytes: item.total_bytes,
-                skipped_conflicts: item.skipped_conflicts,
-            });
-            self.finish_batch_if_needed(item.batch_id, event_sender);
+        match error {
+            TransferWorkError::Cancelled => {
+                self.finish_cancelled(transfer_id, event_sender).await;
+            }
+            other => {
+                self.finish_failed(transfer_id, None, other.to_string(), event_sender)
+                    .await;
+            }
         }
     }
 
-    fn finish_failed(
+    async fn finish_completed(
+        &mut self,
+        transfer_id: SftpTransferId,
+        event_sender: &Sender<SftpTransferEvent>,
+    ) {
+        if let Some(item) = self.remove_item(transfer_id) {
+            self.emit_event(
+                event_sender,
+                SftpTransferEvent::ItemCompleted {
+                    batch_id: item.batch_id,
+                    transfer_id,
+                    destination: item.destination.unwrap_or(item.request.destination),
+                    bytes_transferred: item.bytes_transferred,
+                    total_bytes: item.total_bytes,
+                    skipped_conflicts: item.skipped_conflicts,
+                },
+            )
+            .await;
+            self.finish_batch_if_needed(item.batch_id, event_sender)
+                .await;
+        }
+    }
+
+    async fn finish_failed(
         &mut self,
         transfer_id: SftpTransferId,
         destination: Option<SftpPath>,
         reason: String,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
         if let Some(item) = self.remove_item(transfer_id) {
-            let _ = event_sender.send(SftpTransferEvent::ItemFailed {
-                batch_id: item.batch_id,
-                transfer_id,
-                destination: destination.or(item.destination),
-                reason,
-            });
-            self.finish_batch_if_needed(item.batch_id, event_sender);
+            self.emit_event(
+                event_sender,
+                SftpTransferEvent::ItemFailed {
+                    batch_id: item.batch_id,
+                    transfer_id,
+                    destination: destination.or(item.destination),
+                    reason,
+                },
+            )
+            .await;
+            self.finish_batch_if_needed(item.batch_id, event_sender)
+                .await;
         }
     }
 
-    fn finish_cancelled(
+    async fn finish_cancelled(
         &mut self,
         transfer_id: SftpTransferId,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
         if let Some(item) = self.remove_item(transfer_id) {
-            let _ = event_sender.send(SftpTransferEvent::ItemCancelled {
-                batch_id: item.batch_id,
-                transfer_id,
-                destination: item.destination,
-                bytes_transferred: item.bytes_transferred,
-                total_bytes: item.total_bytes,
-            });
-            self.finish_batch_if_needed(item.batch_id, event_sender);
+            self.emit_event(
+                event_sender,
+                SftpTransferEvent::ItemCancelled {
+                    batch_id: item.batch_id,
+                    transfer_id,
+                    destination: item.destination,
+                    bytes_transferred: item.bytes_transferred,
+                    total_bytes: item.total_bytes,
+                },
+            )
+            .await;
+            self.finish_batch_if_needed(item.batch_id, event_sender)
+                .await;
         }
     }
 
-    fn finish_skipped(
+    async fn finish_skipped(
         &mut self,
         transfer_id: SftpTransferId,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
         if let Some(item) = self.remove_item(transfer_id) {
-            let _ = event_sender.send(SftpTransferEvent::ItemSkipped {
-                batch_id: item.batch_id,
-                transfer_id,
-                destination: item.destination,
-            });
-            self.finish_batch_if_needed(item.batch_id, event_sender);
+            self.emit_event(
+                event_sender,
+                SftpTransferEvent::ItemSkipped {
+                    batch_id: item.batch_id,
+                    transfer_id,
+                    destination: item.destination,
+                },
+            )
+            .await;
+            self.finish_batch_if_needed(item.batch_id, event_sender)
+                .await;
         }
     }
 
-    fn finish_batch_if_needed(
+    async fn finish_batch_if_needed(
         &mut self,
         batch_id: SftpTransferBatchId,
-        event_sender: &UnboundedSender<SftpTransferEvent>,
+        event_sender: &Sender<SftpTransferEvent>,
     ) {
         if let Some(batch) = self.batches.get_mut(&batch_id) {
             batch.active_items = batch.active_items.saturating_sub(1);
             if batch.active_items == 0 {
                 self.batches.remove(&batch_id);
-                let _ = event_sender.send(SftpTransferEvent::BatchFinished { batch_id });
+                self.emit_event(event_sender, SftpTransferEvent::BatchFinished { batch_id })
+                    .await;
             }
         }
     }
 
     fn remove_item(&mut self, transfer_id: SftpTransferId) -> Option<TransferItem> {
         let item = self.items.remove(&transfer_id)?;
+        if let Some(admitted_items) = &self.admitted_items {
+            admitted_items.fetch_sub(1, Ordering::AcqRel);
+        }
         self.ready.retain(|queued_id| *queued_id != transfer_id);
         if let Some(collision_id) = item.active_collision {
             self.collisions.remove(&collision_id);
@@ -1810,6 +2327,13 @@ impl WorkerState {
                 .retain(|_, mapped_id| *mapped_id != transfer_id);
         }
         Some(item)
+    }
+}
+
+fn path_memory_proxy_bytes(path: &SftpPath) -> usize {
+    match path {
+        SftpPath::Local(path) => path.as_os_str().to_string_lossy().len(),
+        SftpPath::Remote(path) => path.len(),
     }
 }
 
@@ -1940,8 +2464,16 @@ async fn cleanup_temp_destination<B: TransferBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs as stdfs, sync::atomic::AtomicU64, time::UNIX_EPOCH};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::{
+        fs as stdfs,
+        future::pending,
+        sync::atomic::AtomicU64,
+        time::{Duration, UNIX_EPOCH},
+    };
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        sync::oneshot,
+    };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2137,6 +2669,65 @@ mod tests {
         }
     }
 
+    struct SlowEnumerationBackend {
+        source: SftpPath,
+        enumeration_started: Option<oneshot::Sender<()>>,
+    }
+
+    impl TransferBackend for SlowEnumerationBackend {
+        fn metadata<'a>(
+            &'a mut self,
+            path: &'a SftpPath,
+        ) -> BackendFuture<'a, Option<SftpPathMetadata>> {
+            let metadata = (path == &self.source).then(|| SftpPathMetadata {
+                path: path.clone(),
+                file_type: SftpEntryType::Directory,
+                size: None,
+                modified_at: None,
+                permissions: None,
+            });
+            Box::pin(async move { Ok(metadata) })
+        }
+
+        fn read_directory<'a>(
+            &'a mut self,
+            _path: &'a SftpPath,
+        ) -> BackendFuture<'a, SftpDirectorySnapshot> {
+            let enumeration_started = self.enumeration_started.take();
+            Box::pin(async move {
+                if let Some(enumeration_started) = enumeration_started {
+                    let _ = enumeration_started.send(());
+                }
+                pending::<Result<SftpDirectorySnapshot, SftpSessionError>>().await
+            })
+        }
+
+        fn create_directory<'a>(&'a mut self, _path: &'a SftpPath) -> BackendFuture<'a, ()> {
+            Box::pin(async { unreachable!("cancelled planning should not create directories") })
+        }
+
+        fn remove_file<'a>(&'a mut self, _path: &'a SftpPath) -> BackendFuture<'a, ()> {
+            Box::pin(async { unreachable!("cancelled planning should not remove files") })
+        }
+
+        fn rename<'a>(
+            &'a mut self,
+            _source: &'a SftpPath,
+            _destination: &'a SftpPath,
+        ) -> BackendFuture<'a, ()> {
+            Box::pin(async { unreachable!("cancelled planning should not rename files") })
+        }
+
+        fn copy_file<'a>(
+            &'a mut self,
+            _source: &'a SftpPath,
+            _destination: &'a SftpPath,
+            _on_progress: &'a mut (dyn FnMut(u64) -> Result<(), CopyInterrupted> + Send),
+        ) -> CopyFuture<'a> {
+            Box::pin(async { unreachable!("cancelled planning should not copy files") })
+        }
+    }
+
     fn real_path(path: &SftpPath) -> PathBuf {
         match path {
             SftpPath::Local(path) => path.clone(),
@@ -2160,27 +2751,53 @@ mod tests {
         .expect("upload request should be valid")
     }
 
-    async fn spawn_worker(
-        backend: TestBackend,
+    async fn spawn_worker<B: TransferBackend + Send + 'static>(
+        backend: B,
     ) -> (
-        UnboundedSender<WorkerCommand>,
-        UnboundedReceiver<SftpTransferEvent>,
+        Sender<WorkerCommand>,
+        Receiver<SftpTransferEvent>,
         Arc<Mutex<SftpTransferQueueSnapshot>>,
     ) {
-        let (command_sender, command_receiver) = unbounded_channel();
-        let (event_sender, event_receiver) = unbounded_channel();
+        spawn_worker_with_limits(backend, TransferPlanningLimits::default()).await
+    }
+
+    async fn spawn_worker_with_limits<B: TransferBackend + Send + 'static>(
+        backend: B,
+        planning_limits: TransferPlanningLimits,
+    ) -> (
+        Sender<WorkerCommand>,
+        Receiver<SftpTransferEvent>,
+        Arc<Mutex<SftpTransferQueueSnapshot>>,
+    ) {
+        spawn_worker_with_event_capacity(backend, planning_limits, TRANSFER_EVENT_QUEUE_CAPACITY)
+            .await
+    }
+
+    async fn spawn_worker_with_event_capacity<B: TransferBackend + Send + 'static>(
+        backend: B,
+        planning_limits: TransferPlanningLimits,
+        event_queue_capacity: usize,
+    ) -> (
+        Sender<WorkerCommand>,
+        Receiver<SftpTransferEvent>,
+        Arc<Mutex<SftpTransferQueueSnapshot>>,
+    ) {
+        let (command_sender, command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+        let (event_sender, event_receiver) = channel(event_queue_capacity);
         let snapshot = Arc::new(Mutex::new(SftpTransferQueueSnapshot::default()));
         tokio::spawn(run_transfer_worker(
             backend,
             Arc::clone(&snapshot),
+            None,
             command_receiver,
             event_sender,
+            planning_limits,
         ));
         (command_sender, event_receiver, snapshot)
     }
 
     fn queue_batch(
-        command_sender: &UnboundedSender<WorkerCommand>,
+        command_sender: &Sender<WorkerCommand>,
         requests: Vec<SftpTransferRequest>,
     ) -> SftpQueuedTransferBatch {
         let batch_id = SftpTransferBatchId(1);
@@ -2194,7 +2811,7 @@ mod tests {
             .collect::<Vec<_>>();
         let transfer_ids = items.iter().map(|item| item.id).collect::<Vec<_>>();
         command_sender
-            .send(WorkerCommand::EnqueueBatch { batch_id, items })
+            .try_send(WorkerCommand::EnqueueBatch { batch_id, items })
             .expect("worker should accept queued batch");
         SftpQueuedTransferBatch {
             batch_id,
@@ -2203,7 +2820,7 @@ mod tests {
     }
 
     async fn collect_until_batch_finished(
-        receiver: &mut UnboundedReceiver<SftpTransferEvent>,
+        receiver: &mut Receiver<SftpTransferEvent>,
         batch_id: SftpTransferBatchId,
     ) -> Vec<SftpTransferEvent> {
         let mut events = Vec::new();
@@ -2218,7 +2835,7 @@ mod tests {
     }
 
     async fn next_collision(
-        receiver: &mut UnboundedReceiver<SftpTransferEvent>,
+        receiver: &mut Receiver<SftpTransferEvent>,
     ) -> (Vec<SftpTransferEvent>, SftpCollision) {
         let mut prior = Vec::new();
         while let Some(event) = receiver.recv().await {
@@ -2253,6 +2870,215 @@ mod tests {
         assert!(snapshot.entries[1].modified_at.unwrap_or(UNIX_EPOCH) >= UNIX_EPOCH);
 
         stdfs::remove_dir_all(root).expect("could not clean local snapshot fixtures");
+    }
+
+    #[test]
+    fn transfer_capacity_rejections_are_typed_and_deterministic() {
+        assert_eq!(
+            validate_batch_size(MAX_TRANSFER_BATCH_ITEMS + 1),
+            Err(SftpTransferManagerError::BatchTooLarge {
+                requested: MAX_TRANSFER_BATCH_ITEMS + 1,
+                maximum: MAX_TRANSFER_BATCH_ITEMS,
+            })
+        );
+
+        let admitted_items = AtomicUsize::new(MAX_QUEUED_TRANSFER_ITEMS);
+        assert_eq!(
+            reserve_transfer_slots(&admitted_items, 1),
+            Err(SftpTransferManagerError::TransferQueueSaturated {
+                requested: 1,
+                available: 0,
+                capacity: MAX_QUEUED_TRANSFER_ITEMS,
+            })
+        );
+
+        let (command_sender, _command_receiver) = channel(TRANSFER_COMMAND_QUEUE_CAPACITY);
+        for batch_id in 0..TRANSFER_COMMAND_QUEUE_CAPACITY {
+            command_sender
+                .try_send(WorkerCommand::CancelBatch(SftpTransferBatchId(
+                    batch_id as u64,
+                )))
+                .expect("command should fit before the declared capacity");
+        }
+        assert_eq!(
+            try_send_command(
+                &command_sender,
+                WorkerCommand::CancelBatch(SftpTransferBatchId(
+                    TRANSFER_COMMAND_QUEUE_CAPACITY as u64,
+                )),
+            ),
+            Err(SftpTransferManagerError::CommandQueueSaturated {
+                capacity: TRANSFER_COMMAND_QUEUE_CAPACITY,
+            })
+        );
+    }
+
+    #[test]
+    fn recursive_planning_rejects_item_and_memory_proxy_limit_overflow() {
+        let source_root = SftpPathMetadata {
+            path: SftpPath::remote("/remote/source"),
+            file_type: SftpEntryType::Directory,
+            size: None,
+            modified_at: None,
+            permissions: None,
+        };
+        let destination_root = SftpPath::local("downloads");
+        let snapshot = SftpDirectorySnapshot {
+            location: SftpLocation::Remote,
+            path: source_root.path.clone(),
+            loaded_at: SystemTime::now(),
+            entries: vec![SftpDirectoryItem {
+                name: "report.txt".to_owned(),
+                path: SftpPath::remote("/remote/source/report.txt"),
+                file_type: SftpEntryType::File,
+                size: Some(5),
+                modified_at: None,
+                permissions: None,
+            }],
+        };
+
+        let mut item_backend = SnapshotBackend {
+            snapshots: HashMap::from([(source_root.path.display(), snapshot.clone())]),
+        };
+        let item_error = test_runtime().block_on(WorkerState::default().build_directory_plan(
+            &source_root,
+            &destination_root,
+            false,
+            &mut item_backend,
+            None,
+            TransferPlanningLimits {
+                max_items: 1,
+                max_memory_proxy_bytes: usize::MAX,
+            },
+        ));
+        assert!(matches!(
+            item_error,
+            Err(TransferWorkError::PlanningLimitExceeded {
+                limit: TransferPlanningLimit::Items,
+                observed: 2,
+                maximum: 1,
+            })
+        ));
+
+        let root_proxy_bytes = TRANSFER_PLAN_ITEM_OVERHEAD_BYTES
+            + path_memory_proxy_bytes(&source_root.path)
+            + path_memory_proxy_bytes(&destination_root);
+        let mut memory_backend = SnapshotBackend {
+            snapshots: HashMap::from([(source_root.path.display(), snapshot)]),
+        };
+        let memory_error = test_runtime().block_on(WorkerState::default().build_directory_plan(
+            &source_root,
+            &destination_root,
+            false,
+            &mut memory_backend,
+            None,
+            TransferPlanningLimits {
+                max_items: usize::MAX,
+                max_memory_proxy_bytes: root_proxy_bytes,
+            },
+        ));
+        assert!(matches!(
+            memory_error,
+            Err(TransferWorkError::PlanningLimitExceeded {
+                limit: TransferPlanningLimit::MemoryProxyBytes,
+                maximum,
+                ..
+            }) if maximum == root_proxy_bytes
+        ));
+    }
+
+    #[test]
+    fn planning_limit_failure_is_terminal_and_observable() {
+        let root = unique_test_directory("planning-limit-terminal");
+        let local = root.join("local");
+        let remote = root.join("remote");
+        let source = local.join("source");
+        recreate_directory(&source);
+        recreate_directory(&remote);
+        stdfs::write(source.join("report.txt"), b"report")
+            .expect("could not write planning source");
+
+        let events = test_runtime().block_on(async {
+            let (command_sender, mut event_receiver, _snapshot) = spawn_worker_with_limits(
+                TestBackend {
+                    delay_per_chunk_ms: 0,
+                },
+                TransferPlanningLimits {
+                    max_items: 1,
+                    max_memory_proxy_bytes: usize::MAX,
+                },
+            )
+            .await;
+            let batch = queue_batch(&command_sender, vec![upload_request(&source, &remote)]);
+            collect_until_batch_finished(&mut event_receiver, batch.batch_id).await
+        });
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SftpTransferEvent::ItemFailed { reason, .. }
+                if reason.contains("items limit") && reason.contains("maximum 1")
+        )));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SftpTransferEvent::BatchFinished { .. })));
+        assert!(
+            !remote.join("source").exists(),
+            "planning failure should occur before destination materialization"
+        );
+
+        stdfs::remove_dir_all(root).expect("could not clean planning-limit fixtures");
+    }
+
+    #[test]
+    fn cancellation_interrupts_slow_recursive_enumeration() {
+        test_runtime().block_on(async {
+            for cancel_batch in [false, true] {
+                let source = SftpPath::local(PathBuf::from(format!(
+                    "slow-enumeration-source-{cancel_batch}"
+                )));
+                let request = SftpTransferRequest::new(
+                    source.clone(),
+                    SftpPath::remote(format!("/slow-enumeration-destination-{cancel_batch}")),
+                )
+                .expect("test transfer request should be valid");
+                let (enumeration_started, wait_for_enumeration) = oneshot::channel();
+                let (command_sender, mut event_receiver, _snapshot) =
+                    spawn_worker(SlowEnumerationBackend {
+                        source,
+                        enumeration_started: Some(enumeration_started),
+                    })
+                    .await;
+                let batch = queue_batch(&command_sender, vec![request]);
+
+                tokio::time::timeout(Duration::from_secs(1), wait_for_enumeration)
+                    .await
+                    .expect("recursive enumeration should start")
+                    .expect("enumeration start signal should be delivered");
+                let command = if cancel_batch {
+                    WorkerCommand::CancelBatch(batch.batch_id)
+                } else {
+                    WorkerCommand::CancelTransfer(batch.transfer_ids[0])
+                };
+                command_sender
+                    .try_send(command)
+                    .expect("cancellation command should fit");
+
+                let events = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    collect_until_batch_finished(&mut event_receiver, batch.batch_id),
+                )
+                .await
+                .expect("cancellation should interrupt the awaited enumeration");
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    SftpTransferEvent::ItemCancelled { transfer_id, .. }
+                        if *transfer_id == batch.transfer_ids[0]
+                )));
+                assert!(!events
+                    .iter()
+                    .any(|event| matches!(event, SftpTransferEvent::ItemFailed { .. })));
+            }
+        });
     }
 
     #[test]
@@ -2319,6 +3145,82 @@ mod tests {
     }
 
     #[test]
+    fn progress_saturation_coalesces_without_losing_terminal_events() {
+        let root = unique_test_directory("progress-coalescing");
+        let local = root.join("local");
+        let remote = root.join("remote");
+        recreate_directory(&local);
+        recreate_directory(&remote);
+        stdfs::write(local.join("large.bin"), vec![b'x'; 512 * 1024])
+            .expect("could not write progress source");
+
+        let events = test_runtime().block_on(async {
+            let (command_sender, mut receiver, _snapshot) = spawn_worker_with_event_capacity(
+                TestBackend {
+                    delay_per_chunk_ms: 0,
+                },
+                TransferPlanningLimits::default(),
+                1,
+            )
+            .await;
+            let batch = queue_batch(
+                &command_sender,
+                vec![upload_request(&local.join("large.bin"), &remote)],
+            );
+
+            let mut events = Vec::new();
+            loop {
+                let event = receiver
+                    .recv()
+                    .await
+                    .expect("worker should emit an item-started event");
+                let started = matches!(event, SftpTransferEvent::ItemStarted { .. });
+                events.push(event);
+                if started {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            events.extend(
+                tokio::time::timeout(
+                    Duration::from_secs(1),
+                    collect_until_batch_finished(&mut receiver, batch.batch_id),
+                )
+                .await
+                .expect("terminal events should survive progress saturation"),
+            );
+            events
+        });
+
+        let progress_events = events
+            .iter()
+            .filter_map(|event| match event {
+                SftpTransferEvent::ItemProgress {
+                    bytes_transferred, ..
+                } => Some(*bytes_transferred),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            (1..=2).contains(&progress_events.len()),
+            "the one-slot channel plus one coalesced pending slot should bound progress"
+        );
+        assert_eq!(progress_events.last(), Some(&(512 * 1024)));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SftpTransferEvent::ItemCompleted { .. })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, SftpTransferEvent::BatchFinished { .. })));
+        assert_eq!(
+            stdfs::read(remote.join("large.bin")).expect("destination should exist"),
+            vec![b'x'; 512 * 1024]
+        );
+
+        stdfs::remove_dir_all(root).expect("could not clean progress fixtures");
+    }
+
+    #[test]
     fn transfer_worker_cancels_pending_and_running_items_without_temp_leaks() {
         let root = unique_test_directory("cancellation");
         let local = root.join("local");
@@ -2344,7 +3246,7 @@ mod tests {
             );
 
             command_sender
-                .send(WorkerCommand::CancelTransfer(batch.transfer_ids[1]))
+                .try_send(WorkerCommand::CancelTransfer(batch.transfer_ids[1]))
                 .expect("should cancel pending item");
 
             let mut cancelled_running = false;
@@ -2356,7 +3258,7 @@ mod tests {
                     {
                         cancelled_running = true;
                         command_sender
-                            .send(WorkerCommand::CancelTransfer(batch.transfer_ids[0]))
+                            .try_send(WorkerCommand::CancelTransfer(batch.transfer_ids[0]))
                             .expect("should cancel running item");
                     }
                     SftpTransferEvent::ItemCancelled { transfer_id, .. }
@@ -2470,7 +3372,7 @@ mod tests {
                             unexpected => panic!("unexpected collision for {unexpected}"),
                         };
                         command_sender
-                            .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                            .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                                 collision_id: collision.id,
                                 decision,
                                 scope,
@@ -2504,7 +3406,7 @@ mod tests {
                 "follow-up.txt"
             );
             command_sender
-                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                     collision_id: follow_up_collision.id,
                     decision: SftpCollisionDecision::Skip,
                     scope: SftpCollisionScope::ThisItem,
@@ -2572,7 +3474,7 @@ mod tests {
 
             let (_, collision) = next_collision(&mut receiver).await;
             command_sender
-                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                     collision_id: collision.id,
                     decision: SftpCollisionDecision::MergeFolders,
                     scope: SftpCollisionScope::ThisItem,
@@ -2581,7 +3483,7 @@ mod tests {
 
             let (_, nested_collision) = next_collision(&mut receiver).await;
             command_sender
-                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                     collision_id: nested_collision.id,
                     decision: SftpCollisionDecision::Skip,
                     scope: SftpCollisionScope::ThisItem,
@@ -2651,6 +3553,8 @@ mod tests {
                 &SftpPath::local(destination.clone()),
                 false,
                 &mut backend,
+                None,
+                TransferPlanningLimits::default(),
             ));
             let error = match error {
                 Ok(_) => panic!("malicious remote entry name should be rejected"),
@@ -2692,7 +3596,7 @@ mod tests {
 
             let (_, first_collision) = next_collision(&mut receiver).await;
             command_sender
-                .send(WorkerCommand::CancelTransfer(first_collision.transfer_id))
+                .try_send(WorkerCommand::CancelTransfer(first_collision.transfer_id))
                 .expect("paused colliding item should cancel");
 
             let second_collision = loop {
@@ -2709,7 +3613,7 @@ mod tests {
                 }
             };
             command_sender
-                .send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
+                .try_send(WorkerCommand::ResolveCollision(SftpCollisionResolution {
                     collision_id: second_collision.id,
                     decision: SftpCollisionDecision::Skip,
                     scope: SftpCollisionScope::RemainingConflictsInBatch,

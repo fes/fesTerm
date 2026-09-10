@@ -2521,6 +2521,18 @@ That motivated splitting mockup analysis into its own persisted, reusable custom
 
 The agent is invoked today by pasting its full definition into a fresh general-purpose background-agent context for each review (custom agent definitions are not yet directly selectable as a `task`-tool agent type), so each run is a clean, disinterested pass with no bias carried over from the implementation work in the same session. A comparative run using two different underlying models (Claude and GPT) on the same mockup found they can disagree on the same evidence — for example, only one correctly recognized a status-bar field omission as an already-negotiated decision rather than a fresh deviation — which is the concrete case the negotiated-deviations ledger now exists to prevent.
 
+#### Drive-and-measure is required for pixel-accurate rounds
+
+The GUI SFTP split-pane layout re-proved the point above at scale: twenty-two review rounds across two models failed to close a nine-item annotated-defect list, and the round that closed it began by building a harness instead of editing layout code. See `docs/milestone-progress.md`, "September 2026 GUI SFTP layout: three models, twenty-eight rounds, and why measurement won," for the full account and the recorded per-model cost.
+
+The operative rule that came out of it: **a model reviewing its own screenshot has no error signal.** It will read its own output as aligned and report success sincerely. For any round whose acceptance criterion is spacing, alignment, or containment, the round must produce numbers, not impressions:
+
+- **Rasterize the reference mockup** so it can be sampled numerically rather than described from memory.
+- **Capture the real build in the real state.** Launch the actual release binary and drive it to the state under review with OS-level automation (on Windows, synthesized input plus `PrintWindow`), rather than reasoning about a headless render or an older screenshot.
+- **Sample both images with a script** (Pillow via `powershell` works well) and compare specific edges, insets, gaps, and row pitches as numbers. A defect is not fixed until a measurement matches.
+- **Prefer a structural cause over a spacing tweak.** Recurring geometry defects in this project have almost always had one structural cause — a minimum applied after a width budget, a forced height, a `ScrollArea` auto-shrinking to content width — that no amount of padding adjustment can reach. If a round is adjusting constants and the same annotation returns, stop and measure for the cause.
+- **Pin each measured invariant in a regression test**, so a number that was expensive to establish cannot silently regress.
+
 For screen-specific review, use the nearest linked PNG in this document rather
 than cropping the older composite wireframe. Capture the native application at
 the corresponding logical viewport and state when practical, retain the OS and

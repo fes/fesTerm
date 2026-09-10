@@ -86,8 +86,11 @@ Production publication is triggered only by a `vMAJOR.MINOR.PATCH` tag whose
 version matches the workspace. Manual dispatch builds the same signed
 artifacts but does not publish.
 
-After a verified in-app install completes, fesTerm requests one normal
-application close so cargo-packager can replace and relaunch the application.
+Before an in-app install begins, fesTerm obtains aggregate restart consent if
+live sessions would be closed. Cancelling leaves the verified download ready
+to install. After a consented install completes, fesTerm requests one normal
+application close and marks that updater-owned close as already authorized so
+ordinary live-session quit interception cannot strand replacement/relaunch.
 
 The workflow:
 
