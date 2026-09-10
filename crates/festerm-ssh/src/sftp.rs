@@ -24,6 +24,7 @@ Supported commands:
   cd <remote-directory>
   lcd <local-directory>
   ls [-al] [remote-path]
+  dir [-al] [remote-path]
   lls [-al]
   ldir [-al]
   mkdir <remote-directory>
@@ -1199,7 +1200,7 @@ pub fn parse_sftp_command(line: &str) -> Result<SftpCommand, SftpCommandParseErr
             .map(|path| SftpCommand::Cd { path }),
         "lcd" => require_exactly_one("lcd", "lcd <local-directory>", arguments)
             .map(|path| SftpCommand::Lcd { path }),
-        "ls" => parse_ls_command(arguments),
+        "ls" | "dir" => parse_ls_command(arguments),
         "lls" | "ldir" => parse_lls_command(arguments),
         "mkdir" => require_exactly_one("mkdir", "mkdir <remote-directory>", arguments)
             .map(|path| SftpCommand::Mkdir { path }),
@@ -1805,6 +1806,12 @@ mod tests {
         );
         assert_eq!(
             parse_sftp_command("ls -la ./child"),
+            Ok(SftpCommand::Ls {
+                path: Some("./child".to_owned())
+            })
+        );
+        assert_eq!(
+            parse_sftp_command("dir -al ./child"),
             Ok(SftpCommand::Ls {
                 path: Some("./child".to_owned())
             })
