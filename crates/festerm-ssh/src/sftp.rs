@@ -24,8 +24,8 @@ Supported commands:
   cd <remote-directory>
   lcd <local-directory>
   ls [-al] [remote-path]
-  lls
-  ldir
+  lls [-al]
+  ldir [-al]
   mkdir <remote-directory>
   rmdir <remote-directory>
   rm <remote-path>
@@ -1200,7 +1200,7 @@ pub fn parse_sftp_command(line: &str) -> Result<SftpCommand, SftpCommandParseErr
         "lcd" => require_exactly_one("lcd", "lcd <local-directory>", arguments)
             .map(|path| SftpCommand::Lcd { path }),
         "ls" => parse_ls_command(arguments),
-        "lls" | "ldir" => require_no_arguments("lls", "lls", arguments).map(|()| SftpCommand::Lls),
+        "lls" | "ldir" => parse_lls_command(arguments),
         "mkdir" => require_exactly_one("mkdir", "mkdir <remote-directory>", arguments)
             .map(|path| SftpCommand::Mkdir { path }),
         "rmdir" => require_exactly_one("rmdir", "rmdir <remote-directory>", arguments)
@@ -1334,6 +1334,22 @@ fn parse_ls_command(arguments: &[String]) -> Result<SftpCommand, SftpCommandPars
         }
     }
     Ok(SftpCommand::Ls { path })
+}
+
+fn parse_lls_command(arguments: &[String]) -> Result<SftpCommand, SftpCommandParseError> {
+    for argument in arguments {
+        let options = argument.trim_start_matches('-');
+        if !argument.starts_with('-')
+            || options.is_empty()
+            || !options.chars().all(|option| matches!(option, 'a' | 'l'))
+        {
+            return Err(SftpCommandParseError::InvalidArguments {
+                command: "lls",
+                usage: "lls [-al]",
+            });
+        }
+    }
+    Ok(SftpCommand::Lls)
 }
 
 fn tokenize_command_line(line: &str) -> Result<Vec<String>, SftpCommandParseError> {
@@ -1794,7 +1810,9 @@ mod tests {
             })
         );
         assert_eq!(parse_sftp_command("lls"), Ok(SftpCommand::Lls));
+        assert_eq!(parse_sftp_command("lls -al"), Ok(SftpCommand::Lls));
         assert_eq!(parse_sftp_command("ldir"), Ok(SftpCommand::Lls));
+        assert_eq!(parse_sftp_command("ldir -la"), Ok(SftpCommand::Lls));
         assert_eq!(
             parse_sftp_command("ls ./child"),
             Ok(SftpCommand::Ls {
