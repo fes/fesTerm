@@ -1043,3 +1043,50 @@ resource approvals, which belong to the document that was approved. It does
 claim `^O` from the terminal, where readline binds the rarely used
 `operate-and-get-next`; that trade is recorded next to the binding so the next
 person to wonder does not have to guess.
+
+## September 2026: three defects that were all about measurement
+
+Three unrelated-looking complaints -- a taskbar icon that read half the size of
+its neighbours, a filter box whose contents sat too high, and a two-column table
+that collapsed into one character per line -- turned out to be the same kind of
+bug three times: something was being sized against the wrong thing.
+
+The icon was not too small. Its *tile* was the same size as every other pinned
+icon; the mark inside it filled only 64% x 51% of that tile and sat 39px off
+centre. A quiet graphite tile is the point of the design, but it also means the
+tile is invisible against dark taskbar chrome, so the only thing a person
+perceives is the mark. The obvious fix -- shrink the tile's transparent margin
+-- would have been wrong, because that margin is exactly what macOS masking
+needs. The mark was scaled 1.25x about its own bounding box and re-centred on
+the canvas, taking it to about 80% of the tile's width, and the tile was left
+alone. The README now says why, so the next person does not reach for the
+margin.
+
+The filter field was the fourth appearance in this file of a rule this project
+keeps re-learning: `ui.horizontal` centres children against *each other*, not
+against their container. The row ends up only as tall as its tallest widget, and
+a later `set_min_height` grows the frame underneath the finished row, dumping
+all the slack below the content. The file already contained the fix --
+`pane_chrome_row`, whose doc comment describes this precise trap -- three lines
+above the code that did not use it. While measuring that, the picker's table
+turned out to overhang its filter field by 24px, because `sftp_table_columns`
+divides up *exactly* the width it is given and the picker had left the default
+8px item spacing in its rows; the SFTP pane had zeroed it years earlier for the
+same reason.
+
+The table was the interesting one. `egui::Grid` sizes a column from what its
+cells reported on the *previous* frame, and a wrapping `Label` reports its own
+wrapped width -- so every frame the column got a little narrower, and the
+narrower it got the more the text wrapped. Left running, "Primary reference"
+settled at one character per line and a 138px-tall header cell. This is not a
+tuning problem; it is a feedback loop, and no choice of initial width fixes it.
+The renderer now measures every cell once at infinite width, decides all the
+column widths itself (natural widths when the table fits, otherwise a floor for
+every column and the remainder shared in proportion to what each column asked
+for), and paints cells into fixed rects. Nothing a cell renders can influence
+what it is measured at.
+
+Each of the new tests was checked against the old code before the fix was
+committed, which is the only way to know a regression test tests anything: the
+old renderer produced the 138px header cell, the old picker overhung by 24px,
+and the old filter text sat 3px above the field's centre line.

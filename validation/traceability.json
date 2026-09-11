@@ -922,7 +922,8 @@
         "enqueue_external_drop_upload_rejects_a_read_only_remote_destination",
         "enqueue_external_drop_upload_enqueues_one_request_per_dropped_path",
         "build_reveal_command_targets_the_given_path_on_this_platform",
-        "reveal_in_file_manager_label_names_the_current_platform_action"
+        "reveal_in_file_manager_label_names_the_current_platform_action",
+        "the_filter_field_centres_its_contents_in_the_box"
       ],
       "manual_scenarios": [
         "FD-05",
@@ -1364,7 +1365,13 @@
         "absolute_url_images_are_never_loaded_automatically",
         "a_local_image_that_cannot_be_read_is_only_attempted_once",
         "automatic_image_loading_is_bounded_by_the_concurrency_cap",
-        "replacing_a_viewers_document_drops_the_previous_documents_approvals"
+        "replacing_a_viewers_document_drops_the_previous_documents_approvals",
+        "a_table_column_that_fits_is_not_wrapped_one_character_per_line",
+        "a_table_too_wide_for_the_reading_column_still_wraps_on_words",
+        "a_table_that_fits_keeps_its_natural_column_widths",
+        "a_table_that_does_not_fit_is_shared_out_across_the_reading_width",
+        "a_table_narrower_than_its_floor_falls_back_to_the_floor",
+        "the_markdown_pickers_table_spans_the_same_width_as_its_filter_field"
       ],
       "manual_scenarios": [
         "CP-06"

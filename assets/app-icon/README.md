@@ -16,14 +16,23 @@ depicting a terminal window or borrowing an operating-system logo.
 - The tile occupies the central 90.6% of the canvas and all essential artwork
   stays well inside the central safe area. Platform packaging may apply its own
   mask without clipping the mark.
+- The mark spans roughly 80% of the tile's width and is centred on the canvas.
+  The quiet graphite tile contributes almost nothing against dark taskbar and
+  dock chrome, so the icon's perceived size is the mark's extent, not the
+  tile's. A mark that only fills the middle half of the tile reads as a
+  half-sized icon next to its neighbours. Grow the mark inside the tile rather
+  than shrinking the tile's transparent margin, which is what macOS masking
+  needs.
 - The source avoids filters, raster effects, text, and third-party paths. It
   remains deterministic and renders without font dependencies.
 
 ## Raster review assets
 
 Committed PNGs are direct renders of the master at 1024, 512, 256, 128, 64,
-32, and 16 pixels. Review the 32 px and 16 px outputs at native scale; they are
-the constraint on future detail. Do not hand-edit the PNGs.
+32, and 16 pixels, produced with [`resvg`](https://github.com/linebender/resvg)
+(`resvg --width N --height N app-icon.svg app-icon-N.png`). Review the 32 px and
+16 px outputs at native scale; they are the constraint on future detail. Do not
+hand-edit the PNGs.
 
 Platform packaging should consume the master or a generated PNG and create the
 native container required by that platform (`.icns`, `.ico`, or desktop

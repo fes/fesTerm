@@ -73,6 +73,10 @@ const CODE_LINE_SPACING: f32 = 0.0;
 const CODE_LINE_HEIGHT: f32 = CODE_TEXT_SIZE * 1.55;
 const TABLE_CELL_PADDING_X: i8 = 10;
 const TABLE_CELL_PADDING_Y: i8 = 6;
+/// Narrowest a table column is allowed to become when a table has to be
+/// squeezed into the reading column. Wide enough for a short word plus its
+/// cell padding, so a squeezed table still wraps on word boundaries.
+const TABLE_MIN_COLUMN_WIDTH: f32 = 72.0;
 const MARKDOWN_PANEL_RADIUS: f32 = 6.0;
 /// Toolbar control metrics, from the mockup's `.fmd-tool` rule
 /// (`height: 30px; min-width: 30px; padding: 0 8px; border-radius: 5px`).
@@ -1904,113 +1908,175 @@ impl MarkdownRenderState<'_> {
         document: &MarkdownDocument,
         text_style: InlineRenderStyle,
     ) {
+        let column_count = block
+            .rows()
+            .iter()
+            .map(|row| row.cells().len())
+            .max()
+            .unwrap_or_default();
+        if column_count == 0 {
+            return;
+        }
+
+        let font = FontId::proportional(BODY_TEXT_SIZE - 1.0);
+        let padding_x = f32::from(TABLE_CELL_PADDING_X);
+        let padding_y = f32::from(TABLE_CELL_PADDING_Y);
+
+        // Each cell's text is laid out once, here, and the resulting galley is
+        // what gets painted. `egui::Grid` cannot do this job: it sizes a column
+        // from what the previous frame's cells reported, so a wrapping `Label`
+        // inside it feeds its own wrapped width back in as the column's desired
+        // width. Every frame the column got narrower until the text wrapped one
+        // character per line, which is exactly what a wide two-column reference
+        // table degenerated into.
+        let mut cell_jobs: Vec<Vec<LayoutJob>> = Vec::with_capacity(block.rows().len());
+        let mut natural = vec![0.0_f32; column_count];
+        for row in block.rows() {
+            let mut cells = Vec::with_capacity(column_count);
+            for (column, cell) in row.cells().iter().enumerate() {
+                let job = inline_layout_job(
+                    cell.inlines(),
+                    document,
+                    self.find,
+                    font.clone(),
+                    if row.is_header() {
+                        text_style.with_strong()
+                    } else {
+                        text_style
+                    },
+                );
+                let mut unwrapped = job.clone();
+                unwrapped.wrap.max_width = f32::INFINITY;
+                let width = ui.painter().layout_job(unwrapped).size().x;
+                if let Some(slot) = natural.get_mut(column) {
+                    *slot = slot.max(width + padding_x * 2.0);
+                }
+                cells.push(job);
+            }
+            cell_jobs.push(cells);
+        }
+
+        // The frame's 1px inner margin sits between the reading column and the
+        // cells, so the columns get to share what is left of it.
+        let widths = table_column_widths(&natural, (ui.available_width() - 2.0).max(0.0));
+        let total_width: f32 = widths.iter().sum();
+
         egui::Frame::new()
             .fill(theme::SURFACE_TAB_INACTIVE.gamma_multiply(0.35))
             .corner_radius(MARKDOWN_PANEL_RADIUS)
             .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
             .inner_margin(egui::Margin::same(1))
             .show(ui, |ui| {
-                egui::ScrollArea::horizontal().show(ui, |ui| {
-                    let mut cell_rects = Vec::new();
-                    egui::Grid::new(("markdown-table", block.span().byte_range().start))
-                        .spacing(vec2(0.0, 0.0))
-                        .show(ui, |ui| {
-                            for row in block.rows() {
-                                let mut row_rects = Vec::new();
-                                for (column, cell) in row.cells().iter().enumerate() {
-                                    let alignment = block
-                                        .alignments()
-                                        .get(column)
-                                        .copied()
-                                        .unwrap_or(TableAlignment::None);
-                                    let cell = egui::Frame::new()
-                                        .fill(if row.is_header() {
-                                            theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.55)
-                                        } else {
-                                            Color32::TRANSPARENT
-                                        })
-                                        // Mirrors VS Code/GitHub table cell
-                                        // padding closely enough to keep dense
-                                        // tables readable without widening the
-                                        // whole reading column too aggressively.
-                                        .inner_margin(egui::Margin::symmetric(
-                                            TABLE_CELL_PADDING_X,
-                                            TABLE_CELL_PADDING_Y,
-                                        ))
-                                        .show(ui, |ui| {
-                                            let job = inline_layout_job(
-                                                cell.inlines(),
-                                                document,
-                                                self.find,
-                                                FontId::proportional(BODY_TEXT_SIZE - 1.0),
-                                                if row.is_header() {
-                                                    text_style.with_strong()
-                                                } else {
-                                                    text_style
-                                                },
-                                            );
-                                            match alignment {
-                                                TableAlignment::Right => {
-                                                    ui.with_layout(
-                                                        egui::Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.add(
-                                                                egui::Label::new(job)
-                                                                    .selectable(true)
-                                                                    .wrap(),
-                                                            );
-                                                        },
-                                                    )
-                                                    .response
-                                                }
-                                                _ => ui.add(
-                                                    egui::Label::new(job).selectable(true).wrap(),
-                                                ),
-                                            }
-                                        });
-                                    row_rects.push(cell.response.rect);
-                                }
-                                cell_rects.push(row_rects);
-                                ui.end_row();
+                egui::ScrollArea::horizontal()
+                    .id_salt(("markdown-table", block.span().byte_range().start))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                        let mut cell_rects: Vec<Vec<egui::Rect>> =
+                            Vec::with_capacity(cell_jobs.len());
+                        for (row, jobs) in block.rows().iter().zip(&cell_jobs) {
+                            // A row is only as tall as its tallest wrapped
+                            // cell, so every cell has to be laid out before any
+                            // of them can be placed.
+                            let mut row_height = 0.0_f32;
+                            let mut galleys = Vec::with_capacity(jobs.len());
+                            for (column, job) in jobs.iter().enumerate() {
+                                let width = widths
+                                    .get(column)
+                                    .copied()
+                                    .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
+                                let mut wrapped = job.clone();
+                                wrapped.wrap.max_width = (width - padding_x * 2.0).max(1.0);
+                                let galley = ui.painter().layout_job(wrapped);
+                                row_height = row_height.max(galley.size().y + padding_y * 2.0);
+                                galleys.push(galley);
                             }
-                        });
 
-                    if let Some(first_row) = cell_rects.first() {
-                        let table_rect = cell_rects
-                            .iter()
-                            .flatten()
-                            .fold(first_row[0], |rect, next| rect.union(*next));
-                        ui.painter().rect_stroke(
-                            table_rect,
-                            0.0,
-                            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                            egui::StrokeKind::Inside,
-                        );
-                        for row in &cell_rects {
-                            for cell in row.iter().take(row.len().saturating_sub(1)) {
+                            let (row_rect, _) = ui.allocate_exact_size(
+                                vec2(total_width, row_height),
+                                egui::Sense::hover(),
+                            );
+                            if row.is_header() {
+                                ui.painter().rect_filled(
+                                    row_rect,
+                                    0.0,
+                                    theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.55),
+                                );
+                            }
+
+                            let mut row_rects = Vec::with_capacity(galleys.len());
+                            let mut left = row_rect.left();
+                            for (column, galley) in galleys.into_iter().enumerate() {
+                                let width = widths
+                                    .get(column)
+                                    .copied()
+                                    .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
+                                let cell_rect = egui::Rect::from_min_size(
+                                    egui::pos2(left, row_rect.top()),
+                                    vec2(width, row_height),
+                                );
+                                left += width;
+                                let layout = match block
+                                    .alignments()
+                                    .get(column)
+                                    .copied()
+                                    .unwrap_or(TableAlignment::None)
+                                {
+                                    TableAlignment::Right => {
+                                        egui::Layout::right_to_left(Align::Center)
+                                    }
+                                    TableAlignment::Center => {
+                                        egui::Layout::left_to_right(Align::Center)
+                                            .with_main_align(Align::Center)
+                                    }
+                                    _ => egui::Layout::left_to_right(Align::Center),
+                                };
+                                let mut cell_ui = ui.new_child(
+                                    egui::UiBuilder::new()
+                                        .max_rect(cell_rect.shrink2(vec2(padding_x, padding_y)))
+                                        .layout(layout),
+                                );
+                                cell_ui.add(egui::Label::new(galley).selectable(true));
+                                row_rects.push(cell_rect);
+                            }
+                            cell_rects.push(row_rects);
+                        }
+
+                        if let Some(first_row) = cell_rects.first() {
+                            let table_rect = cell_rects
+                                .iter()
+                                .flatten()
+                                .fold(first_row[0], |rect, next| rect.union(*next));
+                            ui.painter().rect_stroke(
+                                table_rect,
+                                0.0,
+                                egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                egui::StrokeKind::Inside,
+                            );
+                            for row in &cell_rects {
+                                for cell in row.iter().take(row.len().saturating_sub(1)) {
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(cell.right(), table_rect.top()),
+                                            egui::pos2(cell.right(), table_rect.bottom()),
+                                        ],
+                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                    );
+                                }
+                            }
+                            for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
+                                let Some(first_cell) = row.first() else {
+                                    continue;
+                                };
                                 ui.painter().line_segment(
                                     [
-                                        egui::pos2(cell.right(), table_rect.top()),
-                                        egui::pos2(cell.right(), table_rect.bottom()),
+                                        egui::pos2(table_rect.left(), first_cell.bottom()),
+                                        egui::pos2(table_rect.right(), first_cell.bottom()),
                                     ],
                                     egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
                                 );
                             }
                         }
-                        for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
-                            let Some(first_cell) = row.first() else {
-                                continue;
-                            };
-                            ui.painter().line_segment(
-                                [
-                                    egui::pos2(table_rect.left(), first_cell.bottom()),
-                                    egui::pos2(table_rect.right(), first_cell.bottom()),
-                                ],
-                                egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                            );
-                        }
-                    }
-                });
+                    });
             });
     }
 
@@ -2713,6 +2779,38 @@ fn render_image(
     }
 }
 
+/// Chooses a width for every column of a markdown table.
+///
+/// A table that fits keeps its natural, unwrapped column widths, which is what
+/// makes a two-column reference table read as two tidy columns instead of a
+/// grid stretched across the whole reading width. A table that does not fit
+/// gives every column [`TABLE_MIN_COLUMN_WIDTH`] and then shares the remaining
+/// width out in proportion to how much more each column asked for, so the
+/// prose column absorbs the wrapping and a short label column is not crushed
+/// down to one character per line alongside it.
+fn table_column_widths(natural: &[f32], available: f32) -> Vec<f32> {
+    let total: f32 = natural.iter().sum();
+    if natural.is_empty() || total <= available {
+        return natural.to_vec();
+    }
+    let budget = available - TABLE_MIN_COLUMN_WIDTH * natural.len() as f32;
+    let slack: f32 = natural
+        .iter()
+        .map(|width| (width - TABLE_MIN_COLUMN_WIDTH).max(0.0))
+        .sum();
+    if budget <= 0.0 || slack <= 0.0 {
+        // Narrower than the floor allows; the horizontal scroll area that
+        // wraps the table is what keeps the content reachable.
+        return vec![TABLE_MIN_COLUMN_WIDTH; natural.len()];
+    }
+    natural
+        .iter()
+        .map(|width| {
+            TABLE_MIN_COLUMN_WIDTH + (width - TABLE_MIN_COLUMN_WIDTH).max(0.0) / slack * budget
+        })
+        .collect()
+}
+
 fn inline_layout_job(
     inlines: &[Inline],
     document: &MarkdownDocument,
@@ -3297,9 +3395,149 @@ pub fn take_viewer_commands(context: &egui::Context) -> Vec<AppCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
     use festerm_markdown::RemoteSourceOwner;
     use std::ops::Range;
     use std::time::Duration;
+
+    /// The reference table that exposed the collapsing-column defect: two
+    /// columns, one of them short labels and the other prose long enough that
+    /// the pair has to be balanced rather than simply fitted.
+    const REFERENCE_TABLE: &str = concat!(
+        "| Task | Primary reference |\n",
+        "| --- | --- |\n",
+        "| Product scope and priorities | `DESIGN.md`, `ROADMAP.md` |\n",
+        "| Dependency and ownership boundaries | `ARCHITECTURE.md` |\n",
+    );
+
+    /// Renders a document through the real block renderer inside a headless
+    /// harness, so layout assertions measure the geometry the viewer actually
+    /// draws rather than a reimplementation of it.
+    fn render_markdown(markdown: &str) -> Harness<'static, ()> {
+        let parsed = document(markdown);
+        let find = MarkdownFindState::default();
+        let approvals = ResourceApprovalState::default();
+        let loaded_images = BTreeMap::new();
+        let pending_image_loads = BTreeMap::new();
+        let image_errors = BTreeMap::new();
+        let mut outline_selected = None;
+        let mut pending_scroll = None;
+        let mut outline_keyboard_focus = false;
+        Harness::builder().build_ui_state(
+            move |ui, _state: &mut ()| {
+                let mut state = MarkdownRenderState {
+                    mode: MarkdownViewerMode::Preview,
+                    outline_open: false,
+                    outline_selected: &mut outline_selected,
+                    find: &find,
+                    resource_approvals: &approvals,
+                    loaded_images: &loaded_images,
+                    pending_image_loads: &pending_image_loads,
+                    image_errors: &image_errors,
+                    pending_scroll: &mut pending_scroll,
+                    line_heading_indices: &[],
+                    outline_keyboard_focus: &mut outline_keyboard_focus,
+                };
+                state.render_blocks(ui, parsed.blocks(), &parsed, InlineRenderStyle::body());
+            },
+            (),
+        )
+    }
+
+    /// `egui::Grid` sized a column from what its cells reported last frame,
+    /// and a wrapping `Label` reports its own wrapped width, so every frame
+    /// the column shrank a little further until the text wrapped one
+    /// character per line. Measuring the cells up front breaks that loop.
+    #[test]
+    fn a_table_column_that_fits_is_not_wrapped_one_character_per_line() {
+        let mut harness = render_markdown(REFERENCE_TABLE);
+        harness.run();
+        harness.run();
+        harness.run();
+
+        let header = harness.get_by_label("Primary reference").rect();
+        assert!(
+            header.height() <= BODY_TEXT_SIZE * 2.0,
+            "the header cell is {} px tall, so it wrapped; a column with room \
+             for its text must render it on one line",
+            header.height()
+        );
+        assert!(
+            header.width() >= 90.0,
+            "the header cell is only {} px wide, so its column collapsed",
+            header.width()
+        );
+    }
+
+    /// A table too wide for the reading column has to be squeezed, but it
+    /// must still be squeezed on word boundaries rather than collapsed: this
+    /// is the path the old renderer degenerated into for *every* table.
+    #[test]
+    fn a_table_too_wide_for_the_reading_column_still_wraps_on_words() {
+        let mut harness = render_markdown(concat!(
+            "| Capability | Evidence |\n",
+            "| --- | --- |\n",
+            "| Session restore across an application restart with every tab ",
+            "reattached | Covered by the workspace persistence suite and the ",
+            "native session daemon smoke test |\n",
+        ));
+        harness.run();
+        harness.run();
+
+        let header = harness.get_by_label("Evidence").rect();
+        assert!(
+            header.width() >= TABLE_MIN_COLUMN_WIDTH - f32::from(TABLE_CELL_PADDING_X) * 2.0,
+            "a squeezed column fell below the floor at {} px",
+            header.width()
+        );
+        let cell = harness
+            .get_by_label(
+                "Covered by the workspace persistence suite and the native \
+                 session daemon smoke test",
+            )
+            .rect();
+        assert!(
+            cell.height() <= BODY_TEXT_SIZE * 8.0,
+            "the squeezed cell is {} px tall, so it is wrapping far too narrow",
+            cell.height()
+        );
+    }
+
+    #[test]
+    fn a_table_that_fits_keeps_its_natural_column_widths() {
+        let widths = table_column_widths(&[120.0, 260.0], 600.0);
+        assert_eq!(widths, vec![120.0, 260.0]);
+    }
+
+    #[test]
+    fn a_table_that_does_not_fit_is_shared_out_across_the_reading_width() {
+        let widths = table_column_widths(&[120.0, 600.0], 400.0);
+        let total: f32 = widths.iter().sum();
+
+        assert!(
+            (total - 400.0).abs() <= 0.5,
+            "a squeezed table should use exactly the width it has, not {total}"
+        );
+        assert!(
+            widths.iter().all(|width| *width >= TABLE_MIN_COLUMN_WIDTH),
+            "no column may be squeezed below the floor: {widths:?}"
+        );
+        assert!(
+            widths[1] > widths[0],
+            "the column that asked for more should still be the wider one: {widths:?}"
+        );
+        // The prose column gives up far more than the label column does.
+        assert!(
+            widths[0] > 90.0,
+            "the short column lost too much of its {widths:?} share"
+        );
+    }
+
+    #[test]
+    fn a_table_narrower_than_its_floor_falls_back_to_the_floor() {
+        let widths = table_column_widths(&[300.0, 300.0, 300.0], 100.0);
+        assert_eq!(widths, vec![TABLE_MIN_COLUMN_WIDTH; 3]);
+    }
 
     fn document(text: &str) -> MarkdownDocument {
         MarkdownLoader::default()

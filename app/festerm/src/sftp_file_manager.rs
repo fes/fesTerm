@@ -4505,14 +4505,14 @@ fn show_filter_field(
         ui.set_max_width(content_width);
         ui.set_min_height(SFTP_FILTER_FIELD_HEIGHT);
         ui.set_max_height(SFTP_FILTER_FIELD_HEIGHT);
-        ui.horizontal(|ui| {
-            // `ui.horizontal` vertically centers each child it lays out,
-            // but only for widgets that go through its layout allocator.
-            // Painting the search glyph directly at `ui.cursor().min`
-            // bypassed that centering and always anchored it to the row's
-            // top, leaving it visibly misaligned with the (correctly
-            // centered) text beside it. Allocating the icon's rect through
-            // the horizontal layout fixes that.
+        // `ui.horizontal` centres its children against *each other*, not
+        // against the field: the row is only as tall as the tallest widget in
+        // it, and `set_min_height` then grows the frame underneath the row.
+        // That pinned the glyph and the text to the top of the 26px field and
+        // dumped the slack below them. `pane_chrome_row` allocates the field's
+        // full height up front and centres inside it, which is what the
+        // enclosing border is drawn around.
+        pane_chrome_row(ui, content_width, SFTP_FILTER_FIELD_HEIGHT, |ui| {
             let (icon_rect, _) =
                 ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
             paint_sftp_glyph(
@@ -4542,7 +4542,6 @@ fn show_filter_field(
             })
             .inner
         })
-        .inner
     });
     inner.inner
 }
@@ -5848,6 +5847,12 @@ impl MarkdownFilePicker {
         let columns = sftp_table_columns(width);
         let mut sort_clicked = None;
         ui.horizontal(|ui| {
+            // The column widths returned by `sftp_table_columns` sum to
+            // exactly `width`, so any inter-cell spacing pushes the table
+            // wider than the filter field and breadcrumb above it. The SFTP
+            // pane zeroes spacing for the same reason; the picker has to as
+            // well or its header row overhangs the rest of the dialog.
+            ui.spacing_mut().item_spacing.x = 0.0;
             if show_table_header_cell(
                 ui,
                 columns[0],
@@ -5914,6 +5919,7 @@ impl MarkdownFilePicker {
                         item.file_type == SftpEntryType::Directory || is_markdown_file(item);
                     let row = ui
                         .horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             ui.set_min_height(SFTP_TABLE_ROW_HEIGHT);
                             ui.set_max_height(SFTP_TABLE_ROW_HEIGHT);
                             let name_color = if !markdown_or_dir {
@@ -7073,6 +7079,73 @@ mod tests {
         picker.navigate_up();
         wait_for_picker_load(&mut picker);
         assert_eq!(picker.current_directory(), Some(dir.clone()));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The filter row's glyph and hint text used to sit against the top of
+    /// the field, with all the slack dumped below them. `ui.horizontal`
+    /// centres children against *each other* -- the row is only as tall as
+    /// its tallest widget -- and the field's `set_min_height` then grew the
+    /// box underneath the finished row.
+    #[test]
+    fn the_filter_field_centres_its_contents_in_the_box() {
+        let mut filter = String::new();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut Option<(f32, f32)>| {
+                let top = ui.cursor().top();
+                let response = show_filter_field(ui, &mut filter, PaneFocus::Local, 240.0);
+                *state = Some((top, response.rect.center().y));
+            },
+            None,
+        );
+        harness.run();
+
+        let (top, text_center) = harness.state().expect("the filter field renders");
+        let field_center = top + SFTP_FILTER_FIELD_HEIGHT / 2.0;
+        assert!(
+            (text_center - field_center).abs() <= 1.0,
+            "the filter text is centred on {text_center}, but the field's \
+             centre line is {field_center}"
+        );
+    }
+
+    /// `sftp_table_columns` divides up exactly the width it is given, so any
+    /// inter-cell spacing makes the table wider than the filter field and
+    /// breadcrumbs above it. The SFTP pane zeroes spacing for this reason;
+    /// the Markdown picker did not, and its table overhung the dialog.
+    #[test]
+    fn the_markdown_pickers_table_spans_the_same_width_as_its_filter_field() {
+        let dir = std::env::temp_dir().join(format!(
+            "festerm-markdown-picker-align-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("temp directory should be creatable");
+        let mut picker = MarkdownFilePicker::new(dir.clone(), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, width: &mut f32| {
+                *width = ui.available_width();
+                picker.ui(ui);
+            },
+            0.0,
+        );
+        harness.run();
+
+        let width = *harness.state();
+        let columns = sftp_table_columns(width);
+        let name = harness.get_by_label("Name").rect();
+        let type_column = harness.get_by_label("Type").rect();
+        let expected = columns[0] + columns[1] + columns[2];
+
+        assert!(
+            (type_column.left() - name.left() - expected).abs() <= 0.5,
+            "the last column starts {} px after the first, but its three \
+             preceding columns are only {expected} px wide, so the header row \
+             is wider than the field above it",
+            type_column.left() - name.left()
+        );
 
         fs::remove_dir_all(&dir).ok();
     }
