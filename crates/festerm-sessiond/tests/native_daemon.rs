@@ -426,7 +426,12 @@ fn daemon_command(executable: &Path, runtime_root: &Path) -> Command {
 
 #[cfg(unix)]
 fn short_runtime_root(suffix: &str) -> PathBuf {
-    PathBuf::from(format!("/tmp/fsd-native-{suffix}"))
+    static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let index = NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    match std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT") {
+        Some(root) => PathBuf::from(root).join(format!("{suffix}-{index}")),
+        None => PathBuf::from(format!("/tmp/fsd-native-{suffix}-{index}")),
+    }
 }
 
 #[cfg(windows)]
@@ -561,9 +566,14 @@ fn connect(endpoint: &str) -> Box<dyn ClientStream> {
     // tracing) completes well within that window. Use a longer timeout here
     // so the test tolerates legitimate ConPTY/process startup latency instead
     // of racing it.
-    let mut stream = named_pipe::PipeClient::connect_ms(endpoint, 10_000).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(10)));
-    stream.set_write_timeout(Some(Duration::from_secs(10)));
+    let mut stream = festerm_windows_security::named_pipe::Pipe::connect(
+        endpoint,
+        Duration::from_secs(10),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    stream.set_read_timeout(Duration::from_secs(10));
+    stream.set_write_timeout(Duration::from_secs(10));
     Box::new(stream)
 }
 

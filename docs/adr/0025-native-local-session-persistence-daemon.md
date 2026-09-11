@@ -142,12 +142,34 @@ special case. Concretely:
   which must be corrected as part of implementing this policy — today a
   second `attach` connects at the socket level but is never read from,
   hanging indefinitely instead of stealing, multiplexing, or aborting).
+- **Manual reconnect resumes only an existing daemon.** A disconnected native
+  session offers Reconnect beside Open Diagnostics and Resume in the Inspector,
+  both through `AppCommand::ReconnectSession`. The attempt runs off the GUI
+  thread, keeps the tab identity, rejects duplicate attempts, and never starts
+  a replacement shell if the named daemon is unavailable. Pending input from
+  the previous connection is discarded instead of replayed after reattachment.
+- **Windows pipe lifetime stays inside the existing Win32 boundary.**
+  `festerm-windows-security` owns the native pipe handles as well as the
+  current-user DACL setup. The former `named_pipe` dependency could wait
+  indefinitely inside connection retries and flushed unread output in its
+  server destructor. A narrow safe adapter uses synchronous `PIPE_NOWAIT`
+  operations, explicit connection deadlines/cancellation, and owned-handle
+  teardown without waiting for peer consumption. This keeps raw Win32 and
+  unsafe ownership code out of the daemon and application crates.
 - **The attached byte stream is duplex and bounded at the session boundary.**
   Shell output and replay remain an unstructured byte stream with fixed
   takeover/exit sentinels. Client-to-daemon commands use a small length-framed
   internal protocol for input and terminal resize, each capped at 64 KiB.
   This lets the library target implement `festerm-session::Session` directly
   without nesting a second PTY around the standalone `attach` command.
+  A full daemon command queue is backpressure, not a disconnect: pending
+  input/resize commands must remain bounded and ordered while socket reads
+  pause until capacity returns. Output and newest-client takeover must remain
+  serviceable during that pause.
+  The current internal PTY-reader channel is still unbounded; the client IPC
+  queue bounds do not imply a global daemon memory bound. Making that channel
+  bounded must also address synchronous PTY input writes to avoid circular
+  waits when both directions are saturated.
 - **Session identity reuses the existing validated name.** The same 1-64
   byte session-name validation `PersistenceConfiguration`
   (`festerm-config`) already enforces for `PROF-06`/`LAUNCH-08` is reused
@@ -319,7 +341,11 @@ the case where a leftover record is most harmful.
 - **Automated tests required:** `festerm-sessiond` covers argument and identity
   validation, registry round trips and PID-safe removal, replay bounds,
   split-marker client handling, and an end-to-end Unix service-loop test in
-  which a second client steals the session from the first.
+  which a second client steals the session from the first. Coalesced command
+  bursts exceeding the daemon input queue must retain input/resize order
+  without disconnecting; pending input must not prevent output or takeover.
+  Manual reconnect must preserve session identity, reject duplicate attempts,
+  avoid starting a missing daemon, and discard previous-connection input.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

@@ -4534,7 +4534,11 @@ impl FesTermApp {
                     if session.controller.last_pump_output_received() {
                         ui.ctx().request_repaint();
                     }
-                    overlay_action = overlay::show(ui.ctx(), session.chip_status());
+                    overlay_action = overlay::show(
+                        ui.ctx(),
+                        session.chip_status(),
+                        session.reconnect_available(),
+                    );
                 }
             }
         }
@@ -4735,6 +4739,10 @@ impl FesTermApp {
         if let Some(action) = overlay_action {
             let context = ui.ctx().clone();
             match action {
+                OverlayAction::Reconnect => {
+                    self.state
+                        .dispatch(AppCommand::ReconnectSession(self.state.active()), &context);
+                }
                 OverlayAction::OpenDiagnostics => {
                     self.inspector_restore_focus = None;
                     if !self.state.inspector_open() {
@@ -5402,6 +5410,62 @@ mod tests {
                 Some("remote bind denied".to_owned()),
             ),
         ]
+    }
+
+    #[test]
+    fn disconnected_overlay_reconnects_the_same_tab_through_application_command() {
+        let (app, tab, session) = FesTermApp::for_test_with_fake_ssh_session([
+            festerm_session::SessionEvent::Output(b"retained content".to_vec()),
+            festerm_session::SessionEvent::Lifecycle(
+                festerm_session::SessionLifecycle::Disconnected(
+                    festerm_session::SessionError::new(
+                        festerm_session::SessionErrorKind::Output,
+                        "test disconnect",
+                    ),
+                ),
+            ),
+        ]);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness.get_by_label("Open Diagnostics");
+        let generation = harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .lifecycle_generation();
+        harness.get_by_label("Reconnect").click();
+        harness.run();
+        assert_eq!(harness.state().state.active(), tab);
+        assert_eq!(
+            session.operations(),
+            vec![crate::session_controller::fake::FakeSshOperation::Reconnect]
+        );
+        assert_eq!(
+            harness
+                .state()
+                .state
+                .session_tab(tab)
+                .unwrap()
+                .controller
+                .lifecycle_generation(),
+            generation + 1
+        );
+        assert!(harness.query_by_label("Reconnect").is_none());
+        assert!(harness.get_by_label("Terminal viewport").is_focused());
+        assert!(harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .terminal
+            .row_text(0)
+            .expect("first terminal row")
+            .contains("retained content"));
     }
 
     #[test]
