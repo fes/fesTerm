@@ -969,7 +969,9 @@ pub(crate) struct SftpPaneState {
     pub(crate) selected_anchor: Option<String>,
     pub(crate) cursor_path: Option<String>,
     pub(crate) history: Vec<SftpPath>,
-    pub(crate) history_index: usize,
+    history_scroll_offsets: Vec<f32>,
+    scroll_offset: f32,
+    previous_valid_scroll_offset: f32,
     pub(crate) loading: bool,
     pub(crate) stale: bool,
     pub(crate) error: Option<String>,
@@ -1000,11 +1002,11 @@ impl SftpPaneState {
             // directory. Without this, the very first navigation away
             // (via a breadcrumb click, opening a folder, or "up") pushes
             // that destination in as the *only* history entry, leaving
-            // history_index at 0 with nothing before it - so "Back"
-            // silently does nothing even though the user just navigated
-            // away from a real previous location.
+            // no previous stack entry for Back to restore.
             history: vec![path.clone()],
-            history_index: 0,
+            history_scroll_offsets: vec![0.0],
+            scroll_offset: 0.0,
+            previous_valid_scroll_offset: 0.0,
             loading: true,
             stale: false,
             error: None,
@@ -1147,6 +1149,7 @@ impl SftpPaneState {
     ) {
         self.current_path = snapshot.path.clone();
         self.previous_valid_path = snapshot.path.clone();
+        self.previous_valid_scroll_offset = self.scroll_offset;
         self.path_text = snapshot.path.display();
         self.snapshot = Some(snapshot);
         self.directory_metadata = metadata;
@@ -1196,6 +1199,7 @@ impl SftpPaneState {
         self.details = Some(details);
         self.current_path = self.previous_valid_path.clone();
         self.path_text = self.current_path.display();
+        self.scroll_offset = self.previous_valid_scroll_offset;
     }
 
     fn visible_index_for_key(&mut self, key: &str) -> Option<usize> {
@@ -1296,16 +1300,47 @@ impl SftpPaneState {
         if self.history.last() == Some(&new_path) {
             self.current_path = new_path.clone();
             self.path_text = new_path.display();
-            self.history_index = self.history.len().saturating_sub(1);
             return;
         }
-        if self.history_index + 1 < self.history.len() {
-            self.history.truncate(self.history_index + 1);
-        }
+        self.previous_valid_scroll_offset = self.scroll_offset;
         self.history.push(new_path.clone());
-        self.history_index = self.history.len().saturating_sub(1);
+        self.history_scroll_offsets.push(0.0);
+        self.scroll_offset = 0.0;
         self.current_path = new_path.clone();
         self.path_text = new_path.display();
+    }
+
+    fn restore_history_path(&mut self, path: &SftpPath) -> Option<SftpPath> {
+        let index = self.history.iter().rposition(|entry| entry == path)?;
+        if index + 1 == self.history.len() {
+            return None;
+        }
+        self.previous_valid_scroll_offset = self.scroll_offset;
+        self.history.truncate(index + 1);
+        self.history_scroll_offsets.truncate(index + 1);
+        self.scroll_offset = self.history_scroll_offsets[index];
+        Some(path.clone())
+    }
+
+    fn pop_history(&mut self) -> Option<SftpPath> {
+        if self.history.len() <= 1 {
+            return None;
+        }
+        self.previous_valid_scroll_offset = self.scroll_offset;
+        self.history.pop();
+        self.history_scroll_offsets.pop();
+        self.scroll_offset = *self
+            .history_scroll_offsets
+            .last()
+            .expect("history always retains its starting path");
+        self.history.last().cloned()
+    }
+
+    fn update_scroll_offset(&mut self, offset: f32) {
+        self.scroll_offset = offset;
+        if let Some(current) = self.history_scroll_offsets.last_mut() {
+            *current = offset;
+        }
     }
 }
 
@@ -2443,9 +2478,10 @@ impl SftpFileManagerTab {
                                 }
                             });
                             pane_divider(ui, pane_width);
-                            ScrollArea::vertical()
+                            let scroll_output = ScrollArea::vertical()
                                 .id_salt(("sftp-pane", focus))
                                 .max_height(list_height)
+                                .vertical_scroll_offset(pane.scroll_offset)
                                 // Claim the whole listing viewport even when the
                                 // directory is short, so the footer stays pinned
                                 // to the pane's bottom edge instead of floating
@@ -2744,6 +2780,7 @@ impl SftpFileManagerTab {
                                         }
                                     }
                                 });
+                            pane.update_scroll_offset(scroll_output.state.offset.y);
                             // ScrollArea only claims the height its content
                             // needs. Reserve its remaining viewport explicitly
                             // so the footer is anchored to the pane bottom,
@@ -2832,7 +2869,7 @@ impl SftpFileManagerTab {
             let _ = self.command_sender.send(WorkerCommand::Reconnect);
         }
         if request_back {
-            self.navigate_history(focus, -1);
+            self.navigate_back(focus);
         }
         if request_up {
             self.navigate_up(focus);
@@ -2847,7 +2884,7 @@ impl SftpFileManagerTab {
             self.navigate_to_text(focus);
         }
         if let Some(path) = request_breadcrumb {
-            load_path(self, focus, path, true);
+            self.navigate_to_path(focus, path);
         }
         if let Some(item) = request_open {
             self.open_item(focus, &item);
@@ -3266,7 +3303,7 @@ impl SftpFileManagerTab {
             self.navigate_home(self.focused_pane);
         }
         if alt && ctx.input(|input| input.key_pressed(Key::ArrowLeft)) {
-            self.navigate_history(self.focused_pane, -1);
+            self.navigate_back(self.focused_pane);
         }
         if !editing_path && !filter_focused {
             if ctx.input(|input| input.key_pressed(Key::ArrowDown)) {
@@ -3311,27 +3348,25 @@ impl SftpFileManagerTab {
         }
     }
 
-    fn navigate_history(&mut self, focus: PaneFocus, offset: isize) {
-        let pane = pane_mut(self, focus);
-        if pane.history.is_empty() {
-            return;
+    fn navigate_back(&mut self, focus: PaneFocus) {
+        let target = pane_mut(self, focus).pop_history();
+        if let Some(target) = target {
+            load_path(self, focus, target, false);
         }
-        let next = if offset < 0 {
-            pane.history_index.saturating_sub(offset.unsigned_abs())
+    }
+
+    fn navigate_to_path(&mut self, focus: PaneFocus, path: SftpPath) {
+        let restore_target = pane_mut(self, focus).restore_history_path(&path);
+        if let Some(target) = restore_target {
+            load_path(self, focus, target, false);
         } else {
-            (pane.history_index + offset as usize).min(pane.history.len().saturating_sub(1))
-        };
-        if next == pane.history_index {
-            return;
+            load_path(self, focus, path, true);
         }
-        pane.history_index = next;
-        let target = pane.history[next].clone();
-        load_path(self, focus, target, false);
     }
 
     fn navigate_up(&mut self, focus: PaneFocus) {
         let path = pane_ref(self, focus).current_path.parent_directory();
-        load_path(self, focus, path, true);
+        self.navigate_to_path(focus, path);
     }
 
     fn navigate_home(&mut self, focus: PaneFocus) {
@@ -5716,13 +5751,9 @@ impl MarkdownFilePicker {
     }
 
     fn navigate_back(&mut self) {
-        if self.pane.history_index == 0 {
-            return;
+        if let Some(target) = self.pane.pop_history() {
+            self.load(target, false);
         }
-        let next = self.pane.history_index - 1;
-        self.pane.history_index = next;
-        let target = self.pane.history[next].clone();
-        self.load(target, false);
     }
 
     fn navigate_up(&mut self) {
@@ -5736,7 +5767,12 @@ impl MarkdownFilePicker {
     }
 
     fn navigate_to_breadcrumb(&mut self, path: SftpPath) {
-        self.load(path, true);
+        let restore_target = self.pane.restore_history_path(&path);
+        if let Some(target) = restore_target {
+            self.load(target, false);
+        } else {
+            self.load(path, true);
+        }
     }
 
     /// The directory currently being browsed, so the next picker can resume
@@ -5908,9 +5944,10 @@ impl MarkdownFilePicker {
 
         let mut picked_item: Option<SftpDirectoryItem> = None;
         let entries = self.pane.visible_entries().to_vec();
-        ScrollArea::vertical()
+        let scroll_output = ScrollArea::vertical()
             .id_salt("markdown_file_picker_rows")
             .max_height(280.0)
+            .vertical_scroll_offset(self.pane.scroll_offset)
             .show(ui, |ui| {
                 for item in &entries {
                     let key = path_key(&item.path);
@@ -6010,6 +6047,7 @@ impl MarkdownFilePicker {
                     }
                 }
             });
+        self.pane.update_scroll_offset(scroll_output.state.offset.y);
 
         if ui.input(|input| input.key_pressed(Key::Enter)) {
             if let Some(item) = self.pane.activate_cursor() {
@@ -6997,6 +7035,56 @@ mod tests {
             loader.pending_path_for_test(),
             Some(SftpPath::local("/newest"))
         );
+    }
+
+    #[test]
+    fn directory_scroll_history_resets_new_entries_and_keeps_the_filter() {
+        let root = SftpPath::local("/root");
+        let child = SftpPath::local("/root/child");
+        let mut pane = SftpPaneState::new(root);
+        pane.set_filter("release".to_owned());
+        pane.update_scroll_offset(144.0);
+
+        pane.push_history(child);
+
+        assert_eq!(pane.scroll_offset, 0.0);
+        assert_eq!(pane.filter, "release");
+    }
+
+    #[test]
+    fn directory_scroll_history_restores_direct_parent_and_discards_reentry() {
+        let root = SftpPath::local("/root");
+        let child = SftpPath::local("/root/child");
+        let mut pane = SftpPaneState::new(root.clone());
+        pane.update_scroll_offset(144.0);
+        pane.push_history(child.clone());
+        pane.update_scroll_offset(72.0);
+
+        assert_eq!(pane.pop_history(), Some(root));
+        assert_eq!(pane.scroll_offset, 144.0);
+
+        pane.push_history(child);
+        assert_eq!(pane.scroll_offset, 0.0);
+        assert_eq!(pane.history.len(), 2);
+    }
+
+    #[test]
+    fn directory_scroll_history_discards_every_skipped_descendant() {
+        let root = SftpPath::local("/root");
+        let intermediate = SftpPath::local("/root/intermediate");
+        let child = SftpPath::local("/root/intermediate/child");
+        let mut pane = SftpPaneState::new(root.clone());
+        pane.update_scroll_offset(18.0);
+        pane.push_history(intermediate.clone());
+        pane.update_scroll_offset(96.0);
+        pane.push_history(child);
+
+        assert_eq!(pane.restore_history_path(&root), Some(root));
+        assert_eq!(pane.scroll_offset, 18.0);
+        assert_eq!(pane.history, vec![SftpPath::local("/root")]);
+
+        pane.push_history(intermediate);
+        assert_eq!(pane.scroll_offset, 0.0);
     }
 
     #[test]

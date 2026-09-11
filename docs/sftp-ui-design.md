@@ -29,8 +29,10 @@ Each pane has the same hierarchy:
 1. Explicit identity line: **LOCAL · This computer** or **REMOTE · user@host**; remote includes connection state.
 2. Compact toolbar: Back, Up, Home, Refresh, followed by a breadcrumb/path bar.
 3. Breadcrumb segments are individually clickable. The final segment is current. `Ctrl/Cmd+L` converts the bar to an editable path field; Enter navigates, Escape restores the breadcrumb.
-4. Lightweight **Filter this folder** field. Filtering is immediate, case-insensitive by default, scoped to the loaded directory, and never implies an expensive recursive remote search.
+4. Lightweight **Filter this folder** field. Filtering is immediate, case-insensitive by default, scoped to the loaded directory, and never implies an expensive recursive remote search. The filter remains active while navigating folders.
 5. File table with Name, Size, Modified, and Type. Clicking a heading sorts; the active sort and direction are visible and announced. Default is folders first, then natural Name order. Sorting/filtering is independent per pane.
+
+Entering a folder starts its table at the top. Back, Up, and an ancestor breadcrumb retrace only the active navigation stack and restore the retained ancestor's scroll position; popped descendants are discarded, so entering one again starts at the top rather than using durable per-directory scroll memory. Refresh preserves the current position where possible.
 
 Rows use first-party semantic line icons at compact sizes: folder, generic file, text/code, image, archive, executable, and symlink. Extension/type text remains visible so color or icon shape is never the only cue. Hidden files follow a per-pane **Show hidden files** overflow setting.
 
