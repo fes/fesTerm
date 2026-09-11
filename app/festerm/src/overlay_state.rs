@@ -10,7 +10,7 @@
 //! they reach into session/tab state that this module intentionally does
 //! not own (see `docs/adr` ownership boundaries referenced from `app.rs`).
 
-use std::{sync::mpsc, time::Instant};
+use std::{path::PathBuf, sync::mpsc, time::Instant};
 
 use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 
@@ -188,6 +188,15 @@ pub(crate) struct OverlayState {
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
+    /// Which Markdown viewer tab the open picker should retarget when it
+    /// resolves, set when the picker was opened from inside a viewer
+    /// (`Ctrl+O`). `None` means "open the picked file in a new tab".
+    pub(crate) markdown_file_picker_replaces: Option<TabId>,
+    /// The directory the last "Open Markdown File…" picker was browsing when
+    /// it closed. The next picker resumes here instead of starting over at
+    /// the home directory, which is the behaviour users expect from a file
+    /// dialog when opening several files from the same folder.
+    pub(crate) markdown_file_picker_directory: Option<PathBuf>,
     pub(crate) transient_notice: Option<(String, Instant)>,
     /// The About modal is open. Like the confirmation prompts above (and
     /// unlike the transient notice/password-store lookup), it is a

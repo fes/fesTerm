@@ -40,7 +40,9 @@ use crate::overlay_state::{
     StoredCredentialLaunch,
 };
 use crate::screens;
-use crate::sftp_file_manager::{self, MarkdownFilePicker, MarkdownPickerOutcome};
+use crate::sftp_file_manager::{
+    self, local_home_directory, MarkdownFilePicker, MarkdownPickerOutcome,
+};
 use crate::tabs::{
     AppCommand, AppState, ExternalLinkTarget, HostKeyTrustDecision, InspectorTransport, TabContent,
     TabId,
@@ -85,6 +87,14 @@ enum ApplicationShortcut {
     MarkdownReload,
     MarkdownPreviewSource,
     MarkdownOutline,
+    /// Opens the "Open Markdown File…" picker from anywhere
+    /// (`Ctrl+O`/`Cmd+O`), the near-universal "open a document" chord.
+    /// Inside a Markdown viewer the picked file replaces that viewer's
+    /// document; anywhere else it opens a new tab. This does claim `^O`
+    /// from the terminal, which readline binds to the rarely used
+    /// `operate-and-get-next`; the document-open convention wins because
+    /// fesTerm is a document viewer as well as a terminal.
+    OpenMarkdownFile,
     /// Terminal-content search (`docs/gui-design.md` "Terminal-content
     /// search"). `Ctrl+Shift+F` on Windows/Linux; macOS uses plain `Cmd+F`
     /// since `Cmd+Shift+F` is already `ToggleFocusMode` there.
@@ -192,6 +202,7 @@ impl ApplicationShortcut {
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                 egui::Key::O,
             )),
+            Self::OpenMarkdownFile => Some((egui::Modifiers::COMMAND, egui::Key::O)),
             Self::Find => Some((
                 if cfg!(target_os = "macos") {
                     egui::Modifiers::COMMAND
@@ -239,6 +250,8 @@ impl ApplicationShortcut {
             Self::MarkdownPreviewSource => Some("Ctrl+Shift+V"),
             Self::MarkdownOutline if cfg!(target_os = "macos") => Some("\u{2318}+Shift+O"),
             Self::MarkdownOutline => Some("Ctrl+Shift+O"),
+            Self::OpenMarkdownFile if cfg!(target_os = "macos") => Some("\u{2318}+O"),
+            Self::OpenMarkdownFile => Some("Ctrl+O"),
             Self::Find if cfg!(target_os = "macos") => Some("\u{2318}+F"),
             Self::Find => Some("Ctrl+Shift+F"),
         }
@@ -2572,6 +2585,11 @@ impl FesTermApp {
             self.state.active_tab().content,
             TabContent::MarkdownViewer(_)
         ) && ApplicationShortcut::MarkdownOutline.consume(ctx);
+        // Available from every surface, not just a Markdown viewer: from a
+        // terminal it opens the picked document in a new tab, from a viewer
+        // it replaces that viewer's document (see `ApplicationShortcut::
+        // OpenMarkdownFile` and `open_markdown_file_picker`).
+        let open_markdown_file = ApplicationShortcut::OpenMarkdownFile.consume(ctx);
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
@@ -2628,6 +2646,9 @@ impl FesTermApp {
         }
         if markdown_toggle_outline {
             self.state.dispatch(AppCommand::ToggleMarkdownOutline, ctx);
+        }
+        if open_markdown_file {
+            self.open_markdown_file_picker(ctx);
         }
     }
 
@@ -3084,18 +3105,55 @@ impl FesTermApp {
     /// Opens the "Open Markdown File…" picker (#132), reusing the SFTP
     /// file manager's local-pane browsing widget instead of the OS-native
     /// `rfd::FileDialog` previously used here.
+    ///
+    /// When the active tab is already a Markdown viewer the picked file
+    /// replaces *that* document instead of opening another tab, so `Ctrl+O`
+    /// behaves the way it does in every other document viewer.
     fn open_markdown_file_picker(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        self.overlays.markdown_file_picker_replaces = matches!(
+            self.state.active_tab().content,
+            TabContent::MarkdownViewer(_)
+        )
+        .then_some(active);
         self.overlays.markdown_file_picker = Some(MarkdownFilePicker::new(
-            std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("/")),
+            self.markdown_file_picker_start_directory(),
             context.clone(),
         ));
         context.request_repaint();
     }
 
+    /// Where a freshly opened picker starts browsing: the directory the last
+    /// picker was left in (if it still exists), otherwise the user's home
+    /// directory.
+    fn markdown_file_picker_start_directory(&self) -> std::path::PathBuf {
+        self.overlays
+            .markdown_file_picker_directory
+            .as_ref()
+            .filter(|path| path.is_dir())
+            .cloned()
+            .unwrap_or_else(local_home_directory)
+    }
+
+    /// Remembers where the picker was browsing so the next one resumes
+    /// there. Called on every way the picker can close, not just a
+    /// successful pick, because navigating to a folder and then cancelling
+    /// is still the user telling us where they are working.
+    fn remember_markdown_file_picker_directory(&mut self) {
+        if let Some(directory) = self
+            .overlays
+            .markdown_file_picker
+            .as_ref()
+            .and_then(MarkdownFilePicker::current_directory)
+        {
+            self.overlays.markdown_file_picker_directory = Some(directory);
+        }
+    }
+
     fn close_markdown_file_picker(&mut self, context: &egui::Context) {
+        self.remember_markdown_file_picker_directory();
         if self.overlays.markdown_file_picker.take().is_some() {
+            self.overlays.markdown_file_picker_replaces = None;
             self.restore_active_terminal_focus();
             context.request_repaint();
         }
@@ -3123,10 +3181,12 @@ impl FesTermApp {
         });
         match outcome {
             Some(MarkdownPickerOutcome::Open(path)) => {
+                self.remember_markdown_file_picker_directory();
+                let replacing = self.overlays.markdown_file_picker_replaces.take();
                 self.overlays.markdown_file_picker = None;
                 self.restore_active_terminal_focus();
                 self.state
-                    .dispatch(AppCommand::OpenLocalMarkdownFile { path }, ctx);
+                    .dispatch(AppCommand::OpenLocalMarkdownFile { path, replacing }, ctx);
             }
             Some(MarkdownPickerOutcome::Cancelled) => {
                 self.close_markdown_file_picker(ctx);
@@ -4517,10 +4577,12 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
-                AppCommand::OpenLocalMarkdownFile { path } => {
+                AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                     let context = ui.ctx().clone();
-                    self.state
-                        .dispatch(AppCommand::OpenLocalMarkdownFile { path }, &context);
+                    self.state.dispatch(
+                        AppCommand::OpenLocalMarkdownFile { path, replacing },
+                        &context,
+                    );
                 }
                 AppCommand::StartStoredPasswordSshProfile {
                     profile_id,
@@ -5748,6 +5810,7 @@ mod tests {
         app.state.dispatch(
             AppCommand::OpenLocalMarkdownFile {
                 path: std::path::PathBuf::from("/docs/readme.md"),
+                replacing: None,
             },
             &context,
         );
@@ -5761,6 +5824,60 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item.label == "Toggle Markdown Outline"));
+    }
+
+    /// A fresh picker starts at the user's home directory (not `/`), and a
+    /// later one resumes where the previous one was left.
+    #[test]
+    fn the_markdown_file_picker_starts_at_home_and_then_resumes_the_last_directory() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        assert_eq!(
+            app.markdown_file_picker_start_directory(),
+            local_home_directory()
+        );
+
+        let remembered = std::env::temp_dir();
+        app.overlays.markdown_file_picker_directory = Some(remembered.clone());
+        assert_eq!(app.markdown_file_picker_start_directory(), remembered);
+
+        // A directory that has since been deleted must not strand the picker
+        // somewhere it cannot list.
+        app.overlays.markdown_file_picker_directory =
+            Some(remembered.join("festerm-directory-that-does-not-exist"));
+        assert_eq!(
+            app.markdown_file_picker_start_directory(),
+            local_home_directory()
+        );
+    }
+
+    /// `Ctrl+O` from inside a Markdown viewer retargets that viewer; from any
+    /// other surface it opens a new tab.
+    #[test]
+    fn the_markdown_file_picker_targets_the_active_viewer_only_from_a_viewer() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        app.open_markdown_file_picker(&context);
+        assert_eq!(app.overlays.markdown_file_picker_replaces, None);
+        app.close_markdown_file_picker(&context);
+
+        app.state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: std::path::PathBuf::from("/docs/readme.md"),
+                replacing: None,
+            },
+            &context,
+        );
+        let viewer = app.state.active();
+
+        app.open_markdown_file_picker(&context);
+        assert_eq!(app.overlays.markdown_file_picker_replaces, Some(viewer));
+
+        // Dismissing the picker must not leave the target armed for the next
+        // (possibly unrelated) open.
+        app.close_markdown_file_picker(&context);
+        assert_eq!(app.overlays.markdown_file_picker_replaces, None);
     }
 
     #[test]

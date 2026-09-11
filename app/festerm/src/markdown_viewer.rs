@@ -23,6 +23,17 @@ use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
 
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
+/// How many images a local document may load without the reader asking
+/// (`docs/adr/0030-native-markdown-viewer.md`, "Automatic loading of local
+/// relative images"). A document with more image references than this shows
+/// its remaining images as explicit "Load local image" placeholders, so a
+/// pathological document cannot turn one open into unbounded filesystem
+/// work.
+const MAX_AUTOMATIC_IMAGE_LOADS: usize = 64;
+/// How many automatic image loads may be in flight at once. Each load owns a
+/// thread, so this caps the burst a large document creates; the rest start as
+/// earlier ones finish.
+const MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS: usize = 4;
 const OUTLINE_WIDTH: f32 = 216.0;
 /// Narrower than this and the outline is hidden for the frame: the reading
 /// column matters more than the navigation aid on a cramped window.
@@ -410,6 +421,12 @@ pub struct MarkdownViewerTab {
     loaded_images: BTreeMap<usize, LoadedImage>,
     pending_image_loads: BTreeMap<usize, PendingImageLoad>,
     image_errors: BTreeMap<usize, String>,
+    /// How many image loads this document has started on its own (see
+    /// `start_automatic_image_loads`). Counted rather than derived from
+    /// `loaded_images`/`image_errors` so the `MAX_AUTOMATIC_IMAGE_LOADS`
+    /// budget is spent once per document and cannot be replenished by, say,
+    /// an image that fails to decode.
+    automatic_image_loads: usize,
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     outline_keyboard_focus: bool,
@@ -449,6 +466,7 @@ impl MarkdownViewerTab {
             loaded_images: BTreeMap::new(),
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
+            automatic_image_loads: 0,
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
@@ -456,6 +474,28 @@ impl MarkdownViewerTab {
         };
         tab.reload();
         tab
+    }
+
+    /// Retargets this viewer at a different local file in place, so `Ctrl+O`
+    /// from inside a viewer replaces the document being read rather than
+    /// opening another tab.
+    ///
+    /// The user's *view* preferences (preview-vs-source mode, outline and
+    /// status-bar visibility) carry over because they are properties of how
+    /// this person likes to read, not of the document. Everything else —
+    /// notably `resource_approvals` — is rebuilt from scratch: an approval
+    /// is granted for one document's resources and must never be inherited
+    /// by a different document (`docs/adr/0030-native-markdown-viewer.md`,
+    /// "Explicit, non-persisted resource approval only").
+    pub fn open_local_replacing(&mut self, path: PathBuf) {
+        let mode = self.mode;
+        let outline_open = self.outline_open;
+        let status_bar_visible = self.status_bar_visible;
+        let mut replacement = Self::open_local(path);
+        replacement.mode = mode;
+        replacement.outline_open = outline_open;
+        replacement.status_bar_visible = status_bar_visible;
+        *self = replacement;
     }
 
     /// Opens a Markdown document already fetched from a remote SFTP
@@ -490,6 +530,7 @@ impl MarkdownViewerTab {
             loaded_images: BTreeMap::new(),
             pending_image_loads: BTreeMap::new(),
             image_errors: BTreeMap::new(),
+            automatic_image_loads: 0,
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
@@ -592,6 +633,7 @@ impl MarkdownViewerTab {
 
     pub fn show(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
         self.poll_background_work(ui.ctx());
+        self.start_automatic_image_loads(ui.ctx());
         let mut command = self.consume_shortcuts(ui.ctx(), tab_id);
         egui::Frame::new()
             .fill(theme::SURFACE_WINDOW)
@@ -707,6 +749,7 @@ impl MarkdownViewerTab {
                 self.loaded_images.clear();
                 self.pending_image_loads.clear();
                 self.image_errors.clear();
+                self.automatic_image_loads = 0;
                 self.outline_keyboard_focus = false;
                 if let Some(document) = &self.document {
                     self.find.restore_for_reload(document);
@@ -814,6 +857,60 @@ impl MarkdownViewerTab {
                 reference_index,
                 "A background image loader could not be started.".to_owned(),
             );
+        }
+    }
+
+    /// Starts loading the local images a local document references, without
+    /// waiting for the reader to click each placeholder.
+    ///
+    /// `docs/adr/0030-native-markdown-viewer.md` requires explicit
+    /// activation for resources, and that still holds for everything that
+    /// leaves the machine or escapes the document's own directory: remote
+    /// documents, absolute URLs and SFTP-origin references all keep their
+    /// placeholders. This narrow exception covers only images a *local*
+    /// document references *relatively* — files the reader already granted
+    /// access to by opening the document, read with the same byte and
+    /// raster-area limits as a manual load, and bounded by
+    /// `MAX_AUTOMATIC_IMAGE_LOADS` / `MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS`
+    /// so a hostile document cannot turn one open into unbounded work.
+    /// A document whose images are all placeholders is not a readable
+    /// document, which is the behaviour this restores.
+    fn start_automatic_image_loads(&mut self, context: &egui::Context) {
+        if local_document_source(&self.source).is_none() {
+            return;
+        }
+        let Some(document) = &self.document else {
+            return;
+        };
+        let mut candidates = Vec::new();
+        for (index, reference) in document.resource_references().iter().enumerate() {
+            if self.automatic_image_loads + candidates.len() >= MAX_AUTOMATIC_IMAGE_LOADS {
+                break;
+            }
+            if self.pending_image_loads.len() + candidates.len()
+                >= MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS
+            {
+                break;
+            }
+            if reference.kind() != ResourceReferenceKind::Image
+                || reference.class() != ResourceReferenceClass::LocalRelative
+            {
+                continue;
+            }
+            // `image_errors` is the re-entry guard for a reference that has
+            // already been tried and failed: without it a missing image
+            // would be re-read from disk on every single frame.
+            if self.loaded_images.contains_key(&index)
+                || self.pending_image_loads.contains_key(&index)
+                || self.image_errors.contains_key(&index)
+            {
+                continue;
+            }
+            candidates.push(index);
+        }
+        for index in candidates {
+            self.automatic_image_loads += 1;
+            self.load_local_image(index, context);
         }
     }
 
@@ -2525,50 +2622,89 @@ fn render_image(
     pending_scroll: &mut Option<PendingScroll>,
 ) {
     let reference = &document.resource_references()[image.reference_index()];
+    // An image owns a whole paragraph row. `render_text_block` lays inline
+    // runs out in a `horizontal_wrapped` with zero item spacing, so without
+    // this the group was squeezed into whatever width was left on the
+    // current row and its stacked labels ran together ("Image: diagramLocal
+    // resource"). Claiming the paragraph's full width both wraps the group
+    // onto its own row and gives a loaded image the whole reading column.
+    let full_width = ui.max_rect().width().max(1.0);
     let response = ui
-        .group(|ui| {
-            ui.label(
-                RichText::new(format!("Image: {}", image.alt_text()))
-                    .small()
-                    .strong(),
-            );
-            ui.label(
-                RichText::new(resource_class_label(reference.class()))
-                    .small()
-                    .color(theme::TEXT_SECONDARY),
-            );
-            if let Some(image) = loaded_images.get(&image.reference_index()) {
-                let size = egui::Vec2::new(image.size[0] as f32, image.size[1] as f32);
-                ui.add(
-                    egui::Image::new(&image.texture)
-                        .max_width(320.0)
-                        .max_height(240.0)
-                        .fit_to_exact_size(size.min(vec2(320.0, 240.0))),
-                );
-            } else if pending_image_loads.contains_key(&image.reference_index()) {
-                ui.label(
-                    RichText::new("Loading local image…")
-                        .small()
-                        .color(theme::TEXT_SECONDARY),
-                );
-            } else {
-                ui.label(RichText::new(resource_placeholder_action(reference.class())).small());
-                if reference.class() == ResourceReferenceClass::LocalRelative
-                    && !approvals.is_approved(image.reference_index())
-                    && ui.small_button("Load local image").clicked()
-                {
-                    ui.ctx().memory_mut(|memory| {
-                        memory.data.insert_temp(
-                            egui::Id::new("markdown-load-image"),
-                            image.reference_index(),
+        .allocate_ui_with_layout(
+            vec2(full_width, 0.0),
+            egui::Layout::top_down(Align::Min),
+            |ui| {
+                ui.set_min_width(full_width);
+                ui.set_max_width(full_width);
+                // `render_text_block` zeroes item spacing so inline runs butt
+                // up against each other; restore the application's ambient
+                // spacing inside the group or its stacked rows collide.
+                ui.spacing_mut().item_spacing =
+                    ui.ctx().style_of(ui.ctx().theme()).spacing.item_spacing;
+                ui.group(|ui| {
+                    ui.set_min_width(ui.available_width());
+                    if let Some(loaded) = loaded_images.get(&image.reference_index()) {
+                        let available = ui.available_width().max(1.0);
+                        let native_width = loaded.size[0] as f32;
+                        // Scale down to the reading column when the image is
+                        // wider than it, but never scale *up* past the
+                        // image's own resolution -- stretching a small icon
+                        // across the column only makes it blurry.
+                        // `fit_to_original_size` plus `max_width` is exactly
+                        // that rule.
+                        ui.add(
+                            egui::Image::new(&loaded.texture)
+                                .fit_to_original_size(1.0)
+                                .max_width(available.min(native_width.max(1.0))),
                         );
-                    });
-                }
-                if let Some(message) = image_errors.get(&image.reference_index()) {
-                    ui.label(RichText::new(message).small().color(theme::STATUS_ERROR));
-                }
-            }
-        })
+                        if !image.alt_text().is_empty() {
+                            ui.label(
+                                RichText::new(image.alt_text())
+                                    .small()
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        }
+                    } else {
+                        ui.label(
+                            RichText::new(format!("Image: {}", image.alt_text()))
+                                .small()
+                                .strong(),
+                        );
+                        ui.label(
+                            RichText::new(resource_class_label(reference.class()))
+                                .small()
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                        if pending_image_loads.contains_key(&image.reference_index()) {
+                            ui.label(
+                                RichText::new("Loading local image…")
+                                    .small()
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        } else {
+                            ui.label(
+                                RichText::new(resource_placeholder_action(reference.class()))
+                                    .small(),
+                            );
+                            if reference.class() == ResourceReferenceClass::LocalRelative
+                                && !approvals.is_approved(image.reference_index())
+                                && ui.small_button("Load local image").clicked()
+                            {
+                                ui.ctx().memory_mut(|memory| {
+                                    memory.data.insert_temp(
+                                        egui::Id::new("markdown-load-image"),
+                                        image.reference_index(),
+                                    );
+                                });
+                            }
+                            if let Some(message) = image_errors.get(&image.reference_index()) {
+                                ui.label(RichText::new(message).small().color(theme::STATUS_ERROR));
+                            }
+                        }
+                    }
+                });
+            },
+        )
         .response;
     if matches!(pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(image.span(), *target))
     {
@@ -3133,7 +3269,10 @@ pub fn take_viewer_commands(context: &egui::Context) -> Vec<AppCommand> {
             .data
             .get_temp::<PathBuf>(egui::Id::new("markdown-local-link"))
     }) {
-        commands.push(AppCommand::OpenLocalMarkdownFile { path });
+        commands.push(AppCommand::OpenLocalMarkdownFile {
+            path,
+            replacing: None,
+        });
         context.memory_mut(|memory| {
             memory
                 .data
@@ -3160,6 +3299,7 @@ mod tests {
     use super::*;
     use festerm_markdown::RemoteSourceOwner;
     use std::ops::Range;
+    use std::time::Duration;
 
     fn document(text: &str) -> MarkdownDocument {
         MarkdownLoader::default()
@@ -3194,6 +3334,187 @@ mod tests {
             })
             .expect("section should cover the requested text")
             .format
+    }
+
+    /// A scratch directory for image-loading tests. The viewer resolves
+    /// relative image targets against the *canonicalised* Markdown path, so
+    /// the temp root is canonicalised here too — on Windows `TEMP` is
+    /// routinely an `8.3` short path that would otherwise not match.
+    fn image_test_directory(label: &str) -> PathBuf {
+        let root = fs::canonicalize(std::env::temp_dir()).expect("temp dir should canonicalise");
+        let directory = root.join(format!(
+            "festerm-markdown-image-{label}-{}-{:?}",
+            std::process::id(),
+            thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("scratch directory should be creatable");
+        directory
+    }
+
+    fn write_test_png(path: &Path, width: u32, height: u32) {
+        image::RgbaImage::from_pixel(width, height, image::Rgba([10, 20, 30, 255]))
+            .save(path)
+            .expect("test PNG should be writable");
+    }
+
+    /// Drives the viewer's per-frame background work until `condition` holds,
+    /// mirroring what `show` does every frame without needing a real frame.
+    fn pump_image_loads(
+        viewer: &mut MarkdownViewerTab,
+        context: &egui::Context,
+        mut condition: impl FnMut(&MarkdownViewerTab) -> bool,
+    ) -> bool {
+        for _ in 0..200 {
+            viewer.poll_background_work(context);
+            viewer.start_automatic_image_loads(context);
+            if condition(viewer) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    /// Images a local document references relatively are loaded on open. A
+    /// document whose pictures are all "Load local image" buttons is not a
+    /// readable document; see `start_automatic_image_loads` for why this
+    /// narrow case is exempt from ADR 0030's explicit-activation rule.
+    #[test]
+    fn local_relative_images_load_without_the_reader_asking() {
+        let directory = image_test_directory("auto");
+        write_test_png(&directory.join("diagram.png"), 4, 3);
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, b"# Doc\n\n![A diagram](diagram.png)\n").unwrap();
+
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        let loaded = pump_image_loads(&mut viewer, &context, |viewer| {
+            !viewer.loaded_images.is_empty()
+        });
+
+        assert!(
+            loaded,
+            "the local image should have loaded on its own; errors: {:?}",
+            viewer.image_errors
+        );
+        assert!(viewer.image_errors.is_empty());
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    /// The exemption stops at the document's own directory: anything that
+    /// would reach the network keeps its explicit placeholder.
+    #[test]
+    fn absolute_url_images_are_never_loaded_automatically() {
+        let directory = image_test_directory("absolute");
+        let markdown = directory.join("readme.md");
+        fs::write(
+            &markdown,
+            b"# Doc\n\n![Remote](https://example.test/diagram.png)\n",
+        )
+        .unwrap();
+
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        viewer.start_automatic_image_loads(&context);
+
+        assert!(viewer.pending_image_loads.is_empty());
+        assert!(viewer.loaded_images.is_empty());
+        assert_eq!(viewer.automatic_image_loads, 0);
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    /// A reference that cannot be read must be attempted once, not re-read
+    /// from disk on every frame for as long as the document stays open.
+    #[test]
+    fn a_local_image_that_cannot_be_read_is_only_attempted_once() {
+        let directory = image_test_directory("missing");
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, b"# Doc\n\n![Gone](missing.png)\n").unwrap();
+
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        let failed = pump_image_loads(&mut viewer, &context, |viewer| {
+            !viewer.image_errors.is_empty()
+        });
+
+        assert!(failed, "the missing image should have recorded an error");
+        for _ in 0..5 {
+            viewer.start_automatic_image_loads(&context);
+        }
+        assert_eq!(viewer.automatic_image_loads, 1);
+        assert!(viewer.pending_image_loads.is_empty());
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    /// Automatic loading is bounded: a document with more image references
+    /// than the concurrency cap never starts more than the cap at once.
+    #[test]
+    fn automatic_image_loading_is_bounded_by_the_concurrency_cap() {
+        let directory = image_test_directory("bounded");
+        let mut body = String::from("# Doc\n\n");
+        for index in 0..(MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS * 3) {
+            write_test_png(&directory.join(format!("image-{index}.png")), 2, 2);
+            body.push_str(&format!("![Image {index}](image-{index}.png)\n\n"));
+        }
+        let markdown = directory.join("readme.md");
+        fs::write(&markdown, body.as_bytes()).unwrap();
+
+        let context = egui::Context::default();
+        let mut viewer = MarkdownViewerTab::open_local(markdown);
+        viewer.start_automatic_image_loads(&context);
+
+        assert_eq!(
+            viewer.pending_image_loads.len(),
+            MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS
+        );
+
+        // The rest follow as the first batch drains, so the whole document
+        // still ends up readable.
+        let all_loaded = pump_image_loads(&mut viewer, &context, |viewer| {
+            viewer.loaded_images.len() == MAX_CONCURRENT_AUTOMATIC_IMAGE_LOADS * 3
+        });
+        assert!(
+            all_loaded,
+            "expected every image to load eventually; loaded {} errors {:?}",
+            viewer.loaded_images.len(),
+            viewer.image_errors
+        );
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    /// `Ctrl+O` inside a viewer replaces the document but must not carry the
+    /// previous document's resource approvals across
+    /// (`docs/adr/0030-native-markdown-viewer.md`).
+    #[test]
+    fn replacing_a_viewers_document_drops_the_previous_documents_approvals() {
+        let directory = image_test_directory("replace");
+        let first = directory.join("first.md");
+        let second = directory.join("second.md");
+        fs::write(
+            &first,
+            b"# First\n\n![Remote](https://example.test/a.png)\n",
+        )
+        .unwrap();
+        fs::write(
+            &second,
+            b"# Second\n\n![Remote](https://example.test/b.png)\n",
+        )
+        .unwrap();
+
+        let mut viewer = MarkdownViewerTab::open_local(first);
+        viewer.resource_approvals.approve(0);
+        viewer.mode = MarkdownViewerMode::Source;
+        viewer.outline_open = false;
+
+        viewer.open_local_replacing(second);
+
+        assert!(!viewer.resource_approvals.is_approved(0));
+        assert!(viewer.display_path().ends_with("second.md"));
+        // View preferences are the reader's, not the document's.
+        assert!(matches!(viewer.mode, MarkdownViewerMode::Source));
+        assert!(!viewer.outline_open);
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]

@@ -232,6 +232,49 @@ change, and after a successful reload that produces a new snapshot. They are
 never persisted in configuration, workspace state, recent history, or trust
 stores.
 
+### Amendment: automatic loading of local relative images
+
+*Amended after the first release of the viewer.*
+
+"The viewer never performs implicit secondary loads" made the common case
+unusable: a local design document is mostly diagrams and screenshots, and
+opening one produced a page of grey "Load local image" buttons that had to be
+clicked one at a time before the document could be read at all. The rule was
+written to keep the viewer from reaching out to the network or to files the
+reader had not offered it, and that concern does not apply to an image the
+open document references from its own directory.
+
+The rule is therefore narrowed, not dropped. **Images that a *local* document
+references with a *relative* target load automatically when the document is
+opened.** Everything else keeps its explicit placeholder:
+
+- remote documents (every reference class),
+- absolute URLs of any scheme,
+- SFTP-origin-relative references,
+- non-image resource references.
+
+An automatic load is otherwise identical to the explicit one: the same
+canonicalization, the same regular-file requirement, the same raster-format
+restriction and the same byte and raster-area limits in "Bounded-loading
+limits". The argument that this is safe is an ownership argument, not a
+weakening of the limits: opening `README.md` from a directory is already a
+statement that the directory's contents may be read, and the relative-target
+class is exactly the set of files inside that grant.
+
+Automatic loading is additionally bounded so that a hostile or merely enormous
+document cannot turn one open into unbounded work:
+
+- **Maximum automatic loads per document:** **64**. References past that budget
+  fall back to explicit placeholders.
+- **Maximum concurrent automatic loads:** **4**. Each load owns a thread, so
+  the rest start only as earlier ones finish.
+- A reference that fails is recorded in the per-document error map and is never
+  retried automatically, so a missing file costs one attempt rather than one
+  attempt per frame.
+
+The budget is spent per snapshot and is reset by a reload, matching how
+approvals are cleared.
+
 ### Bounded-loading limits
 
 The first implementation will ship with these concrete limits:
@@ -324,3 +367,30 @@ previously valid snapshot.
   oversize/binary/invalid-UTF-8 failures. Stable scenario IDs should be added in
   the implementing change.
 - **Coverage superseded:** None.
+
+### Validation impact of the automatic local-image amendment
+
+- **Invariants introduced or changed:** "no secondary resource loads occur
+  without explicit, non-persisted approval" is narrowed to "no secondary
+  resource loads occur without explicit, non-persisted approval, except images
+  a local document references with a relative target, which load automatically
+  under the same bounded-loading limits plus a per-document count cap and a
+  concurrency cap". No other reference class changes.
+- **GUI/action edges affected:** None. Automatic loading reuses the existing
+  local-image load path; the explicit "Load local image" activation remains for
+  every class that still requires it and for references past the per-document
+  budget. `Ctrl+O` is added as a chord for the existing
+  `LAUNCH-11` open-Markdown-file workflow; it introduces no new edge, but from
+  inside a viewer it now retargets that viewer instead of opening a second tab.
+- **Automated tests required:**
+  `local_relative_images_load_without_the_reader_asking`,
+  `absolute_url_images_are_never_loaded_automatically`,
+  `a_local_image_that_cannot_be_read_is_only_attempted_once`,
+  `automatic_image_loading_is_bounded_by_the_concurrency_cap`, and
+  `replacing_a_viewers_document_drops_the_previous_documents_approvals`
+  (all in `app/festerm/src/markdown_viewer.rs`).
+- **Native/manual evidence required:** None beyond the existing manual image
+  scenarios, which still cover the explicit path.
+- **Coverage superseded:** The manual "explicit local image load" scenario no
+  longer exercises the default path for a local document; it remains valid for
+  over-budget references and for every non-local-relative class.

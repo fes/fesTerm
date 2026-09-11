@@ -1352,7 +1352,19 @@
         "open_remote_markdown_snapshot_opens_a_new_tab",
         "reopening_the_same_remote_markdown_file_refreshes_the_existing_tab_instead_of_duplicating",
         "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files",
-        "markdown_file_picker_navigation_moves_up_home_and_back"
+        "markdown_file_picker_navigation_moves_up_home_and_back",
+        "ctrl_o_inside_a_markdown_viewer_replaces_that_viewers_document",
+        "opening_a_markdown_file_without_a_replacement_target_still_opens_a_new_tab",
+        "opening_a_markdown_file_falls_back_to_a_new_tab_when_the_replacement_target_is_gone",
+        "the_markdown_file_picker_starts_at_home_and_then_resumes_the_last_directory",
+        "the_markdown_file_picker_targets_the_active_viewer_only_from_a_viewer",
+        "local_home_directory_resolves_to_a_real_directory",
+        "markdown_file_picker_reports_the_directory_it_is_browsing",
+        "local_relative_images_load_without_the_reader_asking",
+        "absolute_url_images_are_never_loaded_automatically",
+        "a_local_image_that_cannot_be_read_is_only_attempted_once",
+        "automatic_image_loading_is_bounded_by_the_concurrency_cap",
+        "replacing_a_viewers_document_drops_the_previous_documents_approvals"
       ],
       "manual_scenarios": [
         "CP-06"

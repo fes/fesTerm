@@ -3337,10 +3337,7 @@ impl SftpFileManagerTab {
     fn navigate_home(&mut self, focus: PaneFocus) {
         match focus {
             PaneFocus::Local => {
-                let target = std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/"));
-                load_path(self, focus, SftpPath::local(target), true);
+                load_path(self, focus, SftpPath::local(local_home_directory()), true);
             }
             PaneFocus::Remote => {
                 load_path(self, focus, SftpPath::remote("/"), true);
@@ -3376,7 +3373,10 @@ impl SftpFileManagerTab {
         match &item.path {
             SftpPath::Local(path) => {
                 self.pending_markdown_command =
-                    Some(crate::tabs::AppCommand::OpenLocalMarkdownFile { path: path.clone() });
+                    Some(crate::tabs::AppCommand::OpenLocalMarkdownFile {
+                        path: path.clone(),
+                        replacing: None,
+                    });
             }
             SftpPath::Remote(path) => {
                 self.request_remote_markdown_snapshot(path.clone());
@@ -4798,6 +4798,20 @@ fn build_remote_markdown_source(
     .ok()
 }
 
+/// The directory the Home navigation and a freshly opened picker start from.
+///
+/// Windows sets `USERPROFILE` rather than `HOME`, so consulting only `HOME`
+/// sent every Home navigation there to the filesystem root instead of the
+/// user's own folder.
+pub(crate) fn local_home_directory() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR_STR))
+}
+
 fn item_glyph(item: &SftpDirectoryItem) -> SftpGlyph {
     match item_type_label(item) {
         "Folder" => SftpGlyph::Folder,
@@ -5719,14 +5733,20 @@ impl MarkdownFilePicker {
 
     fn navigate_home(&mut self) {
         // Matches `SftpFileManagerTab::navigate_home`'s Local branch.
-        let target = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
-        self.load(SftpPath::local(target), true);
+        self.load(SftpPath::local(local_home_directory()), true);
     }
 
     fn navigate_to_breadcrumb(&mut self, path: SftpPath) {
         self.load(path, true);
+    }
+
+    /// The directory currently being browsed, so the next picker can resume
+    /// where this one left off rather than starting over at the home folder.
+    pub(crate) fn current_directory(&self) -> Option<PathBuf> {
+        match &self.pane.current_path {
+            SftpPath::Local(path) => Some(path.clone()),
+            SftpPath::Remote(_) => None,
+        }
     }
 
     fn refresh(&mut self) {
@@ -5894,18 +5914,8 @@ impl MarkdownFilePicker {
                         item.file_type == SftpEntryType::Directory || is_markdown_file(item);
                     let row = ui
                         .horizontal(|ui| {
-                            let (icon_rect, _) =
-                                ui.allocate_exact_size(egui::vec2(16.0, 16.0), Sense::hover());
-                            paint_sftp_glyph(
-                                ui.painter(),
-                                item_glyph(item),
-                                icon_rect,
-                                if markdown_or_dir {
-                                    theme::TEXT_SECONDARY
-                                } else {
-                                    theme::TEXT_MUTED
-                                },
-                            );
+                            ui.set_min_height(SFTP_TABLE_ROW_HEIGHT);
+                            ui.set_max_height(SFTP_TABLE_ROW_HEIGHT);
                             let name_color = if !markdown_or_dir {
                                 theme::TEXT_MUTED
                             } else if selected {
@@ -5913,11 +5923,44 @@ impl MarkdownFilePicker {
                             } else {
                                 theme::TEXT_SECONDARY
                             };
-                            show_table_text_cell(
-                                ui,
-                                columns[0] - 20.0,
-                                CellAlign::Left,
-                                RichText::new(item.name.clone()).color(name_color),
+                            // The icon has to be allocated inside a cell that
+                            // already carries the row's full height. Allocating
+                            // it straight into the row (which is only as tall as
+                            // the icon until the taller text cells are added)
+                            // centered it against its own 16px band, leaving
+                            // every glyph floating above the name beside it.
+                            // This mirrors `SftpFileManagerTab`'s name cell.
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(columns[0], SFTP_TABLE_ROW_HEIGHT),
+                                Layout::left_to_right(Align::Center),
+                                |ui| {
+                                    ui.set_min_width(columns[0]);
+                                    ui.set_max_width(
+                                        (columns[0] - SFTP_TABLE_CELL_PADDING).max(0.0),
+                                    );
+                                    ui.add_space(SFTP_TABLE_CELL_PADDING);
+                                    let (icon_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(15.0, 15.0),
+                                        Sense::hover(),
+                                    );
+                                    paint_sftp_glyph(
+                                        ui.painter(),
+                                        item_glyph(item),
+                                        icon_rect,
+                                        if markdown_or_dir {
+                                            theme::TEXT_SECONDARY
+                                        } else {
+                                            theme::TEXT_MUTED
+                                        },
+                                    );
+                                    ui.add_space(5.0);
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(item.name.clone()).color(name_color),
+                                        )
+                                        .truncate(),
+                                    );
+                                },
                             );
                             show_table_text_cell(
                                 ui,
@@ -6988,14 +7031,48 @@ mod tests {
 
         picker.navigate_home();
         wait_for_picker_load(&mut picker);
-        let expected_home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
-        assert_eq!(picker.pane.current_path, SftpPath::local(expected_home));
+        assert_eq!(
+            picker.pane.current_path,
+            SftpPath::local(local_home_directory())
+        );
 
         picker.navigate_back();
         wait_for_picker_load(&mut picker);
         assert_eq!(picker.pane.current_path, SftpPath::local(dir.clone()));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Home has to be a real directory on every platform. Windows sets
+    /// `USERPROFILE` and not `HOME`, so consulting only `HOME` (as this did)
+    /// sent every Home navigation to the filesystem root.
+    #[test]
+    fn local_home_directory_resolves_to_a_real_directory() {
+        let home = local_home_directory();
+        assert!(
+            home.is_dir(),
+            "home directory should exist on this platform: {home:?}"
+        );
+        assert_ne!(home, PathBuf::from(std::path::MAIN_SEPARATOR_STR));
+    }
+
+    /// The picker exposes where it is browsing so the next picker can resume
+    /// there instead of starting over at Home.
+    #[test]
+    fn markdown_file_picker_reports_the_directory_it_is_browsing() {
+        let dir = std::env::temp_dir().join(format!(
+            "festerm-markdown-picker-dir-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(dir.join("child")).expect("temp directories should be creatable");
+
+        let mut picker = MarkdownFilePicker::new(dir.join("child"), egui::Context::default());
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.current_directory(), Some(dir.join("child")));
+
+        picker.navigate_up();
+        wait_for_picker_load(&mut picker);
+        assert_eq!(picker.current_directory(), Some(dir.clone()));
 
         fs::remove_dir_all(&dir).ok();
     }

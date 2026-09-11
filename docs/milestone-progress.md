@@ -991,3 +991,55 @@ a twenty-thousand-frame burst, then simply stops reading for five seconds --
 took minutes to write, and failed against the unfixed daemon with `os error 233`,
 "No process is on the other end of the pipe": the same error from the original
 screenshots.
+
+## September 2026: making the Markdown viewer readable by default
+
+Five complaints arrived in one message, and four of them were the same
+complaint wearing different clothes: the viewer was correct but not usable.
+
+The file picker's icons floated above their file names. The cause is a rule
+about egui that is easy to learn twice: `ui.horizontal` vertically centers a
+child against the row's height *at the moment the child is allocated*. The
+picker allocated a 16px icon first, so it was centered in a 16px band; the
+31px-tall text cells that followed then grew the row underneath it. The SFTP
+file manager had already solved this by allocating its icon inside a cell that
+carries the full row height, and the picker now does the same thing -- the fix
+was to stop having two answers to one question.
+
+Home was `/`. The picker resolved the home directory from `HOME`, which Windows
+does not set, and fell back to the filesystem root; three separate places had
+independently made the same assumption, and a fourth (`festerm-ssh`) had it
+right all along. One helper now consults `HOME`, then `USERPROFILE`, then the
+working directory, and all three call sites use it. The picker also remembers
+where it was last browsing, including when it was cancelled -- navigating
+somewhere and then changing your mind is still you saying where you work.
+
+Images were the interesting one, because fixing it meant amending an ADR rather
+than working around it. ADR 0030 says "the viewer never performs implicit
+secondary loads", and that rule made a design document -- which is mostly
+diagrams -- open as a page of grey "Load local image" buttons. The rule exists
+to stop the viewer reaching the network or files the reader never offered it,
+and neither applies to an image the open document references from its own
+directory: opening `README.md` *is* the grant. So the decision was narrowed, not
+dropped. Local documents auto-load relatively-referenced images, under the same
+canonicalization, format and size limits as before, capped at 64 per document
+and 4 concurrently, with failures recorded so a missing file costs one attempt
+rather than one per frame. Remote documents, absolute URLs and SFTP-origin
+references keep every placeholder they had.
+
+The images that did load were then rendered at 320x240 inside a group squeezed
+into whatever horizontal space was left on the current inline row -- which is
+also why "Image: diagram" and "Local resource" ran together with no gap, since
+paragraph layout zeroes item spacing so that inline runs butt up correctly. An
+image now claims the paragraph's full width (which forces it onto its own row),
+restores ambient spacing inside its group, scales down to the reading column and
+never up past its own resolution, and shows its alt text as a caption once it
+has loaded rather than as a label above a placeholder.
+
+Finally, `Ctrl+O` opens the picker from anywhere. From a Markdown viewer it
+retargets *that* viewer instead of opening a second tab, carrying the reader's
+view preferences across and deliberately not carrying the previous document's
+resource approvals, which belong to the document that was approved. It does
+claim `^O` from the terminal, where readline binds the rarely used
+`operate-and-get-next`; that trade is recorded next to the binding so the next
+person to wonder does not have to guess.

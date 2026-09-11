@@ -1299,6 +1299,13 @@ pub enum AppCommand {
     OpenProfiles,
     OpenLocalMarkdownFile {
         path: PathBuf,
+        /// Retarget this already-open Markdown viewer at `path` in place
+        /// instead of focusing/opening a separate tab. `Ctrl+O` from inside
+        /// a viewer sets this so the picked document replaces the one the
+        /// user was reading, matching the "open in this window" behaviour of
+        /// every other document viewer; every other caller leaves it `None`
+        /// and gets the focus-or-open-a-new-tab behaviour.
+        replacing: Option<TabId>,
     },
     /// Opens a Markdown file already fetched (in memory) from a remote SFTP
     /// session — e.g. from double-clicking a `.md` file in the SFTP file
@@ -2342,7 +2349,9 @@ impl AppState {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
-            AppCommand::OpenLocalMarkdownFile { path } => self.open_local_markdown(path),
+            AppCommand::OpenLocalMarkdownFile { path, replacing } => {
+                self.open_local_markdown(path, replacing);
+            }
             AppCommand::OpenRemoteMarkdownSnapshot {
                 source,
                 display_path,
@@ -2597,7 +2606,24 @@ impl AppState {
         self.workspace_dirty = true;
     }
 
-    fn open_local_markdown(&mut self, path: PathBuf) {
+    fn open_local_markdown(&mut self, path: PathBuf, replacing: Option<TabId>) {
+        // `Ctrl+O` inside a viewer retargets *that* viewer rather than
+        // opening a second tab. This runs before the
+        // already-open-somewhere-else lookup below on purpose: the user
+        // asked for the document in front of them to change, so honouring a
+        // duplicate tab elsewhere would leave the tab they were reading
+        // untouched and jump them somewhere unexpected.
+        if let Some(target) = replacing {
+            if let Some(viewer) = self.tabs.iter_mut().find_map(|tab| match &mut tab.content {
+                TabContent::MarkdownViewer(viewer) if tab.id == target => Some(viewer),
+                _ => None,
+            }) {
+                viewer.open_local_replacing(path);
+                self.set_active(target);
+                self.workspace_dirty = true;
+                return;
+            }
+        }
         if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
             TabContent::MarkdownViewer(viewer) if viewer.matches_local_path(&path) => Some(tab.id),
             _ => None,
@@ -4151,6 +4177,94 @@ mod tests {
             panic!("expected the refreshed tab to still be the Markdown viewer");
         };
         assert!(viewer.matches_remote_path("sftp.example.test", 22, "/srv/docs/guide.md"));
+    }
+
+    #[test]
+    fn ctrl_o_inside_a_markdown_viewer_replaces_that_viewers_document() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: PathBuf::from("/docs/first.md"),
+                replacing: None,
+            },
+            &context,
+        );
+        let viewer_tab = state.active();
+        let tabs_after_first_open = state.tabs().len();
+
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: PathBuf::from("/docs/second.md"),
+                replacing: Some(viewer_tab),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_after_first_open);
+        assert_eq!(state.active(), viewer_tab);
+        let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
+            panic!("expected the retargeted tab to still be the Markdown viewer");
+        };
+        assert!(viewer.display_path().ends_with("second.md"));
+    }
+
+    #[test]
+    fn opening_a_markdown_file_without_a_replacement_target_still_opens_a_new_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: PathBuf::from("/docs/first.md"),
+                replacing: None,
+            },
+            &context,
+        );
+        let first_viewer = state.active();
+        let tabs_after_first_open = state.tabs().len();
+
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: PathBuf::from("/docs/second.md"),
+                replacing: None,
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_after_first_open + 1);
+        assert_ne!(state.active(), first_viewer);
+    }
+
+    /// A stale replacement target (its tab was closed while the picker was
+    /// open) must not silently swallow the open.
+    #[test]
+    fn opening_a_markdown_file_falls_back_to_a_new_tab_when_the_replacement_target_is_gone() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: PathBuf::from("/docs/first.md"),
+                replacing: None,
+            },
+            &context,
+        );
+        let viewer_tab = state.active();
+        state.dispatch(AppCommand::CloseTab(viewer_tab), &context);
+        let tabs_before = state.tabs().len();
+
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: PathBuf::from("/docs/second.md"),
+                replacing: Some(viewer_tab),
+            },
+            &context,
+        );
+
+        assert_eq!(state.tabs().len(), tabs_before + 1);
+        let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
+            panic!("expected a new Markdown viewer tab");
+        };
+        assert!(viewer.display_path().ends_with("second.md"));
     }
 
     #[test]
