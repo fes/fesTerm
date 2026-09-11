@@ -75,6 +75,21 @@ remain active rolling qualification but do not independently keep M6 open.
 | Native local session persistence daemon | Windows, macOS, Linux using signed/packaged builds | Executable installation, detach/reattach replay, newest-client takeover, process independence and cleanup, owner-only local IPC, Windows current-user pipe isolation and Job Object breakaway | Implementation provisional under ADR-0025; native evidence pending under CP-11 |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
 
+## Deferred desktop Store qualification
+
+The [desktop Store distribution plan](app-store-distribution-plan.md) defines
+the proposed Windows package matrix and Mac sandbox experiments. These are
+**deferred**, not passed by existing direct-package or CP-09/CP-11 evidence:
+
+| Track | Prerequisite | Evidence and owner |
+| --- | --- | --- |
+| Microsoft Store | MSIX build, test package identity, native x64/ARM64 environments and Store flight | Automated manifest/updater isolation; native install/update/uninstall, ConPTY and daemon lifecycle/security; external certification. [#142](https://github.com/fes/fesTerm/issues/142) owns execution. |
+| Mac App Store | Signed sandbox feasibility prototype; any implementation then needs approved product scope and a Store test build | Native local PTY/daemon, file grants, serial and Keychain; usability of consent/denial states; separate App Review evidence. [#143](https://github.com/fes/fesTerm/issues/143) owns a go/no-go recommendation, not a shipping mandate. |
+
+Keep current scenario IDs and results unchanged. Add implementation-specific
+workflow/trace mappings when behavior exists; the planning change does not
+add an M6/M10 gate or change ADR 0025 acceptance.
+
 ## Executable workflow inventory
 
 Use these stable identifiers in issue comments, evidence manifests, and defect
