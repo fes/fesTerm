@@ -20,6 +20,8 @@ use std::os::unix::{
 };
 
 #[cfg(windows)]
+use festerm_windows_security::named_pipe::{Pipe, PipeListener};
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
@@ -750,7 +752,7 @@ fn session_client_loop<R: Read + Send + 'static>(
             break Err(error);
         }
         // Output the client has not taken yet must be delivered before any more
-        // is read, so the stream stays ordered and the shell feels the stall.
+        // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if pending.is_pending() {
             thread::sleep(CLIENT_POLL_INTERVAL);
@@ -876,24 +878,24 @@ fn set_registry_attached(name: &str, pid: u32, attached: bool) {
 #[cfg(windows)]
 fn daemon_client_loop_windows<R: Read + Send + 'static>(
     pipe_name: &str,
-    initial_listener: named_pipe::ConnectingServer,
+    initial_listener: PipeListener,
     reader: R,
     mut writer: Box<dyn Write + Send>,
     spawned: &mut SpawnedShell,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (accept_tx, accept_rx) = mpsc::channel::<io::Result<named_pipe::PipeServer>>();
+    let (accept_tx, accept_rx) = mpsc::channel::<io::Result<Pipe>>();
     let pipe_name = pipe_name.to_owned();
-    let accepting = Arc::new(AtomicBool::new(true));
-    let accept_running = Arc::clone(&accepting);
+    let accept_cancelled = Arc::new(AtomicBool::new(false));
+    let accept_stopped = Arc::clone(&accept_cancelled);
     let accept_pipe_name = pipe_name.clone();
     let accept_thread = thread::spawn(move || -> io::Result<()> {
         let mut initial_listener = Some(initial_listener);
-        while accept_running.load(Ordering::Acquire) {
+        while !accept_stopped.load(Ordering::Acquire) {
             let server = match initial_listener.take() {
-                Some(listener) => listener.wait(),
+                Some(listener) => listener.accept(&accept_stopped),
                 None => match create_secure_pipe_listener(&accept_pipe_name, false) {
-                    Ok(listener) => listener.wait(),
+                    Ok(listener) => listener.accept(&accept_stopped),
                     Err(error) => {
                         // Without this the main loop never learns that the
                         // listener is gone, and the daemon lingers with a
@@ -909,6 +911,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             };
             let server = match server {
                 Ok(server) => server,
+                Err(_) if accept_stopped.load(Ordering::Acquire) => break,
                 Err(error) => {
                     let forwarded =
                         io::Error::new(error.kind(), format!("named pipe accept failed: {error}"));
@@ -916,7 +919,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                     return Err(error);
                 }
             };
-            if !accept_running.load(Ordering::Acquire) {
+            if accept_stopped.load(Ordering::Acquire) {
                 break;
             }
             accept_tx
@@ -999,7 +1002,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             break Err(error);
         }
         // Output the client has not taken yet must be delivered before any more
-        // is read, so the stream stays ordered and the shell feels the stall.
+        // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if pending.is_pending() {
             thread::sleep(CLIENT_POLL_INTERVAL);
@@ -1046,7 +1049,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
         }
     };
 
-    accepting.store(false, Ordering::Release);
+    accept_cancelled.store(true, Ordering::Release);
     sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
     retire_active(&mut active, &mut retired_clients, false);
     report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
@@ -1054,7 +1057,6 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     // session must never stay advertised as resumable, however slowly the rest
     // of shutdown proceeds.
     let deregistered = drop_registry_record(name, process::id());
-    let _ = named_pipe::PipeClient::connect_ms(&pipe_name, 100);
     // The shell must not outlive the daemon that owns its pseudoterminal, and
     // closing the pseudoconsole is what finally lets the reader see end of
     // file. Both have to happen before any worker thread is joined.
@@ -1074,21 +1076,16 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
 }
 
 #[cfg(windows)]
-fn create_secure_pipe_listener(
-    pipe_name: &str,
-    first: bool,
-) -> io::Result<named_pipe::ConnectingServer> {
+fn create_secure_pipe_listener(pipe_name: &str, first: bool) -> io::Result<PipeListener> {
     let guard = festerm_windows_security::restrict_default_dacl_to_current_user()?;
-    let mut options = named_pipe::PipeOptions::new(pipe_name);
-    options.first(first);
-    let listener = options.single()?;
+    let listener = PipeListener::bind(pipe_name, first)?;
     guard.restore()?;
     Ok(listener)
 }
 
 #[cfg(windows)]
 fn accept_windows_clients(
-    accept_rx: &mpsc::Receiver<io::Result<named_pipe::PipeServer>>,
+    accept_rx: &mpsc::Receiver<io::Result<Pipe>>,
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     replay: &ReplayBuffer,
@@ -1101,8 +1098,8 @@ fn accept_windows_clients(
             "accept_windows_clients: new client, replay_empty={}",
             replay.is_empty()
         ));
-        stream.set_read_timeout(Some(WINDOWS_CLIENT_READ_TIMEOUT));
-        stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
+        stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
+        stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
         replace_active(
             active,
             retired_clients,
@@ -1196,7 +1193,15 @@ fn replace_active<S: Read + Write + Send + 'static>(
     let worker_stolen = Arc::clone(&stolen);
     let thread = thread::Builder::new()
         .name(format!("festerm-sessiond-client-{generation}"))
-        .spawn(move || client_io_loop(replacement, generation, input, output_rx, worker_stolen))?;
+        .spawn(move || {
+            let result = client_io_loop(replacement, generation, input, output_rx, worker_stolen);
+            if let Err(error) = &result {
+                sessiond_trace(format_args!(
+                    "client_io_loop[{generation}]: worker exited with error: {error}"
+                ));
+            }
+            result
+        })?;
     let client = ActiveClient {
         generation,
         output,
@@ -1281,9 +1286,10 @@ fn send_to_active(
 /// A client's queue is bounded, so any client that briefly stops reading will
 /// fill it: the GUI drains session output on its frame loop, and one long frame
 /// (or a burst larger than the queue) is enough. Dropping the client there
-/// turned ordinary backpressure into a lost session, so the daemon parks the
-/// chunk here instead and stops reading the pseudoterminal until the client
-/// takes it, which makes the shell — not the session — wait.
+/// turned ordinary backpressure into a lost session, so the main loop parks
+/// the chunk here instead and stops consuming its reader channel until the
+/// client takes it. The separate PTY-reader channel is still unbounded; this
+/// limits client delivery, not the daemon's total buffered PTY output.
 #[derive(Default)]
 struct PendingOutput {
     /// The chunk awaiting delivery, and the client generation it was produced
@@ -1346,7 +1352,7 @@ fn handle_pending_client_input(
     active: Option<&ActiveClient>,
     handle: &mut impl FnMut(ClientCommand) -> io::Result<()>,
 ) -> io::Result<()> {
-    for input in input.try_iter() {
+    for input in input.try_iter().take(CLIENT_QUEUE_CAPACITY) {
         if active.is_some_and(|client| client.generation == input.generation) {
             handle(input.command)?;
         }
@@ -1354,45 +1360,44 @@ fn handle_pending_client_input(
     Ok(())
 }
 
-/// Writes `data` to a client, treating a write timeout as backpressure.
-///
-/// The transport carries a write timeout so a wedged client cannot block this
-/// worker forever without recourse, but a client that is merely slow to read
-/// must keep its session: a timed-out write used to end the client thread, so
-/// one long GUI frame during heavy output disconnected the user mid-session.
-///
-/// [`Write::write_all`] cannot be resumed after a timeout because it does not
-/// report how much it wrote, so this tracks the offset itself and never
-/// rewrites bytes the client already has. A takeover by another client is the
-/// one thing that abandons the write, which keeps `stolen` responsive even
-/// while this client refuses to drain.
-fn write_all_to_client<S: Write>(
+/// Advances an output chunk without preventing the worker from reading input.
+/// A timeout or a completed byte budget yields with the offset intact; neither
+/// disconnects the client nor repeats bytes already delivered.
+fn write_to_client<S: Write>(
     stream: &mut S,
     data: &[u8],
+    written: &mut usize,
     stolen: &AtomicBool,
-) -> io::Result<()> {
-    let mut written = 0;
-    while written < data.len() {
-        if stolen.load(Ordering::Acquire) {
-            return Ok(());
+) -> io::Result<bool> {
+    let mut budget = MAX_CLIENT_FRAME_BYTES;
+    while *written < data.len() {
+        if budget == 0 || stolen.load(Ordering::Acquire) {
+            return Ok(false);
         }
-        match stream.write(&data[written..]) {
+        let end = data.len().min(*written + budget);
+        match stream.write(&data[*written..end]) {
             Ok(0) => {
                 return Err(io::Error::new(
                     io::ErrorKind::WriteZero,
                     "session client accepted no bytes",
                 ))
             }
-            Ok(count) => written += count,
-            Err(error) if is_retryable_client_write(&error) => {}
+            Ok(count) => {
+                *written += count;
+                budget -= count;
+            }
+            Err(error) if is_retryable_client_write(&error) => return Ok(false),
             Err(error) => return Err(error),
         }
     }
+    // Named-pipe flush waits for the peer to drain, without the write timeout.
+    #[cfg(not(windows))]
     match stream.flush() {
-        Ok(()) => Ok(()),
-        Err(error) if is_retryable_client_write(&error) => Ok(()),
-        Err(error) => Err(error),
+        Ok(()) => {}
+        Err(error) if is_retryable_client_write(&error) => {}
+        Err(error) => return Err(error),
     }
+    Ok(true)
 }
 
 fn is_retryable_client_write(error: &io::Error) -> bool {
@@ -1410,46 +1415,89 @@ fn client_io_loop<S: Read + Write>(
     stolen: Arc<AtomicBool>,
 ) -> io::Result<()> {
     let mut parser = ClientFrameParser::default();
+    let mut pending_input = None;
+    let mut pending_output = None;
     let mut buffer = [0u8; 4096];
-    loop {
+    'client: loop {
         if stolen.load(Ordering::Acquire) {
             stream.write_all(STOLEN_NOTICE_BYTES)?;
+            #[cfg(not(windows))]
             stream.flush()?;
             return Ok(());
         }
         loop {
-            match output.try_recv() {
-                Ok(ClientOutput::Data(data)) => {
-                    sessiond_trace(format_args!(
-                        "client_io_loop[{generation}]: writing {} bytes to client",
-                        data.len()
-                    ));
-                    write_all_to_client(&mut stream, &data, &stolen)?;
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            if stolen.load(Ordering::Acquire) {
+                continue 'client;
             }
-        }
-        match stream.read(&mut buffer) {
-            Ok(0) => return Ok(()),
-            Ok(count) => {
-                parser.push(&buffer[..count])?;
-                for command in parser.drain()? {
-                    match input.try_send(ClientInput {
+            let retrying = pending_input.is_some();
+            let command = match pending_input.take() {
+                Some(command) => command,
+                None => match parser.next_command()? {
+                    Some(command) => ClientInput {
                         generation,
                         command,
-                    }) {
-                        Ok(()) => {}
-                        Err(mpsc::TrySendError::Full(_)) => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::WouldBlock,
-                                "session client input queue is full",
-                            ))
-                        }
-                        Err(mpsc::TrySendError::Disconnected(_)) => return Ok(()),
+                    },
+                    None => break,
+                },
+            };
+            match input.try_send(command) {
+                Ok(()) => {
+                    if retrying {
+                        sessiond_trace(format_args!(
+                            "client_io_loop[{generation}]: input queue resumed"
+                        ));
                     }
                 }
+                Err(mpsc::TrySendError::Full(command)) => {
+                    // Keep just one decoded command and the bounded parser
+                    // buffer. Do not read ahead or block on send: output and
+                    // takeover must still progress while the daemon is busy.
+                    if !retrying {
+                        sessiond_trace(format_args!(
+                            "client_io_loop[{generation}]: input queue full; pausing reads"
+                        ));
+                    }
+                    pending_input = Some(command);
+                    break;
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => return Ok(()),
             }
+        }
+        for _ in 0..CLIENT_QUEUE_CAPACITY {
+            if stolen.load(Ordering::Acquire) {
+                continue 'client;
+            }
+            if pending_output.is_none() {
+                match output.try_recv() {
+                    Ok(ClientOutput::Data(data)) => {
+                        sessiond_trace(format_args!(
+                            "client_io_loop[{generation}]: writing {} bytes to client",
+                            data.len()
+                        ));
+                        pending_output = Some((data, 0));
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+                }
+            }
+            let (data, written) = pending_output
+                .as_mut()
+                .expect("output is held until written");
+            if !write_to_client(&mut stream, data, written, &stolen)? {
+                break;
+            }
+            pending_output = None;
+        }
+        if pending_input.is_some() {
+            thread::sleep(CLIENT_POLL_INTERVAL);
+            continue;
+        }
+        // A maximum-sized frame may end in the same transport read as the
+        // next frame. Limit the read, not the combined frames' validity.
+        let read_limit = buffer.len().min(parser.remaining_capacity());
+        match stream.read(&mut buffer[..read_limit]) {
+            Ok(0) => return Ok(()),
+            Ok(count) => parser.push(&buffer[..count])?,
             Err(error)
                 if matches!(
                     error.kind(),
@@ -1467,6 +1515,10 @@ struct ClientFrameParser {
 }
 
 impl ClientFrameParser {
+    fn remaining_capacity(&self) -> usize {
+        MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES - self.bytes.len()
+    }
+
     fn push(&mut self, bytes: &[u8]) -> io::Result<()> {
         if self.bytes.len().saturating_add(bytes.len())
             > MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES
@@ -1480,47 +1532,42 @@ impl ClientFrameParser {
         Ok(())
     }
 
-    fn drain(&mut self) -> io::Result<Vec<ClientCommand>> {
-        let mut commands = Vec::new();
-        loop {
-            if self.bytes.len() < CLIENT_FRAME_HEADER_BYTES {
-                break;
-            }
-            if &self.bytes[..CLIENT_FRAME_MAGIC.len()] != CLIENT_FRAME_MAGIC {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "session client frame has an invalid magic value",
-                ));
-            }
-            let kind = self.bytes[4];
-            let payload_len =
-                u32::from_be_bytes(self.bytes[5..9].try_into().expect("fixed frame header"))
-                    as usize;
-            if payload_len > MAX_CLIENT_FRAME_BYTES {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "session client frame payload exceeds the protocol limit",
-                ));
-            }
-            let frame_len = CLIENT_FRAME_HEADER_BYTES + payload_len;
-            if self.bytes.len() < frame_len {
-                break;
-            }
-            let payload = &self.bytes[CLIENT_FRAME_HEADER_BYTES..frame_len];
-            let command = match kind {
-                CLIENT_FRAME_INPUT => ClientCommand::Input(payload.to_vec()),
-                CLIENT_FRAME_RESIZE => ClientCommand::Resize(parse_resize_frame(payload)?),
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "session client frame has an unknown command",
-                    ))
-                }
-            };
-            self.bytes.drain(..frame_len);
-            commands.push(command);
+    fn next_command(&mut self) -> io::Result<Option<ClientCommand>> {
+        if self.bytes.len() < CLIENT_FRAME_HEADER_BYTES {
+            return Ok(None);
         }
-        Ok(commands)
+        if &self.bytes[..CLIENT_FRAME_MAGIC.len()] != CLIENT_FRAME_MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session client frame has an invalid magic value",
+            ));
+        }
+        let kind = self.bytes[4];
+        let payload_len =
+            u32::from_be_bytes(self.bytes[5..9].try_into().expect("fixed frame header")) as usize;
+        if payload_len > MAX_CLIENT_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "session client frame payload exceeds the protocol limit",
+            ));
+        }
+        let frame_len = CLIENT_FRAME_HEADER_BYTES + payload_len;
+        if self.bytes.len() < frame_len {
+            return Ok(None);
+        }
+        let payload = &self.bytes[CLIENT_FRAME_HEADER_BYTES..frame_len];
+        let command = match kind {
+            CLIENT_FRAME_INPUT => ClientCommand::Input(payload.to_vec()),
+            CLIENT_FRAME_RESIZE => ClientCommand::Resize(parse_resize_frame(payload)?),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "session client frame has an unknown command",
+                ))
+            }
+        };
+        self.bytes.drain(..frame_len);
+        Ok(Some(command))
     }
 }
 
@@ -1828,9 +1875,10 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(windows)]
     let outcome = {
-        let mut stream = named_pipe::PipeClient::connect(&record.socket)?;
-        stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL));
-        stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT));
+        let mut stream =
+            Pipe::connect(&record.socket, WORKER_JOIN_TIMEOUT, &AtomicBool::new(false))?;
+        stream.set_read_timeout(CLIENT_POLL_INTERVAL);
+        stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
         forward_attach_duplex(&mut stream, &mut io::stdout())?
     };
 
@@ -2206,8 +2254,478 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    struct ClientTestStream<F> {
+        input: io::Cursor<Vec<u8>>,
+        reads: Rc<Cell<usize>>,
+        output_on_read: Option<mpsc::SyncSender<ClientOutput>>,
+        on_write: F,
+    }
+
+    impl<F> Read for ClientTestStream<F> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.reads.set(self.reads.get() + 1);
+            if let Some(output) = self.output_on_read.take() {
+                output
+                    .try_send(ClientOutput::Data(b"duplex output".to_vec()))
+                    .unwrap();
+            }
+            self.input.read(buffer)
+        }
+    }
+
+    impl<F: FnMut(&[u8])> Write for ClientTestStream<F> {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            (self.on_write)(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn client_input_burst_waits_in_order_while_output_keeps_flowing() {
+        let mut frames = Vec::new();
+        let count = CLIENT_QUEUE_CAPACITY + 17;
+        for index in 0..count {
+            if index % 2 == 0 {
+                write_client_frame(&mut frames, CLIENT_FRAME_INPUT, &[index as u8]).unwrap();
+            } else {
+                let payload: Vec<_> = [80 + index as u16, 24, 800, 600]
+                    .into_iter()
+                    .flat_map(u16::to_be_bytes)
+                    .collect();
+                write_client_frame(&mut frames, CLIENT_FRAME_RESIZE, &payload).unwrap();
+            }
+        }
+        assert!(frames.len() < 4096, "the burst must fit in one read");
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (output, received_output) = mpsc::sync_channel(1);
+        let mut accepted = Vec::new();
+        let mut written = Vec::new();
+        let reads = Rc::new(Cell::new(0));
+        let stream = ClientTestStream {
+            input: io::Cursor::new(frames),
+            reads: Rc::clone(&reads),
+            output_on_read: Some(output.clone()),
+            on_write: |bytes: &[u8]| {
+                // No daemon command is consumed until the full input queue
+                // has allowed the worker to return to its output pump.
+                written.extend_from_slice(bytes);
+                assert_eq!(reads.get(), 1, "a full input queue must stop reads");
+                accepted.extend(commands.try_iter());
+                assert_eq!(accepted.len(), CLIENT_QUEUE_CAPACITY);
+            },
+        };
+
+        client_io_loop(
+            stream,
+            7,
+            input,
+            received_output,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+
+        assert_eq!(written, b"duplex output");
+        accepted.extend(commands.try_iter());
+        assert_eq!(accepted.len(), count, "no command may be lost");
+        for (index, input) in accepted.into_iter().enumerate() {
+            assert_eq!(input.generation, 7);
+            match input.command {
+                ClientCommand::Input(bytes) => {
+                    assert_eq!(index % 2, 0);
+                    assert_eq!(bytes, [index as u8]);
+                }
+                ClientCommand::Resize(size) => {
+                    assert_eq!(index % 2, 1);
+                    assert_eq!(size.cols, 80 + index as u16);
+                    assert_eq!(size.rows, 24);
+                    assert_eq!(size.pixel_width, 800);
+                    assert_eq!(size.pixel_height, 600);
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_input_coalesced_burst_keeps_native_socket_attached() {
+        let (mut client, worker_socket) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))
+            .unwrap();
+        worker_socket
+            .set_read_timeout(Some(CLIENT_POLL_INTERVAL))
+            .unwrap();
+        worker_socket
+            .set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))
+            .unwrap();
+        let mut burst = Vec::new();
+        for _ in 0..256 {
+            write_client_frame(&mut burst, CLIENT_FRAME_INPUT, b"x").unwrap();
+        }
+        let marker = b"\nINPUT-BURST-COMPLETE\n";
+        write_client_frame(&mut burst, CLIENT_FRAME_INPUT, marker).unwrap();
+        client.write_all(&burst).unwrap();
+
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (output, received_output) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let stolen = Arc::new(AtomicBool::new(false));
+        let worker_stolen = Arc::clone(&stolen);
+        let worker = thread::spawn(move || {
+            client_io_loop(worker_socket, 7, input, received_output, worker_stolen)
+        });
+        let expect_input = |expected: &[u8]| {
+            let input = commands.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(input.generation, 7);
+            assert!(matches!(
+                input.command,
+                ClientCommand::Input(bytes) if bytes == expected
+            ));
+        };
+        expect_input(b"x");
+        // Withhold the command consumer until duplex output reaches the
+        // client, so a blocking send cannot masquerade as successful retry.
+        let duplex = b"output while input is queued";
+        output.send(ClientOutput::Data(duplex.to_vec())).unwrap();
+        let mut received = vec![0; duplex.len()];
+        client.read_exact(&mut received).unwrap();
+        assert_eq!(received, duplex);
+        for _ in 1..256 {
+            expect_input(b"x");
+        }
+        expect_input(marker);
+
+        write_client_frame(&mut client, CLIENT_FRAME_INPUT, b"still attached").unwrap();
+        expect_input(b"still attached");
+        stolen.store(true, Ordering::Release);
+        let mut notice = vec![0; STOLEN_NOTICE_BYTES.len()];
+        client.read_exact(&mut notice).unwrap();
+        assert_eq!(notice, STOLEN_NOTICE_BYTES);
+        assert!(wait_for_thread(&worker, Duration::from_secs(2)));
+        worker.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn client_input_is_read_while_client_output_writes_are_blocked() {
+        struct DuplexStream {
+            input: io::Cursor<Vec<u8>>,
+            commands: mpsc::Receiver<ClientInput>,
+            written: Vec<u8>,
+            stalled_writes: usize,
+            input_received: bool,
+        }
+
+        impl Read for DuplexStream {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                self.input.read(buffer)
+            }
+        }
+
+        impl Write for DuplexStream {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if self.written.is_empty() {
+                    self.written.extend_from_slice(&bytes[..2]);
+                    return Ok(2);
+                }
+                if !self.input_received {
+                    match self.commands.try_recv() {
+                        Ok(command) => {
+                            assert!(matches!(
+                                command.command,
+                                ClientCommand::Input(input) if input == b"\x03"
+                            ));
+                            self.input_received = true;
+                        }
+                        Err(_) => {
+                            self.stalled_writes += 1;
+                            assert!(
+                                self.stalled_writes < 3,
+                                "output retry must yield to read the interrupt"
+                            );
+                            return Err(io::ErrorKind::TimedOut.into());
+                        }
+                    }
+                }
+                self.written.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut frames = Vec::new();
+        write_client_frame(&mut frames, CLIENT_FRAME_INPUT, b"\x03").unwrap();
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (output, received_output) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        output
+            .send(ClientOutput::Data(b"uninterrupted output".to_vec()))
+            .unwrap();
+        let mut stream = DuplexStream {
+            input: io::Cursor::new(frames),
+            commands,
+            written: Vec::new(),
+            stalled_writes: 0,
+            input_received: false,
+        };
+        client_io_loop(
+            &mut stream,
+            7,
+            input,
+            received_output,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(stream.written, b"uninterrupted output");
+        assert!(stream.input_received);
+    }
+
+    #[test]
+    fn client_input_batches_yield_even_when_the_producer_keeps_refilling() {
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let command = || ClientInput {
+            generation: 7,
+            command: ClientCommand::Input(b"x".to_vec()),
+        };
+        for _ in 0..CLIENT_QUEUE_CAPACITY {
+            input.send(command()).unwrap();
+        }
+        let (output, _received_output) = mpsc::sync_channel(1);
+        let active = ActiveClient {
+            generation: 7,
+            output,
+            stolen: Arc::new(AtomicBool::new(false)),
+            thread: thread::spawn(|| Ok(())),
+        };
+        let mut handled = 0;
+        handle_pending_client_input(&commands, Some(&active), &mut |_| {
+            handled += 1;
+            assert!(handled <= CLIENT_QUEUE_CAPACITY);
+            input.try_send(command()).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(handled, CLIENT_QUEUE_CAPACITY);
+        assert_eq!(commands.try_iter().count(), CLIENT_QUEUE_CAPACITY);
+        active.thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn client_input_backpressure_stops_reading_and_allows_takeover() {
+        let mut frames = Vec::new();
+        for _ in 0..1000 {
+            write_client_frame(&mut frames, CLIENT_FRAME_INPUT, b"x").unwrap();
+        }
+        assert!(frames.len() > 4096);
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let probe = input.clone();
+        let (output, received_output) = mpsc::sync_channel(1);
+        let stolen = Arc::new(AtomicBool::new(false));
+        let reads = Rc::new(Cell::new(0));
+        let mut written = Vec::new();
+        let stream = ClientTestStream {
+            input: io::Cursor::new(frames),
+            reads: Rc::clone(&reads),
+            output_on_read: Some(output.clone()),
+            on_write: |bytes: &[u8]| {
+                written.extend_from_slice(bytes);
+                assert_eq!(reads.get(), 1, "backpressure must not read ahead");
+                assert!(matches!(
+                    probe.try_send(ClientInput {
+                        generation: 7,
+                        command: ClientCommand::Input(b"must not fit".to_vec()),
+                    }),
+                    Err(mpsc::TrySendError::Full(_))
+                ));
+                stolen.store(true, Ordering::Release);
+            },
+        };
+
+        client_io_loop(stream, 7, input, received_output, Arc::clone(&stolen)).unwrap();
+
+        assert_eq!(
+            written,
+            [b"duplex output".as_slice(), STOLEN_NOTICE_BYTES].concat()
+        );
+        assert_eq!(commands.try_iter().count(), CLIENT_QUEUE_CAPACITY);
+    }
+
+    #[test]
+    fn client_input_backpressure_exits_when_daemon_channels_close() {
+        for close_input in [false, true] {
+            let mut frames = Vec::new();
+            for _ in 0..CLIENT_QUEUE_CAPACITY + 1 {
+                write_client_frame(&mut frames, CLIENT_FRAME_INPUT, b"x").unwrap();
+            }
+            let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+            let (output, received_output) = mpsc::sync_channel(1);
+            let mut commands = Some(commands);
+            let mut output = Some(output);
+            let reads = Rc::new(Cell::new(0));
+            let mut written = Vec::new();
+            let stream = ClientTestStream {
+                input: io::Cursor::new(frames),
+                reads: Rc::clone(&reads),
+                output_on_read: output.clone(),
+                on_write: |bytes: &[u8]| {
+                    written.extend_from_slice(bytes);
+                    if close_input {
+                        commands.take();
+                    } else {
+                        output.take();
+                    }
+                },
+            };
+
+            client_io_loop(
+                stream,
+                7,
+                input,
+                received_output,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap();
+
+            assert_eq!(written, b"duplex output");
+            assert_eq!(reads.get(), 1);
+        }
+    }
+
+    #[test]
+    fn client_input_retry_is_not_starved_by_continuous_output() {
+        let mut frames = Vec::new();
+        for _ in 0..CLIENT_QUEUE_CAPACITY + 1 {
+            write_client_frame(&mut frames, CLIENT_FRAME_INPUT, b"x").unwrap();
+        }
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (output, received_output) = mpsc::sync_channel(1);
+        let reads = Rc::new(Cell::new(0));
+        let mut writes = 0;
+        let stream = ClientTestStream {
+            input: io::Cursor::new(frames),
+            reads: Rc::clone(&reads),
+            output_on_read: Some(output.clone()),
+            on_write: |_: &[u8]| {
+                writes += 1;
+                assert_eq!(reads.get(), 1);
+                if writes == 1 {
+                    assert_eq!(commands.try_iter().count(), CLIENT_QUEUE_CAPACITY);
+                } else if writes == CLIENT_QUEUE_CAPACITY + 1 {
+                    assert_eq!(
+                        commands.try_iter().count(),
+                        1,
+                        "pending input must retry even when output never becomes empty"
+                    );
+                }
+                assert!(writes <= 2 * CLIENT_QUEUE_CAPACITY);
+                output
+                    .try_send(ClientOutput::Data(b"more output".to_vec()))
+                    .unwrap();
+            },
+        };
+
+        client_io_loop(
+            stream,
+            7,
+            input,
+            received_output,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+
+        assert_eq!(writes, 2 * CLIENT_QUEUE_CAPACITY);
+        assert_eq!(reads.get(), 2);
+    }
+
+    #[test]
+    fn client_input_maximum_frame_accepts_a_coalesced_following_frame() {
+        let payload = vec![b'x'; MAX_CLIENT_FRAME_BYTES];
+        let mut frames = Vec::new();
+        write_client_frame(&mut frames, CLIENT_FRAME_INPUT, &payload).unwrap();
+        write_client_frame(&mut frames, CLIENT_FRAME_INPUT, b"next").unwrap();
+        let (input, commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (_output, received_output) = mpsc::sync_channel(1);
+
+        client_io_loop(
+            io::Cursor::new(frames),
+            7,
+            input,
+            received_output,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+
+        let accepted: Vec<_> = commands.try_iter().collect();
+        assert_eq!(accepted.len(), 2);
+        for (command, expected) in accepted.into_iter().zip([payload, b"next".to_vec()]) {
+            match command.command {
+                ClientCommand::Input(bytes) => assert_eq!(bytes, expected),
+                other => panic!("expected input, received {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn client_input_parser_preserves_fragmented_frames_and_rejects_invalid_frames() {
+        let mut frame = Vec::new();
+        write_client_frame(&mut frame, CLIENT_FRAME_INPUT, b"typed").unwrap();
+        let mut parser = ClientFrameParser::default();
+        for byte in &frame[..frame.len() - 1] {
+            parser.push(&[*byte]).unwrap();
+            assert!(parser.next_command().unwrap().is_none());
+        }
+        parser.push(&frame[frame.len() - 1..]).unwrap();
+        assert!(matches!(
+            parser.next_command().unwrap(),
+            Some(ClientCommand::Input(bytes)) if bytes == b"typed"
+        ));
+        assert!(parser.next_command().unwrap().is_none());
+        assert_eq!(
+            parser.remaining_capacity(),
+            MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES
+        );
+
+        let mut invalid_magic = frame.clone();
+        invalid_magic[0] = b'?';
+        let mut oversized = frame[..CLIENT_FRAME_HEADER_BYTES].to_vec();
+        oversized[5..9].copy_from_slice(&((MAX_CLIENT_FRAME_BYTES + 1) as u32).to_be_bytes());
+        let mut unknown_kind = frame;
+        unknown_kind[4] = 255;
+        let mut short_resize = Vec::new();
+        write_client_frame(&mut short_resize, CLIENT_FRAME_RESIZE, &[0; 7]).unwrap();
+        let mut invalid_resize = Vec::new();
+        write_client_frame(&mut invalid_resize, CLIENT_FRAME_RESIZE, &[0; 8]).unwrap();
+        for invalid in [
+            invalid_magic,
+            oversized,
+            unknown_kind,
+            short_resize,
+            invalid_resize,
+        ] {
+            let mut parser = ClientFrameParser::default();
+            parser.push(&invalid).unwrap();
+            assert_eq!(
+                parser.next_command().unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+        let mut parser = ClientFrameParser::default();
+        let oversized_buffer = vec![0; MAX_CLIENT_FRAME_BYTES + CLIENT_FRAME_HEADER_BYTES + 1];
+        assert_eq!(
+            parser.push(&oversized_buffer).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
 
     #[cfg(unix)]
     #[test]
@@ -2686,9 +3204,56 @@ mod tests {
         let mut writer = StallingWriter::default();
         let stolen = AtomicBool::new(false);
 
-        write_all_to_client(&mut writer, b"abcdef", &stolen).unwrap();
+        let mut written = 0;
+        while !write_to_client(&mut writer, b"abcdef", &mut written, &stolen).unwrap() {}
 
         assert_eq!(writer.written, b"abcdef", "no byte is written twice");
+        assert_eq!(written, 6);
+    }
+
+    #[test]
+    fn a_client_output_batch_yields_with_its_offset_intact() {
+        let data = vec![b'x'; MAX_CLIENT_FRAME_BYTES + 17];
+        let mut wire = Vec::new();
+        let mut written = 0;
+        let stolen = AtomicBool::new(false);
+        assert!(!write_to_client(&mut wire, &data, &mut written, &stolen).unwrap());
+        assert_eq!(written, MAX_CLIENT_FRAME_BYTES);
+        assert!(write_to_client(&mut wire, &data, &mut written, &stolen).unwrap());
+        assert_eq!(wire, data);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retired_windows_clients_finish_even_when_their_output_is_never_read() {
+        for index in 0..4 {
+            let name = format!(
+                r"\\.\pipe\festerm-retired-client-{}-{}-{index}",
+                process::id(),
+                now_ms()
+            );
+            let listener = create_secure_pipe_listener(&name, true).unwrap();
+            let _nonreading_client =
+                Pipe::connect(&name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
+            let mut server = listener.accept(&AtomicBool::new(false)).unwrap();
+            server.write_all(b"unread output before takeover").unwrap();
+            let (input, _commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+            let mut active = None;
+            let mut retired = Vec::new();
+            replace_active(
+                &mut active,
+                &mut retired,
+                server,
+                &ReplayBuffer::default(),
+                input,
+                &mut 1,
+            )
+            .unwrap();
+            retire_active(&mut active, &mut retired, true);
+            assert!(wait_for_thread(&retired[0], WORKER_JOIN_TIMEOUT));
+            reap_client_threads(&mut retired).unwrap();
+            assert!(retired.is_empty());
+        }
     }
 
     /// A takeover must not be blocked by a client that refuses to read.
@@ -2708,7 +3273,7 @@ mod tests {
 
         let stolen = AtomicBool::new(true);
 
-        write_all_to_client(&mut NeverAcceptingWriter, b"abcdef", &stolen).unwrap();
+        assert!(!write_to_client(&mut NeverAcceptingWriter, b"abcdef", &mut 0, &stolen).unwrap());
     }
 
     #[test]

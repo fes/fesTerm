@@ -457,6 +457,18 @@ impl<S: Session> SessionController<S> {
 
     pub fn advance_lifecycle_generation(&mut self) {
         self.lifecycle_generation = self.lifecycle_generation.saturating_add(1);
+        let dropped_bytes = self.pending_writes.queued_bytes();
+        if dropped_bytes > 0 {
+            self.pending_writes = PendingCommandBuffer::new(self.pending_writes.capacity());
+            tracing::warn!(
+                target: "festerm::session",
+                dropped_bytes,
+                "discarded pending input before reconnect"
+            );
+            self.last_error = Some(format!(
+                "discarded {dropped_bytes} pending input bytes before reconnect"
+            ));
+        }
     }
 
     /// Returns the current remote host-key decision request, if any.
@@ -1092,6 +1104,7 @@ pub(crate) mod fake {
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub enum FakeSshOperation {
+        Reconnect,
         Add {
             direction: festerm_session::SshPortForwardDirection,
             bind_host: String,
@@ -1152,6 +1165,26 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh event lock")
                 .push_back(event);
+        }
+
+        pub fn reconnect_available(&self) -> bool {
+            matches!(
+                self.lifecycle(),
+                SessionLifecycle::Running | SessionLifecycle::Disconnected(_)
+            )
+        }
+
+        pub fn try_reconnect(&self) -> Result<(), festerm_ssh::SshReconnectError> {
+            if !self.reconnect_available() {
+                return Err(festerm_ssh::SshReconnectError::NotRunning);
+            }
+            self.inner
+                .operations
+                .lock()
+                .expect("fake ssh operations lock")
+                .push(FakeSshOperation::Reconnect);
+            self.push_event(SessionEvent::Lifecycle(SessionLifecycle::Starting));
+            Ok(())
         }
 
         pub fn try_add_port_forward(
@@ -1277,6 +1310,21 @@ mod tests {
         assert_eq!(controller.lifecycle_generation(), 1);
         controller.advance_lifecycle_generation();
         assert_eq!(controller.lifecycle_generation(), 2);
+    }
+
+    #[test]
+    fn reconnect_boundary_discards_pending_input_without_replaying_it() {
+        let mut controller =
+            SessionController::<FakeSession>::with_named_startup_error("test".to_owned(), "test");
+        controller.pending_writes.enqueue(b"old input").unwrap();
+        controller.advance_lifecycle_generation();
+        assert_eq!(controller.pending_writes.queued_bytes(), 0);
+        assert_eq!(controller.pending_writes.queued_writes(), 0);
+        assert!(controller
+            .last_error
+            .as_ref()
+            .unwrap()
+            .contains("9 pending input bytes"));
     }
 
     /// Regression test: a freshly created session's very first resize (the

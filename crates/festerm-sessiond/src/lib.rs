@@ -32,6 +32,8 @@ use serde::Deserialize;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(1);
+#[cfg(windows)]
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const FRAME_MAGIC: &[u8; 4] = b"FSD1";
 const FRAME_INPUT: u8 = 1;
 const FRAME_RESIZE: u8 = 2;
@@ -42,6 +44,9 @@ const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
 trait SessionStream: Read + Write + Send {}
 impl<T: Read + Write + Send> SessionStream for T {}
+
+type Reconnector =
+    dyn Fn(&AtomicBool) -> Result<Box<dyn SessionStream>, PersistentSessionError> + Send + Sync;
 
 #[derive(Clone, Debug, Deserialize)]
 struct SessionRecord {
@@ -152,6 +157,7 @@ struct Shared {
     events: SyncSender<SessionEvent>,
     notifier: Arc<dyn SessionEventNotifier>,
     cancelled: AtomicBool,
+    reconnecting: AtomicBool,
     completion: Mutex<Option<ShutdownResult>>,
     completion_receiver: Mutex<Receiver<ShutdownResult>>,
 }
@@ -228,8 +234,20 @@ impl Shared {
 /// A bounded `festerm-session` backend attached to one daemon-owned local PTY.
 pub struct PersistentSession {
     shared: Arc<Shared>,
-    commands: SyncSender<SessionCommand>,
+    worker: Mutex<ClientWorker>,
     events: Mutex<Receiver<SessionEvent>>,
+    reconnector: Option<Arc<Reconnector>>,
+}
+
+struct ClientWorker {
+    commands: SyncSender<SessionCommand>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for PersistentSession {
+    fn drop(&mut self) {
+        self.shared.cancelled.store(true, Ordering::Release);
+    }
 }
 
 impl PersistentSession {
@@ -254,7 +272,7 @@ impl PersistentSession {
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
 
         let stream = connect_or_start(name.as_str(), profile, size)?;
-        Self::from_stream(stream, notifier)
+        Self::from_named_stream(stream, notifier, name.as_str().to_owned())
     }
 
     /// Attaches to an already-running, unattached `festerm-sessiond` session
@@ -274,28 +292,36 @@ impl PersistentSession {
     ) -> Result<Self, PersistentSessionError> {
         let name = PersistentSessionName::new(name.to_owned())
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        let registry = load_registry()?;
-        let record = registry.sessions.get(name.as_str()).ok_or_else(|| {
-            PersistentSessionError::new(format!(
-                "no locally running session named '{}' is registered",
-                name.as_str()
-            ))
-        })?;
-        let stream = connect_record(record).map_err(|error| {
-            PersistentSessionError::new(format!(
-                "session '{}' is registered to process {} but is not accepting connections \
-                 ({error}); run `festerm-sessiond kill {}` to clear it",
-                name.as_str(),
-                record.pid,
-                name.as_str()
-            ))
-        })?;
-        Self::from_stream(stream, notifier)
+        let stream = connect_existing(name.as_str())?;
+        Self::from_named_stream(stream, notifier, name.as_str().to_owned())
     }
 
+    fn from_named_stream(
+        stream: Box<dyn SessionStream>,
+        notifier: Arc<dyn SessionEventNotifier>,
+        name: String,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::from_stream_with_reconnector(
+            stream,
+            notifier,
+            Some(Arc::new(move |cancelled| {
+                connect_existing_with_cancel(&name, cancelled)
+            })),
+        )
+    }
+
+    #[cfg(test)]
     fn from_stream(
         stream: Box<dyn SessionStream>,
         notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::from_stream_with_reconnector(stream, notifier, None)
+    }
+
+    fn from_stream_with_reconnector(
+        stream: Box<dyn SessionStream>,
+        notifier: Arc<dyn SessionEventNotifier>,
+        reconnector: Option<Arc<Reconnector>>,
     ) -> Result<Self, PersistentSessionError> {
         let (events_tx, events_rx) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (commands_tx, commands_rx) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
@@ -310,13 +336,14 @@ impl PersistentSession {
             events: events_tx,
             notifier,
             cancelled: AtomicBool::new(false),
+            reconnecting: AtomicBool::new(false),
             completion: Mutex::new(None),
             completion_receiver: Mutex::new(completion_rx),
         });
         shared.set_lifecycle(SessionLifecycle::Starting);
 
         let worker_shared = Arc::clone(&shared);
-        thread::Builder::new()
+        let thread = thread::Builder::new()
             .name(format!("festerm-sessiond-client-{}", shared.id))
             .spawn(move || client_worker(worker_shared, stream, commands_rx, completion_tx))
             .map_err(|error| {
@@ -327,10 +354,207 @@ impl PersistentSession {
 
         Ok(Self {
             shared,
-            commands: commands_tx,
+            worker: Mutex::new(ClientWorker {
+                commands: commands_tx,
+                thread: Some(thread),
+            }),
             events: Mutex::new(events_rx),
+            reconnector,
         })
     }
+
+    /// Whether a manual, resume-only reconnect can currently be requested.
+    pub fn reconnect_available(&self) -> bool {
+        self.reconnector.is_some()
+            && !self.shared.cancelled.load(Ordering::Acquire)
+            && !self.shared.reconnecting.load(Ordering::Acquire)
+            && matches!(
+                self.lifecycle(),
+                SessionLifecycle::Disconnected(_) | SessionLifecycle::Failed(_)
+            )
+    }
+
+    /// Starts an asynchronous attachment to the existing named daemon.
+    ///
+    /// This never starts a shell. `Ok(())` acknowledges the request; connection
+    /// failures arrive through the normal error/lifecycle events. Commands from
+    /// the previous transport are discarded, and input is rejected while the
+    /// connection is being established.
+    pub fn try_reconnect(&self) -> Result<(), PersistentSessionError> {
+        let mut worker = self
+            .worker
+            .lock()
+            .expect("persistent worker lock is healthy");
+        if !self.reconnect_available() {
+            return Err(PersistentSessionError::new(
+                "persistent session is not available for reconnect",
+            ));
+        }
+        let reconnector = Arc::clone(self.reconnector.as_ref().expect("named session"));
+        self.shared.reconnecting.store(true, Ordering::Release);
+        *self
+            .shared
+            .lifecycle
+            .lock()
+            .expect("healthy lifecycle lock") = SessionLifecycle::Starting;
+        self.shared.notifier.notify();
+
+        let previous = Arc::new(Mutex::new(worker.thread.take()));
+        let previous_worker = Arc::clone(&previous);
+        let (commands, receiver) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
+        let (completion, completion_receiver) = mpsc::sync_channel(1);
+        let failure_completion = completion.clone();
+        worker.commands = commands;
+        *self
+            .shared
+            .completion
+            .lock()
+            .expect("healthy completion lock") = None;
+        *self
+            .shared
+            .completion_receiver
+            .lock()
+            .expect("healthy completion receiver lock") = completion_receiver;
+        let shared = Arc::clone(&self.shared);
+        match thread::Builder::new()
+            .name(format!("festerm-sessiond-reconnect-{}", shared.id))
+            .spawn(move || {
+                let previous = previous_worker
+                    .lock()
+                    .expect("healthy previous worker lock")
+                    .take();
+                if let Some(previous) = previous {
+                    if previous.join().is_err() {
+                        reconnect_failed(&shared, "previous session worker panicked");
+                        let _ = completion.send(ShutdownResult::AlreadyStopped);
+                        return;
+                    }
+                }
+                if shared.cancelled.load(Ordering::Acquire) {
+                    finish_cancelled_reconnect(&shared, &completion);
+                    return;
+                }
+                shared.set_lifecycle(SessionLifecycle::Starting);
+                let connection = reconnector(&shared.cancelled);
+                if shared.cancelled.load(Ordering::Acquire) {
+                    finish_cancelled_reconnect(&shared, &completion);
+                    return;
+                }
+                match connection {
+                    Ok(stream) => {
+                        shared.reconnecting.store(false, Ordering::Release);
+                        client_worker(shared, stream, receiver, completion);
+                    }
+                    Err(error) => {
+                        reconnect_failed(&shared, error.to_string());
+                        let _ = completion.send(ShutdownResult::AlreadyStopped);
+                    }
+                }
+            }) {
+            Ok(thread) => {
+                worker.thread = Some(thread);
+                Ok(())
+            }
+            Err(error) => {
+                worker.thread = previous
+                    .lock()
+                    .expect("healthy previous worker lock")
+                    .take();
+                self.shared.reconnecting.store(false, Ordering::Release);
+                let error = PersistentSessionError::new(format!(
+                    "could not start persistent-session reconnect worker: {error}"
+                ));
+                *self
+                    .shared
+                    .lifecycle
+                    .lock()
+                    .expect("healthy lifecycle lock") = SessionLifecycle::Failed(
+                    SessionError::new(SessionErrorKind::Output, error.to_string()),
+                );
+                let _ = failure_completion.try_send(ShutdownResult::AlreadyStopped);
+                self.shared.notifier.notify();
+                Err(error)
+            }
+        }
+    }
+
+    fn send(
+        &self,
+        command: SessionCommand,
+        operation: SessionOperation,
+    ) -> Result<(), SessionSendError> {
+        let worker = self
+            .worker
+            .lock()
+            .expect("persistent worker lock is healthy");
+        if operation != SessionOperation::Shutdown
+            && (self.shared.cancelled.load(Ordering::Acquire)
+                || self.shared.reconnecting.load(Ordering::Acquire)
+                || !matches!(
+                    self.lifecycle(),
+                    SessionLifecycle::Starting | SessionLifecycle::Running
+                ))
+        {
+            return Err(SessionSendError::Closed { operation });
+        }
+        send_command(&worker.commands, command, operation)
+    }
+}
+
+fn reconnect_failed(shared: &Shared, message: impl Into<String>) {
+    let error = SessionError::new(SessionErrorKind::Output, message.into());
+    shared.record_error(error.clone());
+    shared.set_lifecycle(SessionLifecycle::Disconnected(error));
+    shared.reconnecting.store(false, Ordering::Release);
+    shared.notifier.notify();
+}
+
+fn finish_cancelled_reconnect(shared: &Shared, completion: &SyncSender<ShutdownResult>) {
+    shared.reconnecting.store(false, Ordering::Release);
+    shared.set_lifecycle(SessionLifecycle::Stopped);
+    let _ = completion.send(ShutdownResult::Stopped);
+}
+
+fn connect_existing(name: &str) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    connect_existing_with_cancel(name, &AtomicBool::new(false))
+}
+
+fn connect_existing_with_cancel(
+    name: &str,
+    cancelled: &AtomicBool,
+) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(PersistentSessionError::new("session connection cancelled"));
+    }
+    let registry = load_registry()?;
+    connect_existing_in_registry_with_cancel(&registry, name, cancelled)
+}
+
+#[cfg(test)]
+fn connect_existing_in_registry(
+    registry: &SessionRegistry,
+    name: &str,
+) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    connect_existing_in_registry_with_cancel(registry, name, &AtomicBool::new(false))
+}
+
+fn connect_existing_in_registry_with_cancel(
+    registry: &SessionRegistry,
+    name: &str,
+    cancelled: &AtomicBool,
+) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    let record = registry.sessions.get(name).ok_or_else(|| {
+        PersistentSessionError::new(format!(
+            "no locally running session named '{name}' is registered"
+        ))
+    })?;
+    connect_record_with_cancel(record, cancelled).map_err(|error| {
+        PersistentSessionError::new(format!(
+            "session '{name}' is registered to process {} but is not accepting connections \
+             ({error}); run `festerm-sessiond kill --name {name}` to clear it",
+            record.pid,
+        ))
+    })
 }
 
 impl Session for PersistentSession {
@@ -358,28 +582,24 @@ impl Session for PersistentSession {
                 actual: bytes.len(),
             });
         }
-        send_command(
-            &self.commands,
+        self.send(
             SessionCommand::Input(bytes.to_vec()),
             SessionOperation::Input,
         )
     }
 
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
-        send_command(
-            &self.commands,
-            SessionCommand::Resize(size),
-            SessionOperation::Resize,
-        )
+        self.send(SessionCommand::Resize(size), SessionOperation::Resize)
     }
 
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         self.shared.cancelled.store(true, Ordering::Release);
-        send_command(
-            &self.commands,
-            SessionCommand::Shutdown,
-            SessionOperation::Shutdown,
-        )
+        match self.send(SessionCommand::Shutdown, SessionOperation::Shutdown) {
+            // Cancellation is out of band, so a saturated command queue
+            // cannot prevent the worker from observing shutdown.
+            Err(SessionSendError::Full { .. }) => Ok(()),
+            result => result,
+        }
     }
 
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
@@ -476,13 +696,20 @@ impl OutboundFrame {
 /// simply not reading, so a client that blocks inside a write until it
 /// succeeds can deadlock against a daemon doing the same thing. Making partial
 /// progress and coming back next pass is what breaks that cycle.
+/// At most one command-channel's worth of frames is staged here; later
+/// commands stay in that bounded channel until the transport makes room.
 #[derive(Default)]
 struct OutboundFrames {
     frames: VecDeque<OutboundFrame>,
 }
 
 impl OutboundFrames {
+    fn is_full(&self) -> bool {
+        self.frames.len() >= DEFAULT_COMMAND_QUEUE_CAPACITY
+    }
+
     fn push_input(&mut self, bytes: &[u8]) {
+        debug_assert!(!self.is_full());
         let input_bytes = bytes.len();
         self.frames.push_back(OutboundFrame {
             bytes: encode_frame(FRAME_INPUT, bytes),
@@ -493,6 +720,7 @@ impl OutboundFrames {
     }
 
     fn push_resize(&mut self, size: TerminalSize) {
+        debug_assert!(!self.is_full());
         self.frames.push_back(OutboundFrame {
             bytes: encode_frame(FRAME_RESIZE, &encode_resize(size)),
             written: 0,
@@ -520,17 +748,27 @@ impl OutboundFrames {
         shared: &Shared,
         events: &mut VecDeque<SessionEvent>,
     ) -> io::Result<()> {
+        let mut budget = MAX_IO_CHUNK_BYTES;
         while let Some(frame) = self.frames.front_mut() {
+            if frame.resize_applied.is_some() && events.len() >= DEFAULT_EVENT_QUEUE_CAPACITY {
+                return Ok(());
+            }
             while frame.written < frame.bytes.len() {
-                match writer.write(frame.remaining()) {
+                if budget == 0 || shared.cancelled.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                let count = budget.min(frame.remaining().len());
+                match writer.write(&frame.remaining()[..count]) {
                     Ok(0) => {
                         return Err(io::Error::new(
                             io::ErrorKind::WriteZero,
                             "persistent-session daemon accepted no bytes",
                         ))
                     }
-                    Ok(count) => frame.written += count,
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Ok(count) => {
+                        frame.written += count;
+                        budget -= count;
+                    }
                     Err(error) if is_retryable_write(&error) => return Ok(()),
                     Err(error) => return Err(error),
                 }
@@ -588,11 +826,16 @@ fn client_worker(
     let mut outbound = OutboundFrames::default();
     // Events the application has not taken yet. Holding them here rather than
     // blocking inside the send is what keeps input flowing while the GUI is
-    // behind: every pass through the loop still drains the command channel and
-    // still writes to the daemon.
+    // behind. Resize acknowledgements also occupy this bounded queue; once
+    // full, later commands wait in order rather than building a hidden backlog.
     let mut pending_events: VecDeque<SessionEvent> = VecDeque::new();
     loop {
-        loop {
+        if shared.cancelled.load(Ordering::Acquire) {
+            shared.set_lifecycle(SessionLifecycle::Stopped);
+            let _ = completion.send(ShutdownResult::Stopped);
+            return;
+        }
+        while !outbound.is_full() {
             match commands.try_recv() {
                 Ok(SessionCommand::Input(bytes)) => outbound.push_input(&bytes),
                 Ok(SessionCommand::Resize(size)) => outbound.push_resize(size),
@@ -620,9 +863,9 @@ fn client_worker(
         }
 
         // Output the application has not taken yet must reach it before any
-        // more is read, so the stream stays ordered and the shell feels the
-        // stall - the same rule the daemon applies to this client. Input is
-        // deliberately not part of that stall: it was already written above.
+        // more is read. Input can still advance above while ordinary output
+        // waits, but a full resize-acknowledgement backlog also stalls later
+        // commands to preserve their order without unbounded buffering.
         if !pending_events.is_empty() {
             thread::sleep(POLL_INTERVAL);
             continue;
@@ -824,6 +1067,16 @@ fn connect_or_start(
 fn connect_record(
     record: &SessionRecord,
 ) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    connect_record_with_cancel(record, &AtomicBool::new(false))
+}
+
+fn connect_record_with_cancel(
+    record: &SessionRecord,
+    cancelled: &AtomicBool,
+) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(PersistentSessionError::new("session connection cancelled"));
+    }
     let _pid = record.pid;
     #[cfg(unix)]
     {
@@ -841,11 +1094,16 @@ fn connect_record(
 
     #[cfg(windows)]
     {
-        let mut stream = named_pipe::PipeClient::connect(&record.socket).map_err(|error| {
+        let mut stream = festerm_windows_security::named_pipe::Pipe::connect(
+            &record.socket,
+            CONNECT_TIMEOUT,
+            cancelled,
+        )
+        .map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
         })?;
-        stream.set_read_timeout(Some(POLL_INTERVAL));
-        stream.set_write_timeout(Some(WRITE_TIMEOUT));
+        stream.set_read_timeout(POLL_INTERVAL);
+        stream.set_write_timeout(WRITE_TIMEOUT);
         Ok(Box::new(stream))
     }
 }
@@ -1051,6 +1309,9 @@ mod client_worker_tests {
         write_script: VecDeque<Result<usize, io::ErrorKind>>,
         written: Vec<u8>,
         readable: VecDeque<Vec<u8>>,
+        writes_blocked: bool,
+        write_attempts: usize,
+        eof: bool,
     }
 
     impl ScriptedStream {
@@ -1075,6 +1336,9 @@ mod client_worker_tests {
         fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             let mut state = self.lock();
             let Some(chunk) = state.readable.pop_front() else {
+                if state.eof {
+                    return Ok(0);
+                }
                 // The real transports carry a read timeout, so an idle
                 // transport reports `TimedOut` rather than blocking.
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
@@ -1091,6 +1355,10 @@ mod client_worker_tests {
     impl Write for ScriptedStream {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             let mut state = self.lock();
+            state.write_attempts += 1;
+            if state.writes_blocked {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
             let allowed = match state.write_script.pop_front() {
                 Some(Err(kind)) => return Err(io::Error::from(kind)),
                 Some(Ok(limit)) => limit.min(bytes.len()),
@@ -1124,6 +1392,388 @@ mod client_worker_tests {
             thread::sleep(POLL_INTERVAL);
         }
         ready()
+    }
+
+    #[test]
+    fn reconnect_discards_old_pending_input_and_preserves_notifier_and_identity() {
+        struct Notifier(std::sync::atomic::AtomicUsize);
+        impl SessionEventNotifier for Notifier {
+            fn notify(&self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let old = ScriptedStream::default();
+        old.lock().writes_blocked = true;
+        let replacement = ScriptedStream::default();
+        let connector_stream = replacement.clone();
+        let notifier = Arc::new(Notifier(std::sync::atomic::AtomicUsize::new(0)));
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old.clone()),
+            notifier.clone(),
+            Some(Arc::new(move |_| Ok(Box::new(connector_stream.clone())))),
+        )
+        .unwrap();
+        let id = session.id();
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Running
+        )));
+        assert!(!session.reconnect_available());
+        assert!(session.try_reconnect().is_err());
+        session.try_send_input(b"must not replay").unwrap();
+        assert!(wait_for(|| old.lock().write_attempts > 0));
+        let mut admitted = 1;
+        assert!(wait_for(|| {
+            while session.try_send_input(b"also stale").is_ok() {
+                admitted += 1;
+                assert!(admitted <= 2 * DEFAULT_COMMAND_QUEUE_CAPACITY);
+            }
+            admitted == 2 * DEFAULT_COMMAND_QUEUE_CAPACITY
+        }));
+        old.lock().eof = true;
+        assert!(wait_for(|| session.reconnect_available()));
+        assert!(session.try_send_input(b"while disconnected").is_err());
+        let notifications = notifier.0.load(Ordering::Relaxed);
+        session.try_reconnect().unwrap();
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Running
+        )));
+        assert_eq!(session.id(), id);
+        assert!(notifier.0.load(Ordering::Relaxed) > notifications);
+        session.try_send_input(b"fresh").unwrap();
+        assert!(wait_for(|| replacement.written() == input_frame(b"fresh")));
+        assert!(old.written().is_empty());
+        assert_eq!(
+            session.shutdown(Duration::from_secs(2)).unwrap(),
+            ShutdownResult::Stopped
+        );
+    }
+
+    #[test]
+    fn reconnect_is_nonblocking_rejects_duplicates_and_honors_shutdown() {
+        let old = ScriptedStream::default();
+        old.lock().eof = true;
+        let (entered, connecting) = mpsc::sync_channel(1);
+        let caller = thread::current().id();
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old),
+            noop_session_event_notifier(),
+            Some(Arc::new(move |cancelled| {
+                assert_ne!(thread::current().id(), caller);
+                entered.send(()).unwrap();
+                while !cancelled.load(Ordering::Acquire) {
+                    thread::sleep(POLL_INTERVAL);
+                }
+                Err(PersistentSessionError::new("cancelled while connecting"))
+            })),
+        )
+        .unwrap();
+        assert!(wait_for(|| session.reconnect_available()));
+        session.try_reconnect().unwrap();
+        connecting.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Starting));
+        assert!(!session.reconnect_available());
+        assert!(session.try_reconnect().is_err());
+        assert!(session.try_send_input(b"while connecting").is_err());
+        assert_eq!(
+            session.shutdown(Duration::from_secs(2)).unwrap(),
+            ShutdownResult::Stopped
+        );
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Stopped));
+        assert!(!session.reconnect_available());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reconnect_shutdown_cancels_a_busy_native_pipe_without_releasing_its_client() {
+        use festerm_windows_security::named_pipe::{Pipe, PipeListener};
+        let name = format!(
+            r"\\.\pipe\festerm-reconnect-cancel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let listener = PipeListener::bind(&name, true).unwrap();
+        let _existing_client =
+            Pipe::connect(&name, Duration::from_secs(1), &AtomicBool::new(false)).unwrap();
+        let _occupied_server = listener.accept(&AtomicBool::new(false)).unwrap();
+        let record: SessionRecord = serde_json::from_value(serde_json::json!({
+            "pid": std::process::id(), "socket": name
+        }))
+        .unwrap();
+        let old = ScriptedStream::default();
+        old.lock().eof = true;
+        let (entered, connecting) = mpsc::sync_channel(1);
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old),
+            noop_session_event_notifier(),
+            Some(Arc::new(move |cancelled| {
+                entered.send(()).unwrap();
+                connect_record_with_cancel(&record, cancelled)
+            })),
+        )
+        .unwrap();
+        assert!(wait_for(|| session.reconnect_available()));
+        session.try_reconnect().unwrap();
+        connecting.recv_timeout(Duration::from_secs(1)).unwrap();
+        thread::sleep(2 * POLL_INTERVAL);
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Starting));
+        assert_eq!(
+            session.shutdown(Duration::from_secs(1)).unwrap(),
+            ShutdownResult::Stopped
+        );
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Stopped));
+    }
+
+    #[test]
+    fn reconnect_request_does_not_wait_for_the_old_full_event_queue() {
+        let old = ScriptedStream::default();
+        for _ in 0..DEFAULT_EVENT_QUEUE_CAPACITY - 2 {
+            old.queue_readable(b"old output".to_vec());
+        }
+        old.lock().eof = true;
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old),
+            noop_session_event_notifier(),
+            Some(Arc::new(|_| Ok(Box::new(ScriptedStream::default())))),
+        )
+        .unwrap();
+        assert!(wait_for(|| session.reconnect_available()));
+        assert_eq!(
+            session.metrics().event_queue_depth,
+            DEFAULT_EVENT_QUEUE_CAPACITY
+        );
+        session.try_reconnect().unwrap();
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Starting));
+        let mut output = Vec::new();
+        let mut lifecycles = Vec::new();
+        assert!(wait_for(|| {
+            while let Ok(event) = session.try_recv_event() {
+                match event {
+                    SessionEvent::Output(bytes) => output.extend(bytes),
+                    SessionEvent::Lifecycle(state) => lifecycles.push(state),
+                    _ => {}
+                }
+            }
+            lifecycles.len() == 5
+        }));
+        assert_eq!(
+            output,
+            b"old output".repeat(DEFAULT_EVENT_QUEUE_CAPACITY - 2)
+        );
+        assert!(matches!(
+            lifecycles.as_slice(),
+            [
+                SessionLifecycle::Starting,
+                SessionLifecycle::Running,
+                SessionLifecycle::Disconnected(_),
+                SessionLifecycle::Starting,
+                SessionLifecycle::Running
+            ]
+        ));
+        session.shutdown(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn reconnect_missing_daemon_reports_failure_without_starting_a_shell() {
+        let old = ScriptedStream::default();
+        old.lock().eof = true;
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old),
+            noop_session_event_notifier(),
+            Some(Arc::new(|_| {
+                connect_existing_in_registry(&SessionRegistry::default(), "missing")
+            })),
+        )
+        .unwrap();
+        assert!(wait_for(|| session.reconnect_available()));
+        session.try_reconnect().unwrap();
+        assert!(wait_for(|| session.reconnect_available()));
+        assert!(matches!(
+            session.lifecycle(),
+            SessionLifecycle::Disconnected(error) if error.message().contains("no locally running session named 'missing'")
+        ));
+        let events: Vec<_> = std::iter::from_fn(|| session.try_recv_event().ok()).collect();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            SessionEvent::Error(error) if error.message().contains("missing")
+        )));
+        assert_eq!(session.metrics().error_count, 1);
+        session
+            .shared
+            .set_lifecycle(SessionLifecycle::Failed(SessionError::new(
+                SessionErrorKind::Output,
+                "failed attached transport",
+            )));
+        assert!(session.reconnect_available());
+        session.try_reconnect().unwrap();
+        assert!(wait_for(|| session.reconnect_available()));
+        assert_eq!(session.metrics().error_count, 2);
+    }
+
+    #[test]
+    fn unnamed_and_exited_sessions_do_not_offer_reconnect() {
+        let old = ScriptedStream::default();
+        old.lock().eof = true;
+        let session =
+            PersistentSession::from_stream(Box::new(old), noop_session_event_notifier()).unwrap();
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Disconnected(_)
+        )));
+        assert!(!session.reconnect_available());
+        assert!(session.try_reconnect().is_err());
+
+        let old = ScriptedStream::default();
+        old.queue_readable(EXITED_NOTICE_BYTES.to_vec());
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old),
+            noop_session_event_notifier(),
+            Some(Arc::new(|_| panic!("an exited shell must not reconnect"))),
+        )
+        .unwrap();
+        assert!(wait_for(|| matches!(
+            session.lifecycle(),
+            SessionLifecycle::Exited(_)
+        )));
+        assert!(!session.reconnect_available());
+        assert!(session.try_reconnect().is_err());
+    }
+
+    #[test]
+    fn stalled_writes_keep_outbound_commands_bounded_and_ordered() {
+        let stream = ScriptedStream::default();
+        stream.lock().writes_blocked = true;
+        let session =
+            PersistentSession::from_stream(Box::new(stream.clone()), noop_session_event_notifier())
+                .unwrap();
+        let mut expected = Vec::new();
+        let mut admitted = 0;
+        for _ in 0..8 {
+            while let Ok(()) = session.try_send_input(&[admitted as u8]) {
+                expected.extend(input_frame(&[admitted as u8]));
+                admitted += 1;
+                assert!(
+                    admitted <= 2 * DEFAULT_COMMAND_QUEUE_CAPACITY,
+                    "the worker is hiding an unbounded backlog behind the bounded command channel"
+                );
+            }
+            let attempts = stream.lock().write_attempts;
+            assert!(wait_for(|| stream.lock().write_attempts > attempts));
+        }
+        stream.lock().writes_blocked = false;
+        assert!(wait_for(|| stream.written() == expected));
+        assert!(matches!(session.lifecycle(), SessionLifecycle::Running));
+        session.shutdown(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn pending_resize_events_are_bounded_without_blocking_prior_input() {
+        let stream = ScriptedStream::default();
+        let session =
+            PersistentSession::from_stream(Box::new(stream), noop_session_event_notifier())
+                .unwrap();
+        let size = TerminalSize::new(80, 24).unwrap();
+        let mut pending: VecDeque<_> = (0..DEFAULT_EVENT_QUEUE_CAPACITY)
+            .map(|_| SessionEvent::ResizeApplied(size))
+            .collect();
+        let mut outbound = OutboundFrames::default();
+        outbound.push_input(b"before");
+        outbound.push_resize(size);
+        outbound.push_input(b"after");
+        let mut wire = Vec::new();
+        outbound
+            .pump(&mut wire, &session.shared, &mut pending)
+            .unwrap();
+        assert_eq!(wire, input_frame(b"before"));
+        assert_eq!(pending.len(), DEFAULT_EVENT_QUEUE_CAPACITY);
+        assert_eq!(outbound.frames.len(), 2);
+
+        pending.pop_front();
+        outbound
+            .pump(&mut wire, &session.shared, &mut pending)
+            .unwrap();
+        assert_eq!(pending.len(), DEFAULT_EVENT_QUEUE_CAPACITY);
+        assert!(outbound.is_empty());
+        assert_eq!(
+            wire,
+            [
+                input_frame(b"before"),
+                encode_frame(FRAME_RESIZE, &encode_resize(size)),
+                input_frame(b"after"),
+            ]
+            .concat()
+        );
+        session.shutdown(Duration::from_secs(2)).unwrap();
+    }
+
+    #[test]
+    fn shutdown_and_drop_remain_responsive_when_outbound_and_commands_are_full() {
+        for drop_session in [false, true] {
+            let stream = ScriptedStream::default();
+            stream.lock().writes_blocked = true;
+            let session = PersistentSession::from_stream(
+                Box::new(stream.clone()),
+                noop_session_event_notifier(),
+            )
+            .unwrap();
+            let mut admitted = 0;
+            assert!(wait_for(|| {
+                while session.try_send_input(b"x").is_ok() {
+                    admitted += 1;
+                    assert!(admitted <= 2 * DEFAULT_COMMAND_QUEUE_CAPACITY);
+                }
+                admitted == 2 * DEFAULT_COMMAND_QUEUE_CAPACITY
+            }));
+            if drop_session {
+                let shared = Arc::clone(&session.shared);
+                drop(session);
+                assert!(wait_for(|| matches!(
+                    shared.lifecycle(),
+                    SessionLifecycle::Stopped
+                )));
+            } else {
+                assert_eq!(
+                    session.shutdown(Duration::from_secs(2)).unwrap(),
+                    ShutdownResult::Stopped
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn large_outbound_frames_yield_between_bounded_write_batches() {
+        let session = PersistentSession::from_stream(
+            Box::new(ScriptedStream::default()),
+            noop_session_event_notifier(),
+        )
+        .unwrap();
+        let mut outbound = OutboundFrames::default();
+        outbound.push_input(&vec![b'x'; MAX_IO_CHUNK_BYTES]);
+        outbound.push_input(b"later");
+        let mut wire = Vec::new();
+        let mut events = VecDeque::new();
+        outbound
+            .pump(&mut wire, &session.shared, &mut events)
+            .unwrap();
+        assert_eq!(wire.len(), MAX_IO_CHUNK_BYTES);
+        assert_eq!(outbound.frames.len(), 2);
+        outbound
+            .pump(&mut wire, &session.shared, &mut events)
+            .unwrap();
+        assert!(outbound.is_empty());
+        assert_eq!(
+            wire,
+            [
+                input_frame(&vec![b'x'; MAX_IO_CHUNK_BYTES]),
+                input_frame(b"later")
+            ]
+            .concat()
+        );
+        session.shutdown(Duration::from_secs(2)).unwrap();
     }
 
     /// The transport carries a write timeout so a wedged daemon cannot pin the
@@ -1234,6 +1884,54 @@ mod client_worker_tests {
 mod tests {
     use super::*;
     use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn native_socket_eof_allows_manual_resume_on_the_same_session() {
+        let (old_client, old_server) = UnixStream::pair().unwrap();
+        let (new_client, mut new_server) = UnixStream::pair().unwrap();
+        for socket in [&old_client, &new_client, &new_server] {
+            socket.set_read_timeout(Some(POLL_INTERVAL)).unwrap();
+            socket.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap();
+        }
+        new_server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let replacement = Mutex::new(Some(new_client));
+        let session = PersistentSession::from_stream_with_reconnector(
+            Box::new(old_client),
+            noop_session_event_notifier(),
+            Some(Arc::new(move |_| {
+                Ok(Box::new(replacement.lock().unwrap().take().unwrap()))
+            })),
+        )
+        .unwrap();
+        let id = session.id();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        drop(old_server);
+        wait_for_lifecycle(&session, |state| {
+            matches!(state, SessionLifecycle::Disconnected(_))
+        });
+        assert!(session.reconnect_available());
+        session.try_reconnect().unwrap();
+        wait_for_lifecycle(&session, |state| {
+            matches!(state, SessionLifecycle::Starting)
+        });
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        assert_eq!(session.id(), id);
+        session.try_send_input(b"fresh native input").unwrap();
+        assert_eq!(
+            read_frame(&mut new_server),
+            (FRAME_INPUT, b"fresh native input".to_vec())
+        );
+        new_server.write_all(b"resumed output").unwrap();
+        new_server.write_all(EXITED_NOTICE_BYTES).unwrap();
+        let mut output = Vec::new();
+        wait_for_lifecycle_with_output(&session, &mut output, |state| {
+            matches!(state, SessionLifecycle::Exited(_))
+        });
+        assert_eq!(output, b"resumed output");
+        assert!(!session.reconnect_available());
+    }
 
     #[test]
     fn session_backend_forwards_input_resize_output_and_takeover() {

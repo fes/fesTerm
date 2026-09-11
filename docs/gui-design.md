@@ -1531,8 +1531,18 @@ The overlay may show attempt count and retry delay only when the reconnect
 controller supplies those exact values. Stop Retrying transitions to a stable
 Disconnected state; switching tabs does not interrupt retries. Details opens
 the inspector at the relevant event. Reconnect appears only when the backend
-can actually create a new connection attempt; otherwise the actions are
-Details and Close Session.
+can actually create a new connection attempt. The disconnected/failed
+viewport overlay places **Reconnect** beside **Open Diagnostics** when that
+capability is available; otherwise it keeps only **Open Diagnostics**, with
+Close Session available from the tab. An in-flight reconnect does not offer a
+second Reconnect button.
+
+For native persistent local sessions, Reconnect reattaches the existing named
+daemon in the same tab. It never starts a replacement shell if that daemon is
+gone; failure remains visible and retryable. The Inspector exposes the same
+application command as **Resume** for a durable session. Input waiting from
+the previous connection is discarded rather than replayed into the resumed
+shell, and accepted recovery returns keyboard focus to the terminal.
 
 Reconnection must not imply that remote process state survived. Unless
 continuity is guaranteed, the UI describes reconnecting to the host rather

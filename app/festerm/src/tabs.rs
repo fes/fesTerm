@@ -38,7 +38,7 @@ use festerm_session::{
     ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardRuntime,
     SshPortForwardState, TerminalSize,
 };
-use festerm_sessiond::PersistentSession;
+use festerm_sessiond::{PersistentSession, PersistentSessionError};
 use festerm_ssh::{
     HostKeyDecisionResolutionError, HostTrustDecision, PasswordDecisionResolutionError,
     SessionStrategy, SftpTerminalSession, SftpTerminalSessionStartError, SshAuthentication,
@@ -172,18 +172,20 @@ impl std::fmt::Display for PasswordResolutionError {
     }
 }
 
-/// An application-level failure to request an SSH reconnect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// An application-level failure to request a transport reconnect.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionReconnectError {
-    NotSshSession,
+    NotReconnectable,
     Transport(SshReconnectError),
+    Persistent(PersistentSessionError),
 }
 
 impl std::fmt::Display for SessionReconnectError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotSshSession => formatter.write_str("the tab is not an SSH session"),
+            Self::NotReconnectable => formatter.write_str("the tab does not support reconnecting"),
             Self::Transport(error) => error.fmt(formatter),
+            Self::Persistent(error) => error.fmt(formatter),
         }
     }
 }
@@ -233,19 +235,32 @@ impl ApplicationSession {
     }
 
     /// Reports whether this session can accept a nonblocking user reconnect
-    /// request. Local sessions deliberately never expose this capability.
+    /// request. Nonpersistent local sessions have no transport to reattach.
     pub fn reconnect_available(&self) -> bool {
-        matches!(self, Self::Ssh(session) if session.reconnect_available())
+        match self {
+            Self::Ssh(session) => session.reconnect_available(),
+            Self::Persistent(session) => session.reconnect_available(),
+            #[cfg(test)]
+            Self::TestSsh(session) => session.reconnect_available(),
+            _ => false,
+        }
     }
 
-    /// Queues one user-directed reconnect on an SSH session.
+    /// Queues one user-directed SSH reconnect or native daemon reattachment.
     pub fn try_reconnect(&self) -> Result<(), SessionReconnectError> {
-        let Self::Ssh(session) = self else {
-            return Err(SessionReconnectError::NotSshSession);
-        };
-        session
-            .try_reconnect()
-            .map_err(SessionReconnectError::Transport)
+        match self {
+            Self::Ssh(session) => session
+                .try_reconnect()
+                .map_err(SessionReconnectError::Transport),
+            Self::Persistent(session) => session
+                .try_reconnect()
+                .map_err(SessionReconnectError::Persistent),
+            #[cfg(test)]
+            Self::TestSsh(session) => session
+                .try_reconnect()
+                .map_err(SessionReconnectError::Transport),
+            _ => Err(SessionReconnectError::NotReconnectable),
+        }
     }
 
     /// Queues one on-demand SSH-level liveness probe (ADR 0018). A local
@@ -1153,8 +1168,7 @@ impl SessionTab {
         result
     }
 
-    /// Reports whether this is an SSH tab whose current live transport can
-    /// accept one user-directed reconnect request.
+    /// Reports whether the transport can accept a user-directed reconnect.
     pub fn reconnect_available(&self) -> bool {
         self.controller
             .session()
@@ -1167,10 +1181,11 @@ impl SessionTab {
         let result = self
             .controller
             .session()
-            .ok_or(SessionReconnectError::NotSshSession)?
+            .ok_or(SessionReconnectError::NotReconnectable)?
             .try_reconnect();
         if result.is_ok() {
             self.controller.advance_lifecycle_generation();
+            self.view.request_focus_on_next_frame();
         }
         result
     }

@@ -1,6 +1,9 @@
-//! Safe ownership around the Win32 token DACL operations used for named pipes.
+//! Safe ownership around Win32 object security and local named-pipe operations.
 
 #![deny(unsafe_op_in_unsafe_fn)]
+
+#[cfg(windows)]
+pub mod named_pipe;
 
 #[cfg(windows)]
 mod imp {

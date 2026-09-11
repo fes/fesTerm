@@ -2181,7 +2181,6 @@ dependencies = [
  "festerm-windows-job",
  "festerm-windows-security",
  "fs2",
- "named_pipe",
  "nix 0.31.3",
  "portable-pty",
  "serde",
@@ -3668,15 +3667,6 @@ dependencies = [
  "indexmap",
  "rustc-hash 1.1.0",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "named_pipe"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad9c443cce91fc3e12f017290db75dde490d685cdaaf508d7159d7cf41f0eb2b"
-dependencies = [
- "winapi",
 ]
 
 [[package]]

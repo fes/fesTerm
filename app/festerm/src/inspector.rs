@@ -53,9 +53,8 @@ pub struct InspectorContent<'a> {
     pub diagnostics: &'a str,
     pub reconnect_available: bool,
     pub open_sftp_available: bool,
-    /// The durable remote-session provider and name this SSH connection
-    /// attaches to or creates, if any (ADR 0018). `None` for local sessions
-    /// and for ordinary manual-recovery plain SSH shells; drives the
+    /// The durable provider and name this connection attaches to, if any
+    /// (ADRs 0018/0025). `None` for nonpersistent local and plain SSH shells; drives the
     /// Reconnect-vs-Resume language distinction below.
     pub persistent_session: Option<PersistentSessionFacts<'a>>,
 }
@@ -264,7 +263,7 @@ pub fn show(
                                 } else {
                                     "Reconnect"
                                 };
-                                if ui.button(label).clicked() {
+                                if content.reconnect_available && ui.button(label).clicked() {
                                     action = Some(InspectorAction::Reconnect);
                                 }
                                 if content.open_sftp_available && ui.button("Open SFTP").clicked() {
@@ -395,5 +394,33 @@ mod tests {
         assert!(harness.query_by_label("Reconnect").is_none());
         harness.get_by_label("DURABLE SESSION");
         harness.get_by_label("build");
+    }
+
+    #[test]
+    fn sftp_action_does_not_expose_an_unavailable_reconnect() {
+        let mut content = base_content(3);
+        content.reconnect_available = false;
+        let mut harness = harness_for(content);
+        harness.run();
+        harness.get_by_label("Open SFTP");
+        assert!(harness.query_by_label("Reconnect").is_none());
+    }
+
+    #[test]
+    fn disconnected_native_session_offers_resume_in_the_inspector() {
+        let mut content = base_content(4);
+        content.type_label = "Local shell";
+        content.state = "Disconnected";
+        content.transport = TransportFacts::Local;
+        content.open_sftp_available = false;
+        content.persistent_session = Some(PersistentSessionFacts {
+            provider_label: "fesTerm session daemon",
+            session_name: "existing-shell",
+        });
+        let mut harness = harness_for(content);
+        harness.run();
+        harness.get_by_label("Resume");
+        harness.get_by_label("existing-shell");
+        assert!(harness.query_by_label("Open SFTP").is_none());
     }
 }

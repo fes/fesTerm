@@ -1257,3 +1257,60 @@ delivers the rest instead of coalescing them. The test had slept 20ms and hoped
 the copy finished first. The test backend now signals when it has emitted its
 last progress callback, and the test waits for that, which makes the two-event
 bound exact rather than probable.
+
+### A full daemon input queue is not a disconnected session
+
+A macOS 0.1.12 session periodically became Disconnected with
+"persistent-session daemon closed unexpectedly". The daemon, shell, and
+Copilot child were still alive; the application's socket attachment had gone
+away. The screenshot's later rejected-input diagnostic was a consequence, not
+the original failure.
+
+The output-backpressure fixes had left the opposite direction unchanged:
+`client_io_loop` retired the connection if its 64-slot input queue was full.
+One 4096-byte socket read can contain far more than 64 small framed commands.
+An isolated copy of the installed daemon reproduced the failure with 256
+one-byte input frames followed by a marker: the connection closed before the
+marker returned, while the daemon stayed alive. This establishes a concrete
+disconnect path matching the report, not proof that every historical
+disconnect had that cause; the running daemon had no retained failure log.
+
+Pending commands now wait in bounded storage while further client reads
+pause, preserving input/resize order and leaving output and takeover
+serviceable. Regression coverage exercises the actual saturated client loop,
+not just the queue in isolation. Existing user sessions are not restarted or
+killed to apply a source-level fix.
+
+Checking the output direction exposed related duplex problems: a blocked
+daemon write could starve input reads, and the client could move work from
+bounded channels into unbounded frame/resize-event staging. Writes now retain
+their offsets and yield between bounded batches. Client staging is capped at
+64 outbound frames and 128 pending events, alongside the existing bounded
+command channel. The installed-daemon reproducer now receives both its burst
+marker and subsequent input from the fixed build.
+
+This is not a claim of globally bounded daemon memory. The PTY reader still
+feeds an unbounded internal channel; bounding that channel safely requires
+coordinating it with synchronous PTY input writes, rather than introducing a
+new circular wait. The standalone CLI `attach` path also retains its separate
+write loop. These remain follow-up work.
+
+Disconnected recoverable sessions now offer Reconnect beside Open Diagnostics.
+Native local recovery attaches only to the existing daemon, keeps the same
+tab/session identity, preserves the notifier, and restores the latest resize.
+It is asynchronous, rejects duplicate requests, and does not silently create
+a fresh shell when the daemon is missing. Both the transport and application
+discard old queued input before recovery, so a delayed keystroke cannot become
+an unexpected command in the resumed shell. Inspector Resume uses the same
+application command. Signed-package focus and platform acceptance remain
+under CP-11; no running user session was replaced during development.
+
+Review also found two Windows-only waits hidden inside the old `named_pipe`
+dependency: connecting to a busy pipe could ignore the reconnect cancellation,
+and dropping a server endpoint flushed output until its peer read it. The
+existing Win32 support crate now owns a small nonblocking pipe adapter, with
+explicit deadlines/cancellation and handle teardown that does not flush.
+Normal close preserves buffered exit/takeover notices rather than forcibly
+disconnecting before a healthy peer can read them. Windows-specific regression
+tests cover busy-pipe cancellation and unread-output teardown; native Windows
+execution is required before merge.

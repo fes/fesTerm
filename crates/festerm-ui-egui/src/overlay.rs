@@ -22,6 +22,8 @@ use crate::chrome::ChipStatus;
 /// into every overlay.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayAction {
+    /// Requests recovery through the owning application's session command.
+    Reconnect,
     /// Opens (or focuses) the session inspector for lifecycle/error detail.
     OpenDiagnostics,
 }
@@ -42,7 +44,7 @@ const fn overlay_status(status: ChipStatus) -> bool {
 /// Shows a restrained, centered overlay describing `status` if it is
 /// non-nominal, returning the user's chosen action (if any) for this frame.
 /// Draws nothing and returns `None` for connected/starting/neutral states.
-pub fn show(ctx: &Context, status: ChipStatus) -> Option<OverlayAction> {
+pub fn show(ctx: &Context, status: ChipStatus, reconnect_available: bool) -> Option<OverlayAction> {
     if !overlay_status(status) {
         return None;
     }
@@ -54,13 +56,21 @@ pub fn show(ctx: &Context, status: ChipStatus) -> Option<OverlayAction> {
         .interactable(true)
         .show(ctx, |ui| {
             Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_max_width(220.0);
+                ui.set_max_width(260.0);
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new(status.accessible_label()).strong().small());
                     ui.add_space(4.0);
-                    if ui.button("Open Diagnostics").clicked() {
-                        action = Some(OverlayAction::OpenDiagnostics);
-                    }
+                    ui.horizontal(|ui| {
+                        if reconnect_available
+                            && matches!(status, ChipStatus::Disconnected | ChipStatus::Failed)
+                            && ui.button("Reconnect").clicked()
+                        {
+                            action = Some(OverlayAction::Reconnect);
+                        }
+                        if ui.button("Open Diagnostics").clicked() {
+                            action = Some(OverlayAction::OpenDiagnostics);
+                        }
+                    });
                 });
             });
         });
@@ -72,12 +82,15 @@ mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
 
-    fn harness(status: ChipStatus) -> Harness<'static, Option<OverlayAction>> {
+    fn harness(
+        status: ChipStatus,
+        reconnect_available: bool,
+    ) -> Harness<'static, Option<OverlayAction>> {
         Harness::builder()
             .with_size(egui::vec2(400.0, 300.0))
             .build_ui_state(
                 move |ui, action: &mut Option<OverlayAction>| {
-                    if let Some(clicked) = show(ui.ctx(), status) {
+                    if let Some(clicked) = show(ui.ctx(), status, reconnect_available) {
                         *action = Some(clicked);
                     }
                 },
@@ -92,7 +105,7 @@ mod tests {
             ChipStatus::Starting,
             ChipStatus::Neutral,
         ] {
-            let mut harness = harness(status);
+            let mut harness = harness(status, true);
             harness.run();
             assert!(
                 harness.query_by_label("Open Diagnostics").is_none(),
@@ -103,7 +116,7 @@ mod tests {
 
     #[test]
     fn failed_state_shows_an_overlay_with_the_diagnostics_action() {
-        let mut harness = harness(ChipStatus::Failed);
+        let mut harness = harness(ChipStatus::Failed, false);
         harness.run();
 
         assert!(harness.get_by_label_contains("Failed").rect().width() > 0.0);
@@ -119,12 +132,41 @@ mod tests {
             ChipStatus::AuthRequired,
             ChipStatus::Exited,
         ] {
-            let mut harness = harness(status);
+            let mut harness = harness(status, true);
             harness.run();
             assert!(
                 harness.query_by_label("Open Diagnostics").is_some(),
                 "expected overlay for {status:?}"
             );
+        }
+    }
+
+    #[test]
+    fn disconnected_overlay_offers_reconnect_beside_diagnostics() {
+        let mut harness = harness(ChipStatus::Disconnected, true);
+        harness.run();
+        let reconnect = harness.get_by_label("Reconnect").rect();
+        let diagnostics = harness.get_by_label("Open Diagnostics").rect();
+        assert!(reconnect.right() <= diagnostics.left());
+        assert!((reconnect.center().y - diagnostics.center().y).abs() < 1.0);
+        harness.get_by_label("Reconnect").click();
+        harness.run();
+        assert_eq!(*harness.state(), Some(OverlayAction::Reconnect));
+    }
+
+    #[test]
+    fn overlay_hides_reconnect_when_unavailable_or_already_reconnecting() {
+        for (status, available) in [
+            (ChipStatus::Disconnected, false),
+            (ChipStatus::Failed, false),
+            (ChipStatus::Reconnecting, true),
+            (ChipStatus::AuthRequired, true),
+            (ChipStatus::Exited, true),
+        ] {
+            let mut harness = harness(status, available);
+            harness.run();
+            assert!(harness.query_by_label("Reconnect").is_none());
+            harness.get_by_label("Open Diagnostics");
         }
     }
 }
