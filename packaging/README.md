@@ -7,8 +7,9 @@ The checked-in `cargo-packager` 0.11.8 manifests implement ADR-0021:
   hash-verified ConPTY runtime staged by `scripts/stage-conpty.ps1`;
 - `linux.toml` produces AppImage and Debian packages.
 
-Every native package includes both the `festerm` application and its
-`festerm-sessiond` local-session persistence helper. They must be built from
+Every current direct-distribution native package includes both the `festerm`
+application and its `festerm-sessiond` local-session persistence helper.
+They must be built from
 the same workspace revision and installed beside each other so the application
 can resolve the helper without searching `PATH`.
 
@@ -38,3 +39,13 @@ credentials remain outside the repository.
 
 Do not publish unsigned output as a production release. The release workflow
 must fail closed when its protected signing environment is incomplete.
+
+## Planned desktop Store channels
+
+See the [desktop Store distribution plan](../docs/app-store-distribution-plan.md)
+for additive Windows MSIX/MSIXBundle packaging and the Mac App Store sandbox
+feasibility gate. No Store manifest or installation marker exists yet. The
+current `managed` marker prevents installation but still permits GitHub update
+checks; a Store build also needs channel-specific availability and routing.
+Preserve direct packages and the existing app/helper/ConPTY contracts while
+qualifying Store-specific lifecycle and update behavior.

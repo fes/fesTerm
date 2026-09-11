@@ -509,6 +509,14 @@ representative hardware rather than noisy cross-runner correctness gates.
 
 ## Future Capability Tracks
 
+Desktop Store distribution is planned in
+[`docs/app-store-distribution-plan.md`](docs/app-store-distribution-plan.md):
+Microsoft Store MSIX implementation
+([#142](https://github.com/fes/fesTerm/issues/142)) and a separate Mac App Store
+sandbox feasibility gate ([#143](https://github.com/fes/fesTerm/issues/143)).
+Both are deferred tracks, not additional M6/M10 acceptance conditions. The direct signed
+packages remain the baseline, including Developer ID/notarized macOS.
+
 The following tracks remain intentionally outside the initial critical path. Architecture should avoid precluding them, but milestone work should not depend on them.
 
 - Scripting and automation.
