@@ -3454,6 +3454,40 @@ fn toggle_switch(ui: &mut Ui, value: bool, accessible_label: &str) -> egui::Resp
 /// choice. Returns the index of a newly selected (previously inactive)
 /// option; clicking the already-active option is a no-op, matching ordinary
 /// segmented-control behavior.
+/// The width a row of `selectable_label`s will occupy.
+///
+/// `egui::Sides` gives its left closure whatever width that closure claims,
+/// so a settings row reserves the right-hand control's width up front and
+/// lets the description wrap into the remainder. Reserving a fixed guess
+/// works only until a control outgrows it, and the failure is not a clipped
+/// button: egui grows the enclosing card to fit instead, so the card spills
+/// past the window's right edge *and* every later card inherits the wider
+/// content width and spills with it. Measuring the control removes the guess.
+fn segmented_control_width(ui: &Ui, options: &[(&str, bool)]) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let padding = ui.spacing().button_padding.x * 2.0;
+    let labels: f32 = options
+        .iter()
+        .map(|(label, _)| {
+            ui.painter()
+                .layout_no_wrap(
+                    (*label).to_owned(),
+                    font.clone(),
+                    egui::Color32::PLACEHOLDER,
+                )
+                .size()
+                .x
+                + padding
+        })
+        .sum();
+    labels + ui.spacing().item_spacing.x * options.len().saturating_sub(1) as f32
+}
+
+/// The narrowest a settings row's description column is allowed to become
+/// while making room for its control, so a wide control cannot squeeze the
+/// prose into a one-word-per-line ribbon.
+const SETTINGS_MIN_DESCRIPTION_WIDTH: f32 = 180.0;
+
 fn settings_segmented_row(
     ui: &mut Ui,
     title: &str,
@@ -3461,14 +3495,18 @@ fn settings_segmented_row(
     options: &[(&str, bool)],
 ) -> Option<usize> {
     let mut clicked = None;
+    // Measured before the row is laid out, because the left closure runs
+    // first and has to know how much to leave behind.
+    let control_width = segmented_control_width(ui, options);
     egui::Sides::new().show(
         ui,
         |ui| {
-            // Same defensive width reservation as `settings_toggle_row`:
-            // without it, the description can measure as one long
-            // unwrapped line and push the segmented buttons off the right
-            // edge of the card (and out of click range).
-            ui.set_max_width(ui.available_width() - 170.0);
+            // Reserve exactly what the buttons need (plus the `Sides` gap) so
+            // the description wraps at measurement time instead of laying out
+            // as one long unwrapped line that pushes the segmented buttons
+            // off the right edge of the card and out of click range.
+            let reserved = control_width + ui.spacing().item_spacing.x;
+            ui.set_max_width((ui.available_width() - reserved).max(SETTINGS_MIN_DESCRIPTION_WIDTH));
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(title).color(theme::TEXT_PRIMARY));
                 ssh_paragraph(ui, description);
@@ -3485,6 +3523,23 @@ fn settings_segmented_row(
         },
     );
     clicked
+}
+
+/// Give a slider a rail that is actually visible inside a `settings_card`.
+///
+/// egui paints a slider's rail with `widgets.inactive.bg_fill` (see
+/// `egui::Slider::slider_ui`), and `theme::default_visuals` sets that to
+/// `SURFACE_TAB_INACTIVE` - which is exactly `settings_card`'s own fill. The
+/// rail therefore vanished into the card and the only thing left on screen
+/// was the handle's one-pixel outline, so the control read as a small empty
+/// box floating in whitespace rather than as a slider. Lifting the rail one
+/// surface step and filling the travelled portion with the accent color
+/// matches `toggle_switch`'s vocabulary (inert track, accent for "how far
+/// on") and makes the handle's position unmistakable.
+fn style_settings_slider(ui: &mut Ui) {
+    let visuals = &mut ui.style_mut().visuals;
+    visuals.widgets.inactive.bg_fill = theme::SURFACE_TAB_ACTIVE;
+    visuals.selection.bg_fill = theme::ACCENT_PRIMARY;
 }
 
 /// A labeled row with a discrete, clickstop-only slider: dragging or
@@ -3543,14 +3598,16 @@ fn settings_clickstop_row(
             // the right edge.
             ui.allocate_ui_with_layout(
                 egui::vec2(SLIDER_WIDTH, row_height),
-                egui::Layout::top_down(egui::Align::Min),
+                egui::Layout::top_down(egui::Align::Center),
                 |ui| {
                     let max_index = options.len().saturating_sub(1);
                     let mut index = selected.index().min(max_index);
                     ui.style_mut().spacing.slider_width = SLIDER_WIDTH;
+                    style_settings_slider(ui);
                     let response = ui.add(
                         egui::Slider::new(&mut index, 0..=max_index)
                             .step_by(1.0)
+                            .trailing_fill(true)
                             .show_value(false),
                     );
                     if response.changed() {
@@ -5282,6 +5339,85 @@ mod tests {
         ));
     }
 
+    /// The default window is `DEFAULT_WINDOW_WIDTH` wide (see `main.rs`), and
+    /// every surface has to be usable there. `settings_segmented_row` used to
+    /// reserve a fixed 170px for its buttons; "Scrollback limit"'s four
+    /// options need roughly 240, and the overflow does not clip the buttons -
+    /// egui grows the enclosing card instead. The Scrolling card was offered
+    /// 684px and painted 754.5, and because each following card then inherited
+    /// that wider content width, the Terminal font dropdown and the
+    /// scroll-speed slider were pushed off the right edge of the window.
+    #[test]
+    fn settings_controls_stay_inside_their_card_at_the_default_window_width() {
+        let mut harness = settings_harness_with_width(crate::DEFAULT_WINDOW_WIDTH);
+        harness.run();
+
+        // A toggle row's switch is pinned to the card's right edge and its
+        // right side is narrow enough that it never forced the card wider,
+        // so it marks where every other control should stop.
+        let card_right = harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Workspace restore")
+            .rect()
+            .right();
+
+        for (what, right) in [
+            (
+                "the scrollback-limit segmented control",
+                harness.get_by_label("Disabled").rect().right(),
+            ),
+            (
+                "the scroll-speed slider",
+                harness.get_by_role(accesskit::Role::Slider).rect().right(),
+            ),
+            (
+                "the terminal-font dropdown",
+                harness
+                    .get_by_role(accesskit::Role::ComboBox)
+                    .rect()
+                    .right(),
+            ),
+        ] {
+            assert!(
+                right <= card_right + 1.0,
+                "{what} reaches {right}, past the {card_right} right edge the \
+                 toggle rows line up on, so its card is wider than the window"
+            );
+        }
+    }
+
+    /// Regression test for the scroll-speed slider rendering as a small empty
+    /// box with no visible track. egui paints a slider rail with
+    /// `widgets.inactive.bg_fill`, and `theme::default_visuals` sets that to
+    /// `SURFACE_TAB_INACTIVE` - byte-for-byte the fill `settings_card` uses -
+    /// so the rail disappeared into the card and left only the handle's
+    /// one-pixel outline on screen.
+    #[test]
+    fn a_settings_slider_rail_is_visible_against_the_card_it_sits_in() {
+        let mut observed = None;
+        egui::__run_test_ui(|ui| {
+            ui.style_mut().visuals = theme::default_visuals();
+            style_settings_slider(ui);
+            observed = Some((
+                ui.visuals().widgets.inactive.bg_fill,
+                ui.visuals().selection.bg_fill,
+            ));
+        });
+
+        let (rail, travelled) = observed.expect("the test ui body should have run");
+        assert_ne!(
+            rail,
+            theme::SURFACE_TAB_INACTIVE,
+            "the slider rail is painted in the same color as the settings card \
+             around it, so the slider renders as a bare floating handle"
+        );
+        assert_eq!(
+            travelled,
+            theme::ACCENT_PRIMARY,
+            "the travelled part of the rail should use the same accent the \
+             toggle switches use for 'on'"
+        );
+    }
+
     #[test]
     fn scroll_speed_slider_is_reachable_and_dispatches_the_next_clickstop() {
         // Regression test for `settings_clickstop_row` rendering the
@@ -5463,8 +5599,13 @@ mod tests {
         // some content below the fold (inside the scrollable area) without
         // that being a bug, which a naive per-widget position check can't
         // distinguish from actually overlapping the status bar.
+        //
+        // The height has to track the content: this fixture is only 520
+        // wide, and once `settings_segmented_row` began reserving its
+        // buttons' real width the descriptions beside them wrap one line
+        // further at that width, making the whole surface taller.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1510.0))
+            .with_size(egui::vec2(520.0, 1700.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")

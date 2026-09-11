@@ -87,13 +87,21 @@ enum ApplicationShortcut {
     MarkdownReload,
     MarkdownPreviewSource,
     MarkdownOutline,
-    /// Opens the "Open Markdown File…" picker from anywhere
-    /// (`Ctrl+O`/`Cmd+O`), the near-universal "open a document" chord.
-    /// Inside a Markdown viewer the picked file replaces that viewer's
-    /// document; anywhere else it opens a new tab. This does claim `^O`
-    /// from the terminal, which readline binds to the rarely used
-    /// `operate-and-get-next`; the document-open convention wins because
-    /// fesTerm is a document viewer as well as a terminal.
+    /// Opens the "Open Markdown File…" picker (`Ctrl+O`/`Cmd+O`), the
+    /// near-universal "open a document" chord. Inside a Markdown viewer the
+    /// picked file replaces that viewer's document; anywhere else it opens a
+    /// new tab.
+    ///
+    /// On Windows/Linux this deliberately yields to a focused terminal
+    /// session, because there the chord *is* `^O` (0x0F): nano binds it to
+    /// "Write Out", so claiming it would silently swallow a save and cost the
+    /// user their edits, and readline binds it to `operate-and-get-next`.
+    /// That matches the rule the rest of this table follows - a plain
+    /// `Ctrl+<letter>` belongs to the program inside the terminal. From a
+    /// terminal the picker is still one click away under "More actions".
+    /// macOS is unaffected: `Cmd+O` never reaches the terminal (see
+    /// `festerm_ui_egui::input::control_key`, which ignores `mac_cmd`), so
+    /// there the chord stays available on every surface.
     OpenMarkdownFile,
     /// Terminal-content search (`docs/gui-design.md` "Terminal-content
     /// search"). `Ctrl+Shift+F` on Windows/Linux; macOS uses plain `Cmd+F`
@@ -2585,11 +2593,16 @@ impl FesTermApp {
             self.state.active_tab().content,
             TabContent::MarkdownViewer(_)
         ) && ApplicationShortcut::MarkdownOutline.consume(ctx);
-        // Available from every surface, not just a Markdown viewer: from a
-        // terminal it opens the picked document in a new tab, from a viewer
-        // it replaces that viewer's document (see `ApplicationShortcut::
-        // OpenMarkdownFile` and `open_markdown_file_picker`).
-        let open_markdown_file = ApplicationShortcut::OpenMarkdownFile.consume(ctx);
+        // Available from every surface except a focused terminal on
+        // Windows/Linux, where this chord is `^O` and belongs to the program
+        // running inside the terminal (see `ApplicationShortcut::
+        // OpenMarkdownFile` and `open_markdown_file_picker`). Short-circuits
+        // before `consume` so the keystroke is left in the input queue for
+        // `festerm_ui_egui::input` to encode as a control byte.
+        let terminal_owns_plain_ctrl_chords = !cfg!(target_os = "macos")
+            && matches!(self.state.active_tab().content, TabContent::Session(_));
+        let open_markdown_file =
+            !terminal_owns_plain_ctrl_chords && ApplicationShortcut::OpenMarkdownFile.consume(ctx);
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
@@ -5760,6 +5773,77 @@ mod tests {
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let items = app.palette_items();
         assert!(!items.iter().any(|item| item.label == "Open Markdown File…"));
+    }
+
+    #[test]
+    fn the_markdown_picker_chord_works_from_a_non_terminal_surface() {
+        let mut harness = harness();
+        harness.run();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Launcher
+        ));
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::O);
+        harness.run();
+
+        assert!(
+            harness.state().overlays.markdown_file_picker.is_some(),
+            "the document-open chord should still work where no terminal owns it"
+        );
+    }
+
+    /// On Windows/Linux the picker's chord is literally `^O`, which nano
+    /// binds to "Write Out". Swallowing it would turn a save into a file
+    /// dialog and lose the user's edits, so a focused terminal keeps it.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_focused_terminal_keeps_plain_control_o_for_the_program_inside_it() {
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert!(
+            matches!(
+                harness.state().state.active_tab().content,
+                TabContent::Session(_)
+            ),
+            "this test needs a terminal session focused"
+        );
+
+        // How the platform actually reports a held Ctrl on Windows/Linux:
+        // egui sets `command` alongside `ctrl`, and it is precisely that
+        // overlap which makes `^O` collide with the app's `Cmd/Ctrl+O`
+        // binding. Pressing `Modifiers::CTRL` alone would never match the
+        // binding and so would pass no matter what this test is guarding.
+        let control_o = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        harness.key_press_modifiers(control_o, egui::Key::O);
+        harness.run();
+
+        assert!(
+            harness.state().overlays.markdown_file_picker.is_none(),
+            "Ctrl+O was taken from the terminal, so nano's Write Out would be swallowed"
+        );
+    }
+
+    /// The macOS chord is `Cmd+O`, which never reaches the terminal, so it
+    /// stays available on every surface including a live session.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_macos_markdown_picker_chord_survives_a_focused_terminal() {
+        let mut harness = harness();
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::O);
+        harness.run();
+
+        assert!(harness.state().overlays.markdown_file_picker.is_some());
     }
 
     #[test]

@@ -3137,6 +3137,22 @@ fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
         line_height: style.line_height,
         ..Default::default()
     };
+    if inline_code {
+        // epaint draws a section's background from `baseline - font_ascent`
+        // and makes it exactly `line_height` tall, so carrying the prose line
+        // height onto a code span pins the highlight's top to the ascender and
+        // dumps every point of the paragraph's extra leading *below* the
+        // descenders. Letting the span keep its own font's row height instead
+        // makes the highlight the glyphs' own box, centered on the word.
+        //
+        // `Align::TOP` is what keeps the baseline where it was: the row is
+        // still as tall as the prose around it, and epaint offsets a glyph by
+        // `valign * (row_height - line_height)`, which is zero only at the top
+        // alignment. The default `Align::BOTTOM` would drop the code span onto
+        // the row's baseline-minus-leading and break the shared baseline.
+        format.line_height = None;
+        format.valign = Align::TOP;
+    }
     if style.strong {
         format.font_id.size += 0.5;
     }
@@ -3442,6 +3458,85 @@ mod tests {
             },
             (),
         )
+    }
+
+    /// epaint anchors a text section's background at `baseline -
+    /// font_ascent` and makes it exactly `line_height` tall. A code span that
+    /// inherited the paragraph's prose line height therefore grew its
+    /// highlight downwards only: the top sat exactly on the ascender while the
+    /// bottom fell five points past the descenders.
+    #[test]
+    fn an_inline_code_highlight_is_centred_on_its_own_glyphs() {
+        let mut harness = Harness::builder().build_ui(|ui| {
+            let job = paragraph_job(ui, "Use `gp` here.");
+            let galley = ui.painter().layout_job(job);
+            let row = &galley.rows[0].row;
+
+            // `g` and `p` appear only inside the code span; `e` only outside
+            // it, so neither needs to know how sections are numbered.
+            let code = row
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.chr == 'g')
+                .expect("the code span should have been laid out");
+            let prose = row
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.chr == 'e')
+                .expect("the prose should have been laid out");
+
+            assert_eq!(
+                code.pos.y, prose.pos.y,
+                "the code span sits on a different baseline ({}) from the prose around it ({})",
+                code.pos.y, prose.pos.y
+            );
+
+            let highlight = code.logical_rect();
+            let ink_top = code.pos.y - code.font_face_ascent;
+            let ink_bottom = code.pos.y + (code.font_face_height - code.font_face_ascent);
+            let above = ink_top - highlight.top();
+            let below = highlight.bottom() - ink_bottom;
+            assert!(
+                (above - below).abs() < 0.5,
+                "the highlight clears the ascenders by {above} but the descenders by {below}"
+            );
+        });
+        harness.run();
+    }
+
+    /// The highlight is the code span's own box, which is shorter than the
+    /// prose line height it used to carry. That must not tighten the
+    /// paragraph: rows are sized from the tallest line height on them, so the
+    /// prose on the row has to keep setting the pitch.
+    #[test]
+    fn an_inline_code_span_does_not_tighten_the_row_it_sits_on() {
+        let mut harness = Harness::builder().build_ui(|ui| {
+            let with_code = ui.painter().layout_job(paragraph_job(ui, "Use `gp` here."));
+            let without = ui.painter().layout_job(paragraph_job(ui, "Use gp here."));
+            assert_eq!(
+                with_code.rows[0].row.size.y, without.rows[0].row.size.y,
+                "a code span changed the row pitch from {} to {}",
+                without.rows[0].row.size.y, with_code.rows[0].row.size.y
+            );
+        });
+        harness.run();
+    }
+
+    /// Lays a one-paragraph document out exactly as the body renderer does.
+    fn paragraph_job(ui: &egui::Ui, markdown: &str) -> LayoutJob {
+        let parsed = document(markdown);
+        let Block::Paragraph(paragraph) = &parsed.blocks()[0] else {
+            panic!("the fixture should be a single paragraph");
+        };
+        let mut job = inline_layout_job(
+            paragraph.inlines(),
+            &parsed,
+            &MarkdownFindState::default(),
+            FontId::proportional(BODY_TEXT_SIZE),
+            InlineRenderStyle::body(),
+        );
+        job.wrap.max_width = ui.available_width();
+        job
     }
 
     /// `egui::Grid` sized a column from what its cells reported last frame,

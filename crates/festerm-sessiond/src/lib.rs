@@ -1,7 +1,7 @@
 //! Client backend for fesTerm's native local session persistence daemon.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt,
     fs::OpenOptions,
     io::{self, Read, Write},
@@ -173,29 +173,46 @@ impl Shared {
     }
 
     fn send_event(&self, event: SessionEvent) {
+        let mut event = event;
         loop {
-            match self.events.try_send(event.clone()) {
-                Ok(()) => {
-                    let mut metrics = self
-                        .metrics
-                        .lock()
-                        .expect("persistent session metrics lock is not poisoned");
-                    metrics.event_queue_depth += 1;
-                    metrics.event_queue_high_watermark = metrics
-                        .event_queue_high_watermark
-                        .max(metrics.event_queue_depth);
-                    drop(metrics);
-                    self.notifier.notify();
-                    return;
-                }
-                Err(TrySendError::Full(_)) => {
+            match self.try_send_event(event) {
+                Ok(()) => return,
+                Err(rejected) => {
                     if self.cancelled.load(Ordering::Acquire) {
                         return;
                     }
+                    event = rejected;
                     thread::sleep(POLL_INTERVAL);
                 }
-                Err(TrySendError::Disconnected(_)) => return,
             }
+        }
+    }
+
+    /// Offers an event to the application without waiting for room, handing
+    /// the event back when the queue is full.
+    ///
+    /// The client worker is the only thread that can write input to the
+    /// daemon, so it must never park waiting for the GUI to drain output: the
+    /// interrupt the user is trying to send is queued behind that wait. Giving
+    /// the event back lets the worker hold it, keep servicing commands, and
+    /// retry on the next pass.
+    fn try_send_event(&self, event: SessionEvent) -> Result<(), SessionEvent> {
+        match self.events.try_send(event) {
+            Ok(()) => {
+                let mut metrics = self
+                    .metrics
+                    .lock()
+                    .expect("persistent session metrics lock is not poisoned");
+                metrics.event_queue_depth += 1;
+                metrics.event_queue_high_watermark = metrics
+                    .event_queue_high_watermark
+                    .max(metrics.event_queue_depth);
+                drop(metrics);
+                self.notifier.notify();
+                Ok(())
+            }
+            Err(TrySendError::Full(event)) => Err(event),
+            Err(TrySendError::Disconnected(_)) => Ok(()),
         }
     }
 
@@ -436,6 +453,129 @@ fn send_command(
     }
 }
 
+/// One protocol frame waiting for room on the transport, and what the
+/// application should be told once the daemon has all of it.
+struct OutboundFrame {
+    bytes: Vec<u8>,
+    written: usize,
+    input_bytes: usize,
+    resize_applied: Option<TerminalSize>,
+}
+
+impl OutboundFrame {
+    fn remaining(&self) -> &[u8] {
+        &self.bytes[self.written..]
+    }
+}
+
+/// Frames the client still owes the daemon, in the order they were requested.
+///
+/// Input is queued rather than written where it is requested so that a daemon
+/// which is momentarily refusing bytes cannot stop this client reading. Both
+/// ends of this transport write to each other, and both apply backpressure by
+/// simply not reading, so a client that blocks inside a write until it
+/// succeeds can deadlock against a daemon doing the same thing. Making partial
+/// progress and coming back next pass is what breaks that cycle.
+#[derive(Default)]
+struct OutboundFrames {
+    frames: VecDeque<OutboundFrame>,
+}
+
+impl OutboundFrames {
+    fn push_input(&mut self, bytes: &[u8]) {
+        let input_bytes = bytes.len();
+        self.frames.push_back(OutboundFrame {
+            bytes: encode_frame(FRAME_INPUT, bytes),
+            written: 0,
+            input_bytes,
+            resize_applied: None,
+        });
+    }
+
+    fn push_resize(&mut self, size: TerminalSize) {
+        self.frames.push_back(OutboundFrame {
+            bytes: encode_frame(FRAME_RESIZE, &encode_resize(size)),
+            written: 0,
+            input_bytes: 0,
+            resize_applied: Some(size),
+        });
+    }
+
+    fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// Writes as much as the transport will accept right now, recording the
+    /// offset reached so a frame is never partially rewritten.
+    ///
+    /// The stream carries a write timeout so a wedged daemon cannot pin this
+    /// thread forever, but a timeout is backpressure, not a failure: the
+    /// daemon is busy, usually because it is trying to hand us output we have
+    /// not read yet. Treating it as a transport failure used to end this
+    /// worker, which dropped the command channel and left the session unable
+    /// to accept another keystroke for the rest of its life.
+    fn pump<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        shared: &Shared,
+        events: &mut VecDeque<SessionEvent>,
+    ) -> io::Result<()> {
+        while let Some(frame) = self.frames.front_mut() {
+            while frame.written < frame.bytes.len() {
+                match writer.write(frame.remaining()) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "persistent-session daemon accepted no bytes",
+                        ))
+                    }
+                    Ok(count) => frame.written += count,
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(error) if is_retryable_write(&error) => return Ok(()),
+                    Err(error) => return Err(error),
+                }
+            }
+            // Windows named-pipe `flush` maps to `FlushFileBuffers`, which
+            // blocks until the peer has drained everything written - exactly
+            // the wait this loop exists to avoid. The pipe delivers without
+            // it; only the Unix socket needs the nudge.
+            #[cfg(not(windows))]
+            match writer.flush() {
+                Ok(()) => {}
+                Err(error) if is_retryable_write(&error) => {}
+                Err(error) => return Err(error),
+            }
+            let frame = self
+                .frames
+                .pop_front()
+                .expect("the front frame stays queued until it is fully written");
+            if 0 < frame.input_bytes {
+                shared
+                    .metrics
+                    .lock()
+                    .expect("persistent session metrics lock is not poisoned")
+                    .input_bytes += frame.input_bytes as u64;
+            }
+            if let Some(size) = frame.resize_applied {
+                shared
+                    .metrics
+                    .lock()
+                    .expect("persistent session metrics lock is not poisoned")
+                    .resize_count += 1;
+                events.push_back(SessionEvent::ResizeApplied(size));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_retryable_write(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
+}
+
 fn client_worker(
     shared: Arc<Shared>,
     mut stream: Box<dyn SessionStream>,
@@ -445,34 +585,17 @@ fn client_worker(
     shared.set_lifecycle(SessionLifecycle::Running);
     let mut scanner = OutputScanner::default();
     let mut buffer = [0u8; 4096];
+    let mut outbound = OutboundFrames::default();
+    // Events the application has not taken yet. Holding them here rather than
+    // blocking inside the send is what keeps input flowing while the GUI is
+    // behind: every pass through the loop still drains the command channel and
+    // still writes to the daemon.
+    let mut pending_events: VecDeque<SessionEvent> = VecDeque::new();
     loop {
         loop {
             match commands.try_recv() {
-                Ok(SessionCommand::Input(bytes)) => {
-                    if let Err(error) = write_frame(&mut stream, FRAME_INPUT, &bytes) {
-                        fail_transport(&shared, SessionErrorKind::Input, error);
-                        let _ = completion.send(ShutdownResult::Stopped);
-                        return;
-                    }
-                    shared
-                        .metrics
-                        .lock()
-                        .expect("persistent session metrics lock is not poisoned")
-                        .input_bytes += bytes.len() as u64;
-                }
-                Ok(SessionCommand::Resize(size)) => {
-                    if let Err(error) = write_resize(&mut stream, size) {
-                        fail_transport(&shared, SessionErrorKind::Resize, error);
-                        let _ = completion.send(ShutdownResult::Stopped);
-                        return;
-                    }
-                    shared
-                        .metrics
-                        .lock()
-                        .expect("persistent session metrics lock is not poisoned")
-                        .resize_count += 1;
-                    shared.send_event(SessionEvent::ResizeApplied(size));
-                }
+                Ok(SessionCommand::Input(bytes)) => outbound.push_input(&bytes),
+                Ok(SessionCommand::Resize(size)) => outbound.push_resize(size),
                 Ok(SessionCommand::Shutdown) => {
                     shared.set_lifecycle(SessionLifecycle::Stopped);
                     let _ = completion.send(ShutdownResult::Stopped);
@@ -481,6 +604,28 @@ fn client_worker(
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
+        }
+
+        if let Err(error) = outbound.pump(&mut stream, &shared, &mut pending_events) {
+            fail_transport(&shared, SessionErrorKind::Input, error);
+            let _ = completion.send(ShutdownResult::Stopped);
+            return;
+        }
+
+        while let Some(event) = pending_events.pop_front() {
+            if let Err(rejected) = shared.try_send_event(event) {
+                pending_events.push_front(rejected);
+                break;
+            }
+        }
+
+        // Output the application has not taken yet must reach it before any
+        // more is read, so the stream stays ordered and the shell feels the
+        // stall - the same rule the daemon applies to this client. Input is
+        // deliberately not part of that stall: it was already written above.
+        if !pending_events.is_empty() {
+            thread::sleep(POLL_INTERVAL);
+            continue;
         }
 
         match stream.read(&mut buffer) {
@@ -496,7 +641,9 @@ fn client_worker(
                 return;
             }
             Ok(count) => match scanner.push(&buffer[..count]) {
-                ScanResult::Output(output) => send_output(&shared, output),
+                ScanResult::Output(output) => {
+                    pending_events.push_back(count_output(&shared, output))
+                }
                 ScanResult::Pending => {}
                 ScanResult::Stolen(output) => {
                     if !output.is_empty() {
@@ -522,7 +669,14 @@ fn client_worker(
                 if matches!(
                     error.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
+                ) =>
+            {
+                // A read timeout is the idle case, but the daemon may still be
+                // refusing input, so keep the loop hot until it is all gone.
+                if outbound.is_empty() {
+                    continue;
+                }
+            }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {
                 shared.set_lifecycle(SessionLifecycle::Disconnected(SessionError::new(
@@ -557,6 +711,21 @@ fn send_output(shared: &Shared, output: Vec<u8>) {
         .expect("persistent session metrics lock is not poisoned")
         .output_bytes += output.len() as u64;
     shared.send_event(SessionEvent::Output(output));
+}
+
+/// Accounts for output the worker is about to hand the application, returning
+/// the event to deliver.
+///
+/// Counting here rather than at delivery keeps the metric honest about what
+/// the daemon actually sent us even while the application is behind and the
+/// event is still queued.
+fn count_output(shared: &Shared, output: Vec<u8>) -> SessionEvent {
+    shared
+        .metrics
+        .lock()
+        .expect("persistent session metrics lock is not poisoned")
+        .output_bytes += output.len() as u64;
+    SessionEvent::Output(output)
 }
 
 /// Environment variables the macOS launchd-environment correction
@@ -768,23 +937,27 @@ fn runtime_root() -> Result<PathBuf, PersistentSessionError> {
     }
 }
 
-fn write_frame<W: Write + ?Sized>(writer: &mut W, kind: u8, payload: &[u8]) -> io::Result<()> {
-    if payload.len() > MAX_FRAME_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "session command exceeds the protocol limit",
-        ));
-    }
-    writer.write_all(FRAME_MAGIC)?;
-    writer.write_all(&[kind])?;
-    writer.write_all(&(payload.len() as u32).to_be_bytes())?;
-    writer.write_all(payload)?;
-    #[cfg(not(windows))]
-    writer.flush()?;
-    Ok(())
+/// Serializes one protocol frame into a single buffer.
+///
+/// Frames are built whole rather than written field by field so a write that
+/// only partially completes can be resumed from an offset. Writing the header
+/// with one call and the payload with another leaves no way to tell how much
+/// of the frame the peer already has, which is how a timed-out write used to
+/// desynchronize the stream.
+fn encode_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
+    debug_assert!(
+        payload.len() <= MAX_FRAME_BYTES,
+        "session command exceeds the protocol limit"
+    );
+    let mut frame = Vec::with_capacity(FRAME_MAGIC.len() + 5 + payload.len());
+    frame.extend_from_slice(FRAME_MAGIC);
+    frame.push(kind);
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
 }
 
-fn write_resize<W: Write + ?Sized>(writer: &mut W, size: TerminalSize) -> io::Result<()> {
+fn encode_resize(size: TerminalSize) -> Vec<u8> {
     let mut payload = Vec::with_capacity(8);
     for value in [
         size.columns(),
@@ -794,7 +967,7 @@ fn write_resize<W: Write + ?Sized>(writer: &mut W, size: TerminalSize) -> io::Re
     ] {
         payload.extend_from_slice(&value.to_be_bytes());
     }
-    write_frame(writer, FRAME_RESIZE, &payload)
+    payload
 }
 
 #[derive(Default)]
@@ -855,6 +1028,206 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// Client-worker regression tests that need no real transport, so they cover
+/// the Windows named-pipe build as well as the Unix socket one.
+#[cfg(test)]
+mod client_worker_tests {
+    use super::*;
+
+    /// A transport whose writes can be made to stall or dribble, recording
+    /// everything the worker actually put on the wire.
+    #[derive(Clone, Default)]
+    struct ScriptedStream {
+        state: Arc<Mutex<ScriptedState>>,
+    }
+
+    #[derive(Default)]
+    struct ScriptedState {
+        /// Write outcomes consumed in order. `Err` fails the attempt, `Ok(n)`
+        /// caps how many bytes that attempt accepts. Once empty, writes take
+        /// everything offered.
+        write_script: VecDeque<Result<usize, io::ErrorKind>>,
+        written: Vec<u8>,
+        readable: VecDeque<Vec<u8>>,
+    }
+
+    impl ScriptedStream {
+        fn script_writes(&self, script: impl IntoIterator<Item = Result<usize, io::ErrorKind>>) {
+            self.lock().write_script = script.into_iter().collect();
+        }
+
+        fn queue_readable(&self, chunk: Vec<u8>) {
+            self.lock().readable.push_back(chunk);
+        }
+
+        fn written(&self) -> Vec<u8> {
+            self.lock().written.clone()
+        }
+
+        fn lock(&self) -> std::sync::MutexGuard<'_, ScriptedState> {
+            self.state.lock().expect("scripted stream lock is healthy")
+        }
+    }
+
+    impl Read for ScriptedStream {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let mut state = self.lock();
+            let Some(chunk) = state.readable.pop_front() else {
+                // The real transports carry a read timeout, so an idle
+                // transport reports `TimedOut` rather than blocking.
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            };
+            let count = chunk.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&chunk[..count]);
+            if count < chunk.len() {
+                state.readable.push_front(chunk[count..].to_vec());
+            }
+            Ok(count)
+        }
+    }
+
+    impl Write for ScriptedStream {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let mut state = self.lock();
+            let allowed = match state.write_script.pop_front() {
+                Some(Err(kind)) => return Err(io::Error::from(kind)),
+                Some(Ok(limit)) => limit.min(bytes.len()),
+                None => bytes.len(),
+            };
+            state.written.extend_from_slice(&bytes[..allowed]);
+            Ok(allowed)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Spelled out here rather than borrowed from the encoder under test, so
+    /// these tests describe the wire and not the implementation.
+    fn input_frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = b"FSD1".to_vec();
+        frame.push(1);
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    fn wait_for(mut ready: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if ready() {
+                return true;
+            }
+            thread::sleep(POLL_INTERVAL);
+        }
+        ready()
+    }
+
+    /// The transport carries a write timeout so a wedged daemon cannot pin the
+    /// worker forever, but a timeout means the daemon is busy - usually
+    /// because it is trying to hand us output we have not read yet. Treating
+    /// it as a transport failure ended the worker, dropped the command
+    /// channel, and left the session unable to accept another keystroke: the
+    /// interrupt appeared to land and then the terminal went deaf.
+    #[test]
+    fn a_write_timeout_is_backpressure_rather_than_a_dead_session() {
+        let stream = ScriptedStream::default();
+        stream.script_writes([
+            Err(io::ErrorKind::TimedOut),
+            Err(io::ErrorKind::TimedOut),
+            Err(io::ErrorKind::WouldBlock),
+        ]);
+        let session =
+            PersistentSession::from_stream(Box::new(stream.clone()), noop_session_event_notifier())
+                .expect("the worker should start");
+
+        session.try_send_input(b"\x03").expect("input is accepted");
+        assert!(
+            wait_for(|| stream.written() == input_frame(b"\x03")),
+            "the interrupt never reached the daemon; the wire carries {:?}",
+            stream.written()
+        );
+
+        // The session has to still be usable afterwards, which is the half the
+        // user actually notices.
+        session
+            .try_send_input(b"later")
+            .expect("the session still accepts input");
+        let expected = [input_frame(b"\x03"), input_frame(b"later")].concat();
+        assert!(
+            wait_for(|| stream.written() == expected),
+            "input sent after the timeout was lost; the wire carries {:?}",
+            stream.written()
+        );
+        assert!(
+            matches!(session.lifecycle(), SessionLifecycle::Running),
+            "a write timeout disconnected the session: {:?}",
+            session.lifecycle()
+        );
+    }
+
+    /// A frame used to be written field by field with `write_all`, which
+    /// cannot report how much it wrote. A write that stopped part way through
+    /// therefore left a partial frame on the wire with no way to resume it, so
+    /// a retry would either repeat bytes the daemon already had or drop the
+    /// rest of the frame.
+    #[test]
+    fn a_partially_written_frame_resumes_without_repeating_bytes() {
+        let stream = ScriptedStream::default();
+        stream.script_writes([
+            Ok(3),
+            Err(io::ErrorKind::TimedOut),
+            Ok(2),
+            Err(io::ErrorKind::WouldBlock),
+            Ok(1),
+        ]);
+        let session =
+            PersistentSession::from_stream(Box::new(stream.clone()), noop_session_event_notifier())
+                .expect("the worker should start");
+
+        session
+            .try_send_input(b"interrupt")
+            .expect("input accepted");
+        let expected = input_frame(b"interrupt");
+        assert!(
+            wait_for(|| stream.written() == expected),
+            "the resumed frame is not byte-for-byte the original; the wire carries {:?}",
+            stream.written()
+        );
+    }
+
+    /// The worker is the only thread that can write input, so parking it until
+    /// the GUI drains output means the interrupt the user is trying to send is
+    /// queued behind the very flood they are trying to stop. `dir /s` on a
+    /// large tree fills the event queue for seconds at a time.
+    #[test]
+    fn input_reaches_the_daemon_while_the_application_is_behind_on_output() {
+        let stream = ScriptedStream::default();
+        // Far more output than the application's event queue can hold, and
+        // nothing in this test ever drains it.
+        for _ in 0..(DEFAULT_EVENT_QUEUE_CAPACITY * 4) {
+            stream.queue_readable(vec![b'x'; 512]);
+        }
+        let session =
+            PersistentSession::from_stream(Box::new(stream.clone()), noop_session_event_notifier())
+                .expect("the worker should start");
+
+        assert!(
+            wait_for(|| session.metrics().event_queue_depth >= DEFAULT_EVENT_QUEUE_CAPACITY),
+            "the event queue never filled, so this is not testing a backed-up application"
+        );
+
+        session.try_send_input(b"\x03").expect("input is accepted");
+        assert!(
+            wait_for(|| stream.written() == input_frame(b"\x03")),
+            "the interrupt never reached the daemon while output was backed up; \
+             the wire carries {:?}",
+            stream.written()
+        );
+    }
 }
 
 #[cfg(all(test, unix))]

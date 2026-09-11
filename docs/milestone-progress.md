@@ -1090,3 +1090,137 @@ Each of the new tests was checked against the old code before the fix was
 committed, which is the only way to know a regression test tests anything: the
 old renderer produced the 138px header cell, the old picker overhung by 24px,
 and the old filter text sat 3px above the field's centre line.
+
+
+## Lost input after Ctrl+C, and three things found while looking for it
+
+Running `cmd.exe` and then `dir /s` in a local session reproduced the report
+exactly: Ctrl+C took several seconds to register, and once it did the session
+accepted no further input at all while the status bar still read Running. The
+daemon side of this had already been fixed once -- `write_all_to_client` retries
+through timeouts and tracks its own offset -- but the client side of the same
+transport had never had the same treatment, and it is the client that failed
+here.
+
+Both ends of the client/daemon pipe write to each other and apply backpressure
+by not reading, so either side blocking inside a write can deadlock against the
+other. `dir /s` fills the application's event queue, because the GUI drains it
+at a bounded rate. The old `Shared::send_event` spun forever waiting for room.
+The client worker is a single loop, so parking there meant it stopped servicing
+the command channel, and the Ctrl+C the user had already pressed simply sat
+there unsent. That is the latency half of the report.
+
+The permanent half was worse. While the worker was parked the daemon was
+blocked writing to it, so the daemon had stopped reading client input. When the
+worker finally unparked and wrote the interrupt, nobody was reading, and the
+write hit its one-second timeout. The worker treated every write error as
+fatal -- including `TimedOut` -- called `fail_transport` and returned. The thread
+exiting dropped the command receiver, so every later `try_send_input` returned
+`Closed`. Input was dead for the life of the session, and because the worker was
+the only thing reading the pipe, output stopped too. The asymmetry that hid
+this for so long is visible in a single screen of code: the read arm of that
+loop explicitly tolerated `WouldBlock` and `TimedOut`; the write arm four lines
+below it did not.
+
+There is a second defect underneath the first. `write_all` cannot report how
+much it wrote, so a timeout partway through a frame left a partial header on
+the wire with no way to resume. A test that dribbles one byte per write and
+then fails captures the daemon receiving `[70, 83, 68]` -- `"FSD"`, three bytes of
+a four-byte magic -- which is a desynchronised protocol stream, not a lost
+keystroke.
+
+The worker now owns an `OutboundFrames` queue. Frames are encoded up front,
+written with an offset so a partial write resumes exactly where it stopped, and
+retryable errors are treated as backpressure rather than as death. Crucially
+the queue survives across loop iterations, so the client keeps reading output
+between write attempts instead of lengthening the fuse on the same deadlock.
+`send_event` grew a non-blocking `try_send_event` sibling, and when events are
+backed up the loop stalls its *reads* -- letting the shell feel the pressure,
+which is what flow control is for -- while still delivering input. The Windows
+flush rule is preserved: `flush()` on a named pipe is `FlushFileBuffers`, which
+blocks until the peer drains, so it stays `#[cfg(not(windows))]`.
+
+The three new tests run on every platform, unlike the daemon's existing suite,
+which is Unix-only. Against the old code they fail with "the interrupt never
+reached the daemon; the wire carries []", "the wire carries [70, 83, 68]", and
+"the interrupt never reached the daemon while output was backed up".
+
+### The hotkey audit
+
+Reviewing every accelerator against what a terminal program expects turned up
+exactly one real conflict. `control_key_character` maps only letters, Space and
+three bracket keys to C0 bytes, so the number-key quick switch, the zoom chords
+and Ctrl+Tab steal nothing. Markdown chords are already gated on the active tab
+being a viewer, and tab management deliberately uses Ctrl+Shift so that Ctrl+T
+and Ctrl+W reach the terminal. Ctrl+C is already correct: winit collapses it
+into a Copy event, and the input layer copies only when there is a selection.
+
+Ctrl+O was the exception, consumed unconditionally on every surface. The old
+doc comment dismissed readline's `operate-and-get-next` and missed nano's Write
+Out, which is the one that can cost a user their edits. A focused terminal now
+keeps plain Ctrl+O on Windows and Linux and the byte is encoded as `0x0F`;
+macOS is untouched because Cmd+O is not a terminal chord. The picker is still
+reachable from More actions there. It deliberately does not get a replacement
+terminal chord: Ctrl+Shift+O is already the outline toggle, and overloading it
+would be worse than the menu.
+
+One of these tests passed before the fix existed, which was the useful part of
+writing them. `Modifiers::CTRL` never matches a `consume_key(COMMAND, ...)`
+binding, so the assertion was vacuous. Real Windows input reports both `ctrl`
+and `command`; sending that makes the test fail against the old code, as it
+should.
+
+### Settings was not too narrow -- one row was too wide
+
+The report was that Settings does not fit the default window, with a suggestion
+to widen the default. Measuring first showed the window was already at exactly
+its default size, and that the real damage was further down: the scroll-speed
+slider and the terminal font dropdown were off the right edge entirely.
+
+Instrumenting `settings_card` located it in one pass. The Interface card was
+offered 684px and painted 684. The Scrolling card was offered 684 and painted
+754.5, and every card after it inherited 754.5. `settings_segmented_row`
+reserved a fixed 170px for its buttons, and "Scrollback limit" has four options
+that need about 240. egui does not clip that overflow -- it grows the enclosing
+frame to fit, and the frame is the card.
+
+So the fix is the layout, not the window. Widening the default would only have
+hidden the bug until the user narrowed the window again, and the minimum width
+is 360. The row now measures its own buttons and reserves what they actually
+need, clamped so the description column cannot be squeezed below 180px. One
+existing test then failed honestly: its 520x1510 fixture assumed all content
+fit without scrolling, and reserving the correct width wraps one description a
+line further at that width, so the fixture grew to 520x1700.
+
+Verifying that on screen turned up one more thing. With the card no longer
+overflowing, the scroll-speed slider was visible for the first time -- as a
+small empty box with no track. egui paints a slider rail with
+`widgets.inactive.bg_fill`, and the theme sets that to `SURFACE_TAB_INACTIVE`,
+which is byte-for-byte the fill `settings_card` uses. The rail had been
+invisible against the card the whole time, leaving only the handle's one-pixel
+outline floating in whitespace. The slider now lifts its rail one surface step,
+fills the travelled part with the same accent the toggle switches use for "on",
+and centres its named value underneath -- the same vocabulary `toggle_switch`
+already hand-paints.
+
+### The Markdown inline-code highlight
+
+The pill behind an inline `code` span started level with the cap height and
+extended well below the descenders. epaint paints a text background as the
+glyph's logical rect, whose top is `baseline - font_ascent` and whose height is
+the `TextFormat::line_height` override. Inline code inherited the prose line
+height of 22.5 while the code font's own row height is 17.47, and because the
+top is pinned to the ascender the extra 5.03px all landed below the text. The
+measurement is in the test: the old renderer cleared the ascenders by 0 and the
+descenders by 5.03125.
+
+Code spans now drop the line-height override and set `valign = Align::TOP`.
+`Align::TOP` is the part that matters and is easy to get wrong -- egui's default
+is `Align::BOTTOM`, whose factor would have shifted the span's baseline by the
+line-height difference. With TOP the factor is zero, so the baseline is
+unchanged and the surrounding prose does not move. Row height is a max over the
+row's glyphs, so a row carrying both prose and code keeps the prose height; a
+second test holds that.
+
+As before, every one of these tests was run against the pre-fix code and
+observed to fail first.

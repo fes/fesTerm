@@ -26,6 +26,14 @@ use configuration_startup::load as load_startup_configuration;
 const APPLICATION_TITLE: &str = "fesTerm";
 const APPLICATION_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/app-icon-256.png");
 
+/// The window width fesTerm opens at, sized to an 80-column terminal at the
+/// default 14pt monospace font (~9px cells) plus the 16px inset on each side.
+///
+/// Every surface has to be usable at this width, not just the terminal, so
+/// `screens` tests its settings layout against this constant rather than
+/// against a comfortable width nobody actually starts at.
+pub(crate) const DEFAULT_WINDOW_WIDTH: f32 = 80.0 * 9.0 + 16.0 * 2.0;
+
 pub(crate) fn application_icon_data() -> eframe::egui::IconData {
     eframe::icon_data::from_png_bytes(APPLICATION_ICON_PNG)
         .expect("the committed fesTerm application icon must be a valid PNG")
@@ -45,14 +53,11 @@ fn main() -> eframe::Result<()> {
     // wide, ~18px tall at 14pt), plus room for the chrome band above
     // (top inset + chip row; the terminal owns the one shared gap below)
     // and the status bar below.
-    const APPROX_CELL_WIDTH: f32 = 9.0;
     const APPROX_CELL_HEIGHT: f32 = 18.0;
-    const DEFAULT_COLUMNS: f32 = 80.0;
     const DEFAULT_ROWS: f32 = 25.0;
     const CHROME_HEIGHT: f32 = 8.0 + 34.0; // top inset + compact chip row
     const STATUS_BAR_HEIGHT: f32 = 24.0;
-    const SIDE_INSET: f32 = 16.0 * 2.0;
-    let default_width = DEFAULT_COLUMNS * APPROX_CELL_WIDTH + SIDE_INSET;
+    let default_width = DEFAULT_WINDOW_WIDTH;
     let default_height = DEFAULT_ROWS * APPROX_CELL_HEIGHT + CHROME_HEIGHT + STATUS_BAR_HEIGHT;
 
     let viewport = eframe::egui::ViewportBuilder::default()

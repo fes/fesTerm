@@ -499,7 +499,10 @@
       "decisions": [],
       "automated_tests": [
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
-        "routing_uses_core_paste_and_focus_modes"
+        "routing_uses_core_paste_and_focus_modes",
+        "the_markdown_picker_chord_works_from_a_non_terminal_surface",
+        "a_focused_terminal_keeps_plain_control_o_for_the_program_inside_it",
+        "the_macos_markdown_picker_chord_survives_a_focused_terminal"
       ],
       "manual_scenarios": [
         "AS-04",
@@ -809,7 +812,9 @@
         "windows_default_shell_falls_back_to_comspec_then_windows_powershell",
         "scroll_speed_changes_and_resets_to_normal",
         "scroll_speed_preference_round_trips_through_toml_and_defaults_to_normal",
-        "scroll_speed_multiplier_scales_rows_moved_per_wheel_step"
+        "scroll_speed_multiplier_scales_rows_moved_per_wheel_step",
+        "settings_controls_stay_inside_their_card_at_the_default_window_width",
+        "a_settings_slider_rail_is_visible_against_the_card_it_sits_in"
       ],
       "manual_scenarios": [
         "AS-02",
@@ -1371,7 +1376,9 @@
         "a_table_that_fits_keeps_its_natural_column_widths",
         "a_table_that_does_not_fit_is_shared_out_across_the_reading_width",
         "a_table_narrower_than_its_floor_falls_back_to_the_floor",
-        "the_markdown_pickers_table_spans_the_same_width_as_its_filter_field"
+        "the_markdown_pickers_table_spans_the_same_width_as_its_filter_field",
+        "an_inline_code_highlight_is_centred_on_its_own_glyphs",
+        "an_inline_code_span_does_not_tighten_the_row_it_sits_on"
       ],
       "manual_scenarios": [
         "CP-06"
