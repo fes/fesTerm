@@ -939,3 +939,55 @@ The end-to-end check is the one the user would run: start the saved profile,
 type `exit`, and watch the tab report `Exited` while the daemon disappears,
 the registry empties, and the same session name starts cleanly again a second
 later.
+
+## September 2026: a slow client is not a dead client
+
+The daemon fix above was pushed and the session still dropped -- this time
+about a minute into ordinary work, mid-stream, with the tab flipping to
+`Disconnected` while the shell was busy printing. The obvious suspect was the
+new shell-exit detection, and eliminating it took reading `portable-pty`'s
+`WinChild::is_complete`: it calls `GetExitCodeProcess`, never returns an error,
+and only reports an exit when the status is not `STILL_ACTIVE`. It also would
+have produced `Exited`, and the screenshot said `Disconnected`. Different bug.
+
+The real one was two independent zero-tolerance failure paths that turned
+ordinary backpressure into a permanent disconnect. `send_to_active` used
+`try_send` on a 64-slot bounded queue and retired the client on the *first*
+failure -- one full queue and the session was gone. And the client worker did
+`stream.write_all(&data)?` on a stream carrying a one-second write timeout, so
+a timed-out write was fatal. The read path on the same stream already tolerated
+`WouldBlock` and `TimedOut`; the write path did not.
+
+What makes those paths reachable is the shape of the GUI. The client read loop
+blocks when egui's event queue is full, and egui drains that queue on its frame
+loop, so one long frame stops the pipe being read, the daemon's queue fills, and
+the client is dropped. Heavy streaming output -- an agent CLI running inside
+fesTerm -- is exactly that workload, and "about a minute" is exactly how long it
+takes to hit it.
+
+The fix is a policy, stated once and then applied in both loops: *a slow client
+keeps its session; only a gone client loses it*. Output that cannot be delivered
+is parked rather than dropped, and while a chunk is parked the daemon stops
+reading the PTY entirely, so the stall lands on the shell -- which is what
+terminal flow control is for -- instead of on the session. Writes retry
+indefinitely through timeouts, tracking their own offset because `write_all`
+cannot be resumed after one (it does not report how much it wrote), and abort
+early only when another client is taking the session over. The single condition
+that still retires a client is the channel reporting `Disconnected`, or a real
+IO error -- which is what a killed GUI produces, since closing its handles is
+not a timeout.
+
+Parked output is tagged with the client generation it was produced for, so a
+chunk held for a client that has since been replaced is discarded rather than
+delivered twice; the replacement gets the replay buffer instead.
+
+The reproduction is worth recording because the first two attempts were wrong.
+A PowerShell harness hung twice for reasons that had nothing to do with the
+bug: a daemon started from a shell inherits stdio, so piping the script's output
+keeps the pipeline open forever, and `NamedPipeClientStream` has no read timeout,
+so breaking out of a drain loop with a `ReadAsync` still pending deadlocks the
+next read. The third attempt -- a native Rust smoke test that connects, releases
+a twenty-thousand-frame burst, then simply stops reading for five seconds --
+took minutes to write, and failed against the unfixed daemon with `os error 233`,
+"No process is on the other end of the pipe": the same error from the original
+screenshots.

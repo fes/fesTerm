@@ -252,6 +252,69 @@ fn native_daemon_exits_and_deregisters_when_its_shell_exits() {
     );
 }
 
+/// A client that stops reading for a moment must not be disconnected.
+///
+/// The GUI drains session output on its frame loop, so a busy frame (or any
+/// burst larger than the daemon's queue) briefly stops it reading the
+/// transport. That is ordinary backpressure and has to slow the shell down,
+/// not tear the session down: users saw an actively streaming session drop to
+/// `Disconnected` in the middle of their work because the daemon abandoned a
+/// client that was merely slow.
+#[test]
+#[ignore = "native daemon smoke; run through native-smoke.yml or the VM optional-validation mode"]
+fn native_daemon_keeps_a_slow_client_through_a_large_output_burst() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let name = format!("native-slow-{suffix}");
+    let runtime_root = short_runtime_root(&suffix);
+    fs::create_dir_all(&runtime_root).unwrap();
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime_root.clone(),
+        name: name.clone(),
+    };
+
+    let shell = test_shell(&executable);
+    let arguments = flooding_test_shell_arguments();
+    #[cfg(unix)]
+    launch_session_with(&executable, &runtime_root, &name, &shell, &arguments);
+    #[cfg(windows)]
+    let mut daemon = launch_session_with(&executable, &runtime_root, &name, &shell, &arguments);
+
+    let registry = runtime_root.join("festerm").join("sessiond");
+    let endpoint = registry_endpoint(&registry.join("registry.json"), &name);
+    let mut client = connect(&endpoint);
+    #[cfg(windows)]
+    assert_windows_ready(&mut *client);
+
+    // Release the burst, then stop reading for long enough to overrun every
+    // buffer between the shell and this client.
+    send_input(&mut *client, &test_input("go")).unwrap();
+    std::thread::sleep(Duration::from_secs(5));
+
+    // The session must still be attached and still delivering the burst.
+    assert_contains(&mut *client, b"FLOOD-COMPLETE");
+
+    // The test shell ends in `spin`, so the daemon only goes away when the
+    // session is killed. Reap it here rather than leaving a zombie behind for
+    // the rest of the suite.
+    #[cfg(windows)]
+    {
+        drop(client);
+        let _ = daemon_command(&executable, &runtime_root)
+            .args(["kill", "--name", &name])
+            .output();
+        let _ = daemon.wait();
+    }
+}
+
 fn wait_for(timeout: Duration, message: &str, mut condition: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -412,6 +475,18 @@ fn exiting_test_shell(daemon: &Path) -> PathBuf {
 #[cfg(windows)]
 fn exiting_test_shell_arguments() -> Vec<&'static str> {
     vec!["emit:READY", "read-line", "exit:0"]
+}
+
+/// Waits for a line, then emits far more output than the daemon's client queue
+/// and the transport buffers can hold before announcing completion.
+fn flooding_test_shell_arguments() -> Vec<&'static str> {
+    vec![
+        "emit:READY",
+        "read-line",
+        "emit-frames:20000:0",
+        "emit:FLOOD-COMPLETE",
+        "spin",
+    ]
 }
 
 #[cfg(windows)]

@@ -717,6 +717,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     let mut next_generation = 1u64;
     let mut replay = ReplayBuffer::default();
     let mut attached_reported = false;
+    let mut pending = PendingOutput::default();
     let result = loop {
         if let Err(error) = reap_client_threads(&mut retired_clients) {
             shutdown();
@@ -748,6 +749,13 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
+        // Output the client has not taken yet must be delivered before any more
+        // is read, so the stream stays ordered and the shell feels the stall.
+        flush_pending_output(&mut active, &mut retired_clients, &mut pending);
+        if pending.is_pending() {
+            thread::sleep(CLIENT_POLL_INTERVAL);
+            continue;
+        }
         match pty_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(PtyEvent::Data(data)) => {
                 if let Err(error) = accept_unix_clients(
@@ -771,7 +779,7 @@ fn session_client_loop<R: Read + Send + 'static>(
                 if let Some(observer) = observer.as_ref() {
                     let _ = observer.send(ClientLoopEvent::OutputBuffered);
                 }
-                send_to_active(&mut active, &mut retired_clients, data);
+                send_to_active(&mut active, &mut retired_clients, &mut pending, data);
                 report_attach_state_change(
                     active.is_some(),
                     &mut attached_reported,
@@ -782,6 +790,7 @@ fn session_client_loop<R: Read + Send + 'static>(
                 send_to_active(
                     &mut active,
                     &mut retired_clients,
+                    &mut pending,
                     EXITED_NOTICE_BYTES.to_vec(),
                 );
                 break Ok(());
@@ -929,6 +938,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut on_attach_changed =
         move |attached: bool| set_registry_attached(&name_owned, pid, attached);
     let mut shell_exited_at: Option<Instant> = None;
+    let mut pending = PendingOutput::default();
     let result = loop {
         // Windows keeps the pseudoconsole open for as long as this process
         // holds the master handle, so the pseudoterminal reader never reports
@@ -949,6 +959,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             send_to_active(
                 &mut active,
                 &mut retired_clients,
+                &mut pending,
                 EXITED_NOTICE_BYTES.to_vec(),
             );
             break Ok(());
@@ -987,6 +998,13 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             let _ = spawned.child.kill();
             break Err(error);
         }
+        // Output the client has not taken yet must be delivered before any more
+        // is read, so the stream stays ordered and the shell feels the stall.
+        flush_pending_output(&mut active, &mut retired_clients, &mut pending);
+        if pending.is_pending() {
+            thread::sleep(CLIENT_POLL_INTERVAL);
+            continue;
+        }
         match pty_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(PtyEvent::Data(data)) => {
                 if let Err(error) = accept_windows_clients(
@@ -1006,7 +1024,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                     &mut on_attach_changed,
                 );
                 replay.push(&data);
-                send_to_active(&mut active, &mut retired_clients, data);
+                send_to_active(&mut active, &mut retired_clients, &mut pending, data);
                 report_attach_state_change(
                     active.is_some(),
                     &mut attached_reported,
@@ -1017,6 +1035,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
                 send_to_active(
                     &mut active,
                     &mut retired_clients,
+                    &mut pending,
                     EXITED_NOTICE_BYTES.to_vec(),
                 );
                 break Ok(());
@@ -1144,6 +1163,7 @@ struct ClientInput {
     command: ClientCommand,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum ClientOutput {
     Data(Vec<u8>),
 }
@@ -1243,6 +1263,7 @@ fn retire_active_if_finished(
 fn send_to_active(
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
     data: Vec<u8>,
 ) {
     sessiond_trace(format_args!(
@@ -1250,11 +1271,73 @@ fn send_to_active(
         data.len(),
         active.is_some()
     ));
-    let failed = active
-        .as_ref()
-        .is_some_and(|client| client.output.try_send(ClientOutput::Data(data)).is_err());
-    if failed {
-        retire_active(active, retired_clients, false);
+    pending.hold(active.as_ref().map(|client| client.generation), data);
+    flush_pending_output(active, retired_clients, pending);
+}
+
+/// Output that has been read from the pseudoterminal but not yet accepted by
+/// the attached client.
+///
+/// A client's queue is bounded, so any client that briefly stops reading will
+/// fill it: the GUI drains session output on its frame loop, and one long frame
+/// (or a burst larger than the queue) is enough. Dropping the client there
+/// turned ordinary backpressure into a lost session, so the daemon parks the
+/// chunk here instead and stops reading the pseudoterminal until the client
+/// takes it, which makes the shell — not the session — wait.
+#[derive(Default)]
+struct PendingOutput {
+    /// The chunk awaiting delivery, and the client generation it was produced
+    /// for. Output parked for a client that has since been replaced is dropped
+    /// rather than delivered, because the replacement already received the
+    /// replay buffer containing it.
+    held: Option<(u64, Vec<u8>)>,
+}
+
+impl PendingOutput {
+    fn is_pending(&self) -> bool {
+        self.held.is_some()
+    }
+
+    fn hold(&mut self, generation: Option<u64>, data: Vec<u8>) {
+        let Some(generation) = generation else {
+            // With no client attached the replay buffer already holds this
+            // output, so there is nothing to deliver.
+            return;
+        };
+        debug_assert!(
+            self.held.is_none(),
+            "the daemon must not read more pseudoterminal output while a chunk is still pending"
+        );
+        self.held = Some((generation, data));
+    }
+}
+
+/// Tries once to hand any parked output to the attached client.
+///
+/// Only a client that is *gone* is retired here. A client that is merely full
+/// keeps its session and its place in the stream.
+fn flush_pending_output(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
+) {
+    let Some((generation, data)) = pending.held.take() else {
+        return;
+    };
+    let Some(client) = active.as_ref() else {
+        return;
+    };
+    if client.generation != generation {
+        return;
+    }
+    match client.output.try_send(ClientOutput::Data(data)) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(ClientOutput::Data(data))) => {
+            pending.held = Some((generation, data));
+        }
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            retire_active(active, retired_clients, false);
+        }
     }
 }
 
@@ -1269,6 +1352,54 @@ fn handle_pending_client_input(
         }
     }
     Ok(())
+}
+
+/// Writes `data` to a client, treating a write timeout as backpressure.
+///
+/// The transport carries a write timeout so a wedged client cannot block this
+/// worker forever without recourse, but a client that is merely slow to read
+/// must keep its session: a timed-out write used to end the client thread, so
+/// one long GUI frame during heavy output disconnected the user mid-session.
+///
+/// [`Write::write_all`] cannot be resumed after a timeout because it does not
+/// report how much it wrote, so this tracks the offset itself and never
+/// rewrites bytes the client already has. A takeover by another client is the
+/// one thing that abandons the write, which keeps `stolen` responsive even
+/// while this client refuses to drain.
+fn write_all_to_client<S: Write>(
+    stream: &mut S,
+    data: &[u8],
+    stolen: &AtomicBool,
+) -> io::Result<()> {
+    let mut written = 0;
+    while written < data.len() {
+        if stolen.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match stream.write(&data[written..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "session client accepted no bytes",
+                ))
+            }
+            Ok(count) => written += count,
+            Err(error) if is_retryable_client_write(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    match stream.flush() {
+        Ok(()) => Ok(()),
+        Err(error) if is_retryable_client_write(&error) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn is_retryable_client_write(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
 }
 
 fn client_io_loop<S: Read + Write>(
@@ -1293,8 +1424,7 @@ fn client_io_loop<S: Read + Write>(
                         "client_io_loop[{generation}]: writing {} bytes to client",
                         data.len()
                     ));
-                    stream.write_all(&data)?;
-                    stream.flush()?;
+                    write_all_to_client(&mut stream, &data, &stolen)?;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
@@ -2424,9 +2554,12 @@ mod tests {
         assert_eq!(replay.bytes.iter().copied().collect::<Vec<_>>(), b"34567");
     }
 
+    /// A client that is gone must be retired so its worker can be joined.
     #[test]
-    fn failed_client_output_is_retired_for_worker_join() {
-        let (output, _receiver) = mpsc::sync_channel(0);
+    fn output_for_a_departed_client_is_retired_for_worker_join() {
+        let (output, receiver) = mpsc::sync_channel(1);
+        // The worker has ended, so nothing will ever receive again.
+        drop(receiver);
         let mut active = Some(ActiveClient {
             generation: 1,
             output,
@@ -2436,12 +2569,146 @@ mod tests {
             }),
         });
         let mut retired = Vec::new();
+        let mut pending = PendingOutput::default();
 
-        send_to_active(&mut active, &mut retired, b"output".to_vec());
+        send_to_active(&mut active, &mut retired, &mut pending, b"output".to_vec());
 
         assert!(active.is_none());
+        assert!(!pending.is_pending());
         assert_eq!(retired.len(), 1);
         assert!(join_client_thread(retired.pop().unwrap()).is_err());
+    }
+
+    /// A client that is merely slow must keep its session.
+    ///
+    /// The GUI drains output on its frame loop, so a long frame fills the
+    /// bounded queue. Retiring the client there disconnected users in the
+    /// middle of an active session; the output has to wait instead.
+    #[test]
+    fn output_for_a_full_client_waits_instead_of_dropping_the_session() {
+        let (output, receiver) = mpsc::sync_channel(1);
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            output,
+            stolen: Arc::new(AtomicBool::new(false)),
+            thread: thread::spawn(|| -> io::Result<()> { Ok(()) }),
+        });
+        let mut retired = Vec::new();
+        let mut pending = PendingOutput::default();
+
+        send_to_active(&mut active, &mut retired, &mut pending, b"first".to_vec());
+        assert!(!pending.is_pending(), "the first chunk fits in the queue");
+
+        // The queue is now full, so this chunk has nowhere to go yet.
+        send_to_active(&mut active, &mut retired, &mut pending, b"second".to_vec());
+        assert!(pending.is_pending());
+        assert!(active.is_some(), "a slow client must keep its session");
+        assert!(retired.is_empty());
+
+        // Once the client reads, the parked chunk is delivered in order.
+        assert_eq!(
+            receiver.recv().unwrap(),
+            ClientOutput::Data(b"first".into())
+        );
+        flush_pending_output(&mut active, &mut retired, &mut pending);
+        assert!(!pending.is_pending());
+        assert_eq!(
+            receiver.recv().unwrap(),
+            ClientOutput::Data(b"second".into())
+        );
+    }
+
+    /// Output parked for a client that has since been replaced must be dropped:
+    /// the replacement is sent the replay buffer, which already contains it.
+    #[test]
+    fn output_parked_for_a_replaced_client_is_not_delivered_twice() {
+        let (output, receiver) = mpsc::sync_channel(1);
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            output,
+            stolen: Arc::new(AtomicBool::new(false)),
+            thread: thread::spawn(|| -> io::Result<()> { Ok(()) }),
+        });
+        let mut retired = Vec::new();
+        let mut pending = PendingOutput::default();
+
+        send_to_active(&mut active, &mut retired, &mut pending, b"first".to_vec());
+        send_to_active(&mut active, &mut retired, &mut pending, b"second".to_vec());
+        assert!(pending.is_pending());
+
+        let (replacement, replacement_receiver) = mpsc::sync_channel(4);
+        active = Some(ActiveClient {
+            generation: 2,
+            output: replacement,
+            stolen: Arc::new(AtomicBool::new(false)),
+            thread: thread::spawn(|| -> io::Result<()> { Ok(()) }),
+        });
+
+        flush_pending_output(&mut active, &mut retired, &mut pending);
+
+        assert!(!pending.is_pending());
+        assert!(replacement_receiver.try_recv().is_err());
+        drop(receiver);
+    }
+
+    /// A write that times out is backpressure, not a broken client.
+    #[test]
+    fn a_client_write_that_times_out_resumes_where_it_stopped() {
+        #[derive(Default)]
+        struct StallingWriter {
+            written: Vec<u8>,
+            attempts: usize,
+        }
+
+        impl Write for StallingWriter {
+            fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+                self.attempts += 1;
+                match self.attempts {
+                    // Accept a little, then stall twice, then accept the rest.
+                    1 => {
+                        self.written.extend_from_slice(&buffer[..2]);
+                        Ok(2)
+                    }
+                    2 => Err(io::Error::new(io::ErrorKind::TimedOut, "slow client")),
+                    3 => Err(io::Error::new(io::ErrorKind::WouldBlock, "slow client")),
+                    _ => {
+                        self.written.extend_from_slice(buffer);
+                        Ok(buffer.len())
+                    }
+                }
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = StallingWriter::default();
+        let stolen = AtomicBool::new(false);
+
+        write_all_to_client(&mut writer, b"abcdef", &stolen).unwrap();
+
+        assert_eq!(writer.written, b"abcdef", "no byte is written twice");
+    }
+
+    /// A takeover must not be blocked by a client that refuses to read.
+    #[test]
+    fn a_client_write_is_abandoned_once_the_session_is_stolen() {
+        struct NeverAcceptingWriter;
+
+        impl Write for NeverAcceptingWriter {
+            fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::TimedOut, "wedged client"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let stolen = AtomicBool::new(true);
+
+        write_all_to_client(&mut NeverAcceptingWriter, b"abcdef", &stolen).unwrap();
     }
 
     #[test]
