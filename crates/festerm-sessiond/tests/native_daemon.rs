@@ -281,7 +281,7 @@ fn native_daemon_keeps_a_slow_client_through_a_large_output_burst() {
         name: name.clone(),
     };
 
-    let shell = test_shell(&executable);
+    let shell = flooding_test_shell(&executable);
     let arguments = flooding_test_shell_arguments();
     #[cfg(unix)]
     launch_session_with(&executable, &runtime_root, &name, &shell, &arguments);
@@ -441,6 +441,16 @@ fn test_shell(_daemon: &Path) -> PathBuf {
 
 #[cfg(windows)]
 fn test_shell(daemon: &Path) -> PathBuf {
+    pty_test_child(daemon)
+}
+
+/// The workspace's deterministic PTY child, which understands the `emit:` /
+/// `read-line` / `emit-frames:` / `spin` protocol used by the flooding test.
+///
+/// It is an ordinary cross-platform binary, not a Windows-only helper; both
+/// the Linux and macOS smoke jobs `cargo build --workspace` before running
+/// this suite, so it sits next to the daemon on every platform.
+fn pty_test_child(daemon: &Path) -> PathBuf {
     daemon
         .parent()
         .expect("daemon executable has a parent directory")
@@ -479,6 +489,16 @@ fn exiting_test_shell_arguments() -> Vec<&'static str> {
 
 /// Waits for a line, then emits far more output than the daemon's client queue
 /// and the transport buffers can hold before announcing completion.
+///
+/// These arguments are the PTY test child's protocol, not a shell's, so the
+/// flooding test has to launch `pty_test_child` on every platform. `/bin/cat`
+/// -- what `test_shell` hands the other Unix tests -- treats them as filenames
+/// to open, fails to find them and exits immediately, which the daemon
+/// correctly reports as "exited during startup".
+fn flooding_test_shell(daemon: &Path) -> PathBuf {
+    pty_test_child(daemon)
+}
+
 fn flooding_test_shell_arguments() -> Vec<&'static str> {
     vec![
         "emit:READY",

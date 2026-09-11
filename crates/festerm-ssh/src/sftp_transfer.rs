@@ -2472,7 +2472,7 @@ mod tests {
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
-        sync::oneshot,
+        sync::{oneshot, Notify},
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2498,8 +2498,12 @@ mod tests {
         stdfs::create_dir_all(path).expect("could not create test directory");
     }
 
+    #[derive(Default)]
     struct TestBackend {
         delay_per_chunk_ms: u64,
+        /// Signalled once `copy_file` has emitted its final progress callback,
+        /// so a test can wait for a transfer to finish without racing it.
+        copy_finished: Option<std::sync::Arc<Notify>>,
     }
 
     impl TransferBackend for TestBackend {
@@ -2614,6 +2618,9 @@ mod tests {
                         error,
                     ))
                 })?;
+                if let Some(finished) = &self.copy_finished {
+                    finished.notify_one();
+                }
                 Ok(total)
             })
         }
@@ -3002,6 +3009,7 @@ mod tests {
             let (command_sender, mut event_receiver, _snapshot) = spawn_worker_with_limits(
                 TestBackend {
                     delay_per_chunk_ms: 0,
+                    ..Default::default()
                 },
                 TransferPlanningLimits {
                     max_items: 1,
@@ -3094,6 +3102,7 @@ mod tests {
         let events = test_runtime().block_on(async {
             let (command_sender, mut receiver, snapshot) = spawn_worker(TestBackend {
                 delay_per_chunk_ms: 0,
+                ..Default::default()
             })
             .await;
             let batch = queue_batch(
@@ -3155,9 +3164,11 @@ mod tests {
             .expect("could not write progress source");
 
         let events = test_runtime().block_on(async {
+            let copy_finished = std::sync::Arc::new(Notify::new());
             let (command_sender, mut receiver, _snapshot) = spawn_worker_with_event_capacity(
                 TestBackend {
                     delay_per_chunk_ms: 0,
+                    copy_finished: Some(copy_finished.clone()),
                 },
                 TransferPlanningLimits::default(),
                 1,
@@ -3180,7 +3191,16 @@ mod tests {
                     break;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            // The bound asserted below only holds while nothing is draining the
+            // event channel: once the receiver starts taking events the worker
+            // gets a free slot for every one removed, so any progress callback
+            // still to come is delivered instead of being coalesced away.
+            // Sleeping a fixed interval here and hoping the copy finished first
+            // made this test fail intermittently under load, so wait for the
+            // backend to tell us the transfer is genuinely done.
+            tokio::time::timeout(Duration::from_secs(5), copy_finished.notified())
+                .await
+                .expect("the test backend should finish copying the progress source");
             events.extend(
                 tokio::time::timeout(
                     Duration::from_secs(1),
@@ -3235,6 +3255,7 @@ mod tests {
         test_runtime().block_on(async {
             let (command_sender, mut receiver, _snapshot) = spawn_worker(TestBackend {
                 delay_per_chunk_ms: 10,
+                ..Default::default()
             })
             .await;
             let batch = queue_batch(
@@ -3330,6 +3351,7 @@ mod tests {
         test_runtime().block_on(async {
             let (command_sender, mut receiver, _snapshot) = spawn_worker(TestBackend {
                 delay_per_chunk_ms: 0,
+                ..Default::default()
             })
             .await;
             let batch = queue_batch(
@@ -3468,6 +3490,7 @@ mod tests {
         test_runtime().block_on(async {
             let (command_sender, mut receiver, _snapshot) = spawn_worker(TestBackend {
                 delay_per_chunk_ms: 0,
+                ..Default::default()
             })
             .await;
             let batch = queue_batch(&command_sender, vec![upload_request(&source_dir, &remote)]);
@@ -3584,6 +3607,7 @@ mod tests {
         test_runtime().block_on(async {
             let (command_sender, mut receiver, _snapshot) = spawn_worker(TestBackend {
                 delay_per_chunk_ms: 0,
+                ..Default::default()
             })
             .await;
             let batch = queue_batch(

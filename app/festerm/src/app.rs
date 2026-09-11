@@ -7329,7 +7329,17 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(360.0, 400.0))
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
-        harness.run();
+        // `Harness::run` repaints until the UI goes quiet and panics after
+        // four frames if it has not. This test owns a real local session, and
+        // `ui_content` requests another repaint on every frame that received
+        // shell output (see `last_pump_output_received`), so whether the UI
+        // settles within four frames depends entirely on how quickly the
+        // spawned shell finishes printing its banner - which made this test
+        // fail intermittently on CI. Autosave is driven by the first frame
+        // that observes `workspace_dirty`, so stepping a fixed number of
+        // frames tests the same thing without racing the shell.
+        harness.step();
+        harness.step();
 
         assert_eq!(
             harness.state().configuration_status,

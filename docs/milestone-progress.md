@@ -1224,3 +1224,36 @@ second test holds that.
 
 As before, every one of these tests was run against the pre-fix code and
 observed to fail first.
+
+### Three red CI jobs, three different kinds of wrong
+
+The nightly Native Smoke run went red on Linux and macOS with the daemon
+reporting that the session shell "exited during startup". The flooding test
+added with the backpressure fix had asked for the wrong shell: its arguments
+(`emit:READY`, `read-line`, `emit-frames:20000:0`, `spin`) are the PTY test
+child's protocol, but on Unix `test_shell` hands out `/bin/cat`, which treated
+them as filenames it could not open and exited immediately. Windows passed
+because there `test_shell` already is the PTY test child. The child is an
+ordinary cross-platform binary and both Unix smoke jobs already
+`cargo build --workspace`, so the flooding test now asks for it by name on
+every platform. Native Smoke only runs nightly, so the test had never actually
+passed in CI -- it went green on Linux, macOS and Windows on the first run
+after the fix.
+
+The Windows CI job failed on an unrelated test with `Harness::run exceeded
+max_steps (4)`. `Harness::run` repaints until the UI goes quiet, and the
+autosave test owns a real local session, so `ui_content` requested another
+repaint on every frame that received shell output. Whether four frames were
+enough came down to how fast the runner's shell printed its banner. Autosave is
+driven by the first frame that observes `workspace_dirty`, so the test now
+steps a fixed number of frames and stops racing the shell.
+
+The third one only showed up locally, and only when the whole workspace test
+run had the machine loaded: a progress-coalescing test asserting that a
+one-slot event channel bounds a 512KB upload to two progress events. That bound
+is real, but only while nothing is draining the channel -- once the receiver
+starts taking events the worker gets a free slot for each one removed and
+delivers the rest instead of coalescing them. The test had slept 20ms and hoped
+the copy finished first. The test backend now signals when it has emitted its
+last progress callback, and the test waits for that, which makes the two-event
+bound exact rather than probable.
