@@ -60,7 +60,8 @@
       "id": "launcher",
       "edges": [
         "LAUNCH-0[1-5]",
-        "LAUNCH-0[78]"
+        "LAUNCH-0[78]",
+        "LAUNCH-12"
       ],
       "requirements": [
         "docs/gui-design.md#session-launcher"
@@ -81,7 +82,13 @@
         "remote_tmux_detection_defaults_to_tmux_or_screen",
         "detected_remote_provider_default_does_not_override_an_explicit_choice",
         "ssh_profile_editor_saves_named_tmux_persistence",
-        "editing_durable_session_settings_preserves_the_stored_credential_reference"
+        "editing_durable_session_settings_preserves_the_stored_credential_reference",
+        "tmux_and_screen_sessions_appear_in_their_own_labeled_widgets_and_dispatch_resume",
+        "parses_tmux_sessions_with_attached_flag_and_filters_invalid_names",
+        "parses_tmux_sessions_ignores_blank_lines_and_missing_binary_output",
+        "parses_screen_sessions_extracts_display_name_and_full_match_key",
+        "parses_screen_sessions_reports_none_when_no_sockets_exist",
+        "parses_screen_sessions_falls_back_to_the_full_identifier_without_a_numeric_prefix"
       ],
       "manual_scenarios": [
         "AS-01",
@@ -1032,7 +1039,8 @@
         "ssh_profile_editor_offers_a_password_field_that_dispatches_store_profile_password",
         "ssh_profile_editor_adds_a_port_forward_and_saves_it_with_the_profile",
         "ssh_profile_editor_can_remove_a_saved_port_forward_before_saving",
-        "ssh_profile_editor_rejects_an_invalid_port_forward_without_saving"
+        "ssh_profile_editor_rejects_an_invalid_port_forward_without_saving",
+        "a_detected_local_tmux_default_is_applied_when_the_toggle_is_first_enabled"
       ],
       "manual_scenarios": [
         "CP-05",

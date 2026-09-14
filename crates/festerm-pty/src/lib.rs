@@ -313,6 +313,50 @@ fn search_path_executables_in(
     matches
 }
 
+/// Whether an executable literally named `name` (ignoring any extension, so
+/// `tmux` also matches a Windows-built `tmux.exe`) exists anywhere on
+/// `PATH`.
+///
+/// Intended for choosing a sensible default durable-session provider for a
+/// newly created Local profile -- prefer tmux, then GNU screen, then
+/// fesTerm's own bundled session daemon -- without requiring the user to
+/// already know what's installed. Unlike [`search_path_executables`], this
+/// matches the exact name rather than a prefix, so a same-prefixed
+/// unrelated file (e.g. `tmux-mux`) never counts as `tmux` being present.
+pub fn is_executable_on_path(name: &str) -> bool {
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    is_executable_on_path_in(name, std::env::split_paths(&path_var))
+}
+
+fn is_executable_on_path_in(name: &str, directories: impl Iterator<Item = PathBuf>) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let name = name.to_lowercase();
+    for directory in directories {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(file_name) = path.file_name().and_then(OsStr::to_str) else {
+                continue;
+            };
+            let stem = Path::new(file_name)
+                .file_stem()
+                .and_then(OsStr::to_str)
+                .unwrap_or(file_name);
+            if stem.to_lowercase() != name {
+                continue;
+            }
+            if is_executable_candidate(&path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(unix)]
 fn is_executable_candidate(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -1267,6 +1311,55 @@ mod tests {
         assert!(
             search_path_executables_in("", directories, 10).is_empty(),
             "an empty query returns no suggestions"
+        );
+
+        std::fs::remove_dir_all(&root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn is_executable_on_path_matches_the_exact_name_ignoring_extension_and_case() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-exact-path-test-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).expect("test directory can be created");
+        std::fs::create_dir_all(&second).expect("test directory can be created");
+
+        let tmux_name = executable_fixture_name("Tmux");
+        make_executable(&second.join(&tmux_name));
+        // A same-prefixed but distinct name must not count as a match.
+        make_executable(&first.join(executable_fixture_name("tmux-mux")));
+        // Present but not executable: must not count as a match either.
+        std::fs::write(first.join("screen"), b"not executable").expect("test file can be created");
+
+        let directories = [first.clone(), second.clone()].into_iter();
+        assert!(
+            is_executable_on_path_in("tmux", directories),
+            "an executable matching the name case-insensitively, ignoring extension, counts"
+        );
+
+        let directories = [first.clone(), second.clone()].into_iter();
+        assert!(
+            !is_executable_on_path_in("screen", directories),
+            "a same-named but non-executable file does not count"
+        );
+
+        let directories = [first.clone(), second.clone()].into_iter();
+        assert!(
+            !is_executable_on_path_in("nonexistent-multiplexer", directories),
+            "an executable absent from every directory is reported as unavailable"
+        );
+
+        let directories = [first, second].into_iter();
+        assert!(
+            !is_executable_on_path_in("", directories),
+            "an empty name never matches"
         );
 
         std::fs::remove_dir_all(&root).expect("test directory can be removed");

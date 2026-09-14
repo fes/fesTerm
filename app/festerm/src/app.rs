@@ -9,8 +9,8 @@ use std::{
 
 use eframe::egui;
 use festerm_config::{
-    Configuration, EmojiPresentationPreference, InterfaceSettings, Profile, SerialDataBits,
-    SerialFlowControl, SerialParity, SerialStopBits,
+    Configuration, EmojiPresentationPreference, InterfaceSettings, PersistenceProviderKind,
+    Profile, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits,
     SshPortForwardDirection as ConfigPortForwardDirection, TerminalFontPreference,
 };
 use festerm_pty::LocalProfile;
@@ -407,6 +407,21 @@ impl PlatformWakeMonitor {
 
 fn native_secret_store() -> Result<Arc<dyn SecretStore>, SecretStoreError> {
     native_store().map(Arc::<dyn SecretStore>::from)
+}
+
+/// The default durable-session provider offered to a newly created Local
+/// profile, detected once per frame from what's actually installed on the
+/// local `PATH`.
+///
+/// This is the composition-root call site for
+/// [`PersistenceProviderKind::default_for_local_session`]: production code
+/// performs the real `PATH` scan here so `screens::show_profiles` and its
+/// drafts stay pure/parameterized and deterministically testable.
+fn detect_default_local_persistence_provider() -> PersistenceProviderKind {
+    PersistenceProviderKind::default_for_local_session(
+        festerm_pty::is_executable_on_path("tmux"),
+        festerm_pty::is_executable_on_path("screen"),
+    )
 }
 
 fn load_application_icon(context: &egui::Context) -> egui::TextureHandle {
@@ -4407,6 +4422,19 @@ impl FesTermApp {
                     } else {
                         Vec::new()
                     };
+                    // Reuses the same "show resumable sessions" toggle that
+                    // gates fesTerm-sessiond enumeration above: all three
+                    // durable-session providers' quick-connect widgets are
+                    // opt-in together, since they answer the same "what's
+                    // already running that I can jump back into" question.
+                    let (tmux_sessions, screen_sessions) = if self.state.show_resumable_sessions() {
+                        (
+                            crate::multiplexer_sessions::list_tmux_sessions(),
+                            crate::multiplexer_sessions::list_screen_sessions(),
+                        )
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
                     screen_command = screens::show_launcher(
                         ui,
                         active_tab_id,
@@ -4415,6 +4443,8 @@ impl FesTermApp {
                         secure_storage_status,
                         self.state.compact_launcher_grid(),
                         &resumable_sessions,
+                        &tmux_sessions,
+                        &screen_sessions,
                     );
                 }
                 TabContent::Settings => {
@@ -4457,6 +4487,7 @@ impl FesTermApp {
                         active_tab_id,
                         self.state.configuration(),
                         pending_edit,
+                        detect_default_local_persistence_provider(),
                     );
                 }
                 TabContent::MarkdownViewer(tab) => {

@@ -10,6 +10,7 @@ mod diagnostics;
 mod environment;
 mod inspector;
 mod markdown_viewer;
+mod multiplexer_sessions;
 mod native_smoke;
 mod overlay_state;
 mod port_forward_draft;

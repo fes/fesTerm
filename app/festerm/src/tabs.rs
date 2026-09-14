@@ -735,6 +735,46 @@ impl SessionTab {
         Self::from_local_session_result(result, dimensions, name, None, None, inspector_persistence)
     }
 
+    /// Attaches to (or creates) a locally running tmux or GNU screen
+    /// session discovered on the Launcher's "tmux sessions"/"GNU Screen
+    /// sessions" widgets, without going through any saved profile's
+    /// start-if-missing logic. `profile` is `persistence.to_local_profile()`
+    /// (the real `tmux new-session -A`/`screen -xRR` invocation); `label`
+    /// is the tab's display label, distinct from `persistence.session_name()`
+    /// for screen (whose exact match key includes a `pid.` prefix the user
+    /// never sees). Unlike `start_local_profile`, this never records a
+    /// `profile_identifier`: there is no saved profile backing this launch,
+    /// so nothing should claim to be one for workspace-restore or Inspector
+    /// purposes -- mirroring `start_resumed_session`'s `None` above.
+    fn start_multiplexer_session(
+        profile: LocalProfile,
+        label: &str,
+        persistence: &PersistenceConfiguration,
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+    ) -> Self {
+        let profile = crate::environment::with_corrected_local_path(profile);
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
+        let launch_secondary = local_profile_secondary(&profile);
+        let inspector_persistence = Some(InspectorPersistence {
+            provider_label: persistence.provider().label(),
+            session_name: persistence.session_name().to_owned(),
+        });
+        let result = LocalPtySession::start_with_notifier(profile, size, make_notifier(context))
+            .map(ApplicationSession::Local)
+            .map_err(|error| error.to_string());
+        Self::from_local_session_result(
+            result,
+            dimensions,
+            label,
+            launch_secondary,
+            None,
+            inspector_persistence,
+        )
+    }
+
     fn start_ssh(
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
@@ -1584,6 +1624,25 @@ pub enum AppCommand {
     /// #70). The composition root attaches to it and opens a new tab.
     ResumeUnattachedSession {
         name: String,
+    },
+    /// Resumes (or creates, since tmux's `-A`/screen's `-xRR` both attach-or-
+    /// create) a locally running tmux or GNU screen session by name,
+    /// surfaced via the Launcher's "tmux sessions"/"GNU Screen sessions"
+    /// quick-connect widgets. Unlike `ResumeUnattachedSession`, an already
+    /// attached tmux/screen session is a normal, supported target: both
+    /// multiplexers natively allow more than one client, so this is offered
+    /// even for sessions another client is already attached to.
+    ResumeMultiplexerSession {
+        provider: PersistenceProviderKind,
+        /// The exact string passed to `PersistenceConfiguration::new` to
+        /// reattach this specific session: identical to `display_name` for
+        /// tmux, but screen's full `pid.name` identifier for GNU screen,
+        /// since screen's `-x`/`-r`/`-R` matching is substring-based.
+        name: String,
+        /// The user-facing label for the resulting tab (e.g. `main`,
+        /// without screen's `pid.` prefix). Kept separate from `name`
+        /// because the two differ for screen sessions.
+        display_name: String,
     },
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
@@ -2515,6 +2574,13 @@ impl AppState {
             AppCommand::ResumeUnattachedSession { name } => {
                 self.start_resumed_session(&name, context);
             }
+            AppCommand::ResumeMultiplexerSession {
+                provider,
+                name,
+                display_name,
+            } => {
+                self.start_multiplexer_session(provider, &name, &display_name, context);
+            }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
@@ -2738,6 +2804,36 @@ impl AppState {
 
     fn start_resumed_session(&mut self, name: &str, context: &egui::Context) {
         self.place_session(SessionTab::start_resumed_session(name, context));
+    }
+
+    /// Resumes (or creates) a locally running tmux or GNU screen session
+    /// from the Launcher's quick-connect widgets. Mirrors
+    /// `start_configured_local_profile`'s use of `PersistenceConfiguration`
+    /// and `SessionTab::start_multiplexer_session`, but without a backing
+    /// saved profile: `name` is the exact identifier used to reattach (screen's
+    /// full `pid.name` for screen sessions), while `display_name` is the
+    /// friendlier label shown on the resulting tab -- the two differ for
+    /// screen, which is why they're passed separately rather than reusing
+    /// one string for both roles.
+    fn start_multiplexer_session(
+        &mut self,
+        provider: PersistenceProviderKind,
+        name: &str,
+        display_name: &str,
+        context: &egui::Context,
+    ) {
+        let persistence = PersistenceConfiguration::new(provider, name);
+        let Ok(local_profile) = persistence.to_local_profile() else {
+            return;
+        };
+        let dimensions = self.current_session_dimensions();
+        self.place_session(SessionTab::start_multiplexer_session(
+            local_profile,
+            display_name,
+            &persistence,
+            context,
+            dimensions,
+        ));
     }
 
     fn start_configured_local_profile(&mut self, profile_id: &str, context: &egui::Context) {
