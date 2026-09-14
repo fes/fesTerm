@@ -47,6 +47,15 @@ enum LauncherItemKind<'a> {
     SftpProfile(&'a str),
     SerialProfile(&'a str),
     ResumeSession(&'a str),
+    /// A locally running tmux or GNU screen session offered from its own
+    /// quick-connect widget (feature request: local tmux/screen quick
+    /// connect). `provider` is `Tmux` or `Screen`; `display_name` is the
+    /// user-facing label (e.g. `main`); `match_key` is the exact string
+    /// re-passed to `PersistenceConfiguration::new` to reattach this
+    /// specific session -- identical to `display_name` for tmux, but
+    /// screen's full `pid.name` identifier for GNU screen (see
+    /// `multiplexer_sessions::MultiplexerSession`).
+    ResumeMultiplexerSession(PersistenceProviderKind, &'a str, &'a str),
 }
 
 struct LauncherItem<'a> {
@@ -62,7 +71,8 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
-            | LauncherItemKind::ResumeSession(_) => None,
+            | LauncherItemKind::ResumeSession(_)
+            | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SftpProfile(id)
@@ -111,6 +121,13 @@ impl LauncherItem<'_> {
             LauncherItemKind::ResumeSession(name) => AppCommand::ResumeUnattachedSession {
                 name: name.to_owned(),
             },
+            LauncherItemKind::ResumeMultiplexerSession(provider, display_name, match_key) => {
+                AppCommand::ResumeMultiplexerSession {
+                    provider,
+                    name: match_key.to_owned(),
+                    display_name: display_name.to_owned(),
+                }
+            }
         }
     }
 }
@@ -332,6 +349,13 @@ struct DurableSessionDraft {
     /// entry.
     session_name_touched: bool,
     automatic_recovery: bool,
+    /// The provider assigned when a Local profile's durable-session toggle
+    /// is first switched on, detected once at composition-root time from
+    /// what's actually available on the local `PATH`
+    /// (see [`PersistenceProviderKind::default_for_local_session`]).
+    /// Unused for [`DurableSessionTarget::Remote`], which detects its
+    /// default separately via [`Self::apply_detected_remote_provider_default`].
+    local_default_provider: PersistenceProviderKind,
 }
 
 impl Default for DurableSessionDraft {
@@ -343,6 +367,7 @@ impl Default for DurableSessionDraft {
             session_name: "main".to_owned(),
             session_name_touched: false,
             automatic_recovery: false,
+            local_default_provider: PersistenceProviderKind::FestermSessiond,
         }
     }
 }
@@ -360,6 +385,7 @@ impl DurableSessionDraft {
                 // profile-name edits silently overwrite it.
                 session_name_touched: true,
                 automatic_recovery: false,
+                local_default_provider: PersistenceProviderKind::FestermSessiond,
             },
             None => Self::default(),
         }
@@ -1449,7 +1475,7 @@ fn show_durable_session_controls(
         if toggle_switch(ui, draft.enabled, toggle_label).clicked() {
             draft.enabled = !draft.enabled;
             if draft.enabled && matches!(target, DurableSessionTarget::Local) {
-                draft.provider = PersistenceProviderKind::FestermSessiond;
+                draft.provider = draft.local_default_provider;
             }
         }
     });
@@ -2078,6 +2104,7 @@ fn show_sftp_form(
 /// it the same way, and Enter launches the highlighted item without
 /// requiring the mouse. The id prevents this temporary state from colliding
 /// with other application-surface widgets.
+#[allow(clippy::too_many_arguments)]
 pub fn show_launcher(
     ui: &mut Ui,
     tab_id: TabId,
@@ -2086,6 +2113,8 @@ pub fn show_launcher(
     secure_storage_status: Option<&str>,
     compact_launcher_grid: bool,
     resumable_sessions: &[festerm_sessiond::UnattachedSession],
+    tmux_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
+    screen_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
 ) -> Option<AppCommand> {
     let profiles = configuration.profiles();
     let mut items = vec![
@@ -2110,9 +2139,14 @@ pub fn show_launcher(
             kind: LauncherItemKind::NewSerial,
         },
     ];
+    let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
-    // #70) are listed next, so a one-click "Resume" is available before the
-    // saved-profile list, but still after the fixed "new session" entries.
+    // #70) are listed next, in their own "fesTerm sessions" widget, so a
+    // one-click "Resume" is available before the saved-profile list, but
+    // still after the fixed "new session" entries. An already-attached
+    // fesTerm-sessiond session is never enumerated here in the first place
+    // (its single-client "steal" semantics make offering it here
+    // redundant with Reconnect/Inspector Resume), unlike tmux/screen below.
     items.extend(resumable_sessions.iter().map(|session| {
         LauncherItem {
             label: format!("Resume: {}", session.name),
@@ -2124,9 +2158,44 @@ pub fn show_launcher(
             kind: LauncherItemKind::ResumeSession(&session.name),
         }
     }));
-    // Saved profiles are listed last, after the two fixed "new session"
-    // entries above, with a subtle separator (rendered when painting the
-    // list below) marking where they start.
+    let festerm_sessions_end = items.len();
+    // Locally running tmux sessions get their own "tmux sessions" widget.
+    // Unlike fesTerm-sessiond above, tmux natively supports more than one
+    // attached client, so an already-attached session is still offered
+    // here -- just annotated, rather than omitted.
+    items.extend(tmux_sessions.iter().map(|session| LauncherItem {
+        label: session.name.clone(),
+        description: if session.attached {
+            "tmux session · attached elsewhere".to_owned()
+        } else {
+            "tmux session".to_owned()
+        },
+        kind: LauncherItemKind::ResumeMultiplexerSession(
+            PersistenceProviderKind::Tmux,
+            &session.name,
+            &session.match_key,
+        ),
+    }));
+    let tmux_sessions_end = items.len();
+    // Locally running GNU screen sessions get their own "GNU Screen
+    // sessions" widget, with the same attached-elsewhere annotation
+    // treatment as tmux above.
+    items.extend(screen_sessions.iter().map(|session| LauncherItem {
+        label: session.name.clone(),
+        description: if session.attached {
+            "GNU screen session · attached elsewhere".to_owned()
+        } else {
+            "GNU screen session".to_owned()
+        },
+        kind: LauncherItemKind::ResumeMultiplexerSession(
+            PersistenceProviderKind::Screen,
+            &session.name,
+            &session.match_key,
+        ),
+    }));
+    // Saved profiles are listed last, after the fixed "new session"
+    // entries and any quick-connect widgets above, with a subtle separator
+    // (rendered when painting the list below) marking where they start.
     let profiles_start = items.len();
     items.extend(
         profiles
@@ -2475,25 +2544,77 @@ pub fn show_launcher(
                             // (feature request #64): the grid only applies
                             // to saved profiles, which is what tends to grow
                             // long enough to need it.
-                            for (index, item) in items[..profiles_start].iter().enumerate() {
-                                let (response, edit_response) = show_launcher_choice(
-                                    ui,
-                                    &item.label,
-                                    &item.description,
-                                    index == state.selected,
-                                    item.remote(),
-                                    item.profile_id().is_some(),
-                                    None,
-                                );
-                                handle_launcher_item_response(
-                                    item,
-                                    response,
-                                    edit_response,
-                                    &mut state,
-                                    &mut command,
-                                );
-                                ui.add_space(12.0);
-                            }
+                            let render_section =
+                                |ui: &mut Ui,
+                                 heading: Option<&str>,
+                                 start: usize,
+                                 end: usize,
+                                 state: &mut LauncherState,
+                                 command: &mut Option<AppCommand>| {
+                                    if start >= end {
+                                        return;
+                                    }
+                                    if let Some(heading) = heading {
+                                        ssh_section_heading(ui, heading);
+                                    }
+                                    for (offset, item) in items[start..end].iter().enumerate() {
+                                        let index = start + offset;
+                                        let (response, edit_response) = show_launcher_choice(
+                                            ui,
+                                            &item.label,
+                                            &item.description,
+                                            index == state.selected,
+                                            item.remote(),
+                                            item.profile_id().is_some(),
+                                            None,
+                                        );
+                                        handle_launcher_item_response(
+                                            item,
+                                            response,
+                                            edit_response,
+                                            state,
+                                            command,
+                                        );
+                                        ui.add_space(12.0);
+                                    }
+                                };
+                            // Fixed "new session" entries (Local Shell, SSH,
+                            // Serial) always render single-column, one per
+                            // row, regardless of the compact-grid preference
+                            // (feature request #64): the grid only applies
+                            // to saved profiles, which is what tends to grow
+                            // long enough to need it.
+                            render_section(ui, None, 0, fixed_end, &mut state, &mut command);
+                            // Each quick-connect provider gets its own
+                            // labeled widget (fesTerm sessions / tmux
+                            // sessions / GNU Screen sessions) rather than
+                            // one undifferentiated list, so the user can
+                            // tell at a glance which daemon/multiplexer a
+                            // given entry will resume through.
+                            render_section(
+                                ui,
+                                Some("fesTerm sessions"),
+                                fixed_end,
+                                festerm_sessions_end,
+                                &mut state,
+                                &mut command,
+                            );
+                            render_section(
+                                ui,
+                                Some("tmux sessions"),
+                                festerm_sessions_end,
+                                tmux_sessions_end,
+                                &mut state,
+                                &mut command,
+                            );
+                            render_section(
+                                ui,
+                                Some("GNU Screen sessions"),
+                                tmux_sessions_end,
+                                profiles_start,
+                                &mut state,
+                                &mut command,
+                            );
 
                             let profile_items = &items[profiles_start..];
                             if !profile_items.is_empty() {
@@ -3081,9 +3202,10 @@ pub fn show_settings(
                                 ui,
                                 "Resume unattached local sessions from New Session",
                                 "Surface locally running festerm-sessiond persistence \
-                                 sessions that have no attached window as one-click \
-                                 \"Resume\" entries on the New Session tab. Off by \
-                                 default.",
+                                 sessions that have no attached window, plus locally \
+                                 running tmux and GNU screen sessions, as one-click \
+                                 \"Resume\" entries in their own labeled widgets on the \
+                                 New Session tab. Off by default.",
                                 show_resumable_sessions,
                             ) {
                                 command = Some(AppCommand::ToggleShowResumableSessions);
@@ -3699,8 +3821,21 @@ struct LocalProfileDraft {
 impl Default for LocalProfileDraft {
     /// A brand-new Local profile defaults its executable to this
     /// platform's actual default shell (`$SHELL`/`COMSPEC`, matching the
-    /// Local Shell launcher card) rather than leaving it empty.
+    /// Local Shell launcher card) rather than leaving it empty, and its
+    /// durable-session provider to fesTerm native (preserved for callers,
+    /// such as tests, that don't yet detect a local default; prefer
+    /// [`Self::new`] elsewhere).
     fn default() -> Self {
+        Self::new(PersistenceProviderKind::FestermSessiond)
+    }
+}
+
+impl LocalProfileDraft {
+    /// A brand-new Local profile, defaulting its durable-session provider
+    /// (once the toggle is switched on) to `local_default_provider` --
+    /// normally the result of [`PersistenceProviderKind::default_for_local_session`]
+    /// detected once at composition-root time.
+    fn new(local_default_provider: PersistenceProviderKind) -> Self {
         Self {
             original_id: None,
             name: String::new(),
@@ -3709,13 +3844,14 @@ impl Default for LocalProfileDraft {
                 .unwrap_or_default(),
             arguments: String::new(),
             working_directory: String::new(),
-            durable_session: DurableSessionDraft::default(),
+            durable_session: DurableSessionDraft {
+                local_default_provider,
+                ..DurableSessionDraft::default()
+            },
             error: None,
         }
     }
-}
 
-impl LocalProfileDraft {
     fn from_profile(local: &festerm_config::LocalProfileConfiguration) -> Self {
         Self {
             original_id: Some(local.identifier().to_owned()),
@@ -4327,6 +4463,7 @@ pub fn show_profiles(
     tab_id: TabId,
     configuration: &festerm_config::Configuration,
     pending_edit: Option<String>,
+    local_default_provider: PersistenceProviderKind,
 ) -> Option<AppCommand> {
     let state_id = profiles_state_id(tab_id);
     let mut state = ui.data(|data| {
@@ -4364,8 +4501,9 @@ pub fn show_profiles(
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("New Local Profile").clicked() {
-                        next_mode =
-                            Some(ProfilesScreenMode::EditLocal(LocalProfileDraft::default()));
+                        next_mode = Some(ProfilesScreenMode::EditLocal(LocalProfileDraft::new(
+                            local_default_provider,
+                        )));
                     }
                     if ui.button("New SSH Profile").clicked() {
                         next_mode = Some(ProfilesScreenMode::EditSsh(SshProfileDraft::default()));
@@ -5072,6 +5210,40 @@ mod tests {
                         None,
                         compact_launcher_grid,
                         &resumable_sessions,
+                        &[],
+                        &[],
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                LauncherHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration,
+                    command: None,
+                },
+            )
+    }
+
+    fn harness_with_multiplexer_sessions(
+        profiles: Vec<Profile>,
+        tmux_sessions: Vec<crate::multiplexer_sessions::MultiplexerSession>,
+        screen_sessions: Vec<crate::multiplexer_sessions::MultiplexerSession>,
+    ) -> Harness<'static, LauncherHarnessState> {
+        let configuration = Configuration::new(profiles).expect("test configuration is valid");
+        Harness::builder()
+            .with_size(egui::vec2(520.0, 560.0))
+            .build_ui_state(
+                move |ui, state: &mut LauncherHarnessState| {
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        true,
+                        None,
+                        false,
+                        &[],
+                        &tmux_sessions,
+                        &screen_sessions,
                     ) {
                         state.command = Some(command);
                     }
@@ -6419,6 +6591,83 @@ mod tests {
     }
 
     #[test]
+    fn tmux_and_screen_sessions_appear_in_their_own_labeled_widgets_and_dispatch_resume() {
+        use crate::multiplexer_sessions::MultiplexerSession;
+
+        let profiles = vec![
+            Profile::local("development", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let tmux_sessions = vec![MultiplexerSession {
+            name: "build".to_owned(),
+            match_key: "build".to_owned(),
+            attached: false,
+        }];
+        let screen_sessions = vec![MultiplexerSession {
+            name: "main".to_owned(),
+            match_key: "12345.main".to_owned(),
+            attached: true,
+        }];
+        let mut harness =
+            harness_with_multiplexer_sessions(profiles, tmux_sessions, screen_sessions);
+        harness.run();
+
+        let ssh_top = harness
+            .get_by_label("SSH — Connect to a remote host")
+            .rect()
+            .top();
+        let tmux_heading_top = harness.get_by_label("TMUX SESSIONS").rect().top();
+        let tmux_top = harness.get_by_label("build — tmux session").rect().top();
+        let screen_heading_top = harness.get_by_label("GNU SCREEN SESSIONS").rect().top();
+        let screen_top = harness
+            .get_by_label("main — GNU screen session · attached elsewhere")
+            .rect()
+            .top();
+        let profile_top = harness
+            .get_by_label("development — Saved local profile")
+            .rect()
+            .top();
+
+        assert!(
+            ssh_top < tmux_heading_top
+                && tmux_heading_top < tmux_top
+                && tmux_top < screen_heading_top
+                && screen_heading_top < screen_top
+                && screen_top < profile_top,
+            "expected New Session entries, then a tmux sessions widget, then a GNU Screen \
+             sessions widget, then saved profiles"
+        );
+
+        harness.get_by_label("build — tmux session").click();
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(AppCommand::ResumeMultiplexerSession { provider, name, display_name })
+                if *provider == PersistenceProviderKind::Tmux
+                    && name == "build"
+                    && display_name == "build"
+        ));
+
+        harness.state_mut().command = None;
+        harness
+            .get_by_label("main — GNU screen session · attached elsewhere")
+            .click();
+        harness.run();
+        assert!(
+            matches!(
+                &harness.state().command,
+                Some(AppCommand::ResumeMultiplexerSession { provider, name, display_name })
+                    if *provider == PersistenceProviderKind::Screen
+                        && name == "12345.main"
+                        && display_name == "main"
+            ),
+            "an already-attached screen session is still resumable, using its full pid.name \
+             match key to reattach while still showing the friendly display name (not the \
+             pid.name) as the resulting tab's label, since screen's matching is substring-based"
+        );
+    }
+
+    #[test]
     fn compact_launcher_grid_off_keeps_saved_profiles_single_column() {
         // Regression test for feature request #64: with the preference off
         // (the default), saved profiles should stack vertically one per
@@ -6669,6 +6918,8 @@ mod tests {
                         true,
                         None,
                         false,
+                        &[],
+                        &[],
                         &[],
                     ) {
                         state.command = Some(command);
@@ -7253,9 +7504,13 @@ mod tests {
             .with_size(egui::vec2(560.0, 640.0))
             .build_ui_state(
                 |ui, state: &mut ProfilesHarnessState| {
-                    if let Some(command) =
-                        show_profiles(ui, state.tab_id, &state.configuration, None)
-                    {
+                    if let Some(command) = show_profiles(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        None,
+                        PersistenceProviderKind::FestermSessiond,
+                    ) {
                         state.command = Some(command);
                     }
                 },
@@ -7409,6 +7664,59 @@ mod tests {
             PersistenceProviderKind::FestermSessiond
         );
         assert_eq!(persistence.session_name(), "durable-local");
+    }
+
+    #[test]
+    fn a_detected_local_tmux_default_is_applied_when_the_toggle_is_first_enabled() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(560.0, 640.0))
+            .build_ui_state(
+                |ui, state: &mut ProfilesHarnessState| {
+                    if let Some(command) = show_profiles(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        None,
+                        PersistenceProviderKind::Tmux,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                ProfilesHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration: festerm_config::Configuration::new(Vec::new()).unwrap(),
+                    command: None,
+                },
+            );
+        harness.run();
+
+        harness.get_by_label("New Local Profile").click();
+        harness.run();
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text("detected-tmux");
+        harness.run();
+        harness.get_by_label("Use a durable local session").click();
+        harness.run();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile {
+            profile: Profile::Local(local),
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("saving a durable local profile must return a SaveProfile command");
+        };
+        let persistence = local
+            .persistence()
+            .expect("saved local profile must retain explicit persistence");
+        assert_eq!(
+            persistence.provider(),
+            PersistenceProviderKind::Tmux,
+            "a locally-detected tmux availability becomes the toggle-on default, \
+             not the fesTerm-native fallback"
+        );
     }
 
     #[test]
@@ -7626,9 +7934,13 @@ mod tests {
             .with_size(egui::vec2(900.0, 900.0))
             .build_ui_state(
                 |ui, state: &mut ProfilesHarnessState| {
-                    if let Some(command) =
-                        show_profiles(ui, state.tab_id, &state.configuration, None)
-                    {
+                    if let Some(command) = show_profiles(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        None,
+                        PersistenceProviderKind::FestermSessiond,
+                    ) {
                         state.command = Some(command);
                     }
                 },
@@ -7686,9 +7998,13 @@ mod tests {
                             ui.set_min_height(24.0);
                             ui.set_max_height(24.0);
                         });
-                    if let Some(command) =
-                        show_profiles(ui, state.tab_id, &state.configuration, None)
-                    {
+                    if let Some(command) = show_profiles(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        None,
+                        PersistenceProviderKind::FestermSessiond,
+                    ) {
                         state.command = Some(command);
                     }
                 },

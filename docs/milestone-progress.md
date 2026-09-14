@@ -1314,3 +1314,76 @@ Normal close preserves buffered exit/takeover notices rather than forcibly
 disconnecting before a healthy peer can read them. Windows-specific regression
 tests cover busy-pipe cancellation and unread-output teardown; native Windows
 execution is required before merge.
+
+## October 2026: detecting local durable-session defaults instead of assuming one
+
+Enabling a durable local session on a brand-new Local profile always
+defaulted the provider to fesTerm's own bundled session daemon, regardless of
+what was actually installed on the machine. That made sense before remote
+tmux/screen auto-detection existed, but the SSH side of the same toggle
+(`RemoteTmuxProbeState`, added earlier) had already established a better
+pattern: probe for what's available, prefer tmux, then screen, and fall back
+only when neither exists. Local persistence had no equivalent, and the
+asymmetry showed: a user with tmux installed still got fesTerm-native by
+default and had to reselect it every time.
+
+The remote probe runs over SSH and is inherently asynchronous; the local case
+is just a synchronous `PATH` scan, so it needed its own mechanism rather than
+reusing the remote one. `festerm-pty` gained `is_executable_on_path`, an
+exact-stem-match sibling of the existing prefix-search
+`search_path_executables` used by the Local profile editor's executable
+field, and `festerm-config` gained
+`PersistenceProviderKind::default_for_local_session(tmux_available,
+screen_available)` -- a small pure function, easy to exhaustively test for
+all four availability combinations.
+
+The one wrinkle was CI: GitHub Actions' `ubuntu-latest` and `macos-latest`
+runners ship with tmux and screen preinstalled, so wiring the real `PATH`
+scan directly into the profile draft would have flipped an existing test's
+asserted default (`saved_local_profile_defaults_to_named_native_persistence`)
+from flaky to reliably wrong the moment it ran in CI. The detection now
+happens once, at the composition root (`app.rs`), and is threaded through
+`show_profiles` as an explicit parameter; every test call site -- including
+the pre-existing 19-callsite `profiles_harness` -- passes a deterministic
+value instead of touching the filesystem, so the existing native-default test
+is unchanged and a new test exercises the tmux-detected path end to end.
+
+## October 2026: labeled quick-connect widgets for fesTerm, tmux, and screen sessions
+
+The New Session screen's "Resume unattached local sessions" toggle
+(feature request #70) only ever looked at fesTerm's own session daemon.
+tmux and GNU screen sessions running locally were invisible to it, even
+though attaching to one is exactly the same kind of "get back into
+something already running" action.
+
+Adding them meant confronting one asymmetry directly: fesTerm-sessiond has
+single-client "steal" semantics (attaching displaces the previous client, as
+its `SESSION_STOLEN` message documents), so an already-attached session is
+deliberately never listed -- the existing Reconnect/Inspector Resume paths
+cover that case without a confusing extra quick-connect entry. tmux and
+screen both support attaching more than one client at once
+(`new-session -A`, `-xRR`), so an already-attached session there is a normal,
+supported target; it is still listed, just annotated "attached elsewhere"
+rather than hidden.
+
+A new `app/festerm/src/multiplexer_sessions.rs` module owns enumeration,
+split the same way `festerm-pty`'s PATH search already is: a thin wrapper
+that shells out to `tmux list-sessions -F "..."` / `screen -list`, and a pure
+parser tested against literal sample output (including screen's "no sockets"
+and multi-session cases) rather than a real subprocess. Session names are
+filtered through the same `PersistentSessionName` validation SSH persistence
+already uses, rather than a separate, more permissive local-only check --
+one shared notion of what a safe session name looks like, even though local
+`LocalProfile` argv construction doesn't strictly need the SSH-shell-escaping
+rationale that validation exists for.
+
+The Launcher's single flat item list gained two new sections --
+"tmux sessions" and "GNU Screen sessions" -- alongside the existing
+(now similarly labeled) "fesTerm sessions" list, all still backed by one
+flat, keyboard-navigable index so Up/Down/Tab/Enter behave exactly as
+before. Selecting an entry reattaches (or, for tmux, creates) the named
+session through the same `PersistenceConfiguration`/`LocalProfile` path a
+saved Local profile's durable session already uses, via a new
+`AppCommand::ResumeMultiplexerSession`. Both widgets reuse the existing
+resumable-sessions Settings toggle rather than adding a second preference,
+since they answer the same question the fesTerm-sessiond list already does.

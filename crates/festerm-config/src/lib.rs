@@ -2464,6 +2464,26 @@ impl PersistenceProviderKind {
             Self::FestermSessiond => "fesTerm session daemon",
         }
     }
+
+    /// The default durable-session provider for a newly created Local
+    /// profile, given whether `tmux`/GNU `screen` were found on the local
+    /// `PATH`.
+    ///
+    /// Prefers tmux, then screen, then falls back to fesTerm's own bundled
+    /// session daemon (always available since it ships with fesTerm itself,
+    /// unlike tmux/screen which the user must have installed separately).
+    /// This mirrors the remote SSH profile default (tmux, then screen) but
+    /// adds the native fallback tier that remote persistence, which has no
+    /// local-daemon equivalent, does not need.
+    pub const fn default_for_local_session(tmux_available: bool, screen_available: bool) -> Self {
+        if tmux_available {
+            Self::Tmux
+        } else if screen_available {
+            Self::Screen
+        } else {
+            Self::FestermSessiond
+        }
+    }
 }
 
 const fn default_ssh_port() -> u16 {
@@ -3177,6 +3197,26 @@ mod tests {
     use super::*;
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    #[test]
+    fn default_for_local_session_prefers_tmux_then_screen_then_native() {
+        assert_eq!(
+            PersistenceProviderKind::default_for_local_session(true, true),
+            PersistenceProviderKind::Tmux
+        );
+        assert_eq!(
+            PersistenceProviderKind::default_for_local_session(true, false),
+            PersistenceProviderKind::Tmux
+        );
+        assert_eq!(
+            PersistenceProviderKind::default_for_local_session(false, true),
+            PersistenceProviderKind::Screen
+        );
+        assert_eq!(
+            PersistenceProviderKind::default_for_local_session(false, false),
+            PersistenceProviderKind::FestermSessiond
+        );
+    }
 
     fn ssh_port_forward(
         direction: SshPortForwardDirection,
