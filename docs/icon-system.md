@@ -21,8 +21,10 @@ represented clearly by an existing icon.
 - Draw on a `24 × 24` source grid and review every icon rendered at both 20 px
   and 16 px. UI layouts may reserve a 20 px box while rendering the art at 16
   px for breathing room.
-- Use a nominal `1.75` px source stroke. The visual result should read like a
-  1.5–1.75 px optical stroke at normal UI sizes.
+- Use a nominal `1.75` px source stroke. Optically lighter session marks may
+  specify `1..1.75` in the SVG root; the generated renderer preserves that
+  value and scales it with the geometry. Child stroke overrides remain
+  unsupported. Review the negative spaces as well as the outline.
 - Use round line caps and round joins. Use square geometry only when the object
   itself requires it, such as a window frame.
 - Prefer open silhouettes, a single dominant metaphor, and minimal interior
@@ -84,12 +86,23 @@ The intended first enum surface is:
 | `SectionExpanded`, `SectionCollapsed` | matching filename | Disclosure group state |
 
 `SshRemote` is drawn as a terminal whose lower-right corner opens around a
-network globe. `RemoteGlobe` repeats only that globe on the same 24-unit
+network globe. Keep the upper-right rounded corner and its short vertical
+edge intact; only the area behind the globe is interrupted. The globe has
+two parallels and an elliptical meridian, with a lighter source stroke to
+keep the grid open. `RemoteGlobe` repeats only that globe on the same 24-unit
 grid, so a surface that wants the mockup's two-tone treatment paints
 `SshRemote` in the session-type color and then `RemoteGlobe` over it in an
 accent color. The asset layer stays monochrome; the application still owns
 both colors, and every other surface keeps using the single complete
 `SshRemote` mark.
+
+On the launcher, SSH and Serial have wider optical slots than the other
+session marks: the SSH terminal body should be comparable to Local's square,
+and the nine-pin connector should be a wide, rounded trapezoid. The SFTP
+folder includes its front edge; Markdown has a folded corner and two text
+lines. These proportions apply to both cards and saved-profile rows without
+changing card heights or table columns. Serial pins are explicit filled
+circles, independent of the outline's stroke weight.
 
 Do not name variants after where they happen to appear (`TopBarSearch`) or
 after visual construction (`ThreeDots`). Names describe intent so launcher,

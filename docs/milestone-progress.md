@@ -1490,12 +1490,19 @@ merged into a solid disc. `remote-globe` repeats the globe at byte-identical
 coordinates so the two-tone overpaint still lands exactly on the mark it
 decorates.
 
-Shrinking the globe to the mockup's proportions then cost it its identity: the
-mockup renders its mark at about eighty pixels, ours at forty-two, so every
-interior line arrived at half scale against a stroke that does not thin with
-the mark. The circle, equator, and meridian merged and the globe read as a
-plain blue dot. Marks that carry interior detail need a floor on their render
-size, so the launch-card mark grew to fifty pixels (forty-two compact) and the
-globe grew within the viewBox at the terminal's expense. The rule generalizes:
-a fixed-stroke mark cannot be scaled down past the point where its own strokes
-touch.
+The next pass enlarged the marks to fifty pixels (forty-two compact) and
+enlarged the globe within the source, but still did not match the reference.
+Its explanation that the renderer kept a fixed pixel stroke was incorrect:
+`Geometry::new` already scaled strokes with the geometry. The actual problem
+was the universal 1.75-unit source stroke overwhelming the globe's interior,
+combined with squeezing every silhouette into an equal-width square.
+
+The icon-only correction preserved card heights and table columns. SVG roots
+can now specify a lighter optical stroke, which the generator carries into
+the renderer; unrelated icons retain 1.75. SSH restores the globe's two
+parallels and meridian with no terminal edges showing through it. Wider SSH
+and Serial slots preserve the reference's relative sizes, the folder gains
+its front edge, the document gains rounded corners, and the connector uses
+nine explicit filled pins. The lesson is to inspect the renderer and compare
+negative spaces at the actual card and row sizes, not compensate for a
+misdiagnosed stroke problem by repeatedly enlarging the UI.

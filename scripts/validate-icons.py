@@ -356,14 +356,14 @@ def parse_points(value: str) -> tuple[tuple[float, float], ...]:
     return tuple(zip(values[::2], values[1::2]))
 
 
-def runtime_polyline(polyline: Polyline) -> Primitive:
+def runtime_polyline(polyline: Polyline, stroke_width: float = STROKE_WIDTH) -> Primitive:
     if len(polyline.points) == 2:
         start, end = polyline.points
         if math.dist(start, end) <= DOT_SEGMENT_LENGTH:
             return Circle(
                 (start[0] + end[0]) / 2,
                 (start[1] + end[1]) / 2,
-                STROKE_WIDTH / 2,
+                stroke_width / 2,
                 True,
             )
     return polyline
@@ -373,6 +373,7 @@ def runtime_primitives(root: ET.Element) -> tuple[Primitive, ...]:
     primitives: list[Primitive] = []
     root_fill = root.attrib.get("fill", "none")
     root_stroke = root.attrib.get("stroke", "none")
+    stroke_width = number(root, "stroke-width", str(STROKE_WIDTH))
     for element in root:
         name = local_name(element.tag)
         fill = element.attrib.get("fill", root_fill)
@@ -398,7 +399,7 @@ def runtime_primitives(root: ET.Element) -> tuple[Primitive, ...]:
             if "d" not in element.attrib:
                 raise ValueError("<path> requires d")
             primitives.extend(
-                runtime_polyline(polyline)
+                runtime_polyline(polyline, stroke_width)
                 for polyline in parse_path(element.attrib["d"])
             )
         elif name == "line":
@@ -409,14 +410,15 @@ def runtime_primitives(root: ET.Element) -> tuple[Primitive, ...]:
                             (number(element, "x1"), number(element, "y1")),
                             (number(element, "x2"), number(element, "y2")),
                         )
-                    )
+                    ),
+                    stroke_width,
                 )
             )
         elif name == "polyline":
             if "points" not in element.attrib:
                 raise ValueError("<polyline> requires points")
             primitives.append(
-                runtime_polyline(Polyline(parse_points(element.attrib["points"])))
+                runtime_polyline(Polyline(parse_points(element.attrib["points"])), stroke_width)
             )
         elif name == "rect":
             radius = number(element, "rx", "0")
@@ -475,12 +477,13 @@ def validate(path: Path) -> ET.Element:
         expected = {
             "fill": "none",
             "stroke": "currentColor",
-            "stroke-width": "1.75",
             "stroke-linecap": "round",
         }
         for attr, value in expected.items():
             if root.attrib.get(attr) != value:
                 raise ValueError(f"root {attr} must be {value!r}")
+        if not 1.0 <= number(root, "stroke-width") <= STROKE_WIDTH:
+            raise ValueError("root stroke-width must be between 1 and 1.75")
     return root
 
 
@@ -519,13 +522,13 @@ def build_sheet(icons: list[tuple[Path, ET.Element, tuple[Primitive, ...]]]) -> 
             for child in source_root:
                 copied = copy.deepcopy(child)
                 copied.attrib.setdefault("fill", source_root.attrib.get("fill", "none"))
+                if copied.attrib.get("fill") == "currentColor":
+                    copied.set("fill", "#e9edf2")
                 if source_root.attrib.get("stroke"):
                     copied.attrib.setdefault("stroke", "#e9edf2")
                     copied.attrib.setdefault("stroke-width", source_root.attrib["stroke-width"])
                     copied.attrib.setdefault("stroke-linecap", source_root.attrib.get("stroke-linecap", "round"))
                     copied.attrib.setdefault("stroke-linejoin", source_root.attrib.get("stroke-linejoin", "round"))
-                elif copied.attrib.get("fill") == "currentColor":
-                    copied.set("fill", "#e9edf2")
                 group.append(copied)
         label = ET.SubElement(svg, f"{{{SVG_NS}}}text", {
             "x": str(x + 60), "y": str(y + 28), "fill": "#e9edf2",
@@ -594,6 +597,16 @@ def build_runtime_geometry(
                 )
         lines.append("        ],")
     lines.extend(["    }", "}", ""])
+    lines.extend([
+        "fn icon_stroke_width(icon: Icon) -> f32 {",
+        "    match icon {",
+    ])
+    for path, root, _ in icons:
+        width = number(root, "stroke-width", str(STROKE_WIDTH))
+        if width != STROKE_WIDTH:
+            variant = "".join(part.capitalize() for part in path.stem.split("-"))
+            lines.append(f"        Icon::{variant} => {rust_number(width)},")
+    lines.extend([f"        _ => {rust_number(STROKE_WIDTH)},", "    }", "}", ""])
     return "\n".join(lines)
 
 

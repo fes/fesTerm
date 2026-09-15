@@ -54,11 +54,12 @@ pub const ACCENT_ACTION: Color32 = Color32::from_rgb(0x1c, 0x7e, 0xf5);
 /// life and is what makes a long saved-profile list scannable. Type is always
 /// also carried by the icon's distinct silhouette and by the Type column's
 /// text, so no meaning depends on color alone.
-pub const ICON_SESSION_LOCAL: Color32 = Color32::from_rgb(0x9a, 0xb2, 0xd3);
+pub const ICON_SESSION_LOCAL: Color32 = Color32::from_rgb(0x83, 0x9f, 0xbd);
 pub const ICON_SESSION_REMOTE: Color32 = ICON_SESSION_LOCAL;
-pub const ICON_SESSION_FILE_TRANSFER: Color32 = Color32::from_rgb(0xcd, 0x8d, 0xf5);
-pub const ICON_SESSION_SERIAL: Color32 = Color32::from_rgb(0xff, 0xc8, 0x4f);
-pub const ICON_SESSION_MARKDOWN: Color32 = Color32::from_rgb(0xdf, 0xe6, 0xee);
+pub const ICON_SESSION_GLOBE: Color32 = Color32::from_rgb(0x00, 0x88, 0xff);
+pub const ICON_SESSION_FILE_TRANSFER: Color32 = Color32::from_rgb(0xc2, 0x72, 0xef);
+pub const ICON_SESSION_SERIAL: Color32 = Color32::from_rgb(0xff, 0xb6, 0x3f);
+pub const ICON_SESSION_MARKDOWN: Color32 = Color32::from_rgb(0xf0, 0xf3, 0xf7);
 
 /// Maps the semantic palette onto egui's built-in widget vocabulary.
 pub fn default_visuals() -> Visuals {

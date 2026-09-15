@@ -105,7 +105,11 @@
         "resumable_sessions_appear_in_the_running_sessions_panel_and_dispatch_resume",
         "compact_new_session_layout_shortens_the_launch_cards",
         "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns",
-        "both_panel_headings_share_one_line_with_their_own_controls"
+        "both_panel_headings_share_one_line_with_their_own_controls",
+        "launcher_marks_keep_the_mockups_relative_widths_at_card_and_row_sizes",
+        "source_strokes_scale_at_card_and_profile_row_sizes",
+        "remote_globe_overlay_matches_the_complete_ssh_mark",
+        "serial_mark_has_two_staggered_rows_of_nine_filled_pins"
       ],
       "manual_scenarios": [
         "AS-01",
