@@ -22,9 +22,6 @@ pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xa7, 0xb2, 0xbd);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x78, 0x85, 0x92);
 
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x35, 0x41, 0x4e);
-/// A slightly brighter frame than [`BORDER_SUBTLE`], used to lift a selected
-/// launch card without resorting to the loud action accent.
-pub const BORDER_STRONG: Color32 = Color32::from_rgb(0x4d, 0x5b, 0x6b);
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x91, 0xa7, 0xb8);
 pub const ACCENT_PRIMARY: Color32 = Color32::from_rgb(0x42, 0xbf, 0xd0);
 

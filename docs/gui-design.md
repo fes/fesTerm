@@ -188,17 +188,25 @@ same command a pointer click would. Local Shell has initial focus. The top
 region is a row of launch cards for the session types fesTerm can start from
 nothing: **Local Shell**, **SSH**, **SFTP**, **Serial**, and **Markdown**.
 Each card carries a large semantic session-type icon, a title, a two-line
-factual description when roomier density is enabled, and a bottom-right
-proceed arrow. The card row wraps to fewer columns at narrow widths rather
-than forcing horizontal scrolling.
+factual description, and a bottom-right proceed arrow. Every card wears the
+same quiet border whether or not it is the keyboard selection: selection and
+hover lift the card's fill and its arrow instead, because a heavier outline on
+one card reads as a modal or disabled state rather than as a cursor. The card
+row wraps to fewer columns at narrow widths rather than forcing horizontal
+scrolling, and the whole surface is inset from the window's content edge so
+the cards and panels read as objects on a background.
 
 Below the launch cards, **Saved Profiles** and **Running Sessions** form two
 panels. At ordinary desktop widths Saved Profiles takes the left, wider share
 (about three fifths) and Running Sessions takes the right share; below the
 minimum width needed for both panels' own columns, they stack vertically with
-Saved Profiles first. Both panels live inside the Launcher's normal bounded
-content scroll area, so they stay above footer/status chrome instead of
-running underneath it.
+Saved Profiles first. Side by side, the panels fill the rest of the surface
+and each scrolls its own list internally: the launch cards and both panel
+footers stay in place however long the profile or session lists become,
+because the cards are the surface's primary actions and must not scroll out
+from under a user reading a list. Stacked, neither panel has a bounded height
+to scroll inside, so the surface as a whole scrolls instead. Either way the
+panels stay above footer/status chrome instead of running underneath it.
 
 The Saved Profiles panel uses the saved-profile collection icon, a search
 field, and a sort-order toggle. It is a table rather than a card grid, with
