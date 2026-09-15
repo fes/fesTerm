@@ -1134,6 +1134,7 @@
         "profiles_new_local_profile_flow_reports_an_error_for_an_empty_name",
         "saved_local_profile_defaults_to_named_native_persistence",
         "saved_local_profile_can_explicitly_use_named_tmux_persistence",
+        "saved_local_screen_profiles_alone_request_graceful_hangup",
         "native_persistence_is_local_only_and_preserves_the_shell_profile",
         "session_backend_forwards_input_resize_output_and_takeover",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",

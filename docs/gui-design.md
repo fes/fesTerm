@@ -299,8 +299,9 @@ root. It may take over that same generation, but cannot follow a same-name
 replacement; named saved-profile connection policy is unchanged.
 Closing a local multiplexer client does not send newline/EOF into its terminal:
 the server can retain that terminal after the client process exits. Unix PTY
-writer teardown closes only its owned descriptor. Running Sessions Screen
-clients receive the provider's graceful SIGHUP detach signal, with bounded
+writer teardown closes only its owned descriptor. Both Running Sessions and
+saved local Screen profiles (including relaunch and workspace restoration)
+receive the provider's graceful SIGHUP detach signal, with bounded
 SIGTERM/SIGKILL escalation if the owned client ignores it. Process-group ownership
 and bounded output draining are unchanged; ordinary shell shutdown keeps its
 existing policy.

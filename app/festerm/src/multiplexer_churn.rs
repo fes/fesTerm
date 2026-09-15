@@ -304,6 +304,74 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
     eprintln!("provider=screen owned-client-failure-recovery-and-continuity status=pass");
 }
 
+fn saved_screen_profile_preserves_last_client_continuity() {
+    use crate::tabs::{AppCommand, AppState, ApplicationSession, TabContent};
+    use festerm_config::{Configuration, Profile};
+
+    let selected = list(Provider::Screen).unwrap().remove(0);
+    let profile = Profile::local("saved-screen", "/bin/sh", Vec::new(), None)
+        .unwrap()
+        .with_persistence(Provider::Screen, selected.name.clone())
+        .unwrap();
+    let configuration = Configuration::new(vec![profile]).unwrap();
+    let context = eframe::egui::Context::default();
+    let mut original_pid = None;
+    for fresh in ["saved-launch", "saved-relaunch"] {
+        let mut state = AppState::for_test_with_configuration(configuration.clone());
+        state.dispatch(
+            AppCommand::StartConfiguredLocalProfile {
+                profile_id: "saved-screen".into(),
+            },
+            &context,
+        );
+        let TabContent::Session(tab) = &state.active_tab().content else {
+            panic!("saved Screen profile did not open a session");
+        };
+        let Some(ApplicationSession::Local(client)) = tab.controller.session() else {
+            panic!("saved Screen profile did not start a local PTY");
+        };
+        poll(|| {
+            client_attached(
+                Provider::Screen,
+                &selected,
+                client.process_id().unwrap(),
+                client.terminal_device(),
+            )
+            .unwrap()
+        });
+        let pid = challenge(client, "sentinel", fresh);
+        if let Some(expected) = &original_pid {
+            assert_eq!(&pid, expected, "saved relaunch replaced the shell");
+        } else {
+            original_pid = Some(pid);
+        }
+        client.shutdown(Duration::from_secs(2)).unwrap();
+        drop(state);
+        poll(|| {
+            let remaining = list(Provider::Screen).unwrap();
+            assert_eq!(remaining.len(), 1, "saved-profile detach lost the shell");
+            remaining[0].match_key == selected.match_key && !remaining[0].attached
+        });
+    }
+    let resumed = LocalPtySession::start(
+        attach_profile(Provider::Screen, &selected).unwrap(),
+        TerminalSize::new(80, 24).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        Some(challenge(&resumed, "sentinel", "after-saved-detach")),
+        original_pid
+    );
+    resumed.shutdown(Duration::from_secs(2)).unwrap();
+    poll(|| {
+        list(Provider::Screen)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.match_key == selected.match_key && !entry.attached)
+    });
+    eprintln!("provider=screen saved-profile-launch-relaunch-continuity status=pass");
+}
+
 #[test]
 #[ignore = "run via scripts/check_running_sessions.py for isolated provider namespaces"]
 fn isolated_multiplexer_discovery_churn() {
@@ -335,6 +403,7 @@ fn isolated_multiplexer_discovery_churn() {
         let sentinel_identity = list(provider).unwrap()[0].match_key.clone();
         if provider == Provider::Screen {
             screen_attachment_failure_keeps_launcher_and_existing_client(&root);
+            saved_screen_profile_preserves_last_client_continuity();
         }
         let context = eframe::egui::Context::default();
         let mut discovery = crate::discovery::Discovery::default();

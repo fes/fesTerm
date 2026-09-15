@@ -88,6 +88,13 @@ controls can follow the response on the same line. Explicit response framing
 retains exact process/state verification without confusing terminal rendering
 bytes with the fresh challenge.
 
+The final integration pass moved the same graceful Screen shutdown choice into
+the shared saved-profile conversion. Launch, relaunch and workspace restoration
+therefore cannot bypass the policy used by inventory attachment. Configuration
+coverage keeps fresh shells, tmux and native profiles unchanged, while the real
+Screen harness launches and relaunches a saved profile and challenges the same
+shell again after the last client closes.
+
 ## Foundation and acceptance history
 
 fesTerm began foundation-first: M0 through M3 established a testable terminal

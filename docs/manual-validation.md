@@ -355,6 +355,14 @@ Launcher focus/usability, native keyboard delivery, or actual Fedora
 setgid-package qualification. The latter remains distinct from the real-provider
 modeled-denial tests above. Those remaining checks stay in CP-11/CP-12 and #43.
 
+The saved-profile conversion also opts into graceful Screen shutdown, covering
+configured launch, relaunch and workspace restoration rather than only Running
+Sessions. The same isolated provider harness now exercises
+`StartConfiguredLocalProfile` twice, checks last-client detach and verifies the
+original shell PID/state from a subsequent inventory attachment. A configuration
+regression asserts that only Screen receives this policy and that working
+directories and other providers retain their existing behavior.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

@@ -2507,9 +2507,9 @@ impl PersistenceConfiguration {
                 "status",
                 "off",
             ]),
-            PersistenceProviderKind::Screen => {
-                LocalProfile::new("screen").with_arguments(["-xRR", session_name.as_str()])
-            }
+            PersistenceProviderKind::Screen => LocalProfile::new("screen")
+                .with_arguments(["-xRR", session_name.as_str()])
+                .with_unix_hangup_on_shutdown(),
             PersistenceProviderKind::FestermSessiond => {
                 return Err(ConfigError::new(
                     ConfigErrorKind::NativePersistenceRequiresLocalProfile,
@@ -4936,6 +4936,45 @@ username = "deploy"
                 Some("off"),
             ]
         );
+    }
+
+    #[test]
+    fn saved_local_screen_profiles_alone_request_graceful_hangup() {
+        let fresh = Profile::local(
+            "local",
+            "/bin/sh",
+            vec!["-l".to_owned()],
+            Some("/tmp".to_owned()),
+        )
+        .unwrap();
+        assert!(!fresh
+            .as_local()
+            .unwrap()
+            .to_local_profile()
+            .hangup_on_shutdown());
+        for provider in [
+            PersistenceProviderKind::Tmux,
+            PersistenceProviderKind::Screen,
+            PersistenceProviderKind::FestermSessiond,
+        ] {
+            let profile = fresh.clone().with_persistence(provider, "build").unwrap();
+            let launch = profile.as_local().unwrap().to_local_profile();
+            assert_eq!(
+                launch.hangup_on_shutdown(),
+                provider == PersistenceProviderKind::Screen
+            );
+            assert_eq!(launch.working_directory(), Some(Path::new("/tmp")));
+            if provider == PersistenceProviderKind::Screen {
+                assert_eq!(launch.executable(), Path::new("screen"));
+                assert_eq!(
+                    launch.arguments(),
+                    [
+                        std::ffi::OsString::from("-xRR"),
+                        std::ffi::OsString::from("build"),
+                    ]
+                );
+            }
+        }
     }
 
     #[test]
