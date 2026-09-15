@@ -19,6 +19,9 @@ pub enum Icon {
     Search,
     CommandPalette,
     Overflow,
+    /// The same three dots stacked vertically, for the per-row overflow
+    /// control in a table whose rows are shorter than they are wide.
+    OverflowVertical,
     Close,
     Minimize,
     Maximize,
@@ -58,6 +61,30 @@ pub enum Icon {
     ParentDirectory,
     /// Navigate to the account's home directory.
     HomeDirectory,
+    /// The saved-profile collection's identity (a bookmark), distinct from
+    /// `Profile`, which stands for one individual saved definition.
+    SavedProfiles,
+    /// The collection of locally running sessions available to reattach.
+    RunningSessions,
+    /// A file-transfer (SFTP) session or destination.
+    FileTransfer,
+    /// The remote/network badge composited over a session icon. `SshRemote`
+    /// already includes this mark; painting `RemoteGlobe` over it in a second
+    /// color is how a surface renders the badge as an accent without the
+    /// asset layer owning two-tone art.
+    RemoteGlobe,
+    /// Proceed into the flow a launch card represents.
+    Proceed,
+    /// Create a new saved profile.
+    NewProfile,
+    /// Change the ordering of a list.
+    SortOrder,
+    /// Attach an already-running session to a tab.
+    Reattach,
+    /// A disclosure group whose contents are currently shown.
+    SectionExpanded,
+    /// A disclosure group whose contents are currently hidden.
+    SectionCollapsed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -205,8 +232,19 @@ mod tests {
             Icon::Refresh,
             Icon::ParentDirectory,
             Icon::HomeDirectory,
+            Icon::FileTransfer,
+            Icon::NewProfile,
+            Icon::OverflowVertical,
+            Icon::Proceed,
+            Icon::Reattach,
+            Icon::RemoteGlobe,
+            Icon::RunningSessions,
+            Icon::SavedProfiles,
+            Icon::SectionCollapsed,
+            Icon::SectionExpanded,
+            Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 43);
+        assert_eq!(icons.len(), 54);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

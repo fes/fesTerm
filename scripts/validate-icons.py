@@ -22,12 +22,15 @@ ET.register_namespace("", SVG_NS)
 
 EXPECTED = {
     "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
-    "copy", "diagnostics", "disconnect", "error", "home-directory", "host-key-verification",
+    "copy", "diagnostics", "disconnect", "error", "file-transfer", "home-directory",
+    "host-key-verification",
     "edit", "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
-    "external-link", "markdown-document", "new-session", "next-match", "outline", "overflow",
-    "parent-directory", "paste", "previous-match",
-    "profile", "reconnect", "refresh", "rendered-view", "restore", "search", "secret-storage",
-    "serial", "session-inspector", "settings", "source-view", "ssh-remote",
+    "external-link", "markdown-document", "new-profile", "new-session", "next-match", "outline",
+    "overflow", "overflow-vertical", "parent-directory", "paste", "previous-match", "proceed",
+    "profile", "reattach", "reconnect", "refresh", "remote-globe", "rendered-view", "restore",
+    "running-sessions", "saved-profiles", "search", "secret-storage",
+    "section-collapsed", "section-expanded",
+    "serial", "session-inspector", "settings", "sort-order", "source-view", "ssh-remote",
     "theme-appearance", "typography-font", "warning", "workspace",
 }
 ALLOWED_ELEMENTS = {"svg", "path", "rect", "circle", "line", "polyline"}
@@ -465,9 +468,9 @@ def validate(path: Path) -> ET.Element:
             if attr in {"fill", "stroke"} and value not in {"none", "currentColor"}:
                 raise ValueError(f"{attr} must be none or currentColor, got {value!r}")
 
-    if path.stem == "overflow":
+    if path.stem in {"overflow", "overflow-vertical"}:
         if root.attrib.get("fill") != "currentColor":
-            raise ValueError("overflow is the only filled icon and must use currentColor")
+            raise ValueError("the overflow icons are the only filled icons and must use currentColor")
     else:
         expected = {
             "fill": "none",

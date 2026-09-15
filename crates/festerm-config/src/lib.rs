@@ -57,6 +57,8 @@ pub struct Configuration {
     settings: InterfaceSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     known_hosts: Vec<KnownHostEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    profile_usage: Vec<ProfileUsageEntry>,
 }
 
 impl Configuration {
@@ -69,6 +71,7 @@ impl Configuration {
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
             known_hosts: Vec::new(),
+            profile_usage: Vec::new(),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -86,6 +89,7 @@ impl Configuration {
             workspace: Some(workspace),
             settings: InterfaceSettings::DEFAULT,
             known_hosts: Vec::new(),
+            profile_usage: Vec::new(),
         };
         configuration.validate()?;
         Ok(configuration)
@@ -100,6 +104,7 @@ impl Configuration {
         let mut replacement = Self::new_with_workspace(self.profiles.clone(), workspace)?;
         replacement.settings = self.settings.clone();
         replacement.known_hosts = self.known_hosts.clone();
+        replacement.profile_usage = self.profile_usage.clone();
         replacement.validate()?;
         Ok(replacement)
     }
@@ -204,6 +209,9 @@ impl Configuration {
         replacement
             .profiles
             .retain(|profile| profile.identifier() != identifier);
+        replacement
+            .profile_usage
+            .retain(|entry| entry.profile != identifier);
         replacement.validate()?;
         Ok(replacement)
     }
@@ -324,6 +332,7 @@ impl Configuration {
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
             known_hosts: Vec::new(),
+            profile_usage: Vec::new(),
         }
     }
 
@@ -338,6 +347,7 @@ impl Configuration {
             workspace: raw.workspace,
             settings: raw.settings,
             known_hosts: raw.known_hosts,
+            profile_usage: raw.profile_usage,
         };
         configuration.validate()?;
         Ok(configuration)
@@ -411,6 +421,48 @@ impl Configuration {
         self.workspace_enabled
     }
 
+    /// Returns when a profile was last launched, in whole seconds since the
+    /// Unix epoch, if it has ever been launched on this installation.
+    pub fn profile_last_used(&self, identifier: &str) -> Option<u64> {
+        self.profile_usage
+            .iter()
+            .find(|entry| entry.profile == identifier)
+            .map(|entry| entry.last_used_unix_seconds)
+    }
+
+    /// Returns a complete validated replacement recording that `identifier`
+    /// was launched at `unix_seconds`.
+    ///
+    /// Usage is app-maintained observation, not user-authored definition, so
+    /// it lives in its own section rather than inside the profile. That keeps
+    /// a hand-edited profile table byte-stable across launches and lets the
+    /// record be dropped without touching the definition it describes.
+    /// Recording usage for an unknown profile is rejected so the section can
+    /// never outlive the profiles it references.
+    pub fn with_profile_last_used(
+        &self,
+        identifier: &str,
+        unix_seconds: u64,
+    ) -> Result<Self, ConfigError> {
+        if self.profile(identifier).is_none() {
+            return Err(ConfigError::new(ConfigErrorKind::UnknownProfileReference));
+        }
+        let mut replacement = self.clone();
+        match replacement
+            .profile_usage
+            .iter_mut()
+            .find(|entry| entry.profile == identifier)
+        {
+            Some(entry) => entry.last_used_unix_seconds = unix_seconds,
+            None => replacement.profile_usage.push(ProfileUsageEntry {
+                profile: identifier.to_owned(),
+                last_used_unix_seconds: unix_seconds,
+            }),
+        }
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(ConfigErrorKind::UnsupportedSchemaVersion));
@@ -431,6 +483,18 @@ impl Configuration {
             entry.validate()?;
             if !known_hosts.insert((entry.host.as_str(), entry.port)) {
                 return Err(ConfigError::new(ConfigErrorKind::DuplicateKnownHost));
+            }
+        }
+        let mut used_profiles = HashSet::with_capacity(self.profile_usage.len());
+        for entry in &self.profile_usage {
+            validate_identifier(&entry.profile)?;
+            if !identifiers.contains(entry.profile.as_str()) {
+                return Err(ConfigError::new(ConfigErrorKind::UnknownProfileReference));
+            }
+            if !used_profiles.insert(entry.profile.as_str()) {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::DuplicateProfileIdentifier,
+                ));
             }
         }
         self.settings.validate()?;
@@ -460,6 +524,8 @@ struct RawConfiguration {
     settings: InterfaceSettings,
     #[serde(default)]
     known_hosts: Vec<KnownHostEntry>,
+    #[serde(default)]
+    profile_usage: Vec<ProfileUsageEntry>,
 }
 
 impl<'de> Deserialize<'de> for Configuration {
@@ -475,6 +541,7 @@ impl<'de> Deserialize<'de> for Configuration {
             workspace: raw.workspace,
             settings: raw.settings,
             known_hosts: raw.known_hosts,
+            profile_usage: raw.profile_usage,
         };
         configuration.validate().map_err(serde::de::Error::custom)?;
         Ok(configuration)
@@ -1691,6 +1758,31 @@ impl Profile {
     }
 }
 
+/// When a saved profile was last launched.
+///
+/// Only a coarse whole-second timestamp is retained, and only for profiles
+/// the user actually launches. This is the minimum needed to order and label
+/// the launcher's "Last Used" column; it is deliberately not a launch history,
+/// a counter, or anything that could reconstruct a session timeline.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileUsageEntry {
+    profile: String,
+    last_used_unix_seconds: u64,
+}
+
+impl ProfileUsageEntry {
+    /// Returns the identifier of the profile this record describes.
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Returns the launch time in whole seconds since the Unix epoch.
+    pub const fn last_used_unix_seconds(&self) -> u64 {
+        self.last_used_unix_seconds
+    }
+}
+
 /// A persistently trusted SSH host key record (ADR 0020).
 ///
 /// Host public keys and their fingerprints are not secret: this is ordinary
@@ -2680,6 +2772,8 @@ pub enum ConfigErrorKind {
     ForbiddenSecretValue,
     InvalidProfileIdentifier,
     DuplicateProfileIdentifier,
+    /// A recorded profile launch names a profile the document does not define.
+    UnknownProfileReference,
     InvalidLocalProfile,
     InvalidSshProfile,
     InvalidSshPortForwardConfiguration,
@@ -2757,6 +2851,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::DuplicateProfileIdentifier => {
                 formatter.write_str("profiles[].id values must be unique")
             }
+            ConfigErrorKind::UnknownProfileReference => formatter.write_str(
+                "profile_usage[].profile must name a profile defined in profiles[]",
+            ),
             ConfigErrorKind::InvalidLocalProfile => formatter.write_str(
                 "local profile metadata must use non-empty, control-character-free executable, arguments, and working_directory values without secret-bearing options",
             ),

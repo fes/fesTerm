@@ -32,7 +32,7 @@ use festerm_config::SshPortForwardConfiguration;
 
 use crate::port_forward_draft::PortForwardDraft as SshPortForwardDraft;
 use crate::tabs::{
-    AppCommand, PasswordToStore, PrivateKeyToStore, ProfileCredentialToStore, TabId,
+    AppCommand, NewProfileKind, PasswordToStore, PrivateKeyToStore, ProfileCredentialToStore, TabId,
 };
 
 /// One selectable launch option in the Launcher list: the fixed default
@@ -42,6 +42,8 @@ enum LauncherItemKind<'a> {
     NewSsh,
     NewSftp,
     NewSerial,
+    /// Opens a Markdown workspace: the file picker, then a viewer tab.
+    NewMarkdown,
     LocalProfile(&'a str),
     SshProfile(&'a str),
     SftpProfile(&'a str),
@@ -62,6 +64,31 @@ struct LauncherItem<'a> {
     label: String,
     description: String,
     kind: LauncherItemKind<'a>,
+    /// "Type" column text for a Saved Profiles row (`Local`, `SSH`, `SFTP`,
+    /// `Serial`). Empty for launch cards and running-session rows, which are
+    /// not rendered as table rows.
+    type_label: &'static str,
+    /// "Host / Path" column text for a Saved Profiles row: the one field that
+    /// distinguishes two same-named profiles of the same type.
+    location: String,
+    /// "Last Used" column value, absent until the profile has been launched
+    /// at least once on this installation.
+    last_used_unix_seconds: Option<u64>,
+}
+
+impl<'a> LauncherItem<'a> {
+    /// Builds an item that is not a Saved Profiles row, leaving the three
+    /// table-only columns empty.
+    fn untabulated(label: String, description: String, kind: LauncherItemKind<'a>) -> Self {
+        Self {
+            label,
+            description,
+            kind,
+            type_label: "",
+            location: String::new(),
+            last_used_unix_seconds: None,
+        }
+    }
 }
 
 impl LauncherItem<'_> {
@@ -71,6 +98,7 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
+            | LauncherItemKind::NewMarkdown
             | LauncherItemKind::ResumeSession(_)
             | LauncherItemKind::ResumeMultiplexerSession(..) => None,
             LauncherItemKind::LocalProfile(id)
@@ -80,14 +108,55 @@ impl LauncherItem<'_> {
         }
     }
 
-    fn remote(&self) -> bool {
-        matches!(
-            self.kind,
-            LauncherItemKind::NewSsh
-                | LauncherItemKind::NewSftp
-                | LauncherItemKind::SshProfile(_)
-                | LauncherItemKind::SftpProfile(_)
-        )
+    /// The session-type mark and its identity color.
+    ///
+    /// Type is carried by the silhouette first and the color second, so the
+    /// distinction survives for a user who cannot separate the hues.
+    fn mark(&self) -> (Icon, egui::Color32) {
+        match self.kind {
+            LauncherItemKind::LocalDefault
+            | LauncherItemKind::LocalProfile(_)
+            | LauncherItemKind::ResumeSession(_)
+            | LauncherItemKind::ResumeMultiplexerSession(..) => {
+                (Icon::LocalTerminal, theme::ICON_SESSION_LOCAL)
+            }
+            LauncherItemKind::NewSsh | LauncherItemKind::SshProfile(_) => {
+                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
+            }
+            LauncherItemKind::NewSftp | LauncherItemKind::SftpProfile(_) => {
+                (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER)
+            }
+            LauncherItemKind::NewSerial | LauncherItemKind::SerialProfile(_) => {
+                (Icon::Serial, theme::ICON_SESSION_SERIAL)
+            }
+            LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
+        }
+    }
+
+    /// The command that connects this saved profile over its *other*
+    /// protocol, for the row menu's cross-protocol entry.
+    ///
+    /// An SSH profile already carries everything an SFTP session needs (and
+    /// the reverse), so offering the crossover here saves duplicating one
+    /// host under two profiles. Only the two remote kinds have a crossover;
+    /// local and serial profiles return `None` and their menus simply omit
+    /// the entry rather than showing it disabled.
+    fn crossover(&self) -> Option<(&'static str, AppCommand)> {
+        match self.kind {
+            LauncherItemKind::SshProfile(profile_id) => Some((
+                "Connect SFTP",
+                AppCommand::StartConfiguredSftpProfile {
+                    profile_id: profile_id.to_owned(),
+                },
+            )),
+            LauncherItemKind::SftpProfile(profile_id) => Some((
+                "Connect SSH",
+                AppCommand::StartConfiguredSshProfile {
+                    profile_id: profile_id.to_owned(),
+                },
+            )),
+            _ => None,
+        }
     }
 
     fn command(&self) -> AppCommand {
@@ -104,6 +173,7 @@ impl LauncherItem<'_> {
                     "the New Serial Connection item opens the serial form, not an AppCommand"
                 )
             }
+            LauncherItemKind::NewMarkdown => AppCommand::OpenMarkdownWorkspace,
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
@@ -130,155 +200,6 @@ impl LauncherItem<'_> {
             }
         }
     }
-}
-
-/// Applies one Launcher item's click/edit-icon response to its shared
-/// mutable state: opens the profile editor for an edit-icon click, opens
-/// the SSH/Serial connection forms for those fixed entries, or dispatches
-/// the item's launch command otherwise. Shared by both the single-column
-/// and multi-column (feature request #64) rendering paths so their click
-/// handling can never drift apart.
-fn handle_launcher_item_response(
-    item: &LauncherItem<'_>,
-    response: egui::Response,
-    edit_response: Option<egui::Response>,
-    state: &mut LauncherState,
-    command: &mut Option<AppCommand>,
-) {
-    if edit_response.is_some_and(|edit| edit.clicked()) {
-        *command = Some(AppCommand::OpenProfileEditor {
-            identifier: item
-                .profile_id()
-                .expect("editable launcher items always carry a profile id")
-                .to_owned(),
-        });
-    } else if response.clicked() {
-        if matches!(item.kind, LauncherItemKind::NewSsh) {
-            state.ssh_open = true;
-            state.ssh.focus_username = true;
-        } else if matches!(item.kind, LauncherItemKind::NewSftp) {
-            state.sftp_open = true;
-            state.sftp.focus_username = true;
-        } else if matches!(item.kind, LauncherItemKind::NewSerial) {
-            state.serial_open = true;
-        } else {
-            *command = Some(item.command());
-        }
-    }
-}
-
-/// Renders one Launcher card. Saved profiles (`editable`) also get a small
-/// edit-icon control in the card's upper-right corner: clicking it opens
-/// that profile's editor instead of launching it, while clicking anywhere
-/// else on the card launches, matching how the standalone Profiles surface
-/// and this card share one visual language.
-fn show_launcher_choice(
-    ui: &mut Ui,
-    primary: &str,
-    secondary: &str,
-    selected: bool,
-    remote: bool,
-    editable: bool,
-    fixed_width: Option<f32>,
-) -> (egui::Response, Option<egui::Response>) {
-    let width = fixed_width.unwrap_or_else(|| ui.available_width().clamp(220.0, 420.0));
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 54.0), Sense::click());
-    let active = selected || response.hovered();
-    ui.painter().rect(
-        rect,
-        6.0,
-        if active {
-            theme::SURFACE_TAB_ACTIVE
-        } else {
-            theme::SURFACE_TAB_INACTIVE
-        },
-        Stroke::new(
-            if selected { 1.5 } else { 1.0 },
-            if selected {
-                theme::BORDER_ACTIVE
-            } else {
-                theme::BORDER_SUBTLE
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
-
-    let icon_rect = egui::Rect::from_min_size(rect.left_top() + vec2(14.0, 18.0), vec2(18.0, 16.0));
-    let stroke = Stroke::new(
-        1.5,
-        if active {
-            theme::TEXT_PRIMARY
-        } else {
-            theme::TEXT_SECONDARY
-        },
-    );
-    icon::paint(
-        ui.painter(),
-        if remote {
-            Icon::SshRemote
-        } else {
-            Icon::LocalTerminal
-        },
-        icon_rect,
-        stroke.color,
-    );
-
-    ui.painter().text(
-        rect.left_top() + vec2(50.0, 10.0),
-        egui::Align2::LEFT_TOP,
-        primary,
-        egui::FontId::proportional(18.0),
-        theme::TEXT_PRIMARY,
-    );
-    ui.painter().text(
-        rect.left_top() + vec2(50.0, 34.0),
-        egui::Align2::LEFT_TOP,
-        secondary,
-        egui::FontId::proportional(11.0),
-        theme::TEXT_MUTED,
-    );
-    response.widget_info(|| {
-        WidgetInfo::labeled(WidgetType::Button, true, format!("{primary} — {secondary}"))
-    });
-
-    let edit_response = editable.then(|| {
-        let edit_rect =
-            egui::Rect::from_min_size(rect.right_top() + vec2(-30.0, 8.0), vec2(22.0, 22.0));
-        let edit_id = response.id.with("edit");
-        let edit_response = ui.interact(edit_rect, edit_id, Sense::click());
-        let edit_active = edit_response.hovered();
-        ui.painter().rect(
-            edit_rect,
-            4.0,
-            if edit_active {
-                theme::SURFACE_TAB_ACTIVE
-            } else {
-                egui::Color32::TRANSPARENT
-            },
-            Stroke::NONE,
-            egui::StrokeKind::Inside,
-        );
-        icon::paint(
-            ui.painter(),
-            Icon::Edit,
-            edit_rect.shrink(3.0),
-            if edit_active {
-                theme::TEXT_PRIMARY
-            } else {
-                theme::TEXT_SECONDARY
-            },
-        );
-        edit_response.widget_info(|| {
-            WidgetInfo::labeled(
-                WidgetType::Button,
-                true,
-                format!("Edit {primary} ({secondary})"),
-            )
-        });
-        edit_response
-    });
-
-    (response, edit_response)
 }
 
 /// A bordered "Back" control that renders the app's own chevron glyph
@@ -1166,7 +1087,7 @@ impl Default for SerialLauncherForm {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct LauncherState {
     selected: usize,
     ssh_open: bool,
@@ -1177,6 +1098,41 @@ struct LauncherState {
     sftp_profile_prefilled: bool,
     serial_open: bool,
     serial: SerialLauncherForm,
+    /// Filters the Saved Profiles table by name, type, or host/path.
+    profile_search: String,
+    profile_sort: ProfileSortOrder,
+    /// A launch card's request to open an in-tab connection form, applied
+    /// after rendering so the card row does not need mutable access to the
+    /// form state it would otherwise have to borrow mid-layout.
+    pending_form: Option<LauncherForm>,
+    festerm_group_expanded: bool,
+    tmux_group_expanded: bool,
+    screen_group_expanded: bool,
+}
+
+impl Default for LauncherState {
+    /// Session groups start expanded: the panel exists to show what is
+    /// running, and a collapsed default would hide the whole point of it
+    /// behind three extra clicks.
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            ssh_open: false,
+            ssh: SshLauncherForm::default(),
+            ssh_profile_prefilled: false,
+            sftp_open: false,
+            sftp: SshLauncherForm::default(),
+            sftp_profile_prefilled: false,
+            serial_open: false,
+            serial: SerialLauncherForm::default(),
+            profile_search: String::new(),
+            profile_sort: ProfileSortOrder::default(),
+            pending_form: None,
+            festerm_group_expanded: true,
+            tmux_group_expanded: true,
+            screen_group_expanded: true,
+        }
+    }
 }
 
 fn launcher_state_id(tab_id: TabId) -> egui::Id {
@@ -2104,6 +2060,647 @@ fn show_sftp_form(
 /// it the same way, and Enter launches the highlighted item without
 /// requiring the mouse. The id prevents this temporary state from colliding
 /// with other application-surface widgets.
+/// Geometry for the New Session surface, taken from the design mockup.
+///
+/// These are absolute sizes rather than fractions of the window because the
+/// surface is a fixed-density layout: a launch card holds a mark, a title,
+/// and two lines of description whatever the window does, and a profile row
+/// holds one line of text. Only the horizontal split between the two panels
+/// and the card row's column count respond to width.
+const LAUNCH_CARD_HEIGHT: f32 = 205.0;
+/// The height a card takes once its description is dropped, for users who
+/// have turned the compact New Session layout on.
+const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 118.0;
+const LAUNCH_CARD_GAP: f32 = 16.0;
+const LAUNCH_CARD_PADDING: f32 = 20.0;
+/// Narrower than this and a card's title starts eliding, so the row wraps to
+/// fewer columns instead.
+const LAUNCH_CARD_MIN_WIDTH: f32 = 170.0;
+const LAUNCHER_PANEL_GAP: f32 = 18.0;
+/// Saved Profiles takes the larger share: it carries four columns of text,
+/// while Running Sessions is a name and a button.
+const LAUNCHER_PROFILES_PANEL_SHARE: f32 = 0.59;
+/// Narrower than this the two panels stack instead of sitting side by side,
+/// so the profile columns never collapse into each other.
+const LAUNCHER_PANEL_MIN_WIDTH: f32 = 400.0;
+const LAUNCHER_PANEL_PADDING: f32 = 21.0;
+const LAUNCHER_PANEL_CORNER: f32 = 12.0;
+const LAUNCHER_PROFILE_ROW_HEIGHT: f32 = 41.0;
+/// Horizontal centre of the per-row overflow control, measured in from the
+/// Saved Profiles panel's right edge.
+const LAUNCHER_ROW_MENU_INSET: f32 = 35.0;
+/// Saved Profiles column origins as a fraction of the panel's width.
+///
+/// Column headers are positioned from these same values as the cells beneath
+/// them, so a header can never drift away from the data it labels.
+const LAUNCHER_PROFILE_COLUMNS: [f32; 4] = [0.103, 0.355, 0.482, 0.757];
+/// Gutter kept between one column's text and the next column's origin.
+/// Height reserved for the Saved Profiles footer row when pinning it to the
+/// panel's bottom edge.
+const LAUNCHER_FOOTER_HEIGHT: f32 = 40.0;
+const LAUNCHER_COLUMN_GUTTER: f32 = 12.0;
+
+/// How the Saved Profiles list is ordered.
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum ProfileSortOrder {
+    /// Most recently launched first, then never-launched profiles by name.
+    /// The default because the strongest predictor of what a user wants to
+    /// open is what they opened last.
+    #[default]
+    RecentlyUsed,
+    Name,
+}
+
+impl ProfileSortOrder {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RecentlyUsed => "Sorted by last used",
+            Self::Name => "Sorted by name",
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            Self::RecentlyUsed => Self::Name,
+            Self::Name => Self::RecentlyUsed,
+        }
+    }
+}
+
+/// Whole seconds since the Unix epoch.
+///
+/// `None` when the host clock is set before the epoch; callers then omit
+/// relative ages rather than printing a guess.
+pub(crate) fn unix_now_seconds() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|since_epoch| since_epoch.as_secs())
+}
+
+/// Formats an absolute instant as the coarse relative age shown in the
+/// "Last Used" column and under each running session's name.
+///
+/// `now` is a parameter rather than being read here so the result is
+/// deterministic under test. Months and years use nominal 30- and 365-day
+/// lengths: at that distance the label is a rough ordering cue, and being
+/// exact would cost a calendar dependency for no reader-visible gain.
+fn relative_age(now_unix_seconds: u64, then_unix_seconds: u64) -> String {
+    const MINUTE: u64 = 60;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+    const WEEK: u64 = 7 * DAY;
+    const MONTH: u64 = 30 * DAY;
+    const YEAR: u64 = 365 * DAY;
+
+    let elapsed = now_unix_seconds.saturating_sub(then_unix_seconds);
+    let (count, unit) = if elapsed < MINUTE {
+        return "Just now".to_owned();
+    } else if elapsed < HOUR {
+        (elapsed / MINUTE, "minute")
+    } else if elapsed < DAY {
+        (elapsed / HOUR, "hour")
+    } else if elapsed < WEEK {
+        (elapsed / DAY, "day")
+    } else if elapsed < MONTH {
+        (elapsed / WEEK, "week")
+    } else if elapsed < YEAR {
+        (elapsed / MONTH, "month")
+    } else {
+        (elapsed / YEAR, "year")
+    };
+    if count == 1 {
+        format!("1 {unit} ago")
+    } else {
+        format!("{count} {unit}s ago")
+    }
+}
+
+/// Lays text out on a bounded number of lines, eliding the remainder.
+///
+/// Table cells and card descriptions have fixed heights, so overflowing text
+/// must be cut rather than allowed to reflow a row out of its slot.
+fn elided_galley(
+    ui: &Ui,
+    text: &str,
+    size: f32,
+    color: egui::Color32,
+    max_width: f32,
+    max_rows: usize,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat::simple(egui::FontId::proportional(size), color),
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width,
+        max_rows,
+        break_anywhere: false,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
+}
+
+/// Paints a session-type mark.
+///
+/// Remote marks get the accent globe painted over them: the asset layer is
+/// monochrome by contract, so the two-tone treatment is composed here out of
+/// the complete `SshRemote` mark and the `RemoteGlobe` badge that shares its
+/// coordinates exactly.
+fn paint_session_mark(painter: &egui::Painter, item: &LauncherItem<'_>, rect: egui::Rect) {
+    let (mark, color) = item.mark();
+    icon::paint(painter, mark, rect, color);
+    if matches!(mark, Icon::SshRemote) {
+        icon::paint(painter, Icon::RemoteGlobe, rect, theme::ACCENT_ACTION);
+    }
+}
+
+/// Renders one launch card: a session-type mark, a title, a description, and
+/// a corner arrow marking the card as an entry into a flow rather than a
+/// toggle.
+fn show_launch_card(
+    ui: &mut Ui,
+    size: egui::Vec2,
+    compact: bool,
+    item: &LauncherItem<'_>,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    // The accessible name carries the description too: on this surface the
+    // title alone ("SSH") does not say what activating the card will do.
+    response.widget_info(|| {
+        WidgetInfo::labeled(
+            WidgetType::Button,
+            ui.is_enabled(),
+            format!("{} — {}", item.label, item.description),
+        )
+    });
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+
+    let active = selected || response.hovered();
+    // Every card carries a quiet border, matching the design mockup where all
+    // five sit in the same subtle frame; selection lifts that border a shade
+    // rather than switching to the loud action accent.
+    ui.painter().rect(
+        rect,
+        LAUNCHER_PANEL_CORNER,
+        if response.hovered() {
+            theme::SURFACE_TAB_ACTIVE
+        } else {
+            theme::SURFACE_CARD
+        },
+        if active {
+            Stroke::new(1.0, theme::BORDER_STRONG)
+        } else {
+            Stroke::new(1.0, theme::BORDER_SUBTLE)
+        },
+        egui::StrokeKind::Inside,
+    );
+
+    let mark_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.left() + LAUNCH_CARD_PADDING,
+            rect.top() + if compact { LAUNCH_CARD_PADDING } else { 12.0 },
+        ),
+        egui::Vec2::splat(if compact { 28.0 } else { 72.0 }),
+    );
+    paint_session_mark(ui.painter(), item, mark_rect);
+
+    let text_left = rect.left() + LAUNCH_CARD_PADDING;
+    let text_width = (rect.width() - LAUNCH_CARD_PADDING * 2.0).max(0.0);
+    let title = elided_galley(ui, &item.label, 20.0, theme::TEXT_PRIMARY, text_width, 1);
+    let title_top = mark_rect.bottom() + if compact { 10.0 } else { 8.0 };
+    let title_height = title.size().y;
+    ui.painter()
+        .galley(egui::pos2(text_left, title_top), title, theme::TEXT_PRIMARY);
+    // The compact card drops the description rather than shrinking it: an
+    // elided one-line description says less than the title already does.
+    if !compact {
+        let description = elided_galley(
+            ui,
+            &item.description,
+            15.0,
+            theme::TEXT_SECONDARY,
+            text_width,
+            2,
+        );
+        ui.painter().galley(
+            egui::pos2(text_left, title_top + title_height + 8.0),
+            description,
+            theme::TEXT_SECONDARY,
+        );
+    }
+
+    let arrow = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.right() - LAUNCH_CARD_PADDING - 18.0,
+            rect.bottom() - LAUNCH_CARD_PADDING - 18.0,
+        ),
+        egui::Vec2::splat(18.0),
+    );
+    icon::paint(
+        ui.painter(),
+        Icon::Proceed,
+        arrow,
+        if active {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
+    );
+    response
+}
+
+/// Renders a panel heading: an identity mark, a title, and an optional
+/// subtitle, with the caller's own controls laid out along the same baseline
+/// on the right.
+fn show_panel_heading(
+    ui: &mut Ui,
+    mark: Icon,
+    title: &str,
+    subtitle: Option<&str>,
+    controls: impl FnOnce(&mut Ui),
+) {
+    let height = if subtitle.is_some() { 52.0 } else { 40.0 };
+    ui.horizontal(|ui| {
+        ui.set_height(height);
+        let (mark_rect, _) = ui.allocate_exact_size(egui::Vec2::splat(36.0), Sense::hover());
+        icon::paint(ui.painter(), mark, mark_rect, theme::ACCENT_ACTION);
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(
+                egui::RichText::new(title)
+                    .size(20.0)
+                    .color(theme::TEXT_PRIMARY),
+            );
+            if let Some(subtitle) = subtitle {
+                ui.label(
+                    egui::RichText::new(subtitle)
+                        .size(13.0)
+                        .color(theme::TEXT_SECONDARY),
+                );
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), controls);
+    });
+}
+
+/// Renders one Saved Profiles row and its menu.
+///
+/// The menu opens from either the row's overflow control or a right-click
+/// anywhere on the row: the two gestures are the same affordance, so they
+/// share one popup rather than diverging.
+fn show_profile_row(
+    ui: &mut Ui,
+    width: f32,
+    item: &LauncherItem<'_>,
+    selected: bool,
+    now_unix_seconds: Option<u64>,
+    command: &mut Option<AppCommand>,
+) {
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(width, LAUNCHER_PROFILE_ROW_HEIGHT), Sense::hover());
+    let menu_center = egui::pos2(rect.right() - LAUNCHER_ROW_MENU_INSET, rect.center().y);
+    let menu_rect = egui::Rect::from_center_size(menu_center, egui::Vec2::splat(24.0));
+    // The row's own click target stops short of the overflow control so the
+    // two never contend for the same pointer press.
+    let response = ui.interact(
+        rect.with_max_x(menu_rect.left()),
+        ui.id().with(("profile_row", &item.label)),
+        Sense::click(),
+    );
+    // Matches the launch cards: the row's columns are visual, so the
+    // accessible name has to restate the type and host the eye reads across.
+    response.widget_info(|| {
+        WidgetInfo::labeled(
+            WidgetType::Button,
+            ui.is_enabled(),
+            format!("{} — {}", item.label, item.description),
+        )
+    });
+
+    let active = selected || response.hovered();
+    if active {
+        ui.painter()
+            .rect_filled(rect.expand2(vec2(6.0, 0.0)), 6.0, theme::SURFACE_TAB_ACTIVE);
+    }
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, theme::BORDER_SUBTLE.gamma_multiply(0.5)),
+    );
+
+    let mark_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + LAUNCHER_PANEL_PADDING + 13.0, rect.center().y),
+        egui::Vec2::splat(28.0),
+    );
+    paint_session_mark(ui.painter(), item, mark_rect);
+
+    let last_used = item
+        .last_used_unix_seconds
+        .zip(now_unix_seconds)
+        .map(|(then, now)| relative_age(now, then))
+        .unwrap_or_else(|| "Never".to_owned());
+    let columns = [
+        (item.label.clone(), 15.0, theme::TEXT_PRIMARY),
+        (item.type_label.to_owned(), 14.0, theme::TEXT_SECONDARY),
+        (item.location.clone(), 14.0, theme::TEXT_SECONDARY),
+        (last_used, 14.0, theme::TEXT_SECONDARY),
+    ];
+    for (index, (text, size, color)) in columns.into_iter().enumerate() {
+        let left = rect.left() + width * LAUNCHER_PROFILE_COLUMNS[index];
+        let right = LAUNCHER_PROFILE_COLUMNS
+            .get(index + 1)
+            .map(|fraction| rect.left() + width * fraction)
+            .unwrap_or(menu_center.x - 12.0);
+        let galley = elided_galley(
+            ui,
+            &text,
+            size,
+            color,
+            (right - left - LAUNCHER_COLUMN_GUTTER).max(0.0),
+            1,
+        );
+        let top = rect.center().y - galley.size().y / 2.0;
+        ui.painter().galley(egui::pos2(left, top), galley, color);
+    }
+
+    let menu_response = ui.interact(
+        menu_rect,
+        ui.id().with(("profile_row_menu", &item.label)),
+        Sense::click(),
+    );
+    let menu_name = format!("More actions for {}", item.label);
+    menu_response
+        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), &menu_name));
+    icon::paint(
+        ui.painter(),
+        Icon::OverflowVertical,
+        menu_rect.shrink(4.0),
+        if menu_response.hovered() {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
+    );
+    let menu_response = menu_response.on_hover_text("More actions");
+
+    // The overflow control and a right-click on the row are the same
+    // affordance, so both open one menu built in one place rather than two
+    // that could drift apart.
+    egui::Popup::menu(&menu_response).show(|ui| show_profile_row_menu(ui, item, command));
+    response.context_menu(|ui| show_profile_row_menu(ui, item, command));
+
+    if response.clicked() {
+        *command = Some(item.command());
+    }
+}
+
+/// The row menu: launch, edit, and -- for the two remote profile kinds --
+/// connect over the other protocol.
+///
+/// Every entry dispatches an existing `AppCommand`, so a profile launched
+/// from here takes exactly the path it takes from anywhere else.
+fn show_profile_row_menu(ui: &mut Ui, item: &LauncherItem<'_>, command: &mut Option<AppCommand>) {
+    if ui.button("Connect").clicked() {
+        *command = Some(item.command());
+        ui.close();
+    }
+    if let Some((label, crossover)) = item.crossover() {
+        if ui.button(label).clicked() {
+            *command = Some(crossover);
+            ui.close();
+        }
+    }
+    if ui.button("Edit").clicked() {
+        *command = Some(AppCommand::OpenProfileEditor {
+            identifier: item
+                .profile_id()
+                .expect("Saved Profiles rows always carry a profile id")
+                .to_owned(),
+        });
+        ui.close();
+    }
+}
+
+/// Renders one running-session group: a disclosure header naming the
+/// provider, a count, and a row per session.
+///
+/// Providers stay in separate groups rather than one merged list because
+/// reattaching goes through a different mechanism for each, and the group a
+/// session sits in is the only thing that tells the user which.
+#[allow(clippy::too_many_arguments)]
+fn show_session_group(
+    ui: &mut Ui,
+    width: f32,
+    title: &str,
+    items: &[LauncherItem<'_>],
+    first_index: usize,
+    selected: usize,
+    expanded: &mut bool,
+    now_unix_seconds: Option<u64>,
+    command: &mut Option<AppCommand>,
+) {
+    if items.is_empty() {
+        return;
+    }
+    egui::Frame::new()
+        .fill(theme::SURFACE_CARD)
+        .corner_radius(10.0)
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .show(ui, |ui| {
+            ui.set_width((width - 28.0).max(0.0));
+            ui.horizontal(|ui| {
+                let (chevron, _) = ui.allocate_exact_size(egui::Vec2::splat(16.0), Sense::hover());
+                icon::paint(
+                    ui.painter(),
+                    if *expanded {
+                        Icon::SectionExpanded
+                    } else {
+                        Icon::SectionCollapsed
+                    },
+                    chevron,
+                    theme::TEXT_SECONDARY,
+                );
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(title)
+                        .size(15.0)
+                        .color(theme::TEXT_PRIMARY),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (badge, _) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(badge, 11.0, theme::SURFACE_TAB_ACTIVE);
+                    ui.painter().text(
+                        badge.center(),
+                        egui::Align2::CENTER_CENTER,
+                        items.len().to_string(),
+                        egui::FontId::proportional(13.0),
+                        theme::TEXT_SECONDARY,
+                    );
+                });
+            });
+            let header = ui.interact(
+                ui.min_rect(),
+                ui.id().with(("session_group", title)),
+                Sense::click(),
+            );
+            let header_name = if *expanded {
+                format!("Collapse {title}")
+            } else {
+                format!("Expand {title}")
+            };
+            header.widget_info(|| {
+                WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), header_name.clone())
+            });
+            if header.clicked() {
+                *expanded = !*expanded;
+            }
+            if !*expanded {
+                return;
+            }
+            ui.add_space(6.0);
+            for (offset, item) in items.iter().enumerate() {
+                show_session_row(
+                    ui,
+                    first_index + offset == selected,
+                    item,
+                    now_unix_seconds,
+                    command,
+                );
+            }
+        });
+}
+
+/// Renders one reattachable session: its mark, its name, how long it has been
+/// running, and the control that attaches it to a tab.
+fn show_session_row(
+    ui: &mut Ui,
+    selected: bool,
+    item: &LauncherItem<'_>,
+    now_unix_seconds: Option<u64>,
+    command: &mut Option<AppCommand>,
+) {
+    ui.horizontal(|ui| {
+        ui.set_height(52.0);
+        let (mark, _) = ui.allocate_exact_size(egui::Vec2::splat(30.0), Sense::hover());
+        paint_session_mark(ui.painter(), item, mark);
+        ui.add_space(10.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(
+                egui::RichText::new(&item.label)
+                    .size(15.0)
+                    .color(theme::TEXT_PRIMARY),
+            );
+            let subtitle = item
+                .last_used_unix_seconds
+                .zip(now_unix_seconds)
+                .map(|(started, now)| format!("Started {}", relative_age(now, started)))
+                .unwrap_or_else(|| item.description.clone());
+            ui.label(
+                egui::RichText::new(subtitle)
+                    .size(13.0)
+                    .color(theme::TEXT_SECONDARY),
+            );
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let name = format!("Reattach {}", item.label);
+            if launcher_button(ui, Icon::Reattach, "Reattach", Some(&name), selected).clicked() {
+                *command = Some(item.command());
+            }
+        });
+    });
+}
+
+/// A labelled icon button in the New Session surface's own visual language.
+///
+/// `accent` paints the affirmative variant used for the primary action in a
+/// panel; everything else is a quiet surface button.
+fn launcher_button(
+    ui: &mut Ui,
+    mark: Icon,
+    label: &str,
+    accessible_name: Option<&str>,
+    accent: bool,
+) -> egui::Response {
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::proportional(14.0),
+            theme::TEXT_PRIMARY,
+        )
+        .size()
+        .x
+        .ceil();
+    let (rect, response) = ui.allocate_exact_size(vec2(text_width + 62.0, 40.0), Sense::click());
+    // Several buttons on this surface share one visible word ("Reattach"),
+    // so the caller may name them apart for anyone navigating by label.
+    let name = accessible_name.unwrap_or(label);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), name));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let fill = if accent {
+        theme::ACCENT_ACTION
+    } else if response.hovered() {
+        theme::SURFACE_OVERLAY
+    } else {
+        theme::SURFACE_TAB_ACTIVE
+    };
+    let foreground = if accent {
+        egui::Color32::WHITE
+    } else {
+        theme::TEXT_PRIMARY
+    };
+    ui.painter().rect(
+        rect,
+        8.0,
+        fill,
+        if accent {
+            Stroke::NONE
+        } else {
+            Stroke::new(1.0, theme::BORDER_SUBTLE)
+        },
+        egui::StrokeKind::Inside,
+    );
+    let mark_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 22.0, rect.center().y),
+        egui::Vec2::splat(18.0),
+    );
+    icon::paint(ui.painter(), mark, mark_rect, foreground);
+    ui.painter().text(
+        egui::pos2(mark_rect.right() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(14.0),
+        foreground,
+    );
+    response
+}
+
+/// A bare icon control, for the panel headings' secondary actions.
+fn launcher_icon_button(ui: &mut Ui, mark: Icon, tooltip: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(30.0), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), tooltip));
+    icon::paint(
+        ui.painter(),
+        mark,
+        rect.shrink(5.0),
+        if response.hovered() {
+            theme::TEXT_PRIMARY
+        } else {
+            theme::TEXT_SECONDARY
+        },
+    );
+    response.on_hover_text(tooltip)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn show_launcher(
     ui: &mut Ui,
@@ -2111,161 +2708,146 @@ pub fn show_launcher(
     configuration: &Configuration,
     native_store_available: bool,
     secure_storage_status: Option<&str>,
-    compact_launcher_grid: bool,
+    compact_cards: bool,
     resumable_sessions: &[festerm_sessiond::UnattachedSession],
     tmux_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
     screen_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
 ) -> Option<AppCommand> {
     let profiles = configuration.profiles();
+    let now_unix_seconds = unix_now_seconds();
+    // The five launch cards: one per session type fesTerm can start from
+    // nothing, in the order a new user meets them.
     let mut items = vec![
-        LauncherItem {
-            label: "Local Shell".to_owned(),
-            description: "Default shell on this computer".to_owned(),
-            kind: LauncherItemKind::LocalDefault,
-        },
-        LauncherItem {
-            label: "SSH".to_owned(),
-            description: "Connect to a remote host".to_owned(),
-            kind: LauncherItemKind::NewSsh,
-        },
-        LauncherItem {
-            label: "SFTP".to_owned(),
-            description: "Transfer files over SSH".to_owned(),
-            kind: LauncherItemKind::NewSftp,
-        },
-        LauncherItem {
-            label: "Serial".to_owned(),
-            description: "Open a local serial device".to_owned(),
-            kind: LauncherItemKind::NewSerial,
-        },
+        LauncherItem::untabulated(
+            "Local Shell".to_owned(),
+            "Start a local terminal session".to_owned(),
+            LauncherItemKind::LocalDefault,
+        ),
+        LauncherItem::untabulated(
+            "SSH".to_owned(),
+            "Connect to a remote host over SSH".to_owned(),
+            LauncherItemKind::NewSsh,
+        ),
+        LauncherItem::untabulated(
+            "SFTP".to_owned(),
+            "Browse and transfer files".to_owned(),
+            LauncherItemKind::NewSftp,
+        ),
+        LauncherItem::untabulated(
+            "Serial".to_owned(),
+            "Connect to a serial device".to_owned(),
+            LauncherItemKind::NewSerial,
+        ),
+        LauncherItem::untabulated(
+            "Markdown".to_owned(),
+            "Open a Markdown workspace".to_owned(),
+            LauncherItemKind::NewMarkdown,
+        ),
     ];
     let fixed_end = items.len();
     // Resumable, unattached `festerm-sessiond` sessions (feature request
-    // #70) are listed next, in their own "fesTerm sessions" widget, so a
-    // one-click "Resume" is available before the saved-profile list, but
-    // still after the fixed "new session" entries. An already-attached
-    // fesTerm-sessiond session is never enumerated here in the first place
-    // (its single-client "steal" semantics make offering it here
-    // redundant with Reconnect/Inspector Resume), unlike tmux/screen below.
+    // #70) lead the Running Sessions panel. An already-attached
+    // fesTerm-sessiond session is never enumerated in the first place (its
+    // single-client "steal" semantics make offering it here redundant with
+    // Reconnect/Inspector Resume), unlike tmux/screen below.
     items.extend(resumable_sessions.iter().map(|session| {
-        LauncherItem {
-            label: format!("Resume: {}", session.name),
-            description: session
+        let mut item = LauncherItem::untabulated(
+            session.name.clone(),
+            session
                 .working_directory
                 .as_deref()
                 .map(|directory| format!("{} · {directory}", session.shell))
                 .unwrap_or_else(|| session.shell.clone()),
-            kind: LauncherItemKind::ResumeSession(&session.name),
-        }
+            LauncherItemKind::ResumeSession(&session.name),
+        );
+        // Milliseconds are the sessiond wire unit; the surface only ever
+        // shows a coarse relative age, so narrowing here keeps one
+        // representation flowing through the whole screen.
+        item.last_used_unix_seconds = u64::try_from(session.created_at_unix_ms / 1_000).ok();
+        item
     }));
     let festerm_sessions_end = items.len();
-    // Locally running tmux sessions get their own "tmux sessions" widget.
-    // Unlike fesTerm-sessiond above, tmux natively supports more than one
-    // attached client, so an already-attached session is still offered
-    // here -- just annotated, rather than omitted.
-    items.extend(tmux_sessions.iter().map(|session| LauncherItem {
-        label: session.name.clone(),
-        description: if session.attached {
-            "tmux session · attached elsewhere".to_owned()
-        } else {
-            "tmux session".to_owned()
-        },
-        kind: LauncherItemKind::ResumeMultiplexerSession(
-            PersistenceProviderKind::Tmux,
-            &session.name,
-            &session.match_key,
-        ),
+    // Unlike fesTerm-sessiond above, tmux and GNU screen natively support
+    // more than one attached client, so an already-attached session is still
+    // offered here -- annotated rather than omitted.
+    items.extend(tmux_sessions.iter().map(|session| {
+        let mut item = LauncherItem::untabulated(
+            session.name.clone(),
+            if session.attached {
+                "Attached elsewhere".to_owned()
+            } else {
+                "tmux session".to_owned()
+            },
+            LauncherItemKind::ResumeMultiplexerSession(
+                PersistenceProviderKind::Tmux,
+                &session.name,
+                &session.match_key,
+            ),
+        );
+        item.last_used_unix_seconds = session.started_at_unix_seconds();
+        item
     }));
     let tmux_sessions_end = items.len();
-    // Locally running GNU screen sessions get their own "GNU Screen
-    // sessions" widget, with the same attached-elsewhere annotation
-    // treatment as tmux above.
-    items.extend(screen_sessions.iter().map(|session| LauncherItem {
-        label: session.name.clone(),
-        description: if session.attached {
-            "GNU screen session · attached elsewhere".to_owned()
-        } else {
-            "GNU screen session".to_owned()
-        },
-        kind: LauncherItemKind::ResumeMultiplexerSession(
-            PersistenceProviderKind::Screen,
-            &session.name,
-            &session.match_key,
-        ),
+    items.extend(screen_sessions.iter().map(|session| {
+        let mut item = LauncherItem::untabulated(
+            session.name.clone(),
+            if session.attached {
+                "Attached elsewhere".to_owned()
+            } else {
+                "GNU screen session".to_owned()
+            },
+            LauncherItemKind::ResumeMultiplexerSession(
+                PersistenceProviderKind::Screen,
+                &session.name,
+                &session.match_key,
+            ),
+        );
+        item.last_used_unix_seconds = session.started_at_unix_seconds();
+        item
     }));
-    // Saved profiles are listed last, after the fixed "new session"
-    // entries and any quick-connect widgets above, with a subtle separator
-    // (rendered when painting the list below) marking where they start.
+    // Saved profiles fill the Saved Profiles table. Each profile appears
+    // exactly once, under the type it was saved as: an SSH profile's SFTP
+    // launch (and the reverse) is offered from the row menu instead of as a
+    // second row, so the table's length matches the number of things the
+    // user actually saved.
     let profiles_start = items.len();
-    items.extend(
-        profiles
-            .iter()
-            .filter_map(Profile::as_local)
-            .map(|profile| LauncherItem {
-                label: profile.identifier().to_owned(),
-                description: "Saved local profile".to_owned(),
-                kind: LauncherItemKind::LocalProfile(profile.identifier()),
-            }),
-    );
-    items.extend(
-        profiles
-            .iter()
-            .filter_map(Profile::as_ssh)
-            .filter(|profile| profile.profile_kind() == RemoteProfileKind::Ssh)
-            .map(|profile| LauncherItem {
-                label: profile.identifier().to_owned(),
-                description: format!(
-                    "Saved SSH profile · {}@{}:{}",
-                    profile.username(),
-                    profile.host(),
-                    profile.port()
+    items.extend(profiles.iter().map(|profile| {
+        let (kind, type_label, location) = match profile {
+            Profile::Local(local) => (
+                LauncherItemKind::LocalProfile(profile.identifier()),
+                "Local",
+                local
+                    .working_directory()
+                    .map(|directory| directory.display().to_string())
+                    .unwrap_or_else(|| local.executable().to_owned()),
+            ),
+            Profile::Ssh(ssh) => match ssh.profile_kind() {
+                RemoteProfileKind::Ssh => (
+                    LauncherItemKind::SshProfile(profile.identifier()),
+                    "SSH",
+                    ssh.host().to_owned(),
                 ),
-                kind: LauncherItemKind::SshProfile(profile.identifier()),
-            }),
-    );
-    items.extend(
-        profiles
-            .iter()
-            .filter_map(Profile::as_ssh)
-            .map(|profile| LauncherItem {
-                label: profile.identifier().to_owned(),
-                description: match profile.profile_kind() {
-                    RemoteProfileKind::Ssh => format!(
-                        "Saved SSH profile · SFTP · {}@{}:{}",
-                        profile.username(),
-                        profile.host(),
-                        profile.port()
-                    ),
-                    RemoteProfileKind::Sftp => format!(
-                        "Saved SFTP profile · {} · {}@{}:{}",
-                        if profile.sftp_gui_mode() {
-                            "graphical"
-                        } else {
-                            "terminal"
-                        },
-                        profile.username(),
-                        profile.host(),
-                        profile.port()
-                    ),
-                },
-                kind: LauncherItemKind::SftpProfile(profile.identifier()),
-            }),
-    );
-    items.extend(
-        profiles
-            .iter()
-            .filter_map(Profile::as_serial)
-            .map(|profile| LauncherItem {
-                label: profile.identifier().to_owned(),
-                description: format!(
-                    "Saved serial profile · {} · {} baud",
-                    profile.device(),
-                    profile.baud_rate()
+                RemoteProfileKind::Sftp => (
+                    LauncherItemKind::SftpProfile(profile.identifier()),
+                    "SFTP",
+                    ssh.host().to_owned(),
                 ),
-                kind: LauncherItemKind::SerialProfile(profile.identifier()),
-            }),
-    );
-
+            },
+            Profile::Serial(serial) => (
+                LauncherItemKind::SerialProfile(profile.identifier()),
+                "Serial",
+                serial.device().to_owned(),
+            ),
+        };
+        LauncherItem {
+            label: profile.identifier().to_owned(),
+            description: format!("{type_label} · {location}"),
+            kind,
+            type_label,
+            location,
+            last_used_unix_seconds: configuration.profile_last_used(profile.identifier()),
+        }
+    }));
     let state_id = launcher_state_id(tab_id);
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
     state.selected = state.selected.min(items.len().saturating_sub(1));
@@ -2490,218 +3072,150 @@ pub fn show_launcher(
     }
     let launch_via_keyboard = !form_has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
+    // Ordering and filtering are applied to indices rather than to `items`
+    // so the keyboard's selection index keeps meaning the same entry no
+    // matter how the table is sorted or searched.
+    let query = state.profile_search.trim().to_lowercase();
+    let mut profile_order: Vec<usize> = (profiles_start..items.len())
+        .filter(|index| {
+            let item = &items[*index];
+            query.is_empty()
+                || item.label.to_lowercase().contains(&query)
+                || item.location.to_lowercase().contains(&query)
+                || item.type_label.to_lowercase().contains(&query)
+        })
+        .collect();
+    match state.profile_sort {
+        // Never-launched profiles sort after every launched one, then
+        // alphabetically, so the tail of the list stays stable instead of
+        // shuffling as unrelated profiles are used.
+        ProfileSortOrder::RecentlyUsed => profile_order.sort_by(|left, right| {
+            items[*right]
+                .last_used_unix_seconds
+                .cmp(&items[*left].last_used_unix_seconds)
+                .then_with(|| items[*left].label.cmp(&items[*right].label))
+        }),
+        ProfileSortOrder::Name => {
+            profile_order.sort_by(|left, right| items[*left].label.cmp(&items[*right].label));
+        }
+    }
+
     let mut command = None;
     ui.vertical(|ui| {
-        ui.add_space(24.0);
-        ui.horizontal(|ui| {
-            ui.add_space(34.0);
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new("New Session")
-                        .size(24.0)
-                        .color(theme::TEXT_PRIMARY),
-                );
-                ui.label(
-                    egui::RichText::new("Choose a session type")
-                        .size(11.0)
-                        .color(theme::TEXT_SECONDARY),
-                );
-            });
-        });
-        ui.add_space(23.0);
-        // Bound the item list's height to the room actually left above the
-        // status bar and scroll instead of letting it silently run past the
-        // window edge when there are enough saved profiles to overflow: an
-        // unbounded list previously had entries -- and their edit icons --
-        // clipped by the window/viewport boundary instead of scrolling into
-        // view. Uses the same status-bar-aware `scope_builder` + `ScrollArea`
-        // technique as the Settings and SSH profile editor panels.
-        let panel_top = ui.cursor().top();
-        let mut viewport_bottom = ui.ctx().content_rect().bottom();
-        if let Some(status_bar) =
-            egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("status_bar"))
-        {
-            viewport_bottom = viewport_bottom.min(status_bar.outer_rect.top());
-        }
-        let available_height = (viewport_bottom - panel_top).max(0.0);
-        let scroll_rect = egui::Rect::from_min_size(
-            ui.cursor().min,
-            egui::vec2(ui.available_width(), available_height),
-        );
+        ui.add_space(LAUNCH_CARD_GAP);
+        let top = ui.cursor().top();
+        let height = (content_viewport_bottom(ui) - top).max(0.0);
+        let scroll_rect =
+            egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
         ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
             configure_content_scrollbar(ui);
-            egui::ScrollArea::vertical()
-                .max_height(available_height)
+            ScrollArea::vertical()
+                .id_salt((tab_id, "launcher_surface"))
+                .max_height(height)
                 .show(ui, |ui| {
                     ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
-                    ui.horizontal(|ui| {
-                        ui.add_space(26.0);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            // Fixed "new session" entries (Local Shell, SSH,
-                            // Serial) always render single-column, one per
-                            // row, regardless of the compact-grid preference
-                            // (feature request #64): the grid only applies
-                            // to saved profiles, which is what tends to grow
-                            // long enough to need it.
-                            let render_section =
-                                |ui: &mut Ui,
-                                 heading: Option<&str>,
-                                 start: usize,
-                                 end: usize,
-                                 state: &mut LauncherState,
-                                 command: &mut Option<AppCommand>| {
-                                    if start >= end {
-                                        return;
-                                    }
-                                    if let Some(heading) = heading {
-                                        ssh_section_heading(ui, heading);
-                                    }
-                                    for (offset, item) in items[start..end].iter().enumerate() {
-                                        let index = start + offset;
-                                        let (response, edit_response) = show_launcher_choice(
-                                            ui,
-                                            &item.label,
-                                            &item.description,
-                                            index == state.selected,
-                                            item.remote(),
-                                            item.profile_id().is_some(),
-                                            None,
-                                        );
-                                        handle_launcher_item_response(
-                                            item,
-                                            response,
-                                            edit_response,
-                                            state,
-                                            command,
-                                        );
-                                        ui.add_space(12.0);
-                                    }
-                                };
-                            // Fixed "new session" entries (Local Shell, SSH,
-                            // Serial) always render single-column, one per
-                            // row, regardless of the compact-grid preference
-                            // (feature request #64): the grid only applies
-                            // to saved profiles, which is what tends to grow
-                            // long enough to need it.
-                            render_section(ui, None, 0, fixed_end, &mut state, &mut command);
-                            // Each quick-connect provider gets its own
-                            // labeled widget (fesTerm sessions / tmux
-                            // sessions / GNU Screen sessions) rather than
-                            // one undifferentiated list, so the user can
-                            // tell at a glance which daemon/multiplexer a
-                            // given entry will resume through.
-                            render_section(
-                                ui,
-                                Some("fesTerm sessions"),
-                                fixed_end,
-                                festerm_sessions_end,
-                                &mut state,
-                                &mut command,
-                            );
-                            render_section(
-                                ui,
-                                Some("tmux sessions"),
-                                festerm_sessions_end,
-                                tmux_sessions_end,
-                                &mut state,
-                                &mut command,
-                            );
-                            render_section(
-                                ui,
-                                Some("GNU Screen sessions"),
-                                tmux_sessions_end,
-                                profiles_start,
-                                &mut state,
-                                &mut command,
-                            );
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    let content_width = ui.available_width();
 
-                            let profile_items = &items[profiles_start..];
-                            if !profile_items.is_empty() {
-                                ui.add_space(8.0);
-                                // Matches the 26px left inset applied above so
-                                // the divider reads as evenly padded on both
-                                // sides instead of running flush to the
-                                // pane's right edge.
-                                let separator_width = (ui.available_width() - 26.0).max(0.0);
-                                ui.scope(|ui| {
-                                    ui.set_width(separator_width);
-                                    ui.separator();
-                                });
-                                ui.add_space(8.0);
-                            }
+                    show_launch_card_row(
+                        ui,
+                        content_width,
+                        compact_cards,
+                        &items[..fixed_end],
+                        &mut state,
+                        &mut command,
+                    );
+                    ui.add_space(23.0);
 
-                            // Feature request #64: when enabled and the
-                            // window is wide enough for more than one
-                            // column, saved profiles lay out in a
-                            // responsive grid instead of a single vertical
-                            // list, reducing scrolling for users with many
-                            // saved profiles. Falls back to the original
-                            // single-column list at narrow widths or when
-                            // the preference is off.
-                            const LAUNCHER_CARD_WIDTH: f32 = 260.0;
-                            const LAUNCHER_CARD_SPACING: f32 = 12.0;
-                            let columns = if compact_launcher_grid {
-                                let available = ui.available_width();
-                                (((available + LAUNCHER_CARD_SPACING)
-                                    / (LAUNCHER_CARD_WIDTH + LAUNCHER_CARD_SPACING))
-                                    .floor() as usize)
-                                    .max(1)
-                            } else {
-                                1
-                            };
+                    // Below the stacking threshold the two panels are laid
+                    // out one above the other: side by side they would each
+                    // be too narrow for their own columns, and a horizontal
+                    // scrollbar would hide the right-hand panel entirely.
+                    let side_by_side =
+                        content_width >= LAUNCHER_PANEL_MIN_WIDTH * 2.0 + LAUNCHER_PANEL_GAP;
+                    // Side by side, the panels fill the rest of the surface
+                    // so their footers sit on one line at the bottom edge
+                    // rather than floating under short content. Stacked,
+                    // each panel is only as tall as it needs to be.
+                    let panel_height = if side_by_side {
+                        Some((height - (ui.cursor().top() - top) - 20.0).max(0.0))
+                    } else {
+                        None
+                    };
+                    let (profiles_width, sessions_width) = if side_by_side {
+                        let usable = content_width - LAUNCHER_PANEL_GAP;
+                        let profiles = (usable * LAUNCHER_PROFILES_PANEL_SHARE).floor();
+                        (profiles, usable - profiles)
+                    } else {
+                        (content_width, content_width)
+                    };
 
-                            if columns <= 1 {
-                                for (offset, item) in profile_items.iter().enumerate() {
-                                    let index = profiles_start + offset;
-                                    let (response, edit_response) = show_launcher_choice(
+                    let show_panels =
+                        |ui: &mut Ui,
+                         state: &mut LauncherState,
+                         command: &mut Option<AppCommand>| {
+                            if side_by_side {
+                                ui.horizontal_top(|ui| {
+                                    // The panels are columns: without an
+                                    // explicit top-down layout they would
+                                    // inherit the row's left-to-right flow
+                                    // and lay their own contents out
+                                    // sideways.
+                                    ui.spacing_mut().item_spacing.x = 0.0;
+                                    show_saved_profiles_panel(
                                         ui,
-                                        &item.label,
-                                        &item.description,
-                                        index == state.selected,
-                                        item.remote(),
-                                        item.profile_id().is_some(),
-                                        None,
+                                        profiles_width,
+                                        panel_height,
+                                        &items,
+                                        &profile_order,
+                                        now_unix_seconds,
+                                        state,
+                                        command,
                                     );
-                                    handle_launcher_item_response(
-                                        item,
-                                        response,
-                                        edit_response,
-                                        &mut state,
-                                        &mut command,
+                                    ui.add_space(LAUNCHER_PANEL_GAP);
+                                    show_running_sessions_panel(
+                                        ui,
+                                        sessions_width,
+                                        panel_height,
+                                        &items,
+                                        fixed_end,
+                                        festerm_sessions_end,
+                                        tmux_sessions_end,
+                                        profiles_start,
+                                        now_unix_seconds,
+                                        state,
+                                        command,
                                     );
-                                    ui.add_space(12.0);
-                                }
+                                });
                             } else {
-                                ui.spacing_mut().item_spacing.x = LAUNCHER_CARD_SPACING;
-                                for (row_index, row) in profile_items.chunks(columns).enumerate() {
-                                    ui.horizontal(|ui| {
-                                        for (column, item) in row.iter().enumerate() {
-                                            let index =
-                                                profiles_start + row_index * columns + column;
-                                            let (response, edit_response) = show_launcher_choice(
-                                                ui,
-                                                &item.label,
-                                                &item.description,
-                                                index == state.selected,
-                                                item.remote(),
-                                                item.profile_id().is_some(),
-                                                Some(LAUNCHER_CARD_WIDTH),
-                                            );
-                                            handle_launcher_item_response(
-                                                item,
-                                                response,
-                                                edit_response,
-                                                &mut state,
-                                                &mut command,
-                                            );
-                                        }
-                                    });
-                                    ui.add_space(12.0);
-                                }
+                                show_saved_profiles_panel(
+                                    ui,
+                                    profiles_width,
+                                    panel_height,
+                                    &items,
+                                    &profile_order,
+                                    now_unix_seconds,
+                                    state,
+                                    command,
+                                );
+                                ui.add_space(LAUNCHER_PANEL_GAP);
+                                show_running_sessions_panel(
+                                    ui,
+                                    sessions_width,
+                                    panel_height,
+                                    &items,
+                                    fixed_end,
+                                    festerm_sessions_end,
+                                    tmux_sessions_end,
+                                    profiles_start,
+                                    now_unix_seconds,
+                                    state,
+                                    command,
+                                );
                             }
-                        });
-                    });
+                        };
+                    show_panels(ui, &mut state, &mut command);
+                    ui.add_space(20.0);
                 });
         });
         if let Some(status) = secure_storage_status {
@@ -2723,9 +3237,389 @@ pub fn show_launcher(
             command = Some(items[state.selected].command());
         }
     }
+    // The three fixed entries open an in-tab form rather than dispatching a
+    // command, so a card click is translated here for the same reason the
+    // keyboard path above translates it: `command()` has no form variant.
+    if let Some(opened) = state.pending_form.take() {
+        match opened {
+            LauncherForm::Ssh => {
+                state.ssh_open = true;
+                state.ssh.focus_username = true;
+            }
+            LauncherForm::Sftp => {
+                state.sftp_open = true;
+                state.sftp.focus_username = true;
+            }
+            LauncherForm::Serial => state.serial_open = true,
+        }
+    }
 
     ui.data_mut(|data| data.insert_temp(state_id, state));
     command
+}
+
+/// Which in-tab connection form a launch card asked to open.
+#[derive(Clone, Copy)]
+enum LauncherForm {
+    Ssh,
+    Sftp,
+    Serial,
+}
+
+/// Lays the launch cards out in equal columns, wrapping to as many rows as
+/// the available width needs.
+fn show_launch_card_row(
+    ui: &mut Ui,
+    width: f32,
+    compact: bool,
+    cards: &[LauncherItem<'_>],
+    state: &mut LauncherState,
+    command: &mut Option<AppCommand>,
+) {
+    let columns = (((width + LAUNCH_CARD_GAP) / (LAUNCH_CARD_MIN_WIDTH + LAUNCH_CARD_GAP)).floor()
+        as usize)
+        .clamp(1, cards.len().max(1));
+    let card_width =
+        ((width - LAUNCH_CARD_GAP * (columns.saturating_sub(1)) as f32) / columns as f32).max(0.0);
+    for (row_index, row) in cards.chunks(columns).enumerate() {
+        if row_index > 0 {
+            ui.add_space(LAUNCH_CARD_GAP);
+        }
+        ui.horizontal_top(|ui| {
+            for (column, item) in row.iter().enumerate() {
+                if column > 0 {
+                    ui.add_space(LAUNCH_CARD_GAP);
+                }
+                let index = row_index * columns + column;
+                let response = show_launch_card(
+                    ui,
+                    vec2(
+                        card_width,
+                        if compact {
+                            LAUNCH_CARD_COMPACT_HEIGHT
+                        } else {
+                            LAUNCH_CARD_HEIGHT
+                        },
+                    ),
+                    compact,
+                    item,
+                    index == state.selected,
+                );
+                if response.clicked() {
+                    match item.kind {
+                        LauncherItemKind::NewSsh => state.pending_form = Some(LauncherForm::Ssh),
+                        LauncherItemKind::NewSftp => state.pending_form = Some(LauncherForm::Sftp),
+                        LauncherItemKind::NewSerial => {
+                            state.pending_form = Some(LauncherForm::Serial);
+                        }
+                        _ => *command = Some(item.command()),
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// The Saved Profiles panel: search and sort controls, a column-aligned
+/// table of every saved profile, and the two profile-management actions.
+#[allow(clippy::too_many_arguments)]
+fn show_saved_profiles_panel(
+    ui: &mut Ui,
+    width: f32,
+    height: Option<f32>,
+    items: &[LauncherItem<'_>],
+    order: &[usize],
+    now_unix_seconds: Option<u64>,
+    state: &mut LauncherState,
+    command: &mut Option<AppCommand>,
+) {
+    ui.scope_builder(
+        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| {
+            egui::Frame::new()
+                .fill(theme::SURFACE_PANEL)
+                .corner_radius(LAUNCHER_PANEL_CORNER)
+                .inner_margin(egui::Margin::symmetric(0, 18))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    if let Some(height) = height {
+                        ui.set_min_height((height - 36.0).max(0.0));
+                    }
+                    let inner = (width - LAUNCHER_PANEL_PADDING * 2.0).max(0.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(0.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(LAUNCHER_PANEL_PADDING);
+                            ui.allocate_ui(vec2(inner, 46.0), |ui| {
+                                show_panel_heading(
+                                    ui,
+                                    Icon::SavedProfiles,
+                                    "Saved Profiles",
+                                    None,
+                                    |ui| {
+                                        if launcher_icon_button(
+                                            ui,
+                                            Icon::SortOrder,
+                                            state.profile_sort.label(),
+                                        )
+                                        .clicked()
+                                        {
+                                            state.profile_sort = state.profile_sort.toggled();
+                                        }
+                                        ui.add_space(12.0);
+                                        let field_width = (ui.available_width() - 40.0).max(80.0);
+                                        let (field, _) = ui.allocate_exact_size(
+                                            vec2(field_width, 38.0),
+                                            Sense::hover(),
+                                        );
+                                        ui.painter().rect(
+                                            field,
+                                            11.0,
+                                            theme::SURFACE_FIELD,
+                                            Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                            egui::StrokeKind::Inside,
+                                        );
+                                        let glass = egui::Rect::from_center_size(
+                                            egui::pos2(field.left() + 20.0, field.center().y),
+                                            egui::Vec2::splat(17.0),
+                                        );
+                                        icon::paint(
+                                            ui.painter(),
+                                            Icon::Search,
+                                            glass,
+                                            theme::TEXT_MUTED,
+                                        );
+                                        let entry = egui::Rect::from_min_max(
+                                            egui::pos2(glass.right() + 8.0, field.top()),
+                                            field.max,
+                                        );
+                                        ui.scope_builder(
+                                            egui::UiBuilder::new().max_rect(entry),
+                                            |ui| {
+                                                let search = ui.add_sized(
+                                                    entry.size(),
+                                                    TextEdit::singleline(&mut state.profile_search)
+                                                        .background_color(
+                                                            egui::Color32::TRANSPARENT,
+                                                        )
+                                                        .hint_text("Search profiles…")
+                                                        .margin(egui::Margin::symmetric(0, 10)),
+                                                );
+                                                // The magnifier is painted,
+                                                // not a label widget, so the
+                                                // field would otherwise reach
+                                                // assistive technology
+                                                // unnamed.
+                                                let value = state.profile_search.clone();
+                                                search.widget_info(|| {
+                                                    let mut info = WidgetInfo::text_edit(
+                                                        ui.is_enabled(),
+                                                        &value,
+                                                        &value,
+                                                        "Search profiles…",
+                                                    );
+                                                    info.label =
+                                                        Some("Search profiles…".to_owned());
+                                                    info
+                                                });
+                                            },
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                        ui.add_space(14.0);
+
+                        show_profile_column_headers(ui, width, inner);
+                        if order.is_empty() {
+                            ui.add_space(16.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(LAUNCHER_PANEL_PADDING);
+                                ui.label(
+                                    egui::RichText::new(
+                                        if state.profile_search.trim().is_empty() {
+                                            "No saved profiles yet."
+                                        } else {
+                                            "No profiles match this search."
+                                        },
+                                    )
+                                    .size(14.0)
+                                    .color(theme::TEXT_MUTED),
+                                );
+                            });
+                        }
+                        for index in order {
+                            show_profile_row(
+                                ui,
+                                width,
+                                &items[*index],
+                                *index == state.selected,
+                                now_unix_seconds,
+                                command,
+                            );
+                        }
+
+                        // The footer sits on the panel's bottom edge, so it
+                        // lines up with the other panel however short the
+                        // profile table happens to be.
+                        let footer_slack = height
+                            .map(|height| {
+                                height - 36.0 - ui.min_rect().height() - LAUNCHER_FOOTER_HEIGHT
+                            })
+                            .unwrap_or(18.0);
+                        ui.add_space(footer_slack.max(18.0));
+                        ui.horizontal(|ui| {
+                            ui.add_space(LAUNCHER_PANEL_PADDING);
+                            if launcher_button(ui, Icon::Settings, "Manage Profiles…", None, false)
+                                .clicked()
+                            {
+                                *command = Some(AppCommand::OpenProfiles);
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add_space(LAUNCHER_PANEL_PADDING);
+                                    // New Profile has to say *what* it is
+                                    // creating, otherwise it would land on
+                                    // the same list as Manage Profiles and
+                                    // the two controls would be one control
+                                    // wearing two labels.
+                                    let new_profile = launcher_button(
+                                        ui,
+                                        Icon::NewProfile,
+                                        "New Profile",
+                                        None,
+                                        true,
+                                    );
+                                    egui::Popup::menu(&new_profile).show(|ui| {
+                                        for (label, kind) in [
+                                            ("Local Shell", NewProfileKind::Local),
+                                            ("SSH", NewProfileKind::Ssh),
+                                            ("SFTP", NewProfileKind::Sftp),
+                                            ("Serial", NewProfileKind::Serial),
+                                        ] {
+                                            if ui.button(label).clicked() {
+                                                *command = Some(AppCommand::CreateProfile { kind });
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                },
+                            );
+                        });
+                    });
+                });
+        },
+    );
+}
+
+/// Paints the table's column headers from the same column origins the rows
+/// use, so the two can never drift apart.
+fn show_profile_column_headers(ui: &mut Ui, width: f32, inner: f32) {
+    let _ = inner;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
+    for (index, heading) in ["Name", "Type", "Host / Path", "Last Used"]
+        .into_iter()
+        .enumerate()
+    {
+        let galley = elided_galley(ui, heading, 13.0, theme::TEXT_MUTED, width * 0.2, 1);
+        let left = rect.left() + width * LAUNCHER_PROFILE_COLUMNS[index];
+        let top = rect.center().y - galley.size().y / 2.0;
+        ui.painter()
+            .galley(egui::pos2(left, top), galley, theme::TEXT_MUTED);
+    }
+}
+
+/// The Running Sessions panel: one disclosure group per durable-session
+/// provider that currently has something to reattach.
+#[allow(clippy::too_many_arguments)]
+fn show_running_sessions_panel(
+    ui: &mut Ui,
+    width: f32,
+    height: Option<f32>,
+    items: &[LauncherItem<'_>],
+    fixed_end: usize,
+    festerm_sessions_end: usize,
+    tmux_sessions_end: usize,
+    profiles_start: usize,
+    now_unix_seconds: Option<u64>,
+    state: &mut LauncherState,
+    command: &mut Option<AppCommand>,
+) {
+    ui.scope_builder(
+        egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
+        |ui| {
+            egui::Frame::new()
+                .fill(theme::SURFACE_PANEL)
+                .corner_radius(LAUNCHER_PANEL_CORNER)
+                .inner_margin(egui::Margin::same(15))
+                .show(ui, |ui| {
+                    ui.set_width((width - 30.0).max(0.0));
+                    if let Some(height) = height {
+                        ui.set_min_height((height - 30.0).max(0.0));
+                    }
+                    ui.spacing_mut().item_spacing.y = 12.0;
+                    show_panel_heading(
+                        ui,
+                        Icon::RunningSessions,
+                        "Running Sessions",
+                        Some("Local sessions available to reattach"),
+                        |ui| {
+                            if launcher_icon_button(ui, Icon::Refresh, "Refresh").clicked() {
+                                ui.ctx().request_repaint();
+                            }
+                        },
+                    );
+                    let groups = [
+                        (
+                            "fesTerm Native (sessiond)",
+                            fixed_end,
+                            festerm_sessions_end,
+                            &mut state.festerm_group_expanded,
+                        ),
+                        (
+                            "tmux",
+                            festerm_sessions_end,
+                            tmux_sessions_end,
+                            &mut state.tmux_group_expanded,
+                        ),
+                        (
+                            "screen",
+                            tmux_sessions_end,
+                            profiles_start,
+                            &mut state.screen_group_expanded,
+                        ),
+                    ];
+                    let mut any = false;
+                    for (title, start, end, expanded) in groups {
+                        if start >= end {
+                            continue;
+                        }
+                        any = true;
+                        show_session_group(
+                            ui,
+                            (width - 30.0).max(0.0),
+                            title,
+                            &items[start..end],
+                            start,
+                            state.selected,
+                            expanded,
+                            now_unix_seconds,
+                            command,
+                        );
+                    }
+                    if !any {
+                        ui.label(
+                            egui::RichText::new(
+                                "Nothing is running locally that can be reattached right now.",
+                            )
+                            .size(14.0)
+                            .color(theme::TEXT_MUTED),
+                        );
+                    }
+                });
+        },
+    );
 }
 
 /// Renders a restored SSH workspace tab without creating a transport.
@@ -3171,11 +4065,10 @@ pub fn show_settings(
                             ui.add_space(10.0);
                             if settings_toggle_row(
                                 ui,
-                                "Compact multi-column New Session list",
-                                "Show saved profiles in a responsive multi-column grid on \
-                                 the New Session tab when the window is wide enough, \
-                                 reducing vertical scrolling. Falls back to a single \
-                                 column at narrow widths. Off by default.",
+                                "Compact New Session layout",
+                                "Drop the descriptions from the New Session tab's launch \
+                                 cards so the saved-profile and running-session panels \
+                                 start higher up the window. Off by default.",
                                 compact_launcher_grid,
                             ) {
                                 command = Some(AppCommand::ToggleCompactLauncherGrid);
@@ -4463,6 +5356,7 @@ pub fn show_profiles(
     tab_id: TabId,
     configuration: &festerm_config::Configuration,
     pending_edit: Option<String>,
+    pending_create: Option<NewProfileKind>,
     local_default_provider: PersistenceProviderKind,
 ) -> Option<AppCommand> {
     let state_id = profiles_state_id(tab_id);
@@ -4486,6 +5380,17 @@ pub fn show_profiles(
                 }
             };
         }
+    }
+
+    if let Some(kind) = pending_create {
+        state.mode = match kind {
+            NewProfileKind::Local => {
+                ProfilesScreenMode::EditLocal(LocalProfileDraft::new(local_default_provider))
+            }
+            NewProfileKind::Ssh => ProfilesScreenMode::EditSsh(SshProfileDraft::default()),
+            NewProfileKind::Sftp => ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp()),
+            NewProfileKind::Serial => ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
+        };
     }
 
     let mut next_mode = None;
@@ -5180,7 +6085,7 @@ mod tests {
     }
 
     fn harness_with_profiles(profiles: Vec<Profile>) -> Harness<'static, LauncherHarnessState> {
-        harness_with_profiles_and_grid(profiles, false, 520.0)
+        harness_with_profiles_and_grid(profiles, false, 1240.0)
     }
 
     fn harness_with_profiles_and_grid(
@@ -5199,7 +6104,7 @@ mod tests {
     ) -> Harness<'static, LauncherHarnessState> {
         let configuration = Configuration::new(profiles).expect("test configuration is valid");
         Harness::builder()
-            .with_size(egui::vec2(width, 560.0))
+            .with_size(egui::vec2(width, 880.0))
             .build_ui_state(
                 move |ui, state: &mut LauncherHarnessState| {
                     if let Some(command) = show_launcher(
@@ -5231,7 +6136,7 @@ mod tests {
     ) -> Harness<'static, LauncherHarnessState> {
         let configuration = Configuration::new(profiles).expect("test configuration is valid");
         Harness::builder()
-            .with_size(egui::vec2(520.0, 560.0))
+            .with_size(egui::vec2(1240.0, 880.0))
             .build_ui_state(
                 move |ui, state: &mut LauncherHarnessState| {
                     if let Some(command) = show_launcher(
@@ -5394,24 +6299,18 @@ mod tests {
 
     #[test]
     fn settings_toggle_compact_launcher_grid_control_returns_the_toggle_command() {
-        // Regression test for the "Compact multi-column New Session list"
-        // preference (feature request #64): off by default, with its own
-        // explicit toggle in the Interface card.
+        // Regression test for the "Compact New Session layout" preference
+        // (feature request #64): off by default, with its own explicit
+        // toggle in the Interface card.
         let mut harness = settings_harness();
         harness.run();
 
         assert!(harness
-            .query_by_role_and_label(
-                accesskit::Role::CheckBox,
-                "Compact multi-column New Session list"
-            )
+            .query_by_role_and_label(accesskit::Role::CheckBox, "Compact New Session layout")
             .is_some());
 
         harness
-            .get_by_role_and_label(
-                accesskit::Role::CheckBox,
-                "Compact multi-column New Session list",
-            )
+            .get_by_role_and_label(accesskit::Role::CheckBox, "Compact New Session layout")
             .click();
         harness.run();
 
@@ -5840,7 +6739,7 @@ mod tests {
 
     fn open_ssh_form(harness: &mut Harness<'static, LauncherHarnessState>) {
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
         // Quick Connect is the default surface; these tests exercise the
@@ -5981,7 +6880,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6000,7 +6899,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6015,7 +6914,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6046,7 +6945,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SFTP — Transfer files over SSH")
+            .get_by_label("SFTP — Browse and transfer files")
             .click();
         harness.run();
 
@@ -6065,7 +6964,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SFTP — Transfer files over SSH")
+            .get_by_label("SFTP — Browse and transfer files")
             .click();
         harness.run();
 
@@ -6096,7 +6995,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6123,7 +7022,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6281,7 +7180,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6304,7 +7203,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6396,7 +7295,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         harness
-            .get_by_label("SSH — Connect to a remote host")
+            .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
 
@@ -6505,7 +7404,7 @@ mod tests {
         harness.run();
 
         harness
-            .get_by_label("build — Saved SSH profile · deploy@ssh.example.test:2200")
+            .get_by_label("build — SSH · ssh.example.test")
             .click();
         harness.run();
 
@@ -6517,7 +7416,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_profiles_are_listed_after_local_shell_and_new_ssh_connection() {
+    fn saved_profiles_are_listed_below_the_launch_cards() {
         let profiles = vec![
             Profile::local("development", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
@@ -6525,31 +7424,31 @@ mod tests {
         let mut harness = harness_with_profiles(profiles);
         harness.run();
 
-        let local_shell_top = harness
-            .get_by_label("Local Shell — Default shell on this computer")
-            .rect()
-            .top();
-        let ssh_top = harness
-            .get_by_label("SSH — Connect to a remote host")
-            .rect()
-            .top();
-        let profile_top = harness
-            .get_by_label("development — Saved local profile")
-            .rect()
-            .top();
+        let local_shell = harness
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        let ssh = harness
+            .get_by_label("SSH — Connect to a remote host over SSH")
+            .rect();
+        let profile = harness.get_by_label("development — Local · cargo").rect();
 
         assert!(
-            local_shell_top < ssh_top && ssh_top < profile_top,
-            "expected Local Shell, then New SSH Connection, then saved profiles, got tops: \
-             {local_shell_top}, {ssh_top}, {profile_top}"
+            local_shell.right() <= ssh.left(),
+            "the launch cards sit side by side in one row, Local Shell first, got {local_shell:?} \
+             and {ssh:?}"
+        );
+        assert!(
+            ssh.bottom() <= profile.top(),
+            "saved profiles sit below the launch card row, got {ssh:?} and {profile:?}"
         );
     }
 
     #[test]
-    fn resumable_sessions_appear_before_saved_profiles_and_dispatch_resume() {
+    fn resumable_sessions_appear_in_the_running_sessions_panel_and_dispatch_resume() {
         // Feature request #70: unattached, locally running festerm-sessiond
-        // sessions should surface as one-click "Resume" entries, listed
-        // after the fixed "new session" entries but before saved profiles.
+        // sessions should surface as one-click reattach entries. They live in
+        // the Running Sessions panel, grouped under the provider that owns
+        // them, because reattaching differs per provider.
         let profiles = vec![
             Profile::local("development", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
@@ -6562,23 +7461,27 @@ mod tests {
             created_at_unix_ms: 0,
         }];
         let mut harness =
-            harness_with_profiles_grid_and_resumable(profiles, false, 520.0, resumable_sessions);
+            harness_with_profiles_grid_and_resumable(profiles, false, 1240.0, resumable_sessions);
         harness.run();
 
-        let ssh_top = harness
-            .get_by_label("SSH — Connect to a remote host")
+        let cards_bottom = harness
+            .get_by_label("SSH — Connect to a remote host over SSH")
+            .rect()
+            .bottom();
+        let group_top = harness
+            .get_by_label("fesTerm Native (sessiond)")
             .rect()
             .top();
-        let resume_node = harness.get_by_label("Resume: orphaned — /bin/bash · /tmp");
-        let resume_top = resume_node.rect().top();
-        let profile_top = harness
-            .get_by_label("development — Saved local profile")
-            .rect()
-            .top();
+        let resume_node = harness.get_by_label("Reattach orphaned");
+        let profile_rect = harness.get_by_label("development — Local · cargo").rect();
 
         assert!(
-            ssh_top < resume_top && resume_top < profile_top,
-            "expected New Session entries, then Resume entries, then saved profiles"
+            cards_bottom < group_top && group_top < resume_node.rect().top(),
+            "reattachable sessions belong under their provider group, below the launch cards"
+        );
+        assert!(
+            profile_rect.right() <= resume_node.rect().left(),
+            "saved profiles and running sessions are side-by-side panels, profiles on the left"
         );
 
         resume_node.click();
@@ -6602,43 +7505,31 @@ mod tests {
             name: "build".to_owned(),
             match_key: "build".to_owned(),
             attached: false,
+            started_at_unix_seconds: None,
         }];
         let screen_sessions = vec![MultiplexerSession {
             name: "main".to_owned(),
             match_key: "12345.main".to_owned(),
             attached: true,
+            started_at_unix_seconds: None,
         }];
         let mut harness =
             harness_with_multiplexer_sessions(profiles, tmux_sessions, screen_sessions);
         harness.run();
 
-        let ssh_top = harness
-            .get_by_label("SSH — Connect to a remote host")
-            .rect()
-            .top();
-        let tmux_heading_top = harness.get_by_label("TMUX SESSIONS").rect().top();
-        let tmux_top = harness.get_by_label("build — tmux session").rect().top();
-        let screen_heading_top = harness.get_by_label("GNU SCREEN SESSIONS").rect().top();
-        let screen_top = harness
-            .get_by_label("main — GNU screen session · attached elsewhere")
-            .rect()
-            .top();
-        let profile_top = harness
-            .get_by_label("development — Saved local profile")
-            .rect()
-            .top();
+        let tmux_heading_top = harness.get_by_label("tmux").rect().top();
+        let tmux_top = harness.get_by_label("Reattach build").rect().top();
+        let screen_heading_top = harness.get_by_label("screen").rect().top();
+        let screen_top = harness.get_by_label("Reattach main").rect().top();
 
         assert!(
-            ssh_top < tmux_heading_top
-                && tmux_heading_top < tmux_top
+            tmux_heading_top < tmux_top
                 && tmux_top < screen_heading_top
-                && screen_heading_top < screen_top
-                && screen_top < profile_top,
-            "expected New Session entries, then a tmux sessions widget, then a GNU Screen \
-             sessions widget, then saved profiles"
+                && screen_heading_top < screen_top,
+            "each multiplexer keeps its own labelled group, tmux above GNU screen:              {tmux_heading_top} {tmux_top} {screen_heading_top} {screen_top}"
         );
 
-        harness.get_by_label("build — tmux session").click();
+        harness.get_by_label("Reattach build").click();
         harness.run();
         assert!(matches!(
             &harness.state().command,
@@ -6649,9 +7540,7 @@ mod tests {
         ));
 
         harness.state_mut().command = None;
-        harness
-            .get_by_label("main — GNU screen session · attached elsewhere")
-            .click();
+        harness.get_by_label("Reattach main").click();
         harness.run();
         assert!(
             matches!(
@@ -6668,75 +7557,94 @@ mod tests {
     }
 
     #[test]
-    fn compact_launcher_grid_off_keeps_saved_profiles_single_column() {
-        // Regression test for feature request #64: with the preference off
-        // (the default), saved profiles should stack vertically one per
-        // row even in a window wide enough to fit multiple grid columns.
+    fn saved_profiles_always_stack_one_row_per_profile() {
+        // The Saved Profiles panel is a table, so every profile occupies a
+        // full-width row whose columns line up with the ones above it. A
+        // multi-column card grid (the original shape of feature request #64)
+        // cannot do that, so the preference no longer changes this.
         let profiles = vec![
             Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
             Profile::local("beta", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
         ];
-        let mut harness = harness_with_profiles_and_grid(profiles, false, 900.0);
+        let mut harness = harness_with_profiles_and_grid(profiles, true, 1240.0);
         harness.run();
 
-        let alpha_rect = harness.get_by_label("alpha — Saved local profile").rect();
-        let beta_rect = harness.get_by_label("beta — Saved local profile").rect();
+        let alpha_rect = harness.get_by_label("alpha — Local · cargo").rect();
+        let beta_rect = harness.get_by_label("beta — Local · cargo").rect();
 
         assert!(
             alpha_rect.top() < beta_rect.top()
                 && (alpha_rect.left() - beta_rect.left()).abs() < 1.0,
-            "expected alpha above beta in the same column when the grid preference is off"
+            "expected alpha above beta in one column of aligned rows"
         );
     }
 
     #[test]
-    fn compact_launcher_grid_on_lays_out_saved_profiles_side_by_side_when_wide_enough() {
-        // Regression test for feature request #64: with the preference on
-        // and a window wide enough for multiple columns, saved profiles
-        // should lay out side by side instead of one per row.
+    fn compact_new_session_layout_shortens_the_launch_cards() {
+        // Feature request #64 asked for a denser New Session surface. The
+        // preference now trades the launch cards' descriptions for height,
+        // which is what actually buys room for the panels below them.
         let profiles = vec![
             Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
-            Profile::local("beta", "cargo", vec!["run".to_owned()], None)
-                .expect("test profile is valid"),
         ];
-        let mut harness = harness_with_profiles_and_grid(profiles, true, 900.0);
-        harness.run();
 
-        let alpha_rect = harness.get_by_label("alpha — Saved local profile").rect();
-        let beta_rect = harness.get_by_label("beta — Saved local profile").rect();
+        let mut roomy = harness_with_profiles_and_grid(profiles.clone(), false, 1240.0);
+        roomy.run();
+        let roomy_card = roomy
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        let roomy_profile = roomy.get_by_label("alpha — Local · cargo").rect();
+
+        let mut compact = harness_with_profiles_and_grid(profiles, true, 1240.0);
+        compact.run();
+        let compact_card = compact
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        let compact_profile = compact.get_by_label("alpha — Local · cargo").rect();
 
         assert!(
-            (alpha_rect.top() - beta_rect.top()).abs() < 1.0
-                && alpha_rect.left() < beta_rect.left(),
-            "expected alpha and beta side by side in the same row when the grid preference is on \
-             and the window is wide enough for multiple columns"
+            compact_card.height() < roomy_card.height(),
+            "the compact layout must shrink the launch cards, got {compact_card:?} against \
+             {roomy_card:?}"
+        );
+        assert!(
+            compact_profile.top() < roomy_profile.top(),
+            "shorter cards must pull the panels below them upward"
         );
     }
 
     #[test]
-    fn compact_launcher_grid_on_falls_back_to_single_column_when_narrow() {
-        // Regression test for feature request #64: even with the
-        // preference on, a narrow window that can only fit one card-width
-        // column should fall back to the single-column layout.
+    fn the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns() {
+        // Side by side, each panel needs room for its own columns. Below
+        // that threshold they stack instead, because two cramped columns
+        // would clip their contents or force a horizontal scrollbar that
+        // hides the right-hand panel entirely.
         let profiles = vec![
             Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
-            Profile::local("beta", "cargo", vec!["run".to_owned()], None)
-                .expect("test profile is valid"),
         ];
-        let mut harness = harness_with_profiles_and_grid(profiles, true, 360.0);
-        harness.run();
+        let resumable = vec![festerm_sessiond::UnattachedSession {
+            name: "orphaned".to_owned(),
+            shell: "/bin/bash".to_owned(),
+            arguments: Vec::new(),
+            working_directory: Some("/tmp".to_owned()),
+            created_at_unix_ms: 0,
+        }];
 
-        let alpha_rect = harness.get_by_label("alpha — Saved local profile").rect();
-        let beta_rect = harness.get_by_label("beta — Saved local profile").rect();
+        let mut narrow =
+            harness_with_profiles_grid_and_resumable(profiles.clone(), false, 560.0, resumable);
+        narrow.run();
+
+        let profile_rect = narrow.get_by_label("alpha — Local · cargo").rect();
+        let session_rect = narrow.get_by_label("Reattach orphaned").rect();
 
         assert!(
-            alpha_rect.top() < beta_rect.top()
-                && (alpha_rect.left() - beta_rect.left()).abs() < 1.0,
-            "expected a single-column fallback when the window is too narrow for a second column"
+            profile_rect.bottom() <= session_rect.top(),
+            "expected the Running Sessions panel below the Saved Profiles panel in a narrow \
+             window, got {profile_rect:?} and {session_rect:?}"
         );
     }
 
@@ -6750,16 +7658,13 @@ mod tests {
         harness.run();
 
         assert!(harness
-            .query_by_label("development — Saved local profile")
+            .query_by_label("development — Local · cargo")
             .is_some());
-        harness.key_press(egui::Key::ArrowDown);
-        harness.run();
-        harness.key_press(egui::Key::ArrowDown);
-        harness.run();
-        harness.key_press(egui::Key::ArrowDown);
-        harness.run();
-        harness.key_press(egui::Key::ArrowDown);
-        harness.run();
+        // Past the five launch cards to the first saved profile.
+        for _ in 0..5 {
+            harness.key_press(egui::Key::ArrowDown);
+            harness.run();
+        }
         harness.key_press(egui::Key::Enter);
         harness.run();
 
@@ -6786,7 +7691,7 @@ mod tests {
         harness.run();
 
         assert!(harness
-            .query_by_label("production — Saved SSH profile · deploy@ssh.example.test:2200")
+            .query_by_label("production — SSH · ssh.example.test")
             .is_some());
         assert!(
             harness
@@ -6798,7 +7703,231 @@ mod tests {
     }
 
     #[test]
-    fn saved_sftp_profile_uses_the_ssh_profile_identity_as_its_primary_label() {
+    fn searching_saved_profiles_filters_the_table_without_dispatching_a_command() {
+        let profiles = vec![
+            Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+            Profile::local("beta", "npm", vec!["start".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        assert!(harness.query_by_label("beta — Local · npm").is_some());
+
+        // Typing filters on name, type, and host/path alike.
+        harness.get_by_label("Search profiles…").focus();
+        harness.run();
+        harness.get_by_label("Search profiles…").type_text("npm");
+        harness.run();
+
+        assert!(
+            harness.query_by_label("alpha — Local · cargo").is_none(),
+            "a profile matching neither name, type, nor host/path must drop out of the table"
+        );
+        assert!(harness.query_by_label("beta — Local · npm").is_some());
+        assert!(
+            harness.state().command.is_none(),
+            "filtering is a view concern and must not dispatch an AppCommand"
+        );
+    }
+
+    #[test]
+    fn the_sort_toggle_switches_between_last_used_and_name_without_dispatching() {
+        let profiles = vec![
+            Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        // Recently used is the default, so never-launched profiles sort by
+        // name after every launched one.
+        harness.get_by_label("Sorted by last used").click();
+        harness.run();
+
+        assert!(harness.query_by_label("Sorted by name").is_some());
+        assert!(harness.state().command.is_none());
+
+        harness.get_by_label("Sorted by name").click();
+        harness.run();
+        assert!(harness.query_by_label("Sorted by last used").is_some());
+    }
+
+    #[test]
+    fn a_running_session_group_collapses_and_expands_from_its_header() {
+        use crate::multiplexer_sessions::MultiplexerSession;
+
+        let tmux_sessions = vec![MultiplexerSession {
+            name: "build".to_owned(),
+            match_key: "build".to_owned(),
+            attached: false,
+            started_at_unix_seconds: None,
+        }];
+        let mut harness = harness_with_multiplexer_sessions(Vec::new(), tmux_sessions, Vec::new());
+        harness.run();
+
+        assert!(harness.query_by_label("Reattach build").is_some());
+
+        harness.get_by_label("Collapse tmux").click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Reattach build").is_none(),
+            "a collapsed group hides its rows but keeps its header and count"
+        );
+        assert!(harness.query_by_label("Expand tmux").is_some());
+        assert!(harness.state().command.is_none());
+
+        harness.get_by_label("Expand tmux").click();
+        harness.run();
+        assert!(harness.query_by_label("Reattach build").is_some());
+    }
+
+    #[test]
+    fn the_running_sessions_refresh_control_dispatches_no_command() {
+        let mut harness = harness_with_profiles(Vec::new());
+        harness.run();
+
+        harness.get_by_label("Refresh").click();
+        harness.run();
+
+        assert!(
+            harness.state().command.is_none(),
+            "Refresh asks for a repaint so the composition root can re-enumerate; it must not \
+             mutate profiles or session definitions"
+        );
+    }
+
+    #[test]
+    fn manage_profiles_opens_the_profiles_surface() {
+        let mut harness = harness_with_profiles(Vec::new());
+        harness.run();
+
+        harness.get_by_label("Manage Profiles…").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::OpenProfiles)
+        ));
+    }
+
+    #[test]
+    fn a_markdown_launch_card_opens_a_markdown_workspace() {
+        let mut harness = harness_with_profiles(Vec::new());
+        harness.run();
+
+        harness
+            .get_by_label("Markdown — Open a Markdown workspace")
+            .click();
+        harness.run();
+
+        assert!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::OpenMarkdownWorkspace)
+            ),
+            "Markdown is one of the session types fesTerm can start from nothing, so it earns a \
+             launch card alongside the other four"
+        );
+    }
+
+    #[test]
+    fn new_profile_asks_which_kind_rather_than_repeating_manage_profiles() {
+        // New Profile and Manage Profiles... sit side by side, so New
+        // Profile has to actually create something rather than landing on
+        // the same list.
+        let mut harness = harness_with_profiles(Vec::new());
+        harness.run();
+
+        harness.get_by_label("New Profile").click();
+        harness.run();
+        harness.run();
+        harness.get_by_label("SFTP").click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::CreateProfile {
+                kind: NewProfileKind::Sftp
+            })
+        ));
+    }
+
+    #[test]
+    fn a_profile_rows_menu_connects_the_profile() {
+        let profiles = vec![
+            Profile::local("development", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        harness.get_by_label("More actions for development").click();
+        harness.run();
+        harness.run();
+        harness.get_by_label("Connect").click();
+        harness.run();
+
+        assert!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::StartConfiguredLocalProfile { ref profile_id })
+                    if profile_id == "development"
+            ),
+            "the row menu's Connect entry must take the same path as clicking the row"
+        );
+    }
+
+    #[test]
+    fn right_clicking_a_profile_row_opens_the_same_menu_as_its_overflow_control() {
+        // The overflow control and a right-click are one affordance, so they
+        // must offer the same entries rather than drifting apart.
+        let profiles = vec![
+            Profile::local("development", "cargo", vec!["run".to_owned()], None)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        harness
+            .get_by_label("development — Local · cargo")
+            .click_secondary();
+        harness.run();
+        harness.run();
+
+        assert!(harness.query_by_label("Connect").is_some());
+        assert!(harness.query_by_label("Edit").is_some());
+    }
+
+    #[test]
+    fn an_sftp_profiles_row_menu_offers_an_ssh_connection() {
+        let profiles = vec![
+            Profile::sftp("files", "ssh.example.test", 22, "deploy", true)
+                .expect("test profile is valid"),
+        ];
+        let mut harness = harness_with_profiles(profiles);
+        harness.run();
+
+        harness.get_by_label("More actions for files").click();
+        harness.run();
+        harness.run();
+        harness.get_by_label("Connect SSH").click();
+        harness.run();
+
+        assert!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::StartConfiguredSshProfile { ref profile_id })
+                    if profile_id == "files"
+            ),
+            "an SFTP profile names the same host an SSH session would, so its row offers both"
+        );
+    }
+
+    #[test]
+    fn an_ssh_profiles_sftp_launch_is_offered_from_its_row_menu_not_a_second_row() {
         let profiles = vec![Profile::ssh(
             "production",
             "ssh.example.test",
@@ -6812,14 +7941,27 @@ mod tests {
         let mut harness = harness_with_profiles(profiles);
         harness.run();
 
-        assert!(harness
-            .query_by_label("production — Saved SSH profile · SFTP · deploy@ssh.example.test:2200")
-            .is_some());
-        assert!(
+        assert_eq!(
             harness
-                .query_by_label("production (SFTP) — Saved SFTP destination · deploy@ssh.example.test:2200")
-                .is_none(),
-            "saved SFTP launchers must reuse the SSH profile identity instead of inventing a second label vocabulary"
+                .get_all_by_label("production — SSH · ssh.example.test")
+                .count(),
+            1,
+            "one saved profile must occupy exactly one row, whatever protocols it can serve"
+        );
+
+        harness.get_by_label("More actions for production").click();
+        harness.run();
+        harness.run();
+        harness.get_by_label("Connect SFTP").click();
+        harness.run();
+
+        assert!(
+            matches!(
+                harness.state().command,
+                Some(AppCommand::StartConfiguredSftpProfile { ref profile_id })
+                    if profile_id == "production"
+            ),
+            "an SSH profile's SFTP launch must reuse that profile's identity from its row menu"
         );
     }
 
@@ -6840,7 +7982,7 @@ mod tests {
         let mut harness = harness_with_profiles(vec![profile]);
         harness.run();
         harness
-            .get_by_label("production — Saved SSH profile · deploy@ssh.example.test:2200")
+            .get_by_label("production — SSH · ssh.example.test")
             .click();
         harness.run();
 
@@ -6866,9 +8008,9 @@ mod tests {
         let mut harness = harness_with_profiles(vec![profile]);
         harness.run();
 
-        harness
-            .get_by_label("Edit production (Saved SSH profile · deploy@ssh.example.test:2200)")
-            .click();
+        harness.get_by_label("More actions for production").click();
+        harness.run();
+        harness.get_by_label("Edit").click();
         harness.run();
 
         assert!(matches!(
@@ -6901,7 +8043,7 @@ mod tests {
             .collect();
         let configuration = Configuration::new(profiles).expect("test configuration is valid");
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 500.0))
+            .with_size(egui::vec2(1240.0, 880.0))
             .build_ui_state(
                 |ui, state: &mut LauncherHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -6939,17 +8081,16 @@ mod tests {
                 .expect("status bar panel state should be recorded")
                 .outer_rect
                 .top();
-        let last_edit_rect = harness
-            .get_by_label("Edit host-0 (Saved SSH profile · deploy@ssh.example.test:22)")
-            .rect();
+        let last_row_menu_rect = harness.get_by_label("More actions for host-0").rect();
         assert!(
-            last_edit_rect.max.y <= status_bar_top,
-            "saved profile edit icons must stay above the status bar rather than overlapping it"
+            last_row_menu_rect.max.y <= status_bar_top,
+            "saved profile row controls must stay above the status bar rather than overlapping it"
         );
 
-        harness
-            .get_by_label("Edit host-0 (Saved SSH profile · deploy@ssh.example.test:22)")
-            .click();
+        harness.get_by_label("More actions for host-0").click();
+        harness.run();
+        harness.run();
+        harness.get_by_label("Edit").click();
         harness.run();
         assert!(matches!(
             harness.state().command,
@@ -7509,6 +8650,7 @@ mod tests {
                         state.tab_id,
                         &state.configuration,
                         None,
+                        None,
                         PersistenceProviderKind::FestermSessiond,
                     ) {
                         state.command = Some(command);
@@ -7676,6 +8818,7 @@ mod tests {
                         ui,
                         state.tab_id,
                         &state.configuration,
+                        None,
                         None,
                         PersistenceProviderKind::Tmux,
                     ) {
@@ -7939,6 +9082,7 @@ mod tests {
                         state.tab_id,
                         &state.configuration,
                         None,
+                        None,
                         PersistenceProviderKind::FestermSessiond,
                     ) {
                         state.command = Some(command);
@@ -8002,6 +9146,7 @@ mod tests {
                         ui,
                         state.tab_id,
                         &state.configuration,
+                        None,
                         None,
                         PersistenceProviderKind::FestermSessiond,
                     ) {

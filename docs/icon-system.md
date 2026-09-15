@@ -73,6 +73,23 @@ The intended first enum surface is:
 | `Back` | `back.svg` | Return to the prior step of a multi-step flow |
 | `Edit` | `edit.svg` | Open a saved definition's editor |
 | `Activate` | `activate.svg` | Switch focus to an existing open tab |
+| `SavedProfiles` | `saved-profiles.svg` | The saved-profile collection; `Profile` remains one individual definition |
+| `RunningSessions` | `running-sessions.svg` | The collection of running sessions available to reattach |
+| `FileTransfer` | `file-transfer.svg` | File-transfer (SFTP) session or destination |
+| `RemoteGlobe` | `remote-globe.svg` | The remote/network badge already composited into `SshRemote` |
+| `Proceed` | `proceed.svg` | Proceed into the flow a launch card represents |
+| `NewProfile` | `new-profile.svg` | Create a new saved profile |
+| `SortOrder` | `sort-order.svg` | Change a list's ordering |
+| `Reattach` | `reattach.svg` | Attach an already-running session to a tab |
+| `SectionExpanded`, `SectionCollapsed` | matching filename | Disclosure group state |
+
+`SshRemote` is drawn as a terminal whose lower-right corner opens around a
+network globe. `RemoteGlobe` repeats only that globe on the same 24-unit
+grid, so a surface that wants the mockup's two-tone treatment paints
+`SshRemote` in the session-type color and then `RemoteGlobe` over it in an
+accent color. The asset layer stays monochrome; the application still owns
+both colors, and every other surface keeps using the single complete
+`SshRemote` mark.
 
 Do not name variants after where they happen to appear (`TopBarSearch`) or
 after visual construction (`ThreeDots`). Names describe intent so launcher,
