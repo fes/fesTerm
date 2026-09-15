@@ -1506,3 +1506,27 @@ its front edge, the document gains rounded corners, and the connector uses
 nine explicit filled pins. The lesson is to inspect the renderer and compare
 negative spaces at the actual card and row sizes, not compensate for a
 misdiagnosed stroke problem by repeatedly enlarging the UI.
+
+### New Session density refinement
+
+After the icon correction, the launcher still read larger and heavier than
+fesTerm's other controls. A local-only experiment reduces its typography,
+icon slots, padding, and row heights together rather than applying global
+zoom or changing the artwork again. Panel headings move from 20 to 17 px,
+card titles from 18 to 16 px, profile rows from 41 to 34 px, and buttons from
+40 to 32 px. Both normal and compact card layouts retain descriptions and
+the approved relative icon proportions.
+
+The heading's vertical placement now uses the measured title height instead
+of an offset tied to its old font size. Running-session panel measurements
+also use the actual margins, avoiding stale 30 px deductions after their
+insets shrink. A populated capture fixture shows twelve mixed profiles and
+all three session providers at four widths, alongside the existing full-app
+captures. Geometry assertions cover title fit, heading/search alignment,
+and minimum click targets. The experiment was approved after visual feedback
+for inclusion in v0.1.13; application-wide typography remains unchanged.
+
+The visual pass also favored assigning a little more of a narrow table to
+Name instead of Last Used. Headers and rows use the same responsive origins,
+so long profile names remain distinguishable without changing desktop
+column proportions or introducing horizontal scrolling.

@@ -190,7 +190,7 @@ nothing: **Local Shell**, **SSH**, **SFTP**, **Serial**, and **Markdown**.
 Each card is a wide strip rather than a tall tile: a semantic session-type
 icon and the title share the top line, a two-line factual description sits
 below them, and a proceed arrow shares the description's vertical centre on
-the right. Icon slots are fifty pixels high, or forty-two in the compact
+the right. Icon slots are forty pixels high, or thirty-four in the compact
 layout. SSH and Serial use wider optical slots so the remote terminal does
 not shrink beside Local and the connector keeps its wide silhouette.
 Source strokes scale with the geometry; the SSH globe uses a lighter stroke
@@ -205,6 +205,18 @@ disabled state rather than as a cursor. The card
 row wraps to fewer columns at narrow widths rather than forcing horizontal
 scrolling, and the whole surface is inset from the window's content edge so
 the cards and panels read as objects on a background.
+
+**Density:** this landing surface matches the scale of the rest of fesTerm
+without changing the
+approved icon artwork or the connection forms. Card titles use 16 px text,
+panel headings 17 px, body/control text 13 px, and secondary text 12 px.
+Cards are 112 px high (96 px compact), profile rows 34 px, and labelled
+controls 32 px. Bare icon actions keep at least 24 px click targets.
+Below 600 px panel width, the Name column borrows space from Last Used so
+ordinary profile names remain distinguishable; headers and rows share the
+same column origins.
+The existing compact-layout preference remains a second, tighter option;
+no new preference or application-wide zoom factor is introduced.
 
 Below the launch cards, **Saved Profiles** and **Running Sessions** form two
 panels. At ordinary desktop widths Saved Profiles takes the left, wider share

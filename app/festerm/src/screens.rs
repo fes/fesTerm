@@ -2069,58 +2069,79 @@ fn show_sftp_form(
 /// and the card row's column count respond to width.
 /// Height of a card's two-line description block, used to place both the
 /// description and the proceed arrow that shares its vertical centre.
-const LAUNCH_CARD_DESCRIPTION_HEIGHT: f32 = 38.0;
+const LAUNCH_CARD_DESCRIPTION_HEIGHT: f32 = 32.0;
 /// Width reserved on a card's right edge for the proceed arrow, so the
 /// description wraps beside it rather than underneath it.
-const LAUNCH_CARD_ARROW_LANE: f32 = 30.0;
-const LAUNCH_CARD_HEIGHT: f32 = 134.0;
+const LAUNCH_CARD_ARROW_LANE: f32 = 24.0;
+const LAUNCH_CARD_HEIGHT: f32 = 112.0;
 /// The height a card takes for users who have turned the compact New Session
 /// layout on. Compact trims the mark and the padding; it keeps the
 /// description, because a card that only says "SSH" does not tell a new user
 /// what activating it will do.
-const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 116.0;
-const LAUNCH_CARD_GAP: f32 = 16.0;
-const LAUNCH_CARD_PADDING: f32 = 18.0;
-const LAUNCH_CARD_COMPACT_PADDING: f32 = 14.0;
+const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 96.0;
+const LAUNCH_CARD_GAP: f32 = 12.0;
+const LAUNCH_CARD_PADDING: f32 = 16.0;
+const LAUNCH_CARD_COMPACT_PADDING: f32 = 12.0;
+const LAUNCH_CARD_MARK_SIZE: f32 = 40.0;
+const LAUNCH_CARD_COMPACT_MARK_SIZE: f32 = 34.0;
+const LAUNCH_CARD_TITLE_SIZE: f32 = 16.0;
 /// Narrower than this and a card's title starts eliding, so the row wraps to
 /// fewer columns instead.
-const LAUNCH_CARD_MIN_WIDTH: f32 = 196.0;
-const LAUNCHER_PANEL_GAP: f32 = 18.0;
+const LAUNCH_CARD_MIN_WIDTH: f32 = 176.0;
+const LAUNCHER_PANEL_GAP: f32 = 14.0;
 /// Saved Profiles takes the larger share: it carries four columns of text,
 /// while Running Sessions is a name and a button.
 const LAUNCHER_PROFILES_PANEL_SHARE: f32 = 0.59;
 /// Narrower than this the two panels stack instead of sitting side by side,
 /// so the profile columns never collapse into each other.
 const LAUNCHER_PANEL_MIN_WIDTH: f32 = 400.0;
-const LAUNCHER_PANEL_PADDING: f32 = 21.0;
+const LAUNCHER_PANEL_PADDING: f32 = 16.0;
 /// Both panels reserve the same heading row and place their mark, title, and
 /// controls on the same line within it, so a heading that carries a subtitle
 /// still lines up with one that does not.
-const LAUNCHER_PANEL_HEADING_HEIGHT: f32 = 52.0;
-const LAUNCHER_PANEL_HEADING_LINE: f32 = 21.0;
+const LAUNCHER_PANEL_HEADING_HEIGHT: f32 = 44.0;
+const LAUNCHER_PANEL_HEADING_LINE: f32 = 16.0;
+const LAUNCHER_HEADING_TEXT_SIZE: f32 = 17.0;
+const LAUNCHER_HEADING_MARK_SIZE: f32 = 28.0;
 /// Vertical inset from a panel's frame to its heading row. Shared by both
 /// panels so their headings start at the same height.
-const LAUNCHER_PANEL_TOP_MARGIN: i8 = 15;
+const LAUNCHER_PANEL_TOP_MARGIN: i8 = 12;
 /// Text size inside the Saved Profiles search pill.
-const LAUNCHER_SEARCH_TEXT_SIZE: f32 = 14.0;
-const LAUNCHER_PANEL_CORNER: f32 = 12.0;
-const LAUNCHER_PROFILE_ROW_HEIGHT: f32 = 41.0;
+const LAUNCHER_SEARCH_TEXT_SIZE: f32 = 13.0;
+const LAUNCHER_BODY_TEXT_SIZE: f32 = 13.0;
+const LAUNCHER_DETAIL_TEXT_SIZE: f32 = 12.0;
+const LAUNCHER_CONTROL_HEIGHT: f32 = 32.0;
+const LAUNCHER_CONTROL_ICON_SIZE: f32 = 16.0;
+const LAUNCHER_PANEL_CORNER: f32 = 10.0;
+const LAUNCHER_PROFILE_ROW_HEIGHT: f32 = 34.0;
+const LAUNCHER_PROFILE_MARK_SIZE: f32 = 24.0;
 /// Horizontal centre of the per-row overflow control, measured in from the
 /// Saved Profiles panel's right edge.
-const LAUNCHER_ROW_MENU_INSET: f32 = 35.0;
+const LAUNCHER_ROW_MENU_INSET: f32 = 26.0;
 /// Saved Profiles column origins as a fraction of the panel's width.
 ///
 /// Column headers are positioned from these same values as the cells beneath
 /// them, so a header can never drift away from the data it labels.
 const LAUNCHER_PROFILE_COLUMNS: [f32; 4] = [0.103, 0.355, 0.482, 0.757];
+/// On narrower panels, names take priority over relative-use metadata.
+const LAUNCHER_NARROW_PROFILE_COLUMNS: [f32; 4] = [0.103, 0.400, 0.520, 0.820];
 /// Gutter kept between one column's text and the next column's origin.
 /// Height reserved for the Saved Profiles footer row when pinning it to the
 /// panel's bottom edge.
-const LAUNCHER_FOOTER_HEIGHT: f32 = 40.0;
+const LAUNCHER_FOOTER_HEIGHT: f32 = LAUNCHER_CONTROL_HEIGHT;
+const LAUNCHER_FOOTER_GAP: f32 = 12.0;
 /// Inset kept between the window's content edge and the New Session surface,
 /// so the launch cards and panels do not sit flush against the frame.
 const LAUNCHER_SURFACE_MARGIN: f32 = 12.0;
 const LAUNCHER_COLUMN_GUTTER: f32 = 12.0;
+
+fn launcher_profile_columns(width: f32) -> [f32; 4] {
+    if width < 600.0 {
+        LAUNCHER_NARROW_PROFILE_COLUMNS
+    } else {
+        LAUNCHER_PROFILE_COLUMNS
+    }
+}
 
 /// How the Saved Profiles list is ordered.
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
@@ -2297,18 +2318,22 @@ fn show_launch_card(
     } else {
         LAUNCH_CARD_PADDING
     };
-    let mark_size = if compact { 42.0 } else { 50.0 };
+    let mark_size = if compact {
+        LAUNCH_CARD_COMPACT_MARK_SIZE
+    } else {
+        LAUNCH_CARD_MARK_SIZE
+    };
     let mark_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + padding, rect.top() + padding),
         session_mark_size(item.mark().0, mark_size),
     );
     paint_session_mark(ui.painter(), item, mark_rect);
 
-    let title_left = mark_rect.right() + 12.0;
+    let title_left = mark_rect.right() + 10.0;
     let title = elided_galley(
         ui,
         &item.label,
-        18.0,
+        LAUNCH_CARD_TITLE_SIZE,
         theme::TEXT_PRIMARY,
         (rect.right() - padding - title_left).max(0.0),
         1,
@@ -2326,7 +2351,7 @@ fn show_launch_card(
     let description = elided_galley(
         ui,
         &item.description,
-        14.0,
+        LAUNCHER_BODY_TEXT_SIZE,
         theme::TEXT_SECONDARY,
         // Every description line stops short of the proceed arrow's column
         // rather than the last line alone, so a two-line description keeps a
@@ -2334,7 +2359,7 @@ fn show_launch_card(
         (rect.width() - padding * 2.0 - LAUNCH_CARD_ARROW_LANE).max(0.0),
         2,
     );
-    let description_top = mark_rect.bottom() + if compact { 8.0 } else { 10.0 };
+    let description_top = mark_rect.bottom() + if compact { 6.0 } else { 8.0 };
     ui.painter().galley(
         egui::pos2(text_left, description_top),
         description,
@@ -2343,10 +2368,10 @@ fn show_launch_card(
 
     let arrow = egui::Rect::from_center_size(
         egui::pos2(
-            rect.right() - padding - 9.0,
+            rect.right() - padding - LAUNCHER_CONTROL_ICON_SIZE / 2.0,
             rect.bottom() - padding - LAUNCH_CARD_DESCRIPTION_HEIGHT / 2.0,
         ),
-        egui::Vec2::splat(18.0),
+        egui::Vec2::splat(LAUNCHER_CONTROL_ICON_SIZE),
     );
     icon::paint(
         ui.painter(),
@@ -2377,43 +2402,43 @@ fn show_panel_heading(
     // alignment it would sit at the top of the row, and a heading with a
     // subtitle would ride higher than one without — which is why the two
     // panels' titles did not line up with each other.
-    let title_width = ui
+    let title_size = ui
         .painter()
         .layout_no_wrap(
             title.to_owned(),
-            egui::FontId::proportional(20.0),
+            egui::FontId::proportional(LAUNCHER_HEADING_TEXT_SIZE),
             theme::TEXT_PRIMARY,
         )
-        .size()
-        .x;
+        .size();
     let subtitle_width = subtitle.map(|subtitle| {
         ui.painter()
             .layout_no_wrap(
                 subtitle.to_owned(),
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(LAUNCHER_DETAIL_TEXT_SIZE),
                 theme::TEXT_SECONDARY,
             )
             .size()
             .x
     });
-    let text_width = title_width.max(subtitle_width.unwrap_or(0.0)).ceil() + 1.0;
+    let text_width = title_size.x.max(subtitle_width.unwrap_or(0.0)).ceil() + 1.0;
     ui.horizontal(|ui| {
         ui.set_height(height);
-        let (mark_slot, _) = ui.allocate_exact_size(vec2(34.0, height), Sense::hover());
+        let (mark_slot, _) =
+            ui.allocate_exact_size(vec2(LAUNCHER_HEADING_MARK_SIZE, height), Sense::hover());
         let mark_rect = egui::Rect::from_center_size(
             egui::pos2(
                 mark_slot.center().x,
                 mark_slot.top() + LAUNCHER_PANEL_HEADING_LINE,
             ),
-            egui::Vec2::splat(34.0),
+            egui::Vec2::splat(LAUNCHER_HEADING_MARK_SIZE),
         );
         icon::paint(ui.painter(), mark, mark_rect, theme::ACCENT_ACTION);
-        ui.add_space(10.0);
+        ui.add_space(6.0);
         let (text_slot, _) = ui.allocate_exact_size(vec2(text_width, height), Sense::hover());
         let text_rect = egui::Rect::from_min_max(
             egui::pos2(
                 text_slot.left(),
-                text_slot.top() + LAUNCHER_PANEL_HEADING_LINE - 12.0,
+                text_slot.top() + LAUNCHER_PANEL_HEADING_LINE - title_size.y / 2.0,
             ),
             text_slot.max,
         );
@@ -2427,13 +2452,13 @@ fn show_panel_heading(
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(
                     egui::RichText::new(title)
-                        .size(20.0)
+                        .size(LAUNCHER_HEADING_TEXT_SIZE)
                         .color(theme::TEXT_PRIMARY),
                 );
                 if let Some(subtitle) = subtitle {
                     ui.label(
                         egui::RichText::new(subtitle)
-                            .size(13.0)
+                            .size(LAUNCHER_DETAIL_TEXT_SIZE)
                             .color(theme::TEXT_SECONDARY),
                     );
                 }
@@ -2500,11 +2525,11 @@ fn show_profile_row(
         Stroke::new(1.0, theme::BORDER_SUBTLE.gamma_multiply(0.5)),
     );
 
-    let mark_size = session_mark_size(item.mark().0, 28.0);
+    let mark_size = session_mark_size(item.mark().0, LAUNCHER_PROFILE_MARK_SIZE);
     let mark_rect = egui::Rect::from_min_size(
         egui::pos2(
             rect.left() + LAUNCHER_PANEL_PADDING - 1.0,
-            rect.center().y - 14.0,
+            rect.center().y - mark_size.y / 2.0,
         ),
         mark_size,
     );
@@ -2516,14 +2541,27 @@ fn show_profile_row(
         .map(|(then, now)| relative_age(now, then))
         .unwrap_or_else(|| "Never".to_owned());
     let columns = [
-        (item.label.clone(), 15.0, theme::TEXT_PRIMARY),
-        (item.type_label.to_owned(), 14.0, theme::TEXT_SECONDARY),
-        (item.location.clone(), 14.0, theme::TEXT_SECONDARY),
-        (last_used, 14.0, theme::TEXT_SECONDARY),
+        (
+            item.label.clone(),
+            LAUNCHER_BODY_TEXT_SIZE,
+            theme::TEXT_PRIMARY,
+        ),
+        (
+            item.type_label.to_owned(),
+            LAUNCHER_BODY_TEXT_SIZE,
+            theme::TEXT_SECONDARY,
+        ),
+        (
+            item.location.clone(),
+            LAUNCHER_BODY_TEXT_SIZE,
+            theme::TEXT_SECONDARY,
+        ),
+        (last_used, LAUNCHER_DETAIL_TEXT_SIZE, theme::TEXT_SECONDARY),
     ];
+    let column_origins = launcher_profile_columns(width);
     for (index, (text, size, color)) in columns.into_iter().enumerate() {
-        let left = rect.left() + width * LAUNCHER_PROFILE_COLUMNS[index];
-        let right = LAUNCHER_PROFILE_COLUMNS
+        let left = rect.left() + width * column_origins[index];
+        let right = column_origins
             .get(index + 1)
             .map(|fraction| rect.left() + width * fraction)
             .unwrap_or(menu_center.x - 12.0);
@@ -2620,10 +2658,10 @@ fn show_session_group(
     }
     egui::Frame::new()
         .fill(theme::SURFACE_CARD)
-        .corner_radius(10.0)
-        .inner_margin(egui::Margin::symmetric(14, 12))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            ui.set_width((width - 28.0).max(0.0));
+            ui.set_width((width - 20.0).max(0.0));
             ui.horizontal(|ui| {
                 let (chevron, _) = ui.allocate_exact_size(egui::Vec2::splat(16.0), Sense::hover());
                 icon::paint(
@@ -2636,21 +2674,21 @@ fn show_session_group(
                     chevron,
                     theme::TEXT_SECONDARY,
                 );
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new(title)
-                        .size(15.0)
+                        .size(LAUNCHER_BODY_TEXT_SIZE)
                         .color(theme::TEXT_PRIMARY),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (badge, _) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::hover());
+                    let (badge, _) = ui.allocate_exact_size(vec2(22.0, 24.0), Sense::hover());
                     ui.painter()
                         .rect_filled(badge, 11.0, theme::SURFACE_TAB_ACTIVE);
                     ui.painter().text(
                         badge.center(),
                         egui::Align2::CENTER_CENTER,
                         items.len().to_string(),
-                        egui::FontId::proportional(13.0),
+                        egui::FontId::proportional(LAUNCHER_DETAIL_TEXT_SIZE),
                         theme::TEXT_SECONDARY,
                     );
                 });
@@ -2697,16 +2735,16 @@ fn show_session_row(
     command: &mut Option<AppCommand>,
 ) {
     ui.horizontal(|ui| {
-        ui.set_height(52.0);
+        ui.set_height(44.0);
         let (mark, _) =
-            ui.allocate_exact_size(session_mark_size(item.mark().0, 30.0), Sense::hover());
+            ui.allocate_exact_size(session_mark_size(item.mark().0, 24.0), Sense::hover());
         paint_session_mark(ui.painter(), item, mark);
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.label(
                 egui::RichText::new(&item.label)
-                    .size(15.0)
+                    .size(LAUNCHER_BODY_TEXT_SIZE)
                     .color(theme::TEXT_PRIMARY),
             );
             let subtitle = item
@@ -2716,7 +2754,7 @@ fn show_session_row(
                 .unwrap_or_else(|| item.description.clone());
             ui.label(
                 egui::RichText::new(subtitle)
-                    .size(13.0)
+                    .size(LAUNCHER_DETAIL_TEXT_SIZE)
                     .color(theme::TEXT_SECONDARY),
             );
         });
@@ -2744,13 +2782,16 @@ fn launcher_button(
         .painter()
         .layout_no_wrap(
             label.to_owned(),
-            egui::FontId::proportional(14.0),
+            egui::FontId::proportional(LAUNCHER_BODY_TEXT_SIZE),
             theme::TEXT_PRIMARY,
         )
         .size()
         .x
         .ceil();
-    let (rect, response) = ui.allocate_exact_size(vec2(text_width + 62.0, 40.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(text_width + 48.0, LAUNCHER_CONTROL_HEIGHT),
+        Sense::click(),
+    );
     // Several buttons on this surface share one visible word ("Reattach"),
     // so the caller may name them apart for anyone navigating by label.
     let name = accessible_name.unwrap_or(label);
@@ -2772,7 +2813,7 @@ fn launcher_button(
     };
     ui.painter().rect(
         rect,
-        8.0,
+        6.0,
         fill,
         if accent {
             Stroke::NONE
@@ -2782,15 +2823,15 @@ fn launcher_button(
         egui::StrokeKind::Inside,
     );
     let mark_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 22.0, rect.center().y),
-        egui::Vec2::splat(18.0),
+        egui::pos2(rect.left() + 18.0, rect.center().y),
+        egui::Vec2::splat(LAUNCHER_CONTROL_ICON_SIZE),
     );
     icon::paint(ui.painter(), mark, mark_rect, foreground);
     ui.painter().text(
-        egui::pos2(mark_rect.right() + 10.0, rect.center().y),
+        egui::pos2(mark_rect.right() + 8.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(14.0),
+        egui::FontId::proportional(LAUNCHER_BODY_TEXT_SIZE),
         foreground,
     );
     response
@@ -2798,12 +2839,12 @@ fn launcher_button(
 
 /// A bare icon control, for the panel headings' secondary actions.
 fn launcher_icon_button(ui: &mut Ui, mark: Icon, tooltip: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(30.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(28.0), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), tooltip));
     icon::paint(
         ui.painter(),
         mark,
-        rect.shrink(5.0),
+        rect.shrink(6.0),
         if response.hovered() {
             theme::TEXT_PRIMARY
         } else {
@@ -3248,7 +3289,7 @@ pub fn show_launcher(
                         state,
                         command,
                     );
-                    ui.add_space(23.0);
+                    ui.add_space(16.0);
 
                     // Side by side, the panels fill the rest of the surface so
                     // their footers sit on one line at the bottom edge rather
@@ -3498,22 +3539,22 @@ fn show_saved_profiles_panel(
                                     {
                                         state.profile_sort = state.profile_sort.toggled();
                                     }
-                                    ui.add_space(12.0);
-                                    let field_width = (ui.available_width() - 40.0).max(80.0);
+                                    ui.add_space(8.0);
+                                    let field_width = (ui.available_width() - 28.0).max(80.0);
                                     let (field, _) = ui.allocate_exact_size(
-                                        vec2(field_width, 38.0),
+                                        vec2(field_width, LAUNCHER_CONTROL_HEIGHT),
                                         Sense::hover(),
                                     );
                                     ui.painter().rect(
                                         field,
-                                        11.0,
+                                        8.0,
                                         theme::SURFACE_FIELD,
                                         Stroke::new(1.0, theme::BORDER_SUBTLE),
                                         egui::StrokeKind::Inside,
                                     );
                                     let glass = egui::Rect::from_center_size(
-                                        egui::pos2(field.left() + 20.0, field.center().y),
-                                        egui::Vec2::splat(17.0),
+                                        egui::pos2(field.left() + 16.0, field.center().y),
+                                        egui::Vec2::splat(LAUNCHER_CONTROL_ICON_SIZE),
                                     );
                                     icon::paint(
                                         ui.painter(),
@@ -3586,14 +3627,14 @@ fn show_saved_profiles_panel(
                                 },
                             );
                         });
-                        ui.add_space(14.0);
+                        ui.add_space(8.0);
 
                         show_profile_column_headers(ui, width, inner);
                         let selected = state.selected;
                         let search_is_empty = state.profile_search.trim().is_empty();
                         let rows = |ui: &mut Ui, command: &mut Option<AppCommand>| {
                             if order.is_empty() {
-                                ui.add_space(16.0);
+                                ui.add_space(12.0);
                                 ui.horizontal(|ui| {
                                     ui.add_space(LAUNCHER_PANEL_PADDING);
                                     ui.label(
@@ -3602,7 +3643,7 @@ fn show_saved_profiles_panel(
                                         } else {
                                             "No profiles match this search."
                                         })
-                                        .size(14.0)
+                                        .size(LAUNCHER_BODY_TEXT_SIZE)
                                         .color(theme::TEXT_MUTED),
                                     );
                                 });
@@ -3629,7 +3670,7 @@ fn show_saved_profiles_panel(
                                     - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0
                                     - ui.min_rect().height()
                                     - LAUNCHER_FOOTER_HEIGHT
-                                    - 18.0)
+                                    - LAUNCHER_FOOTER_GAP)
                                     .max(0.0);
                                 configure_content_scrollbar(ui);
                                 ScrollArea::vertical()
@@ -3641,11 +3682,11 @@ fn show_saved_profiles_panel(
                                         ui.set_width(width);
                                         rows(ui, command);
                                     });
-                                ui.add_space(18.0);
+                                ui.add_space(LAUNCHER_FOOTER_GAP);
                             }
                             None => {
                                 rows(ui, command);
-                                ui.add_space(18.0);
+                                ui.add_space(LAUNCHER_FOOTER_GAP);
                             }
                         }
                         ui.horizontal(|ui| {
@@ -3697,13 +3738,20 @@ fn show_saved_profiles_panel(
 /// use, so the two can never drift apart.
 fn show_profile_column_headers(ui: &mut Ui, width: f32, inner: f32) {
     let _ = inner;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
     for (index, heading) in ["Name", "Type", "Host / Path", "Last Used"]
         .into_iter()
         .enumerate()
     {
-        let galley = elided_galley(ui, heading, 13.0, theme::TEXT_MUTED, width * 0.2, 1);
-        let left = rect.left() + width * LAUNCHER_PROFILE_COLUMNS[index];
+        let galley = elided_galley(
+            ui,
+            heading,
+            LAUNCHER_DETAIL_TEXT_SIZE,
+            theme::TEXT_MUTED,
+            width * 0.2,
+            1,
+        );
+        let left = rect.left() + width * launcher_profile_columns(width)[index];
         let top = rect.center().y - galley.size().y / 2.0;
         ui.painter()
             .galley(egui::pos2(left, top), galley, theme::TEXT_MUTED);
@@ -3726,6 +3774,7 @@ fn show_running_sessions_panel(
     state: &mut LauncherState,
     command: &mut Option<AppCommand>,
 ) {
+    let inner_width = (width - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0).max(0.0);
     ui.scope_builder(
         egui::UiBuilder::new().layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
@@ -3734,13 +3783,13 @@ fn show_running_sessions_panel(
                 .corner_radius(LAUNCHER_PANEL_CORNER)
                 .inner_margin(egui::Margin::same(LAUNCHER_PANEL_TOP_MARGIN))
                 .show(ui, |ui| {
-                    ui.set_width((width - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0).max(0.0));
+                    ui.set_width(inner_width);
                     if let Some(height) = height {
                         ui.set_min_height(
                             (height - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0).max(0.0),
                         );
                     }
-                    ui.spacing_mut().item_spacing.y = 12.0;
+                    ui.spacing_mut().item_spacing.y = 8.0;
                     // Measured from the cursor rather than from `min_rect`,
                     // which `set_min_height` above has already stretched to
                     // the panel's full height.
@@ -3782,7 +3831,7 @@ fn show_running_sessions_panel(
                             any = true;
                             show_session_group(
                                 ui,
-                                (width - 30.0).max(0.0),
+                                inner_width,
                                 title,
                                 &items[start..end],
                                 start,
@@ -3797,7 +3846,7 @@ fn show_running_sessions_panel(
                                 egui::RichText::new(
                                     "Nothing is running locally that can be reattached right now.",
                                 )
-                                .size(14.0)
+                                .size(LAUNCHER_BODY_TEXT_SIZE)
                                 .color(theme::TEXT_MUTED),
                             );
                         }
@@ -3806,8 +3855,10 @@ fn show_running_sessions_panel(
                     // panel so the launch cards above it stay on screen.
                     match height {
                         Some(height) => {
-                            let list_height =
-                                (height - 30.0 - (ui.cursor().top() - content_top)).max(0.0);
+                            let list_height = (height
+                                - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0
+                                - (ui.cursor().top() - content_top))
+                                .max(0.0);
                             configure_content_scrollbar(ui);
                             ScrollArea::vertical()
                                 .id_salt("launcher_running_sessions_list")
@@ -3815,8 +3866,8 @@ fn show_running_sessions_panel(
                                 .min_scrolled_height(list_height)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    ui.set_width((width - 30.0).max(0.0));
-                                    ui.spacing_mut().item_spacing.y = 12.0;
+                                    ui.set_width(inner_width);
+                                    ui.spacing_mut().item_spacing.y = 8.0;
                                     body(ui, &mut expanded, command);
                                 });
                         }
@@ -6375,6 +6426,124 @@ mod tests {
         command: Option<AppCommand>,
     }
 
+    fn populated_launcher_harness(
+        width: f32,
+        compact: bool,
+    ) -> Harness<'static, LauncherHarnessState> {
+        use crate::multiplexer_sessions::MultiplexerSession;
+
+        let mut profiles = Vec::new();
+        for index in 1..=3 {
+            profiles.extend([
+                Profile::local(
+                    format!("Local development {index}"),
+                    "/bin/zsh",
+                    Vec::new(),
+                    None,
+                )
+                .expect("review profile is valid"),
+                Profile::ssh(
+                    format!("Production server {index}"),
+                    format!("server-{index}.development.example.com"),
+                    22,
+                    "deploy",
+                    "xterm-256color",
+                    100,
+                    40,
+                )
+                .expect("review profile is valid"),
+                Profile::sftp(
+                    format!("Project files {index}"),
+                    "artifacts.example.com",
+                    22,
+                    "build",
+                    true,
+                )
+                .expect("review profile is valid"),
+                Profile::serial(
+                    format!("Network switch {index}"),
+                    format!("/dev/tty.usbserial-{index}"),
+                    115_200,
+                    festerm_config::SerialDataBits::Eight,
+                    festerm_config::SerialParity::None,
+                    festerm_config::SerialStopBits::One,
+                    festerm_config::SerialFlowControl::None,
+                )
+                .expect("review profile is valid"),
+            ]);
+        }
+        let native =
+            ["dev-work", "build-process"].map(|name| festerm_sessiond::UnattachedSession {
+                name: name.to_owned(),
+                shell: "/bin/zsh".to_owned(),
+                arguments: Vec::new(),
+                working_directory: None,
+                created_at_unix_ms: u128::from(
+                    unix_now_seconds()
+                        .expect("review clock is after the Unix epoch")
+                        .saturating_sub(2 * 60 * 60),
+                ) * 1000,
+            });
+        let tmux = [MultiplexerSession {
+            name: "research".to_owned(),
+            match_key: "research".to_owned(),
+            attached: false,
+            started_at_unix_seconds: None,
+        }];
+        let screen = [MultiplexerSession {
+            name: "legacy".to_owned(),
+            match_key: "12345.legacy".to_owned(),
+            attached: true,
+            started_at_unix_seconds: None,
+        }];
+        Harness::builder()
+            .with_size(vec2(width, 880.0))
+            .build_ui_state(
+                move |ui, state: &mut LauncherHarnessState| {
+                    ui.ctx().set_visuals(theme::default_visuals());
+                    if let Some(command) = show_launcher(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        true,
+                        None,
+                        compact,
+                        &native,
+                        &tmux,
+                        &screen,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                LauncherHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration: Configuration::new(profiles)
+                        .expect("review configuration is valid"),
+                    command: None,
+                },
+            )
+    }
+
+    #[test]
+    #[ignore = "manual GUI density review capture"]
+    fn capture_populated_launcher_for_density_review() {
+        let output = std::env::temp_dir().join("festerm-gui-review");
+        let mut snapshots = egui_kittest::SnapshotResults::new();
+        for width in [1240.0, 1000.0, 800.0, 560.0] {
+            for compact in [false, true] {
+                let mut harness = populated_launcher_harness(width, compact);
+                harness.run();
+                let mode = if compact { "compact" } else { "roomy" };
+                harness.snapshot_options(
+                    format!("launcher-populated-{width}-{mode}"),
+                    &egui_kittest::SnapshotOptions::default().output_path(&output),
+                );
+                snapshots.extend(harness.take_snapshot_results());
+            }
+        }
+        snapshots.unwrap();
+    }
+
     fn settings_harness() -> Harness<'static, SettingsHarnessState> {
         settings_harness_with_width(520.0)
     }
@@ -7829,7 +7998,11 @@ mod tests {
 
     #[test]
     fn launcher_marks_keep_the_mockups_relative_widths_at_card_and_row_sizes() {
-        for height in [28.0, 42.0, 50.0] {
+        for height in [
+            LAUNCHER_PROFILE_MARK_SIZE,
+            LAUNCH_CARD_COMPACT_MARK_SIZE,
+            LAUNCH_CARD_MARK_SIZE,
+        ] {
             let local = session_mark_size(Icon::LocalTerminal, height);
             let ssh = session_mark_size(Icon::SshRemote, height);
             let serial = session_mark_size(Icon::Serial, height);
@@ -7840,6 +8013,123 @@ mod tests {
             // The SSH composite is wider, but its terminal body remains
             // the same optical size as Local's 19.2-unit square.
             assert!((ssh.x * 14.8 / 24.0 - local.x * 19.2 / 24.0).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn tighter_launcher_preserves_alignment_and_click_targets_at_desktop_widths() {
+        for width in [860.0, 1000.0, 1240.0] {
+            for compact in [false, true] {
+                let mut harness = populated_launcher_harness(width, compact);
+                harness.run();
+                let saved = harness.get_by_label("Saved Profiles").rect();
+                let running = harness.get_by_label("Running Sessions").rect();
+                let search = harness.get_by_label("Search profiles…").rect();
+                assert!((saved.center().y - running.center().y).abs() < 1.0);
+                assert!((saved.center().y - search.center().y).abs() < 3.0);
+                for label in [
+                    "Manage Profiles…",
+                    "New Profile",
+                    "Reattach dev-work",
+                    "Reattach research",
+                    "Refresh",
+                    "Sorted by last used",
+                    "More actions for Production server 1",
+                    "Collapse fesTerm Native (sessiond)",
+                ] {
+                    let rect = harness.get_by_label(label).rect();
+                    assert!(
+                        rect.width() >= 24.0 && rect.height() >= 24.0,
+                        "{label}: {rect:?}"
+                    );
+                    assert!(
+                        rect.right() <= width && rect.bottom() <= 880.0,
+                        "{label}: {rect:?}"
+                    );
+                }
+                let row = harness
+                    .get_by_label("Local development 1 — Local · /bin/zsh")
+                    .rect();
+                assert_eq!(row.height(), 34.0);
+                assert_eq!(harness.get_by_label("New Profile").rect().height(), 32.0);
+            }
+        }
+    }
+
+    #[test]
+    fn tighter_launcher_fits_all_five_cards_on_a_thousand_pixel_window() {
+        let labels = [
+            "Local Shell — Start a local terminal session",
+            "SSH — Connect to a remote host over SSH",
+            "SFTP — Browse and transfer files",
+            "Serial — Connect to a serial device",
+            "Markdown — Open a Markdown workspace",
+        ];
+        for compact in [false, true] {
+            let mut harness = populated_launcher_harness(1000.0, compact);
+            harness.run();
+            let first = harness.get_by_label(labels[0]).rect();
+            assert_eq!(first.height(), if compact { 96.0 } else { 112.0 });
+            let mut previous_right = first.left();
+            for label in labels {
+                let rect = harness.get_by_label(label).rect();
+                assert_eq!(rect.top(), first.top(), "{label} wrapped to another row");
+                assert!(rect.left() >= previous_right && rect.right() <= 1000.0);
+                previous_right = rect.right();
+            }
+        }
+    }
+
+    #[test]
+    fn tighter_launcher_prioritizes_distinguishable_names_in_narrow_panels() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let name = ui.painter().layout_no_wrap(
+                "Local development 1".to_owned(),
+                egui::FontId::proportional(LAUNCHER_BODY_TEXT_SIZE),
+                theme::TEXT_PRIMARY,
+            );
+            for width in [480.0, 500.0, 560.0] {
+                let columns = launcher_profile_columns(width);
+                let name_width = width * (columns[1] - columns[0]) - LAUNCHER_COLUMN_GUTTER;
+                assert!(name_width >= name.size().x);
+                assert!(columns.windows(2).all(|pair| pair[0] < pair[1]));
+            }
+            assert_eq!(launcher_profile_columns(700.0), LAUNCHER_PROFILE_COLUMNS);
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn tighter_launcher_titles_fit_the_minimum_card_width() {
+        let ctx = egui::Context::default();
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        for (mark_size, padding) in [
+            (LAUNCH_CARD_MARK_SIZE, LAUNCH_CARD_PADDING),
+            (LAUNCH_CARD_COMPACT_MARK_SIZE, LAUNCH_CARD_COMPACT_PADDING),
+        ] {
+            for (icon, title) in [
+                (Icon::LocalTerminal, "Local Shell"),
+                (Icon::SshRemote, "SSH"),
+                (Icon::FileTransfer, "SFTP"),
+                (Icon::Serial, "Serial"),
+                (Icon::MarkdownDocument, "Markdown"),
+            ] {
+                let available = LAUNCH_CARD_MIN_WIDTH
+                    - padding * 2.0
+                    - session_mark_size(icon, mark_size).x
+                    - 10.0;
+                // Font layout needs an initialized frame.
+                let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                    let galley = painter.layout_no_wrap(
+                        title.to_owned(),
+                        egui::FontId::proportional(LAUNCH_CARD_TITLE_SIZE),
+                        theme::TEXT_PRIMARY,
+                    );
+                    assert!(galley.size().x <= available, "{title} would elide");
+                });
+                output.textures_delta.clear();
+            }
         }
     }
 
