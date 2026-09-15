@@ -3,6 +3,29 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Running Sessions discovery under churn (#155, September 2026)
+
+The refreshed Launcher exposed two correctness gaps behind apparently simple
+lists: every frame synchronously queried three providers, and local tmux/screen
+Reattach reused saved profiles' attach-or-create commands. Discovery now has one
+bounded background job and one coalesced refresh, with visible provider errors.
+Reattach checks the selected generation, waits for attachment off-thread, and
+keeps failed/stale attempts on Launcher rather than manufacturing a new shell.
+Native generation leases reject dead/reused-PID inventory; tmux uses server PID
+and immutable session IDs; screen uses full PID/name plus process start time.
+
+Real-provider churn caught additional platform differences: tmux 3.7 sanitizes
+literal tab delimiters, older GNU screen returns nonzero status for valid lists,
+and screen socket metadata can change during attach/detach or socket recreation. The corrected
+parsers use stable delimiters, validate recognized listing output, and report
+actual screen process start time through one bounded, batched `ps` query. Isolated repeatable tests prove fresh challenges
+reach the same shell PID/state, not merely replayed titles. These checks advance
+closed #70's local resume behavior and `LAUNCH-12`/`PROF-06`, without claiming
+SSH #49 recovery or the broader CP-11/#43 package/security/native GUI obligations
+are complete. CP-12 records the remaining native Launcher/usability evidence.
+
+## Foundation and acceptance history
+
 fesTerm began foundation-first: M0 through M3 established a testable terminal
 core, ANSI/VT state, and interactive input before a native window or session
 backend could obscure defects. M4 added the egui renderer and input boundary;

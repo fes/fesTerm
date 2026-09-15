@@ -648,6 +648,7 @@ impl Shared {
 
 /// A native local-shell session driven by bounded worker queues.
 pub struct LocalPtySession {
+    process_id: Option<u32>,
     shared: Arc<Shared>,
     command_sender: SyncSender<SessionCommand>,
     event_receiver: Mutex<Receiver<SessionEvent>>,
@@ -695,6 +696,7 @@ impl LocalPtySession {
             .slave
             .spawn_command(command)
             .map_err(|error| LocalPtyError::new(format!("could not start local shell: {error}")))?;
+        let process_id = child.process_id();
         let process_tree_result = {
             #[cfg(unix)]
             {
@@ -772,6 +774,7 @@ impl LocalPtySession {
             })?;
 
         Ok(Self {
+            process_id,
             shared,
             command_sender,
             event_receiver: Mutex::new(event_receiver),
@@ -781,6 +784,11 @@ impl LocalPtySession {
     /// Starts the safe platform default interactive shell.
     pub fn start_default(size: TerminalSize) -> Result<Self, LocalPtyError> {
         Self::start_default_with_preference(size, true)
+    }
+
+    /// Identity of the directly owned client process (not its persistent server).
+    pub fn process_id(&self) -> Option<u32> {
+        self.process_id
     }
 
     /// Starts the safe platform default shell with the caller's Windows

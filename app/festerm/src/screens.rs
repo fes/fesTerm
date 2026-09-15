@@ -48,7 +48,7 @@ enum LauncherItemKind<'a> {
     SshProfile(&'a str),
     SftpProfile(&'a str),
     SerialProfile(&'a str),
-    ResumeSession(&'a str),
+    ResumeSession(&'a festerm_sessiond::UnattachedSession),
     /// A locally running tmux or GNU screen session offered from its own
     /// quick-connect widget (feature request: local tmux/screen quick
     /// connect). `provider` is `Tmux` or `Screen`; `display_name` is the
@@ -57,7 +57,10 @@ enum LauncherItemKind<'a> {
     /// specific session -- identical to `display_name` for tmux, but
     /// screen's full `pid.name` identifier for GNU screen (see
     /// `multiplexer_sessions::MultiplexerSession`).
-    ResumeMultiplexerSession(PersistenceProviderKind, &'a str, &'a str),
+    ResumeMultiplexerSession(
+        PersistenceProviderKind,
+        &'a crate::multiplexer_sessions::MultiplexerSession,
+    ),
 }
 
 struct LauncherItem<'a> {
@@ -188,14 +191,13 @@ impl LauncherItem<'_> {
                     profile_id: profile_id.to_owned(),
                 }
             }
-            LauncherItemKind::ResumeSession(name) => AppCommand::ResumeUnattachedSession {
-                name: name.to_owned(),
+            LauncherItemKind::ResumeSession(session) => AppCommand::ResumeUnattachedSession {
+                session: session.clone(),
             },
-            LauncherItemKind::ResumeMultiplexerSession(provider, display_name, match_key) => {
+            LauncherItemKind::ResumeMultiplexerSession(provider, session) => {
                 AppCommand::ResumeMultiplexerSession {
                     provider,
-                    name: match_key.to_owned(),
-                    display_name: display_name.to_owned(),
+                    session: session.clone(),
                 }
             }
         }
@@ -2713,15 +2715,35 @@ fn show_session_group(
                 return;
             }
             ui.add_space(6.0);
-            for (offset, item) in items.iter().enumerate() {
-                show_session_row(
-                    ui,
-                    first_index + offset == selected,
-                    item,
-                    now_unix_seconds,
-                    command,
-                );
+            let stride = 44.0 + ui.spacing().item_spacing.y;
+            let top = ui.cursor().top();
+            let first = (((ui.clip_rect().top() - top) / stride).floor().max(0.0) as usize)
+                .min(items.len());
+            let end = ((((ui.clip_rect().bottom() - top) / stride).ceil().max(0.0) as usize) + 1)
+                .min(items.len())
+                .max(first);
+            ui.add_space(first as f32 * stride);
+            for (offset, item) in items.iter().enumerate().take(end).skip(first) {
+                let identity = match item.kind {
+                    LauncherItemKind::ResumeSession(session) => {
+                        format!("native:{}", session.endpoint)
+                    }
+                    LauncherItemKind::ResumeMultiplexerSession(provider, session) => {
+                        format!("{provider:?}:{}", session.match_key)
+                    }
+                    _ => unreachable!("running groups contain only resumable sessions"),
+                };
+                ui.push_id(identity, |ui| {
+                    show_session_row(
+                        ui,
+                        first_index + offset == selected,
+                        item,
+                        now_unix_seconds,
+                        command,
+                    );
+                });
             }
+            ui.add_space((items.len() - end) as f32 * stride);
         });
 }
 
@@ -2750,7 +2772,14 @@ fn show_session_row(
             let subtitle = item
                 .last_used_unix_seconds
                 .zip(now_unix_seconds)
-                .map(|(started, now)| format!("Started {}", relative_age(now, started)))
+                .map(|(started, now)| {
+                    let age = format!("Started {}", relative_age(now, started));
+                    if item.description == "Attached elsewhere" {
+                        format!("Attached elsewhere · {age}")
+                    } else {
+                        age
+                    }
+                })
                 .unwrap_or_else(|| item.description.clone());
             ui.label(
                 egui::RichText::new(subtitle)
@@ -2911,7 +2940,7 @@ pub fn show_launcher(
                 .as_deref()
                 .map(|directory| format!("{} · {directory}", session.shell))
                 .unwrap_or_else(|| session.shell.clone()),
-            LauncherItemKind::ResumeSession(&session.name),
+            LauncherItemKind::ResumeSession(session),
         );
         // Milliseconds are the sessiond wire unit; the surface only ever
         // shows a coarse relative age, so narrowing here keeps one
@@ -2931,11 +2960,7 @@ pub fn show_launcher(
             } else {
                 "tmux session".to_owned()
             },
-            LauncherItemKind::ResumeMultiplexerSession(
-                PersistenceProviderKind::Tmux,
-                &session.name,
-                &session.match_key,
-            ),
+            LauncherItemKind::ResumeMultiplexerSession(PersistenceProviderKind::Tmux, session),
         );
         item.last_used_unix_seconds = session.started_at_unix_seconds();
         item
@@ -2949,11 +2974,7 @@ pub fn show_launcher(
             } else {
                 "GNU screen session".to_owned()
             },
-            LauncherItemKind::ResumeMultiplexerSession(
-                PersistenceProviderKind::Screen,
-                &session.name,
-                &session.match_key,
-            ),
+            LauncherItemKind::ResumeMultiplexerSession(PersistenceProviderKind::Screen, session),
         );
         item.last_used_unix_seconds = session.started_at_unix_seconds();
         item
@@ -3801,7 +3822,7 @@ fn show_running_sessions_panel(
                         Some("Local sessions available to reattach"),
                         |ui| {
                             if launcher_icon_button(ui, Icon::Refresh, "Refresh").clicked() {
-                                ui.ctx().request_repaint();
+                                *command = Some(AppCommand::RefreshRunningSessions);
                             }
                         },
                     );
@@ -6474,6 +6495,8 @@ mod tests {
         }
         let native =
             ["dev-work", "build-process"].map(|name| festerm_sessiond::UnattachedSession {
+                pid: 123,
+                endpoint: String::new(),
                 name: name.to_owned(),
                 shell: "/bin/zsh".to_owned(),
                 arguments: Vec::new(),
@@ -7833,6 +7856,8 @@ mod tests {
                 .expect("test profile is valid"),
         ];
         let resumable_sessions = vec![festerm_sessiond::UnattachedSession {
+            pid: 123,
+            endpoint: String::new(),
             name: "orphaned".to_owned(),
             shell: "/bin/bash".to_owned(),
             arguments: Vec::new(),
@@ -7868,7 +7893,7 @@ mod tests {
 
         assert!(matches!(
             &harness.state().command,
-            Some(AppCommand::ResumeUnattachedSession { name }) if name == "orphaned"
+            Some(AppCommand::ResumeUnattachedSession { session }) if session.name == "orphaned"
         ));
     }
 
@@ -7912,10 +7937,10 @@ mod tests {
         harness.run();
         assert!(matches!(
             &harness.state().command,
-            Some(AppCommand::ResumeMultiplexerSession { provider, name, display_name })
+            Some(AppCommand::ResumeMultiplexerSession { provider, session })
                 if *provider == PersistenceProviderKind::Tmux
-                    && name == "build"
-                    && display_name == "build"
+                    && session.match_key == "build"
+                    && session.name == "build"
         ));
 
         harness.state_mut().command = None;
@@ -7924,10 +7949,10 @@ mod tests {
         assert!(
             matches!(
                 &harness.state().command,
-                Some(AppCommand::ResumeMultiplexerSession { provider, name, display_name })
+                Some(AppCommand::ResumeMultiplexerSession { provider, session })
                     if *provider == PersistenceProviderKind::Screen
-                        && name == "12345.main"
-                        && display_name == "main"
+                        && session.match_key == "12345.main"
+                        && session.name == "main"
             ),
             "an already-attached screen session is still resumable, using its full pid.name \
              match key to reattach while still showing the friendly display name (not the \
@@ -8275,6 +8300,8 @@ mod tests {
                 .expect("test profile is valid"),
         ];
         let resumable = vec![festerm_sessiond::UnattachedSession {
+            pid: 123,
+            endpoint: String::new(),
             name: "orphaned".to_owned(),
             shell: "/bin/bash".to_owned(),
             arguments: Vec::new(),
@@ -8433,7 +8460,7 @@ mod tests {
     }
 
     #[test]
-    fn the_running_sessions_refresh_control_dispatches_no_command() {
+    fn the_running_sessions_refresh_control_dispatches_a_refresh_command() {
         let mut harness = harness_with_profiles(Vec::new());
         harness.run();
 
@@ -8441,10 +8468,37 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.state().command.is_none(),
-            "Refresh asks for a repaint so the composition root can re-enumerate; it must not \
-             mutate profiles or session definitions"
+            matches!(
+                harness.state().command,
+                Some(AppCommand::RefreshRunningSessions)
+            ),
+            "Refresh requests coalesced background inventory work through the command model"
         );
+    }
+
+    #[test]
+    fn large_running_inventory_only_materializes_visible_rows() {
+        let sessions = (0..5000)
+            .map(|index| festerm_sessiond::UnattachedSession {
+                name: format!("owned-{index:04}"),
+                shell: "test-shell".into(),
+                arguments: Vec::new(),
+                working_directory: None,
+                created_at_unix_ms: 0,
+                pid: index + 1,
+                endpoint: format!("generation-{index}"),
+            })
+            .collect();
+        let mut harness =
+            harness_with_profiles_grid_and_resumable(Vec::new(), false, 1240.0, sessions);
+        harness.run();
+        harness.get_by_label("Reattach owned-0000");
+        assert!(harness.query_by_label("Reattach owned-4999").is_none());
+        harness
+            .get_by_label("Collapse fesTerm Native (sessiond)")
+            .click();
+        harness.run();
+        assert!(harness.query_by_label("Reattach owned-0000").is_none());
     }
 
     #[test]

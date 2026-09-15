@@ -2069,6 +2069,7 @@ dependencies = [
  "festerm-ui-egui",
  "festerm-windows-power",
  "image",
+ "nix 0.31.3",
  "raw-window-handle",
  "russh",
  "tokio",
@@ -2185,6 +2186,7 @@ dependencies = [
  "portable-pty",
  "serde",
  "serde_json",
+ "socket2",
  "windows-sys 0.61.2",
 ]
 
@@ -6351,6 +6353,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

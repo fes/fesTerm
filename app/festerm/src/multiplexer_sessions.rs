@@ -2,7 +2,7 @@
 //! Launcher's quick-connect widgets.
 //!
 //! Both multiplexers natively support multiple simultaneous clients
-//! attaching to the same session (`tmux new-session -A`, `screen -xRR`),
+//! attaching to the same session (`tmux attach-session`, `screen -x`),
 //! unlike fesTerm's own session daemon, which has single-client "steal"
 //! semantics. That asymmetry is why an already-attached tmux/screen session
 //! is still offered here (annotated, not hidden) while an already-attached
@@ -14,10 +14,17 @@
 //! `search_path_executables`/`search_path_executables_in` split already
 //! used in `festerm-pty` for PATH discovery.
 
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+
+#[cfg(any(unix, test))]
+#[path = "screen_process.rs"]
+mod screen_process;
 
 use festerm_ssh::PersistentSessionName;
+
+#[cfg(all(test, unix))]
+#[path = "multiplexer_churn.rs"]
+mod churn;
 
 /// A single enumerated tmux or GNU screen session, ready to offer as a
 /// Launcher quick-connect entry.
@@ -25,13 +32,9 @@ use festerm_ssh::PersistentSessionName;
 pub struct MultiplexerSession {
     /// The user-facing label (e.g. `main`, without screen's `pid.` prefix).
     pub name: String,
-    /// The exact string passed back to
-    /// [`festerm_config::PersistenceConfiguration::new`] to reattach this
-    /// specific session. Identical to `name` for tmux, since tmux session
-    /// names are already unique and exact. For screen, this is the full
-    /// `pid.name` identifier, since screen's `-x`/`-r`/`-R` matching is
-    /// substring-based and only the full identifier guarantees an
-    /// unambiguous match to *this* session.
+    /// Provider-scoped identity: tmux server PID plus immutable $session_id;
+    /// screen full pid.name plus process start time.
+    /// The command builder extracts the exact attach-only provider target.
     pub match_key: String,
     /// Whether another client is already attached to this session.
     pub attached: bool,
@@ -49,42 +52,209 @@ impl MultiplexerSession {
 /// Enumerates locally running tmux sessions by shelling out to
 /// `tmux list-sessions`. Returns an empty list if tmux isn't installed, no
 /// server is running, or no sessions exist -- all of which are ordinary,
-/// silent conditions for a Launcher quick-connect widget, not errors.
-pub fn list_tmux_sessions() -> Vec<MultiplexerSession> {
-    let output = std::process::Command::new("tmux")
-        .args([
+/// silent conditions for a Launcher quick-connect widget, not errors. Other
+/// failures, output limits and timeouts are explicit.
+pub fn list_tmux_sessions() -> Result<Vec<MultiplexerSession>, String> {
+    let output = bounded_output(
+        "tmux",
+        &[
             "list-sessions",
             "-F",
-            "#{session_name}\t#{session_attached}\t#{session_created}",
-        ])
-        .output();
-    match output {
-        Ok(output) if output.status.success() => {
-            parse_tmux_sessions(&String::from_utf8_lossy(&output.stdout))
+            "#{session_name}|#{session_attached}|#{session_created}|#{session_id}|#{pid}",
+        ],
+    )?;
+    let Some(output) = output else {
+        return Ok(Vec::new());
+    };
+    if output.status.success() {
+        Ok(parse_tmux_sessions(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    } else {
+        let error = String::from_utf8_lossy(&output.stderr);
+        if error.contains("no server running") || error.contains("No such file or directory") {
+            Ok(Vec::new())
+        } else {
+            Err(format!("list-sessions failed: {}", error.trim()))
         }
-        _ => Vec::new(),
     }
 }
 
 /// Enumerates locally running GNU screen sessions by shelling out to
 /// `screen -list`. Returns an empty list if screen isn't installed or no
-/// sessions exist; `screen -list` exits non-zero when there are none, so
-/// that case is treated the same as a missing binary.
-pub fn list_screen_sessions() -> Vec<MultiplexerSession> {
-    let output = std::process::Command::new("screen").arg("-list").output();
-    match output {
-        Ok(output) => {
-            parse_screen_sessions_with_socket_times(&String::from_utf8_lossy(&output.stdout))
-        }
-        Err(_) => Vec::new(),
+/// sessions exist. Old GNU screen also exits nonzero for successful listings;
+/// recognized output, not exit status alone, distinguishes those from errors.
+pub fn list_screen_sessions() -> Result<Vec<MultiplexerSession>, String> {
+    let Some(output) = bounded_output("screen", &["-list"])? else {
+        return Ok(Vec::new());
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    // Older GNU screen (including macOS's 4.00.03) returns a nonzero
+    // status even for a successful listing containing live sessions.
+    if (output.status.success()
+        || text.contains("No Sockets found")
+        || extract_screen_socket_directory(&text).is_some())
+        && output.stderr.is_empty()
+    {
+        #[allow(unused_mut)]
+        let mut sessions = parse_screen_sessions(&text);
+        #[cfg(unix)]
+        screen_process::add_identity(&mut sessions)?;
+        Ok(sessions)
+    } else {
+        Err(format!(
+            "screen -list failed: {} {}",
+            text.trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 }
 
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+/// Async pipes avoid per-command reader threads that can outlive a timeout
+/// when a misbehaving child leaves an inherited pipe open.
+fn bounded_output(program: &str, args: &[&str]) -> Result<Option<std::process::Output>, String> {
+    bounded_output_with_timeout(program, args, COMMAND_TIMEOUT)
+}
+
+fn bounded_output_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Option<std::process::Output>, String> {
+    let profile = provider_environment(festerm_pty::LocalProfile::new(program));
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    if let festerm_pty::EnvironmentPolicy::InheritWith(overrides) = profile.environment() {
+        command.envs(overrides);
+    }
+    command.env("LC_ALL", "C").env("TZ", "UTC0");
+    crate::local_command::output(command, timeout)
+}
+
+fn provider_environment(profile: festerm_pty::LocalProfile) -> festerm_pty::LocalProfile {
+    // Preserve an explicitly inherited provider namespace (including test
+    // wrappers); Finder's minimal PATH falls back to the established login
+    // environment correction. Discovery and PTY attach use the same policy.
+    #[cfg(target_os = "macos")]
+    {
+        let mut profile = profile;
+        if profile
+            .executable()
+            .to_str()
+            .is_some_and(festerm_pty::is_executable_on_path)
+        {
+            if let Some(path) = std::env::var_os("PATH") {
+                profile = profile.with_environment(festerm_pty::EnvironmentPolicy::InheritWith(
+                    std::collections::BTreeMap::from([("PATH".into(), path)]),
+                ));
+            }
+        }
+        crate::environment::with_corrected_local_path(profile)
+    }
+    #[cfg(not(target_os = "macos"))]
+    profile
+}
+
+/// Resume never uses the saved-profile attach-or-create command. tmux's
+/// immutable $id targets one session within the selected server generation;
+/// screen uses the full pid.name identifier and never -R/-RR.
+pub fn attach_profile(
+    provider: festerm_config::PersistenceProviderKind,
+    selected: &MultiplexerSession,
+) -> Result<festerm_pty::LocalProfile, String> {
+    use festerm_config::PersistenceProviderKind;
+    let sessions = match provider {
+        PersistenceProviderKind::Tmux => list_tmux_sessions()?,
+        PersistenceProviderKind::Screen => list_screen_sessions()?,
+        _ => return Err("Not a local multiplexer provider".into()),
+    };
+    if !sessions.iter().any(|current| {
+        current.match_key == selected.match_key
+            && current.name == selected.name
+            && current.started_at_unix_seconds == selected.started_at_unix_seconds
+    }) {
+        return Err(
+            "The selected session exited or was replaced. Refresh Running Sessions and try again."
+                .into(),
+        );
+    }
+
+    let profile = match provider {
+        PersistenceProviderKind::Tmux => {
+            let (pid, id) = selected
+                .match_key
+                .split_once(':')
+                .ok_or("Invalid tmux session identity; Refresh to retry")?;
+            if pid.parse::<u32>().is_err()
+                || !id.starts_with('$')
+                || id[1..].parse::<u64>().is_err()
+            {
+                return Err("Invalid tmux session identity; Refresh to retry".into());
+            }
+            // Test the server generation in the same server command queue as
+            // the immutable session-id attach. Even a restarted server with a
+            // reused $0 cannot turn an old click into a different shell.
+            festerm_pty::LocalProfile::new("tmux").with_arguments([
+                "if-shell".to_owned(),
+                "-F".to_owned(),
+                format!("#{{==:#{{pid}},{pid}}}"),
+                format!("attach-session -t {id}"),
+                "display-message -p 'Selected tmux server exited; refresh Running Sessions'"
+                    .to_owned(),
+            ])
+        }
+        PersistenceProviderKind::Screen => festerm_pty::LocalProfile::new("screen")
+            .with_arguments(["-x", screen_target(&selected.match_key)]),
+        _ => unreachable!(),
+    };
+    Ok(provider_environment(profile))
+}
+
+pub fn screen_target(identity: &str) -> &str {
+    identity
+        .split_once('|')
+        .map_or(identity, |(target, _)| target)
+}
+
+pub fn client_attached(
+    provider: festerm_config::PersistenceProviderKind,
+    selected: &MultiplexerSession,
+    pid: u32,
+) -> Result<bool, String> {
+    use festerm_config::PersistenceProviderKind;
+    match provider {
+        PersistenceProviderKind::Tmux => {
+            let Some(output) = bounded_output(
+                "tmux",
+                &["list-clients", "-F", "#{client_pid}|#{session_id}|#{pid}"],
+            )?
+            else {
+                return Err("tmux is no longer available".into());
+            };
+            if !output.status.success() {
+                return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+            }
+            Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                let parts: Vec<_> = line.split('|').collect();
+                parts.len() == 3
+                    && parts[0] == pid.to_string()
+                    && format!("{}:{}", parts[2], parts[1]) == selected.match_key
+            }))
+        }
+        PersistenceProviderKind::Screen => Ok(list_screen_sessions()?
+            .iter()
+            .any(|session| session.match_key == selected.match_key && session.attached)),
+        _ => Err("Not a multiplexer provider".into()),
+    }
+}
 /// Parses
-/// `tmux list-sessions -F "#{session_name}\t#{session_attached}\t#{session_created}"`
+/// `tmux list-sessions -F "#{session_name}|#{session_attached}|#{session_created}|#{session_id}|#{pid}"`
 /// output. `#{session_attached}` is the number of attached clients as a
 /// decimal string (`0` when detached), and `#{session_created}` is seconds
 /// since the Unix epoch.
+/// Literal tabs are accepted for old fixtures, but not requested: tmux 3.7
+/// sanitizes control characters in arguments to underscores.
 ///
 /// Sessions whose name fails [`PersistentSessionName`] validation are
 /// silently omitted: fesTerm reuses that same validated path for local
@@ -99,7 +269,7 @@ fn parse_tmux_sessions(output: &str) -> Vec<MultiplexerSession> {
         if line.is_empty() {
             continue;
         }
-        let mut fields = line.splitn(3, '\t');
+        let mut fields = line.split(['\t', '|']);
         let Some(name) = fields.next() else {
             continue;
         };
@@ -113,14 +283,34 @@ fn parse_tmux_sessions(output: &str) -> Vec<MultiplexerSession> {
         let started_at_unix_seconds = fields
             .next()
             .and_then(|value| value.trim().parse::<u64>().ok());
+        let id = fields.next();
+        let pid = fields.next();
+        let match_key = match (id, pid) {
+            (Some(id), Some(pid))
+                if id.starts_with('$')
+                    && id[1..].parse::<u64>().is_ok()
+                    && pid.parse::<u32>().is_ok() =>
+            {
+                format!("{pid}:{id}")
+            }
+            // Legacy parser fixtures have no stable identity; discovery always
+            // requests it, and attach_profile refuses these fallback keys.
+            _ => name.to_owned(),
+        };
         sessions.push(MultiplexerSession {
             name: name.to_owned(),
-            match_key: name.to_owned(),
+            match_key,
             attached,
             started_at_unix_seconds,
         });
     }
+    canonicalize(&mut sessions);
     sessions
+}
+
+fn canonicalize(sessions: &mut Vec<MultiplexerSession>) {
+    sessions.sort_by(|a, b| a.name.cmp(&b.name).then(a.match_key.cmp(&b.match_key)));
+    sessions.dedup_by(|a, b| a.match_key == b.match_key);
 }
 
 /// Parses `screen -list` output, e.g.:
@@ -140,17 +330,8 @@ fn parse_tmux_sessions(output: &str) -> Vec<MultiplexerSession> {
 /// becomes `match_key` (see [`MultiplexerSession::match_key`]); the display
 /// `name` strips the numeric `pid.` prefix when present, falling back to
 /// the full identifier if it isn't in that shape.
-#[cfg(test)]
 fn parse_screen_sessions(output: &str) -> Vec<MultiplexerSession> {
     parse_screen_sessions_with_started_at(output, |_| None)
-}
-
-fn parse_screen_sessions_with_socket_times(output: &str) -> Vec<MultiplexerSession> {
-    let socket_directory = extract_screen_socket_directory(output);
-    parse_screen_sessions_with_started_at(output, |identifier| {
-        socket_directory
-            .and_then(|directory| screen_socket_modified_unix_seconds(directory, identifier))
-    })
 }
 
 fn parse_screen_sessions_with_started_at(
@@ -169,19 +350,23 @@ fn parse_screen_sessions_with_started_at(
         // here; trim it before validating/using it, or a real session
         // would otherwise fail `PersistentSessionName` validation (which
         // rejects whitespace) and be silently dropped.
-        let identifier = identifier.trim_end();
+        // GNU screen 4.9+ can insert a creation-date column before status.
+        let identifier = identifier
+            .split_once("\t(")
+            .map_or(identifier, |(identifier, _)| identifier)
+            .trim_end();
         let attached = match status {
             "(Attached)" => true,
             "(Detached)" => false,
             _ => continue,
         };
-        if PersistentSessionName::new(identifier).is_err() {
-            continue;
-        }
         let name = identifier
             .split_once('.')
             .filter(|(pid, _)| !pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()))
             .map_or(identifier, |(_, rest)| rest);
+        if PersistentSessionName::new(name).is_err() {
+            continue;
+        }
         sessions.push(MultiplexerSession {
             name: name.to_owned(),
             match_key: identifier.to_owned(),
@@ -189,6 +374,7 @@ fn parse_screen_sessions_with_started_at(
             started_at_unix_seconds: started_at_for_identifier(identifier),
         });
     }
+    canonicalize(&mut sessions);
     sessions
 }
 
@@ -211,35 +397,74 @@ fn extract_screen_socket_directory(output: &str) -> Option<&str> {
     None
 }
 
-fn screen_socket_path(socket_directory: &str, pid: &str, name: &str) -> PathBuf {
-    PathBuf::from(socket_directory).join(screen_socket_filename(pid, name))
-}
-
-fn screen_socket_filename(pid: &str, name: &str) -> String {
-    format!("{pid}.{name}")
-}
-
-fn screen_socket_modified_unix_seconds(socket_directory: &str, identifier: &str) -> Option<u64> {
-    let (pid, name) = identifier.split_once('.')?;
-    if pid.is_empty() || name.is_empty() || !pid.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    std::fs::metadata(screen_socket_path(socket_directory, pid, name))
-        .ok()?
-        .modified()
-        .ok()
-        .and_then(system_time_unix_seconds)
-}
-
-fn system_time_unix_seconds(time: SystemTime) -> Option<u64> {
-    time.duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn provider_attachment_keeps_inherited_executable_search_path() {
+        let profile = provider_environment(festerm_pty::LocalProfile::new("/bin/sh"));
+        let festerm_pty::EnvironmentPolicy::InheritWith(overrides) = profile.environment() else {
+            panic!("provider executable resolution must remain explicit");
+        };
+        assert_eq!(
+            overrides.get(std::ffi::OsStr::new("PATH")),
+            std::env::var_os("PATH").as_ref()
+        );
+    }
+
+    #[test]
+    fn stable_tmux_ids_are_sorted_deduplicated_and_do_not_follow_recreated_names() {
+        let sessions = parse_tmux_sessions("z|1|12|$9|42\na|0|10|$2|42\na|0|10|$2|42\n");
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].match_key, "42:$2");
+        assert_eq!(sessions[1].name, "z");
+        assert!(sessions[1].attached);
+        let recreated = parse_tmux_sessions("a|0|11|$3|42\n");
+        assert_ne!(sessions[0].match_key, recreated[0].match_key);
+        let restarted = parse_tmux_sessions("a|0|11|$2|43\n");
+        assert_ne!(sessions[0].match_key, restarted[0].match_key);
+    }
+
+    #[test]
+    fn modern_screen_dates_do_not_change_full_pid_identity() {
+        let sessions = parse_screen_sessions(
+            "\t123.main\t(09/15/2026 10:00:00 AM)\t(Attached)\n\t124.main\t(Detached)\n",
+        );
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].match_key, "123.main");
+        assert!(sessions[0].attached);
+        assert_eq!(sessions[1].match_key, "124.main");
+    }
+
+    #[test]
+    fn unavailable_binary_is_not_a_provider_error() {
+        assert!(bounded_output("festerm-nonexistent-multiplexer-155", &[])
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provider_process_failures_timeouts_and_output_are_bounded() {
+        let output = bounded_output("/bin/sh", &["-c", "printf 'denied' >&2; exit 7"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(7));
+        assert_eq!(output.stderr, b"denied");
+        let start = std::time::Instant::now();
+        let error = bounded_output_with_timeout(
+            "/bin/sh",
+            &["-c", "while :; do :; done"],
+            Duration::from_millis(40),
+        )
+        .unwrap_err();
+        assert!(error.contains("timed out"));
+        assert!(start.elapsed() < Duration::from_secs(2));
+        let error = bounded_output("/bin/sh", &["-c", "s=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; i=0; while [ \"$i\" -lt 16 ]; do s=$s$s; i=$((i+1)); done; printf '%s' \"$s\""]).unwrap_err();
+        assert!(error.contains("exceeds 1 MiB"), "{error}");
+    }
 
     #[test]
     fn parses_tmux_sessions_with_attached_flag_and_filters_invalid_names() {
@@ -248,16 +473,16 @@ mod tests {
             parse_tmux_sessions(output),
             vec![
                 MultiplexerSession {
-                    name: "main".to_owned(),
-                    match_key: "main".to_owned(),
-                    attached: false,
-                    started_at_unix_seconds: Some(1_700_000_000),
-                },
-                MultiplexerSession {
                     name: "build".to_owned(),
                     match_key: "build".to_owned(),
                     attached: true,
                     started_at_unix_seconds: Some(1_700_000_001),
+                },
+                MultiplexerSession {
+                    name: "main".to_owned(),
+                    match_key: "main".to_owned(),
+                    attached: false,
+                    started_at_unix_seconds: Some(1_700_000_000),
                 },
             ]
         );
@@ -270,15 +495,15 @@ mod tests {
             parse_tmux_sessions(output),
             vec![
                 MultiplexerSession {
-                    name: "main".to_owned(),
-                    match_key: "main".to_owned(),
-                    attached: false,
-                    started_at_unix_seconds: None,
-                },
-                MultiplexerSession {
                     name: "build".to_owned(),
                     match_key: "build".to_owned(),
                     attached: true,
+                    started_at_unix_seconds: None,
+                },
+                MultiplexerSession {
+                    name: "main".to_owned(),
+                    match_key: "main".to_owned(),
+                    attached: false,
                     started_at_unix_seconds: None,
                 },
             ]
@@ -383,15 +608,6 @@ mod tests {
         assert_eq!(
             extract_screen_socket_directory(output),
             Some("/run/screen/S-user")
-        );
-    }
-
-    #[test]
-    fn builds_screen_socket_filename_from_pid_and_name() {
-        assert_eq!(screen_socket_filename("12345", "main"), "12345.main");
-        assert_eq!(
-            screen_socket_path("/run/screen/S-user", "12346", "pts-0.host"),
-            PathBuf::from("/run/screen/S-user/12346.pts-0.host")
         );
     }
 }

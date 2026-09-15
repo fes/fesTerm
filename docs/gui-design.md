@@ -260,9 +260,11 @@ only for SFTP profiles and dispatches `AppCommand::StartConfiguredSshProfile`;
 per-card edit icon.
 
 The Running Sessions panel uses the running-sessions identity icon and the
-subtitle “Local sessions available to reattach.” Its refresh control requests
-a repaint rather than routing through `AppCommand`, because the composition
-root repopulates the discovered session lists each frame. Locally reattachable
+subtitle “Local sessions available to reattach.” Its refresh control dispatches
+`AppCommand::RefreshRunningSessions`. Opt-in discovery runs outside rendering,
+coalesces repeated requests into one pending refresh, and refreshes approximately
+every two seconds without a restart. A superseded/disabled request cannot
+overwrite newer inventory. Locally reattachable
 sessions are grouped by provider: **fesTerm Native (sessiond)**, **tmux**, and
 **screen**. Each nonempty group has a disclosure header, count badge, and one
 row per session. Rows show the session name, `Started N ago` when the provider
@@ -270,8 +272,27 @@ reported a start time, otherwise the provider/status description, and a
 **Reattach** button. fesTerm-sessiond rows dispatch
 `AppCommand::ResumeUnattachedSession`; tmux and screen rows dispatch
 `AppCommand::ResumeMultiplexerSession` with the provider, match key, and
-user-facing display name. Empty provider groups are omitted, and an entirely
+user-facing display name plus the discovered generation. Native entries exclude
+attached clients; tmux/screen entries include them with **Attached elsewhere**
+even when a start time is shown. Counts describe eligible displayed entries,
+not a universally unattached-only population. Empty provider groups are omitted, and an entirely
 empty panel says that nothing local can be reattached right now.
+
+Reattach is asynchronous and attach-only, unlike saved profiles' intentional
+attach-or-create behavior. A stale/replaced selection or failed attachment stays
+on Launcher with an actionable diagnostic and refreshes inventory; it never
+opens a replacement shell or an error-only terminal. An attachment that succeeds
+and subsequently exits has the normal disconnected-terminal lifecycle.
+Missing providers/no running server are ordinary empty results; permissions,
+malformed registries, command failures, output limits, and timeouts are visible
+provider errors, not silently successful empty inventories. Provider commands
+have two-second deadlines and 1 MiB output caps, native registry reads have a
+500 ms lock deadline and 4 MiB cap, and offscreen running rows skip widget/text
+layout. The opt-in setting gates all three providers.
+On macOS discovery and attach share the existing login-environment correction
+without changing an inherited executable path that already finds the provider.
+The cached login-shell probe is also bounded and terminates its owned process
+group on timeout, rather than leaving an orphaned reader thread.
 
 The initial launcher shows the usable top-level choices Local Shell, SSH,
 SFTP, Serial, and Markdown. A choice whose transport is not yet implemented

@@ -271,6 +271,22 @@ going away can never remain advertised as resumable, and `kill` now drops the
 registry record even when terminating the process fails -- that is precisely
 the case where a leftover record is most harmful.
 
+## Discovery hardening (2026-09-15, issue #155)
+
+Running Sessions now reads metadata outside GUI rendering, with bounded registry
+lock acquisition, capped input and explicit failures. New daemon endpoints use
+PID/creation-time generations rather than reusable names and hold an owner-only
+generation lease file for their lifetime. Discovery and helper list/start/kill
+share that lease check: PID reuse alone cannot keep a new-format record live.
+Older named endpoints retain their legacy PID-based compatibility behavior;
+newly launched helpers receive generation-aware protection. A discovered resume
+checks the selected name/PID/creation-time/endpoint and refuses a replaced or
+already-attached record. Native connects are bounded on Unix as on Windows.
+Failed attachment-state publication remains pending and retries with a 500 ms
+backoff rather than permanently remembering a detach that was never saved.
+This is internal lifecycle/discovery hardening of the existing daemon contract,
+not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
+
 ## Alternatives considered
 
 - **Do nothing; local persistence remains Unix-only via `tmux`/`screen`.**
@@ -338,6 +354,9 @@ the case where a leftover record is most harmful.
 - **GUI/action edges affected:** `PROF-06` now covers selecting the native
   local provider, attach-or-create launch, Inspector facts, non-destructive
   tab detach, replay, and newest-client takeover.
+  `LAUNCH-12` additionally covers asynchronous bounded discovery, eligible
+  provider counts, generation-aware attach-only resume, stale-click recovery,
+  and explicit Refresh (`LAUNCH-20`); `LAUNCH-21` covers offscreen row layout.
 - **Automated tests required:** `festerm-sessiond` covers argument and identity
   validation, registry round trips and PID-safe removal, replay bounds,
   split-marker client handling, and an end-to-end Unix service-loop test in
@@ -346,6 +365,10 @@ the case where a leftover record is most harmful.
   without disconnecting; pending input must not prevent output or takeover.
   Manual reconnect must preserve session identity, reject duplicate attempts,
   avoid starting a missing daemon, and discard previous-connection input.
+  `native_discovery_churn_preserves_process_and_rejects_replaced_generations`
+  verifies isolated batches, same-child PID after fresh post-reattach input,
+  natural exit removal and rejection of same-name replacements. Registry tests
+  distinguish absence, corruption, lock deadlines and stale generation leases.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

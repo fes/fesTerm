@@ -415,7 +415,7 @@ fn run_start(
 
     with_registry_lock(|registry| {
         if let Some(record) = registry.sessions.get(&name) {
-            if process_alive(record.pid) {
+            if record_is_live(record)? {
                 return Err(format!("session '{name}' is already running").into());
             }
             registry.sessions.remove(&name);
@@ -575,10 +575,22 @@ fn run_daemon(
     let runtime_root = runtime_root()?;
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
+    let generation = now_ms();
+    let lease_path = runtime_root.join(format!("lease-{}-{generation}", process::id()));
+    let lease = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&lease_path)?;
+    lease.lock_exclusive()?;
+    set_file_mode(&lease_path, 0o600)?;
 
     #[cfg(unix)]
     {
-        let socket_path = session_socket_path(&runtime_root, &name)?;
+        // Endpoint lifetime follows a daemon generation, not a reusable name.
+        // A stale Launcher selection can never reach a same-name replacement.
+        let socket_path =
+            session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
         let listener = bind_unix_listener(&socket_path)?;
         set_file_mode(&socket_path, 0o600)?;
 
@@ -592,7 +604,7 @@ fn run_daemon(
             working_directory: shell.working_directory.clone(),
             cols,
             rows,
-            created_at_unix_ms: now_ms(),
+            created_at_unix_ms: generation,
             attached: false,
         };
         if let Err(error) = save_registry_record(record) {
@@ -610,7 +622,7 @@ fn run_daemon(
 
     #[cfg(windows)]
     {
-        let pipe_name = session_pipe_name(&name);
+        let pipe_name = session_pipe_name(&format!("{}-{generation}", process::id()));
         let initial_listener = create_secure_pipe_listener(&pipe_name, true)?;
         let mut spawned = spawn_shell(&shell, cols, rows)?;
         let record = SessionRecord {
@@ -622,7 +634,7 @@ fn run_daemon(
             working_directory: shell.working_directory.clone(),
             cols,
             rows,
-            created_at_unix_ms: now_ms(),
+            created_at_unix_ms: generation,
             attached: false,
         };
         if let Err(error) = save_registry_record(record) {
@@ -643,6 +655,8 @@ fn run_daemon(
         )?;
     }
 
+    drop(lease);
+    let _ = fs::remove_file(lease_path);
     Ok(())
 }
 
@@ -690,7 +704,7 @@ fn daemon_client_loop<R: Read + Send + 'static>(
             || {
                 let _ = child.kill();
             },
-            move |attached| set_registry_attached(&name_owned, pid, attached),
+            attachment_reporter(name_owned, pid),
         )
     };
     // Deregister first: a daemon that has stopped serving its session must
@@ -709,7 +723,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     observer: Option<mpsc::Sender<ClientLoopEvent>>,
     mut handle_client_command: impl FnMut(ClientCommand) -> io::Result<()>,
     mut shutdown: impl FnMut(),
-    mut on_attach_changed: impl FnMut(bool),
+    mut on_attach_changed: impl FnMut(bool) -> bool,
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
@@ -815,11 +829,10 @@ fn session_client_loop<R: Read + Send + 'static>(
 fn report_attach_state_change(
     currently_attached: bool,
     previously_reported: &mut bool,
-    on_change: &mut impl FnMut(bool),
+    on_change: &mut impl FnMut(bool) -> bool,
 ) {
-    if currently_attached != *previously_reported {
+    if currently_attached != *previously_reported && on_change(currently_attached) {
         *previously_reported = currently_attached;
-        on_change(currently_attached);
     }
 }
 
@@ -864,15 +877,36 @@ enum ClientLoopEvent {
     OutputBuffered,
 }
 
-fn set_registry_attached(name: &str, pid: u32, attached: bool) {
-    let _ = with_registry_lock(|registry: &mut SessionRegistry| {
+fn attachment_reporter(name: String, pid: u32) -> impl FnMut(bool) -> bool {
+    let mut retry_after = Instant::now();
+    move |attached| {
+        if Instant::now() < retry_after {
+            return false;
+        }
+        match set_registry_attached(&name, pid, attached) {
+            Ok(()) => true,
+            Err(error) => {
+                sessiond_trace(format_args!("could not publish attachment state: {error}"));
+                retry_after = Instant::now() + Duration::from_millis(500);
+                false
+            }
+        }
+    }
+}
+
+fn set_registry_attached(
+    name: &str,
+    pid: u32,
+    attached: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    with_registry_lock(|registry: &mut SessionRegistry| {
         if let Some(record) = registry.sessions.get_mut(name) {
             if record.pid == pid {
                 record.attached = attached;
             }
         }
         Ok(())
-    });
+    })
 }
 
 #[cfg(windows)]
@@ -938,8 +972,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut attached_reported = false;
     let pid = process::id();
     let name_owned = name.to_owned();
-    let mut on_attach_changed =
-        move |attached: bool| set_registry_attached(&name_owned, pid, attached);
+    let mut on_attach_changed = attachment_reporter(name_owned, pid);
     let mut shell_exited_at: Option<Instant> = None;
     let mut pending = PendingOutput::default();
     let result = loop {
@@ -1716,7 +1749,7 @@ const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
 fn run_list() -> Result<(), Box<dyn std::error::Error>> {
     let registry = with_registry_lock(|registry| {
-        prune_dead_records(registry);
+        prune_dead_records(registry)?;
         Ok(registry.clone())
     })?;
 
@@ -1750,7 +1783,7 @@ fn kill_registered_session(
     let Some(record) = registry.sessions.get(name).cloned() else {
         return Err(format!("session '{name}' is not registered").into());
     };
-    let terminated = if process_alive(record.pid) {
+    let terminated = if record_is_live(&record)? {
         terminate(record.pid)
     } else {
         Ok(())
@@ -2101,7 +2134,7 @@ fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
 fn save_registry_record(record: SessionRecord) -> Result<(), Box<dyn std::error::Error>> {
     with_registry_lock(|registry: &mut SessionRegistry| {
         if let Some(existing) = registry.sessions.get(&record.name) {
-            if existing.pid != record.pid && process_alive(existing.pid) {
+            if existing.pid != record.pid && record_is_live(existing)? {
                 return Err(format!("session '{}' is already running", record.name).into());
             }
         }
@@ -2129,10 +2162,26 @@ fn remove_registry_record_if_pid_matches(registry: &mut SessionRegistry, name: &
     }
 }
 
-fn prune_dead_records(registry: &mut SessionRegistry) {
-    registry
-        .sessions
-        .retain(|_, record| process_alive(record.pid));
+fn record_is_live(record: &SessionRecord) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(festerm_sessiond::daemon_generation_is_live(
+        &runtime_root()?,
+        record.pid,
+        record.created_at_unix_ms,
+        &record.socket,
+    )?)
+}
+
+fn prune_dead_records(registry: &mut SessionRegistry) -> Result<(), Box<dyn std::error::Error>> {
+    let mut dead = Vec::new();
+    for (name, record) in &registry.sessions {
+        if !record_is_live(record)? {
+            dead.push(name.clone());
+        }
+    }
+    for name in dead {
+        registry.sessions.remove(&name);
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -2195,6 +2244,7 @@ fn spawn_shell(
     })
 }
 
+#[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -2205,11 +2255,6 @@ fn process_alive(pid: u32) -> bool {
             Err(Errno::ESRCH) => false,
             Err(_) => false,
         }
-    }
-
-    #[cfg(windows)]
-    {
-        festerm_windows_job::process_is_alive(pid)
     }
 }
 
@@ -2791,7 +2836,7 @@ mod tests {
                         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "test closed"))
                 },
                 || {},
-                |_attached| {},
+                |_attached| true,
             )
         });
 
@@ -2917,7 +2962,10 @@ mod tests {
                 None,
                 |_command| Ok(()),
                 || {},
-                move |attached| attach_events_clone.lock().unwrap().push(attached),
+                move |attached| {
+                    attach_events_clone.lock().unwrap().push(attached);
+                    true
+                },
             )
         });
 
@@ -3389,6 +3437,20 @@ mod tests {
         assert!(error.to_string().contains("is not registered"));
     }
 
+    #[test]
+    fn killing_a_stale_generation_never_signals_a_reused_live_pid() {
+        let mut record = test_record("stale", process::id());
+        record.created_at_unix_ms = 0;
+        record.socket = format!("{}-0.sock", record.pid);
+        let mut registry = SessionRegistry::default();
+        registry.sessions.insert("stale".into(), record);
+        kill_registered_session(&mut registry, "stale", |_| {
+            panic!("stale generation must not signal this live process")
+        })
+        .unwrap();
+        assert!(registry.sessions.is_empty());
+    }
+
     fn test_record(name: &str, pid: u32) -> SessionRecord {
         SessionRecord {
             name: name.to_owned(),
@@ -3463,7 +3525,10 @@ mod tests {
         let events = Rc::new(RefCell::new(Vec::new()));
         let mut reported = false;
         let events_clone = Rc::clone(&events);
-        let mut on_change = move |attached: bool| events_clone.borrow_mut().push(attached);
+        let mut on_change = move |attached: bool| {
+            events_clone.borrow_mut().push(attached);
+            true
+        };
 
         report_attach_state_change(false, &mut reported, &mut on_change);
         assert!(events.borrow().is_empty());
@@ -3476,5 +3541,17 @@ mod tests {
 
         report_attach_state_change(false, &mut reported, &mut on_change);
         assert_eq!(*events.borrow(), vec![true, false]);
+    }
+
+    #[test]
+    fn failed_attachment_state_publication_is_retried_not_marked_complete() {
+        let mut reported = true;
+        report_attach_state_change(false, &mut reported, &mut |_| false);
+        assert!(reported, "failed detach publication must remain pending");
+        report_attach_state_change(false, &mut reported, &mut |_| true);
+        assert!(!reported);
+        report_attach_state_change(false, &mut reported, &mut |_| {
+            panic!("successful publication is not repeated")
+        });
     }
 }

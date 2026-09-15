@@ -30,6 +30,13 @@ else
     status=fail
 fi
 
+if python3 scripts/check_running_sessions.py; then
+    printf 'suite=running-session-churn status=pass\n' >>"$result_path"
+else
+    printf 'suite=running-session-churn status=fail\n' >>"$result_path"
+    status=fail
+fi
+
 if scripts/run-p5-reference.sh; then
     printf 'suite=p5 status=pass\n' >>"$result_path"
 else

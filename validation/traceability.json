@@ -61,7 +61,6 @@
       "edges": [
         "LAUNCH-0[1-5]",
         "LAUNCH-0[78]",
-        "LAUNCH-12",
         "LAUNCH-1[5-8]"
       ],
       "requirements": [
@@ -119,6 +118,38 @@
       "status": "automated"
     },
     {
+      "id": "running-session-discovery",
+      "edges": ["LAUNCH-12"],
+      "requirements": ["docs/gui-design.md#session-launcher"],
+      "decisions": ["ADR-0018", "ADR-0025"],
+      "automated_tests": [
+        "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
+        "duplicate_resume_requests_are_bounded_and_disabled_discovery_does_not_launch",
+        "large_running_inventory_only_materializes_visible_rows",
+        "resuming_a_missing_session_surfaces_a_concise_error",
+        "the_running_sessions_refresh_control_dispatches_a_refresh_command",
+        "resumable_sessions_appear_in_the_running_sessions_panel_and_dispatch_resume",
+        "tmux_and_screen_sessions_appear_in_their_own_labeled_widgets_and_dispatch_resume",
+        "stable_tmux_ids_are_sorted_deduplicated_and_do_not_follow_recreated_names",
+        "modern_screen_dates_do_not_change_full_pid_identity",
+        "screen_process_start_is_stable_utc_generation_metadata",
+        "provider_process_failures_timeouts_and_output_are_bounded",
+        "timed_out_command_terminates_its_owned_descendants",
+        "provider_attachment_keeps_inherited_executable_search_path",
+        "unavailable_binary_is_not_a_provider_error",
+        "registry_absence_corruption_and_lock_contention_have_distinct_bounded_results",
+        "generation_lease_excludes_stale_pid_records_and_attached_native_sessions",
+        "killing_a_stale_generation_never_signals_a_reused_live_pid",
+        "failed_attachment_state_publication_is_retried_not_marked_complete",
+        "native_discovery_churn_preserves_process_and_rejects_replaced_generations",
+        "cursor_query_guard_replies_once_to_fragmented_queries",
+        "isolated_multiplexer_discovery_churn"
+      ],
+      "manual_scenarios": ["CP-12"],
+      "status": "partial",
+      "prerequisites": []
+    },
+    {
       "id": "launcher-profile-search-sort",
       "edges": [
         "LAUNCH-1[34]"
@@ -150,7 +181,8 @@
       ],
       "automated_tests": [
         "a_running_session_group_collapses_and_expands_from_its_header",
-        "the_running_sessions_refresh_control_dispatches_no_command"
+        "the_running_sessions_refresh_control_dispatches_a_refresh_command",
+        "rapid_refresh_is_coalesced_and_stale_results_are_discarded"
       ],
       "manual_scenarios": [],
       "status": "automated"
@@ -169,6 +201,7 @@
       "automated_tests": [
         "the_new_session_surface_is_inset_from_the_window_edge",
         "the_launch_cards_stay_in_place_while_a_long_profile_list_scrolls",
+        "large_running_inventory_only_materializes_visible_rows",
         "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns",
         "a_launch_card_is_a_wide_strip_rather_than_a_tall_tile",
         "tighter_launcher_preserves_alignment_and_click_targets_at_desktop_widths",
