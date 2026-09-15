@@ -24,6 +24,18 @@ closed #70's local resume behavior and `LAUNCH-12`/`PROF-06`, without claiming
 SSH #49 recovery or the broader CP-11/#43 package/security/native GUI obligations
 are complete. CP-12 records the remaining native Launcher/usability evidence.
 
+Sustained 32-by-10 host churn then exposed a teardown bug that smaller inventories
+had hidden. Detached tmux clients vanished from inventory while their PTY control
+workers remained: cancellation stopped the reader before the client's last output
+could drain, and the disconnected control channel turned exit polling into a
+busy loop. The test process reached 917% CPU before later screen `ps` queries
+hit their unchanged two-second deadline. Readers now drain and discard shutdown
+output without publishing events, and stopped controllers pace their exit polls.
+The harness requires reader/control completion as well as provider transitions;
+a provider-independent drop regression reproduced the old failure. Explicit
+timeout-to-Refresh recovery is tested separately rather than retrying stress
+errors until they disappear.
+
 ## Foundation and acceptance history
 
 fesTerm began foundation-first: M0 through M3 established a testable terminal

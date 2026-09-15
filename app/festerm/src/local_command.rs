@@ -1,28 +1,55 @@
 //! Bounded subprocess output without blocking reader threads.
 
 use std::{
+    cell::Cell,
     process::{Command, Output, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MAX_OUTPUT: u64 = 1024 * 1024;
 
-async fn read_bounded(reader: impl tokio::io::AsyncRead + Unpin) -> Result<Vec<u8>, String> {
+#[derive(Default)]
+struct ReadProgress {
+    bytes: Cell<usize>,
+    eof: Cell<bool>,
+}
+
+async fn read_bounded(
+    reader: impl tokio::io::AsyncRead + Unpin,
+    progress: &ReadProgress,
+) -> Result<Vec<u8>, String> {
     use tokio::io::AsyncReadExt;
     let mut bytes = Vec::new();
-    reader
-        .take(MAX_OUTPUT + 1)
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > MAX_OUTPUT {
-        return Err("provider inventory exceeds 1 MiB".into());
+    let mut reader = reader.take(MAX_OUTPUT + 1);
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            progress.eof.set(true);
+            break;
+        }
+        progress.bytes.set(bytes.len() + count);
+        if progress.bytes.get() as u64 > MAX_OUTPUT {
+            return Err("provider inventory exceeds 1 MiB".into());
+        }
+        bytes.extend_from_slice(&buffer[..count]);
     }
     Ok(bytes)
 }
 
 pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, String> {
     let program = command.get_program().to_string_lossy().into_owned();
+    let trace = std::env::var_os("FESTERM_DISCOVERY_TIMING").is_some();
+    let arguments = trace.then(|| {
+        command
+            .get_args()
+            .map(|arg| arg.to_os_string())
+            .collect::<Vec<_>>()
+    });
+    let started = Instant::now();
     #[cfg(unix)]
     let command = {
         use std::os::unix::process::CommandExt;
@@ -49,10 +76,19 @@ pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, Str
         };
         #[cfg(unix)]
         let process_group = child.id();
+        let pid = child.id();
+        let spawn_ms = started.elapsed().as_millis();
+        let stdout_progress = ReadProgress::default();
+        let stderr_progress = ReadProgress::default();
+        let waiting_for_exit = Cell::new(false);
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let result = tokio::time::timeout(timeout, async {
-            let (stdout, stderr) = tokio::try_join!(read_bounded(stdout), read_bounded(stderr))?;
+            let (stdout, stderr) = tokio::try_join!(
+                read_bounded(stdout, &stdout_progress),
+                read_bounded(stderr, &stderr_progress)
+            )?;
+            waiting_for_exit.set(true);
             let status = child.wait().await.map_err(|error| error.to_string())?;
             Ok(Output {
                 status,
@@ -62,8 +98,22 @@ pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, Str
         })
         .await;
         match result {
-            Ok(Ok(output)) => Ok(Some(output)),
+            Ok(Ok(output)) => {
+                if let Some(arguments) = &arguments {
+                    eprintln!(
+                        "discovery-command program={program:?} args={arguments:?} pid={pid:?} spawn_ms={spawn_ms} elapsed_ms={} status={}",
+                        started.elapsed().as_millis(), output.status
+                    );
+                }
+                Ok(Some(output))
+            }
             error => {
+                let detail = format!("pid={pid:?} spawn_ms={spawn_ms} elapsed_ms={} stdout_bytes={} stdout_eof={} stderr_bytes={} stderr_eof={} waiting_for_exit={}",
+                    started.elapsed().as_millis(), stdout_progress.bytes.get(), stdout_progress.eof.get(),
+                    stderr_progress.bytes.get(), stderr_progress.eof.get(), waiting_for_exit.get());
+                if let Some(arguments) = &arguments {
+                    eprintln!("discovery-command program={program:?} args={arguments:?} {detail}");
+                }
                 #[cfg(unix)]
                 if let Some(pid) = process_group {
                     use nix::{
@@ -77,8 +127,8 @@ pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, Str
                 match error {
                     Ok(Err(error)) => Err(error),
                     _ => Err(format!(
-                        "{program} discovery timed out after {} ms; Refresh to retry",
-                        timeout.as_millis()
+                        "{program} discovery timed out after {} ms; Refresh to retry ({detail})",
+                        timeout.as_millis(),
                     )),
                 }
             }

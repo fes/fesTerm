@@ -140,6 +140,7 @@ fn challenge(client: &LocalPtySession, nonce: &str, fresh: &str) -> String {
 #[test]
 #[ignore = "run via scripts/check_running_sessions.py for isolated provider namespaces"]
 fn isolated_multiplexer_discovery_churn() {
+    eprintln!("churn-process pid={}", std::process::id());
     let root = std::env::var_os("FESTERM_MUX_CHURN_ROOT")
         .map(PathBuf::from)
         .expect("use scripts/check_running_sessions.py; never run against ordinary user sessions");
@@ -196,6 +197,9 @@ fn isolated_multiplexer_discovery_churn() {
                 let pid = challenge(&client, &nonce, "before");
                 // Duplicate clicks/refreshes cannot create another server shell.
                 assert_eq!(list(provider).unwrap().len(), batch + 1 - index);
+                client
+                    .shutdown(Duration::from_secs(2))
+                    .expect("detached client's control and reader workers must stop");
                 drop(client);
                 poll(|| {
                     list(provider)
@@ -214,6 +218,9 @@ fn isolated_multiplexer_discovery_churn() {
                         SessionLifecycle::Starting | SessionLifecycle::Running
                     )
                 });
+                resumed
+                    .shutdown(Duration::from_secs(2))
+                    .expect("exited client's control and reader workers must stop");
                 drop(resumed);
                 poll(|| {
                     !list(provider)

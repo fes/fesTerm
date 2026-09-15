@@ -208,6 +208,33 @@ and the final default 8×3 churn run for sessiond, tmux 3.7c and GNU screen
 native-process/headless results, not signed-package, native-window visual,
 Windows, Linux, WSL, or VM acceptance evidence.
 
+The subsequent 32-by-10 host run initially failed on screen's bounded `ps`
+query. Instrumentation reproduced a live, zero-output `ps` at its deadline;
+sampling identified accumulated detached-client PTY control workers spinning in
+`wait4`, not a completed child awaiting an async notification. Shutdown now drains
+and discards final client output, and disconnected controllers do not busy-poll.
+The churn harness also requires each detached/exited client's reader and control
+workers to complete. A controlled drop regression records the former timeout,
+and a separate deterministic discovery test makes a real subprocess timeout
+visible before coalesced explicit Refresh restores a known inventory. Unexpected
+provider errors in foreground churn remain failures, not hidden retries.
+
+After the correction, the same macOS host passed all three providers at
+32-by-10 with no command-error diagnostics. Across 4,609 screen identity queries,
+`ps` had a 25 ms median and 120 ms maximum; 113 full 33-PID queries had a 40 ms
+median and 59 ms maximum. The owned test process sampled after the first tmux
+cycle fell from 917% CPU before the fix to 4.2% afterward. The full required CI
+commands and four existing isolated native-daemon smoke/churn tests also passed.
+This follow-up is host backend/headless evidence only; parent-owned candidate
+VM and native GUI qualification are separate.
+
+Set `FESTERM_DISCOVERY_TIMING=1` when running `check_running_sessions.py` to
+record command argv, owned child PIDs, spawn/total elapsed milliseconds and
+exit statuses. This opt-in log includes local session names; it does not dump
+command output or environment values. Deadline diagnostics include stdout/stderr
+byte counts, EOF state and whether exit-wait started. The two-second provider
+I/O/exit deadline is unchanged; runtime/spawn overhead is measured separately.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

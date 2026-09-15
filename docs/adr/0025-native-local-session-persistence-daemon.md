@@ -369,6 +369,11 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
   verifies isolated batches, same-child PID after fresh post-reattach input,
   natural exit removal and rejection of same-name replacements. Registry tests
   distinguish absence, corruption, lock deadlines and stale generation leases.
+  Shared Running Sessions acceptance also checks that local multiplexer client
+  teardown retires reader/control workers without terminating the persistent
+  shell, and that a visible provider timeout can recover through a coalesced
+  explicit Refresh. These are internal lifecycle/discovery corrections, not a
+  change to daemon ownership, transport queues or this ADR's provisional status.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

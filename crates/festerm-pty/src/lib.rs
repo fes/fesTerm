@@ -994,17 +994,21 @@ fn reader_worker(
 ) {
     let mut buffer = vec![0_u8; MAX_IO_CHUNK_BYTES.min(16 * 1024)];
     loop {
-        if shared.cancel.load(Ordering::Acquire) {
-            let _ = done_sender.send(Ok(()));
-            return;
-        }
         match reader.read(&mut buffer) {
             Ok(0) => {
                 let _ = done_sender.send(Ok(()));
                 return;
             }
             Ok(read) => {
+                // Keep draining after cancellation, without publishing events:
+                // a terminal client can need its last output drained to exit.
+                if shared.cancel.load(Ordering::Acquire) {
+                    continue;
+                }
                 if !shared.emit_output(buffer[..read].to_vec()) {
+                    if shared.cancel.load(Ordering::Acquire) {
+                        continue;
+                    }
                     let _ = done_sender.send(Ok(()));
                     return;
                 }
@@ -1106,6 +1110,10 @@ fn control_worker(
                 }
                 shared.terminate_process_tree();
                 break;
+            }
+            Ok(None) if stopping => {
+                // A disconnected command channel returns immediately.
+                thread::sleep(POLL_INTERVAL);
             }
             Ok(None) => {}
             Err(error) => {
@@ -1553,6 +1561,30 @@ mod tests {
             Ok(ShutdownResult::Stopped)
         );
         assert_eq!(session.lifecycle(), SessionLifecycle::Stopped);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_client_with_pending_terminal_output_retires_its_workers() {
+        let profile = LocalProfile::new("/bin/sh").with_arguments([
+            "-c",
+            "trap 'printf \"%65536s\" closing; exit 0' TERM; printf 'READY\\n'; while IFS= read -r line; do :; done",
+        ]);
+        let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
+        let mut output = Vec::new();
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
+            bytes.windows(5).any(|window| window == b"READY")
+        });
+        let shared = Arc::clone(&session.shared);
+        drop(session);
+        assert_eq!(
+            shared
+                .completion_receiver
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2)),
+            Ok(Ok(ShutdownResult::Stopped))
+        );
     }
 
     #[cfg(unix)]

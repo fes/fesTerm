@@ -65,6 +65,15 @@ impl Discovery {
     }
 
     pub fn update(&mut self, enabled: bool, context: &eframe::egui::Context) {
+        self.update_with(enabled, context, Inventory::discover);
+    }
+
+    fn update_with(
+        &mut self,
+        enabled: bool,
+        context: &eframe::egui::Context,
+        discover: impl FnOnce() -> Inventory + Send + 'static,
+    ) {
         if self.enabled != enabled {
             self.enabled = enabled;
             self.inventory = Inventory::default();
@@ -100,7 +109,7 @@ impl Discovery {
             let handle = thread::Builder::new()
                 .name("running-session-discovery".into())
                 .spawn(move || {
-                    let _ = sender.send(Inventory::discover());
+                    let _ = sender.send(discover());
                     context.request_repaint();
                 });
             match handle {
@@ -121,6 +130,69 @@ impl Discovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_provider_timeout_is_visible_and_explicit_refresh_recovers() {
+        let context = eframe::egui::Context::default();
+        let mut discovery = Discovery::default();
+        discovery.update_with(true, &context, || {
+            let mut command = std::process::Command::new("/bin/sh");
+            command.args(["-c", "exec /bin/sleep 5"]);
+            let error =
+                crate::local_command::output(command, Duration::from_millis(40)).unwrap_err();
+            Inventory {
+                errors: vec![format!("screen: {error}")],
+                ..Default::default()
+            }
+        });
+        finish(&mut discovery, &context);
+        assert_eq!(discovery.inventory.errors.len(), 1);
+        let error = &discovery.inventory.errors[0];
+        assert!(error.starts_with("screen:"));
+        assert!(error.contains("timed out"));
+        assert!(error.contains("stdout_eof=false"));
+        assert!(error.contains("waiting_for_exit=false"));
+        assert!(error.contains("Refresh to retry"));
+        assert!(discovery.inventory.screen.is_empty());
+
+        let generation = discovery.generation;
+        for _ in 0..10_000 {
+            discovery.refresh();
+        }
+        assert_eq!(discovery.generation, generation + 1);
+        discovery.update_with(true, &context, || Inventory {
+            screen: vec![MultiplexerSession {
+                name: "same-owned-shell".into(),
+                match_key: "123.same-owned-shell|1700000000".into(),
+                attached: false,
+                started_at_unix_seconds: Some(1700000000),
+            }],
+            ..Default::default()
+        });
+        finish(&mut discovery, &context);
+        assert!(discovery.inventory.errors.is_empty());
+        assert_eq!(discovery.inventory.screen.len(), 1);
+        assert_eq!(
+            discovery.inventory.screen[0].match_key,
+            "123.same-owned-shell|1700000000"
+        );
+        assert!(discovery.worker.is_none());
+        assert!(!discovery.requested);
+    }
+
+    #[cfg(unix)]
+    fn finish(discovery: &mut Discovery, context: &eframe::egui::Context) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !discovery.worker.as_ref().unwrap().2.is_finished() {
+            assert!(Instant::now() < deadline, "discovery worker did not finish");
+            thread::sleep(Duration::from_millis(1));
+        }
+        discovery.next_refresh = Some(Instant::now() + Duration::from_secs(60));
+        discovery.update_with(true, context, || {
+            panic!("unexpected extra discovery worker")
+        });
+    }
 
     #[test]
     fn rapid_refresh_is_coalesced_and_stale_results_are_discarded() {
