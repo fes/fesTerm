@@ -281,6 +281,20 @@ during Screen churn used 3.7% CPU rather than accumulating spinning workers.
 All required repository checks passed on the host. This remains backend/headless
 evidence, not updated guest or native-window qualification.
 
+The subsequent Linux VM at `7321011`, using actual Screen 4.9.1, failed after
+successful discovery, client confirmation, Launcher recovery and fresh state
+challenges: shutting down the recovered client left no Screen session for the
+original client. This was not an initial-list parser or startup-readiness
+failure. A retained-terminal PTY regression reproduced the dependency writer's
+destructor injecting newline/EOF after client exit. Unix writer teardown now
+uses a safe owned descriptor that sends no bytes. The deterministic regression
+failed with the old writer and passed with the correction; all 12 PTY tests and
+macOS 8-by-3 churn passed, including a new fresh challenge from the surviving
+Screen client after the recovered client shuts down. Actual Linux Screen 4.9.1
+must be rerun on this corrected candidate; earlier host passes are not that
+evidence. Discovery parsing, provider deadlines and Windows writer behavior are
+unchanged.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

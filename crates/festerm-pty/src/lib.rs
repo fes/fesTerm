@@ -690,7 +690,7 @@ impl LocalPtySession {
         let reader = pair.master.try_clone_reader().map_err(|error| {
             LocalPtyError::new(format!("could not open local PTY reader: {error}"))
         })?;
-        let writer = pair.master.take_writer().map_err(|error| {
+        let writer = local_pty_writer(&*pair.master).map_err(|error| {
             LocalPtyError::new(format!("could not open local PTY writer: {error}"))
         })?;
         let mut child = pair
@@ -996,6 +996,25 @@ fn send_command(
         }),
         Err(TrySendError::Disconnected(_)) => Err(SessionSendError::Closed { operation }),
     }
+}
+
+#[cfg(unix)]
+fn local_pty_writer(master: &dyn MasterPty) -> Result<Box<dyn Write + Send>, LocalPtyError> {
+    // portable-pty's Unix writer injects newline/VEOF on Drop. A multiplexer
+    // can still own the slave after its client exits; shutdown must send no input.
+    let descriptor = master
+        .as_raw_fd()
+        .ok_or_else(|| LocalPtyError::new("local PTY master has no Unix descriptor"))?;
+    let writer = filedescriptor::FileDescriptor::dup(&descriptor)
+        .map_err(|error| LocalPtyError::new(error.to_string()))?;
+    Ok(Box::new(writer))
+}
+
+#[cfg(not(unix))]
+fn local_pty_writer(master: &dyn MasterPty) -> Result<Box<dyn Write + Send>, LocalPtyError> {
+    master
+        .take_writer()
+        .map_err(|error| LocalPtyError::new(error.to_string()))
 }
 
 fn reader_worker(
@@ -1723,6 +1742,49 @@ mod tests {
              manually and re-run these tests"
         );
         path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal() {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let pair = native_pty_system()
+            .openpty(to_portable_size(TerminalSize::new(80, 24).unwrap()))
+            .unwrap();
+        let mut retained = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK)
+            .open(pair.master.tty_name().unwrap())
+            .unwrap();
+        let writer = local_pty_writer(&*pair.master).unwrap();
+        let mut barrier =
+            filedescriptor::FileDescriptor::dup(&pair.master.as_raw_fd().unwrap()).unwrap();
+
+        // Model Screen retaining the client terminal after its attacher exits.
+        // A later explicit write orders the assertion without an absence timer.
+        drop(writer);
+        barrier.write_all(b"after-drop\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut observed = Vec::new();
+        let mut buffer = [0; 64];
+        while !observed.ends_with(b"after-drop\n") {
+            match retained.read(&mut buffer) {
+                Ok(0) => panic!("writer teardown injected EOF into the retained terminal"),
+                Ok(count) => observed.extend_from_slice(&buffer[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "terminal barrier timed out");
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("retained terminal read failed: {error}"),
+            }
+            assert!(
+                observed.len() <= 64,
+                "unexpected terminal input: {observed:?}"
+            );
+        }
+        assert_eq!(observed, b"after-drop\n");
     }
 
     #[cfg(unix)]

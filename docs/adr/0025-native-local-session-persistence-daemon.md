@@ -405,6 +405,10 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
   and preservation of live replacements. Isolated Screen churn additionally
   delays/fails a new client while another remains attached, verifies Launcher
   diagnostics and Refresh recovery, and challenges the unchanged server shell.
+  `dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal` rejects
+  destructor-injected newline/EOF when a local multiplexer retains the terminal
+  after its frontend exits. The Unix client writer uses an owned safe descriptor;
+  no queue, process-tree ownership or native daemon transport contract changes.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

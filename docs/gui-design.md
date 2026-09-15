@@ -293,6 +293,10 @@ and subsequently exits has the normal disconnected-terminal lifecycle.
 Native explicit reconnect retains both the discovered generation and registry
 root. It may take over that same generation, but cannot follow a same-name
 replacement; named saved-profile connection policy is unchanged.
+Closing a local multiplexer client does not send newline/EOF into its terminal:
+the server can retain that terminal after the client process exits. Unix PTY
+writer teardown closes only its owned descriptor; process-tree shutdown and
+bounded output draining remain unchanged.
 Missing providers/no running server are ordinary empty results; permissions,
 malformed registries, command failures, output limits, and timeouts are visible
 provider errors, not silently successful empty inventories. Provider commands

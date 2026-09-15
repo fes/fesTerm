@@ -2135,6 +2135,7 @@ dependencies = [
  "festerm-session",
  "festerm-windows-job",
  "festerm-windows-runtime",
+ "filedescriptor",
  "nix 0.31.3",
  "portable-pty",
 ]

@@ -58,6 +58,16 @@ disturbing an existing client, and exposed a separate harness cleanup race:
 Screen `quit` is asynchronous, so cleanup now waits boundedly for inventory
 removal rather than immediately reporting a leak.
 
+The Linux VM's actual Screen 4.9.1 run then lost the shared shell after the
+recovered client shut down, not during initial discovery. The pinned PTY
+dependency's Unix writer destructor sends newline/EOF even after its child
+exits. A deterministic retained-slave regression reproduced that unwanted input
+without Screen or scheduling retries. Unix clients now use an owned, safely
+duplicated descriptor whose destructor sends no bytes; the existing safe
+descriptor dependency was already locked through portable-pty. The isolated
+Screen regression also challenges the original shell after the second client's
+shutdown, rather than relying solely on an attached inventory flag.
+
 ## Foundation and acceptance history
 
 fesTerm began foundation-first: M0 through M3 established a testable terminal

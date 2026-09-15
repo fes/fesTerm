@@ -126,6 +126,7 @@
         "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
         "a_provider_timeout_is_visible_and_explicit_refresh_recovers",
         "dropping_a_client_with_pending_terminal_output_retires_its_workers",
+        "dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal",
         "duplicate_resume_requests_are_bounded_and_disabled_discovery_does_not_launch",
         "large_running_inventory_only_materializes_visible_rows",
         "resuming_a_missing_session_surfaces_a_concise_error",

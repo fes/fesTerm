@@ -220,7 +220,7 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
     state.dispatch(
         AppCommand::ResumeMultiplexerSession {
             provider: Provider::Screen,
-            session: selected,
+            session: selected.clone(),
         },
         &context,
     );
@@ -251,7 +251,25 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
         .shutdown(Duration::from_secs(2))
         .unwrap();
     drop(state);
-    assert!(list(Provider::Screen).unwrap()[0].attached);
+    let remaining = list(Provider::Screen).unwrap();
+    assert_eq!(
+        remaining.len(), 1,
+        "Screen shell disappeared after shutting down the recovered client; primary lifecycle: {:?}",
+        primary.lifecycle()
+    );
+    assert_eq!(remaining[0].match_key, selected.match_key);
+    assert!(remaining[0].attached);
+    primary.try_send_input(b"after-detach\r").unwrap();
+    let mut output = Vec::new();
+    poll(|| {
+        while let Ok(event) = primary.try_recv_event() {
+            if let SessionEvent::Output(bytes) = event {
+                output.extend(bytes);
+            }
+        }
+        assert!(output.len() < 1024 * 1024);
+        String::from_utf8_lossy(&output).contains(&format!("STATE:sentinel:{pid}:after-detach"))
+    });
     primary.shutdown(Duration::from_secs(2)).unwrap();
     poll(|| {
         list(Provider::Screen)
