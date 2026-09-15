@@ -404,13 +404,30 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn provider_attachment_keeps_inherited_executable_search_path() {
-        let profile = provider_environment(festerm_pty::LocalProfile::new("/bin/sh"));
+        assert!(festerm_pty::is_executable_on_path("sh"));
+        let profile = provider_environment(festerm_pty::LocalProfile::new("sh"));
         let festerm_pty::EnvironmentPolicy::InheritWith(overrides) = profile.environment() else {
             panic!("provider executable resolution must remain explicit");
         };
+        let inherited = std::env::var_os("PATH").expect("the executable search path is present");
         assert_eq!(
             overrides.get(std::ffi::OsStr::new("PATH")),
-            std::env::var_os("PATH").as_ref()
+            Some(&inherited)
+        );
+        let discovered = bounded_output("sh", &["-c", "printf '%s' \"$PATH\""])
+            .unwrap()
+            .expect("the executable is available for discovery");
+        assert!(discovered.status.success());
+        assert_eq!(discovered.stdout, inherited.as_encoded_bytes());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn absolute_provider_executable_uses_login_environment_correction() {
+        let profile = festerm_pty::LocalProfile::new("/bin/sh");
+        assert_eq!(
+            provider_environment(profile.clone()),
+            crate::environment::with_corrected_local_path(profile)
         );
     }
 

@@ -228,6 +228,13 @@ commands and four existing isolated native-daemon smoke/churn tests also passed.
 This follow-up is host backend/headless evidence only; parent-owned candidate
 VM and native GUI qualification are separate.
 
+The macOS provider-PATH regressions distinguish a bare executable found on
+inherited PATH from an absolute executable using normal login-environment
+correction. A controlled login shell with a deliberately different PATH
+reproduced the former required-CI assertion failure; the corrected tests also
+check that discovery actually executes with the PATH retained for attachment.
+Production discovery/attachment environment policy is unchanged.
+
 Set `FESTERM_DISCOVERY_TIMING=1` when running `check_running_sessions.py` to
 record command argv, owned child PIDs, spawn/total elapsed milliseconds and
 exit statuses. This opt-in log includes local session names; it does not dump
