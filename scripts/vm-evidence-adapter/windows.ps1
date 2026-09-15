@@ -19,7 +19,7 @@ function Test-FesTermJob {
     $Job.adapter_id -eq 'festerm' -and
         $Job.adapter_schema_version -eq 1 -and
         $Job.platform -eq 'windows' -and
-        @('native-smoke', 'os-input-smoke', 'optional-validation') -contains $Job.mode -and
+        @('native-smoke', 'os-input-smoke', 'optional-validation', 'running-session-stress') -contains $Job.mode -and
         @($Job.payload.PSObject.Properties).Count -eq 0
 }
 
@@ -73,6 +73,23 @@ $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\V
 Push-Location $sourcePath
 try {
     switch ($job.mode) {
+        'running-session-stress' {
+            $resultPath = Join-Path $ArtifactDirectory 'running-session-stress.txt'
+            Set-Content -LiteralPath $resultPath -Value 'status=running'
+            if (-not (Test-Path -LiteralPath $vcvarsallPath) -or
+                -not (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+                throw 'Windows Build Tools and Clang are required for session stress builds.'
+            }
+            $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+            $stressCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && python scripts/check_running_sessions.py --batch 8 --cycles 3"
+            Invoke-NativeCommand { cmd.exe /d /c $stressCommand }
+            if ($LASTEXITCODE -ne 0) {
+                Set-Content -LiteralPath $resultPath -Value 'status=fail'
+                throw 'Running-session stress failed.'
+            }
+            Set-Content -LiteralPath $resultPath -Value 'status=pass'
+            Require-PassStatus $resultPath
+        }
         'native-smoke' {
             if (-not (Test-Path -LiteralPath $vcvarsallPath) -or
                 -not (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {

@@ -10,7 +10,7 @@ validate_job() {
         (.adapter_id == "festerm") and
         (.adapter_schema_version == 1) and
         (.platform == "linux") and
-        (.mode == "native-smoke" or .mode == "os-input-smoke" or .mode == "optional-validation") and
+        (.mode == "native-smoke" or .mode == "os-input-smoke" or .mode == "optional-validation" or .mode == "running-session-stress") and
         (.payload == {})
     ' "$job_path" >/dev/null
 }
@@ -32,6 +32,16 @@ source_path=$(festerm_source)
 mkdir -p "$artifact_directory"
 
 case "$(jq -er '.mode' "$job_path")" in
+    running-session-stress)
+        result_path="$artifact_directory/running-session-stress.txt"
+        printf 'status=running\n' >"$result_path"
+        if python3 "$source_path/scripts/check_running_sessions.py" --batch 8 --cycles 3; then
+            printf 'status=pass\n' >"$result_path"
+        else
+            printf 'status=fail\n' >"$result_path"
+            exit 1
+        fi
+        ;;
     native-smoke)
         (
             cd "$source_path"
