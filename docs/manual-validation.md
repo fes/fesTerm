@@ -267,11 +267,10 @@ startup-failure regression also checks artifacts directly. Screen 4.00.03
 coverage now includes an already-attached session and a delayed/failing new
 client through the actual Launcher command, useful failure diagnostics, explicit
 Refresh/retry, and fresh same-shell PID/state proof from the recovered client.
-Screen confirmation inspects the server's exact new terminal using bounded
-macOS `lsof` or Linux `/proc` descriptors; missing/denied inspection is an
-actionable error, not success. Linux descriptor permissions and native Windows
-execution of these new cases still require their own candidate runs. Earlier
-guest results on `59ba3b7` do not establish coverage for these corrections.
+That intermediate candidate inspected the server's exact new terminal using
+bounded macOS `lsof` or Linux `/proc` descriptors. The Fedora follow-up below
+replaced the modern Screen inspection requirement with a public query.
+Earlier guest results on `59ba3b7` did not establish coverage for these corrections.
 The corrected candidate also passed sustained 32-by-10 host churn for all three
 providers (30 provider cycles), including the failing-client/recovery regression,
 with no command-error diagnostics and complete owned-namespace cleanup.
@@ -323,6 +322,38 @@ a deterministic regression rejects partial or mismatched replies while allowing
 the trailing terminal controls. This does not change production discovery or
 terminal parsing. Public-query authentication/permission failures stay on Launcher
 with diagnostics rather than publishing an unconfirmed client.
+
+CP-12 candidate VM evidence, 2026-09-15: exact source
+`9ba4563f5dc0013a3ebbd4074598ea6e46918e02` passed the fixed
+`running-session-stress` mode on all three dedicated guests, using reviewed
+shared controller `f93d6b0` and adapter `59ba3b7`. Each native run includes the
+generation/root reconnect and artifact-cleanup regressions, plus 8-by-3 churn.
+Provider-level logs were recovered in addition to the aggregate manifests.
+
+| Guest | Native sessiond | Multiplexer coverage |
+| --- | --- | --- |
+| Ubuntu Noble ARM64 | Three native tests passed; 8-by-3 churn passed | tmux and GNU Screen 4.9.1 each passed 8-by-3, including failed-client recovery and surviving-shell challenges |
+| Windows ARM64 | Three native ConPTY tests passed; 8-by-3 churn passed | tmux and Screen explicitly skipped as non-native providers; this is not WSL or GPU/window qualification |
+| macOS ARM64 | Three native tests passed; 8-by-3 churn passed | Apple Screen 4.00.03 passed 8-by-3; tmux was absent and explicitly skipped in this guest, with separate host coverage above |
+
+Private manifest and guest-log run identifiers:
+
+- Linux: `20260915T231031Z-linux-festerm-94cbebde-b855-4918-8356-7a9ac35a3c01`
+- Windows: `20260915T231340Z-windows-festerm-a63c8b58-3842-449a-8578-a047aada87d7`
+- macOS: `20260915T231546Z-macos-festerm-e2bcb324-24d1-45f6-8e9e-3871719f8360`
+
+Earlier failures remain recorded, rather than being replaced by successful
+retries. Missing guest Python and Screen prerequisites were supplied in
+user-owned locations with separate task baselines; original snapshots and
+privilege policies were preserved. The macOS guest's original Parallels Tools
+update reboot interrupted a run after its native cases passed; the successful
+run used an explicit post-update baseline. All three guests were stopped after
+evidence collection.
+
+These results establish native-process/backend coverage, not signed-package,
+Launcher focus/usability, native keyboard delivery, or actual Fedora
+setgid-package qualification. The latter remains distinct from the real-provider
+modeled-denial tests above. Those remaining checks stay in CP-11/CP-12 and #43.
 
 ## Intake rule for new work
 
