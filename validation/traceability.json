@@ -104,7 +104,8 @@
         "manage_profiles_opens_the_profiles_surface",
         "resumable_sessions_appear_in_the_running_sessions_panel_and_dispatch_resume",
         "compact_new_session_layout_shortens_the_launch_cards",
-        "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns"
+        "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns",
+        "both_panel_headings_share_one_line_with_their_own_controls"
       ],
       "manual_scenarios": [
         "AS-01",
@@ -164,7 +165,8 @@
       "automated_tests": [
         "the_new_session_surface_is_inset_from_the_window_edge",
         "the_launch_cards_stay_in_place_while_a_long_profile_list_scrolls",
-        "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns"
+        "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns",
+        "a_launch_card_is_a_wide_strip_rather_than_a_tall_tile"
       ],
       "manual_scenarios": [],
       "status": "automated"

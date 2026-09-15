@@ -2067,17 +2067,24 @@ fn show_sftp_form(
 /// and two lines of description whatever the window does, and a profile row
 /// holds one line of text. Only the horizontal split between the two panels
 /// and the card row's column count respond to width.
-const LAUNCH_CARD_HEIGHT: f32 = 186.0;
+/// Height of a card's two-line description block, used to place both the
+/// description and the proceed arrow that shares its vertical centre.
+const LAUNCH_CARD_DESCRIPTION_HEIGHT: f32 = 38.0;
+/// Width reserved on a card's right edge for the proceed arrow, so the
+/// description wraps beside it rather than underneath it.
+const LAUNCH_CARD_ARROW_LANE: f32 = 30.0;
+const LAUNCH_CARD_HEIGHT: f32 = 126.0;
 /// The height a card takes for users who have turned the compact New Session
 /// layout on. Compact trims the mark and the padding; it keeps the
 /// description, because a card that only says "SSH" does not tell a new user
 /// what activating it will do.
-const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 152.0;
+const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 108.0;
 const LAUNCH_CARD_GAP: f32 = 16.0;
-const LAUNCH_CARD_PADDING: f32 = 20.0;
+const LAUNCH_CARD_PADDING: f32 = 18.0;
+const LAUNCH_CARD_COMPACT_PADDING: f32 = 14.0;
 /// Narrower than this and a card's title starts eliding, so the row wraps to
 /// fewer columns instead.
-const LAUNCH_CARD_MIN_WIDTH: f32 = 170.0;
+const LAUNCH_CARD_MIN_WIDTH: f32 = 196.0;
 const LAUNCHER_PANEL_GAP: f32 = 18.0;
 /// Saved Profiles takes the larger share: it carries four columns of text,
 /// while Running Sessions is a name and a button.
@@ -2086,6 +2093,16 @@ const LAUNCHER_PROFILES_PANEL_SHARE: f32 = 0.59;
 /// so the profile columns never collapse into each other.
 const LAUNCHER_PANEL_MIN_WIDTH: f32 = 400.0;
 const LAUNCHER_PANEL_PADDING: f32 = 21.0;
+/// Both panels reserve the same heading row and place their mark, title, and
+/// controls on the same line within it, so a heading that carries a subtitle
+/// still lines up with one that does not.
+const LAUNCHER_PANEL_HEADING_HEIGHT: f32 = 52.0;
+const LAUNCHER_PANEL_HEADING_LINE: f32 = 21.0;
+/// Vertical inset from a panel's frame to its heading row. Shared by both
+/// panels so their headings start at the same height.
+const LAUNCHER_PANEL_TOP_MARGIN: i8 = 15;
+/// Text size inside the Saved Profiles search pill.
+const LAUNCHER_SEARCH_TEXT_SIZE: f32 = 14.0;
 const LAUNCHER_PANEL_CORNER: f32 = 12.0;
 const LAUNCHER_PROFILE_ROW_HEIGHT: f32 = 41.0;
 /// Horizontal centre of the per-row overflow control, measured in from the
@@ -2261,45 +2278,62 @@ fn show_launch_card(
         egui::StrokeKind::Inside,
     );
 
-    let mark_size = if compact { 52.0 } else { 64.0 };
+    // The mark and the title share one row. Stacking them cost the card a
+    // whole mark's worth of height for no more information, and the row of
+    // cards is a navigation strip rather than the surface's content.
+    let padding = if compact {
+        LAUNCH_CARD_COMPACT_PADDING
+    } else {
+        LAUNCH_CARD_PADDING
+    };
+    let mark_size = if compact { 34.0 } else { 42.0 };
     let mark_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.left() + LAUNCH_CARD_PADDING,
-            rect.top() + if compact { 14.0 } else { 18.0 },
-        ),
+        egui::pos2(rect.left() + padding, rect.top() + padding),
         egui::Vec2::splat(mark_size),
     );
     paint_session_mark(ui.painter(), item, mark_rect);
 
-    let text_left = rect.left() + LAUNCH_CARD_PADDING;
-    let text_width = (rect.width() - LAUNCH_CARD_PADDING * 2.0).max(0.0);
-    let title = elided_galley(ui, &item.label, 18.0, theme::TEXT_PRIMARY, text_width, 1);
-    let title_top = mark_rect.bottom() + if compact { 8.0 } else { 10.0 };
+    let title_left = mark_rect.right() + 12.0;
+    let title = elided_galley(
+        ui,
+        &item.label,
+        18.0,
+        theme::TEXT_PRIMARY,
+        (rect.right() - padding - title_left).max(0.0),
+        1,
+    );
     let title_height = title.size().y;
-    ui.painter()
-        .galley(egui::pos2(text_left, title_top), title, theme::TEXT_PRIMARY);
-    // The description stays in the compact layout: it is the only text that
-    // says what the card does, and the arrow alone does not replace it.
+    ui.painter().galley(
+        egui::pos2(title_left, mark_rect.center().y - title_height / 2.0),
+        title,
+        theme::TEXT_PRIMARY,
+    );
+
+    // The description stays in the compact layout too: it is the only text
+    // that says what the card does, and the arrow does not replace it.
+    let text_left = rect.left() + padding;
     let description = elided_galley(
         ui,
         &item.description,
         14.0,
         theme::TEXT_SECONDARY,
-        // The last description line shares its row with the corner arrow, so
-        // it wraps short of it rather than running underneath.
-        (text_width - 26.0).max(0.0),
+        // Every description line stops short of the proceed arrow's column
+        // rather than the last line alone, so a two-line description keeps a
+        // straight right edge instead of stepping in on its final row.
+        (rect.width() - padding * 2.0 - LAUNCH_CARD_ARROW_LANE).max(0.0),
         2,
     );
+    let description_top = mark_rect.bottom() + if compact { 8.0 } else { 10.0 };
     ui.painter().galley(
-        egui::pos2(text_left, title_top + title_height + 6.0),
+        egui::pos2(text_left, description_top),
         description,
         theme::TEXT_SECONDARY,
     );
 
-    let arrow = egui::Rect::from_min_size(
+    let arrow = egui::Rect::from_center_size(
         egui::pos2(
-            rect.right() - LAUNCH_CARD_PADDING - 18.0,
-            rect.bottom() - LAUNCH_CARD_PADDING - 18.0,
+            rect.right() - padding - 9.0,
+            rect.bottom() - padding - LAUNCH_CARD_DESCRIPTION_HEIGHT / 2.0,
         ),
         egui::Vec2::splat(18.0),
     );
@@ -2326,11 +2360,12 @@ fn show_panel_heading(
     subtitle: Option<&str>,
     controls: impl FnOnce(&mut Ui),
 ) {
-    let height = if subtitle.is_some() { 52.0 } else { 44.0 };
-    // The text block is measured up front so it can be placed in a rect
-    // centred on the mark. Left to egui's own alignment it would sit at the
-    // top of the row and the heading would read as floating above the search
-    // and sort controls beside it instead of sharing their centre line.
+    let height = LAUNCHER_PANEL_HEADING_HEIGHT;
+    // The text block is measured up front so it can be placed against the
+    // heading line rather than centred in the row. Left to egui's own
+    // alignment it would sit at the top of the row, and a heading with a
+    // subtitle would ride higher than one without — which is why the two
+    // panels' titles did not line up with each other.
     let title_width = ui
         .painter()
         .layout_no_wrap(
@@ -2351,15 +2386,26 @@ fn show_panel_heading(
             .x
     });
     let text_width = title_width.max(subtitle_width.unwrap_or(0.0)).ceil() + 1.0;
-    let text_height = if subtitle.is_some() { 42.0 } else { 24.0 };
     ui.horizontal(|ui| {
         ui.set_height(height);
-        let (mark_rect, _) = ui.allocate_exact_size(egui::Vec2::splat(34.0), Sense::hover());
+        let (mark_slot, _) = ui.allocate_exact_size(vec2(34.0, height), Sense::hover());
+        let mark_rect = egui::Rect::from_center_size(
+            egui::pos2(
+                mark_slot.center().x,
+                mark_slot.top() + LAUNCHER_PANEL_HEADING_LINE,
+            ),
+            egui::Vec2::splat(34.0),
+        );
         icon::paint(ui.painter(), mark, mark_rect, theme::ACCENT_ACTION);
         ui.add_space(10.0);
         let (text_slot, _) = ui.allocate_exact_size(vec2(text_width, height), Sense::hover());
-        let text_rect =
-            egui::Rect::from_center_size(text_slot.center(), vec2(text_slot.width(), text_height));
+        let text_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                text_slot.left(),
+                text_slot.top() + LAUNCHER_PANEL_HEADING_LINE - 12.0,
+            ),
+            text_slot.max,
+        );
         // Painted galleys would drop the heading out of the accessibility
         // tree, so the labels stay real widgets inside a placed rect.
         ui.scope_builder(
@@ -2382,7 +2428,19 @@ fn show_panel_heading(
                 }
             },
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), controls);
+        // The controls centre on the heading line as well, so a search field
+        // or a refresh button shares the title's centre rather than the row's.
+        let rest = ui.available_rect_before_wrap();
+        let control_rect = egui::Rect::from_min_max(
+            rest.min,
+            egui::pos2(rest.right(), rest.top() + LAUNCHER_PANEL_HEADING_LINE * 2.0),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(control_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            controls,
+        );
     });
 }
 
@@ -3389,101 +3447,128 @@ fn show_saved_profiles_panel(
             egui::Frame::new()
                 .fill(theme::SURFACE_PANEL)
                 .corner_radius(LAUNCHER_PANEL_CORNER)
-                .inner_margin(egui::Margin::symmetric(0, 18))
+                .inner_margin(egui::Margin::symmetric(0, LAUNCHER_PANEL_TOP_MARGIN))
                 .show(ui, |ui| {
                     ui.set_width(width);
                     if let Some(height) = height {
-                        ui.set_min_height((height - 36.0).max(0.0));
+                        ui.set_min_height(
+                            (height - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0).max(0.0),
+                        );
                     }
                     let inner = (width - LAUNCHER_PANEL_PADDING * 2.0).max(0.0);
                     ui.vertical(|ui| {
                         ui.add_space(0.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(LAUNCHER_PANEL_PADDING);
-                            ui.allocate_ui(vec2(inner, 46.0), |ui| {
-                                show_panel_heading(
-                                    ui,
-                                    Icon::SavedProfiles,
-                                    "Saved Profiles",
-                                    None,
-                                    |ui| {
-                                        if launcher_icon_button(
-                                            ui,
-                                            Icon::SortOrder,
-                                            state.profile_sort.label(),
+                        // Placed from the cursor rather than nested inside a
+                        // horizontal row: an extra layout between the panel
+                        // and its heading shifted this title down relative to
+                        // Running Sessions, which calls the heading directly.
+                        let heading = egui::Rect::from_min_size(
+                            ui.cursor().min + vec2(LAUNCHER_PANEL_PADDING, 0.0),
+                            vec2(inner, LAUNCHER_PANEL_HEADING_HEIGHT),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(heading), |ui| {
+                            show_panel_heading(
+                                ui,
+                                Icon::SavedProfiles,
+                                "Saved Profiles",
+                                None,
+                                |ui| {
+                                    if launcher_icon_button(
+                                        ui,
+                                        Icon::SortOrder,
+                                        state.profile_sort.label(),
+                                    )
+                                    .clicked()
+                                    {
+                                        state.profile_sort = state.profile_sort.toggled();
+                                    }
+                                    ui.add_space(12.0);
+                                    let field_width = (ui.available_width() - 40.0).max(80.0);
+                                    let (field, _) = ui.allocate_exact_size(
+                                        vec2(field_width, 38.0),
+                                        Sense::hover(),
+                                    );
+                                    ui.painter().rect(
+                                        field,
+                                        11.0,
+                                        theme::SURFACE_FIELD,
+                                        Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                        egui::StrokeKind::Inside,
+                                    );
+                                    let glass = egui::Rect::from_center_size(
+                                        egui::pos2(field.left() + 20.0, field.center().y),
+                                        egui::Vec2::splat(17.0),
+                                    );
+                                    icon::paint(
+                                        ui.painter(),
+                                        Icon::Search,
+                                        glass,
+                                        theme::TEXT_MUTED,
+                                    );
+                                    // The entry is sized to one line of
+                                    // text and centred on the pill, so
+                                    // the text sits on the pill's centre
+                                    // line instead of hanging from a
+                                    // fixed top margin.
+                                    let line = ui
+                                        .painter()
+                                        .layout_no_wrap(
+                                            "Ag".to_owned(),
+                                            egui::FontId::proportional(LAUNCHER_SEARCH_TEXT_SIZE),
+                                            theme::TEXT_PRIMARY,
                                         )
-                                        .clicked()
-                                        {
-                                            state.profile_sort = state.profile_sort.toggled();
-                                        }
-                                        ui.add_space(12.0);
-                                        let field_width = (ui.available_width() - 40.0).max(80.0);
-                                        let (field, _) = ui.allocate_exact_size(
-                                            vec2(field_width, 38.0),
-                                            Sense::hover(),
-                                        );
-                                        ui.painter().rect(
-                                            field,
-                                            11.0,
-                                            theme::SURFACE_FIELD,
-                                            Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                            egui::StrokeKind::Inside,
-                                        );
-                                        let glass = egui::Rect::from_center_size(
-                                            egui::pos2(field.left() + 20.0, field.center().y),
-                                            egui::Vec2::splat(17.0),
-                                        );
-                                        icon::paint(
-                                            ui.painter(),
-                                            Icon::Search,
-                                            glass,
-                                            theme::TEXT_MUTED,
-                                        );
-                                        let entry = egui::Rect::from_min_max(
-                                            egui::pos2(glass.right() + 8.0, field.top()),
-                                            field.max,
-                                        );
-                                        ui.scope_builder(
-                                            egui::UiBuilder::new().max_rect(entry),
-                                            |ui| {
-                                                let search = ui.add_sized(
-                                                    entry.size(),
-                                                    TextEdit::singleline(&mut state.profile_search)
-                                                        // The pill around the
-                                                        // field is painted by
-                                                        // this panel, so the
-                                                        // widget must not draw
-                                                        // a second frame
-                                                        // inside it.
-                                                        .frame(egui::Frame::NONE)
-                                                        .background_color(
-                                                            egui::Color32::TRANSPARENT,
-                                                        )
-                                                        .hint_text("Search profiles…")
-                                                        .margin(egui::Margin::symmetric(0, 10)),
+                                        .size()
+                                        .y;
+                                    let entry = egui::Rect::from_min_max(
+                                        egui::pos2(
+                                            glass.right() + 8.0,
+                                            field.center().y - line / 2.0,
+                                        ),
+                                        egui::pos2(
+                                            field.right() - 10.0,
+                                            field.center().y + line / 2.0,
+                                        ),
+                                    );
+                                    ui.scope_builder(
+                                        egui::UiBuilder::new().max_rect(entry),
+                                        |ui| {
+                                            let search = ui.add_sized(
+                                                entry.size(),
+                                                TextEdit::singleline(&mut state.profile_search)
+                                                    // The pill around the
+                                                    // field is painted by
+                                                    // this panel, so the
+                                                    // widget must not draw
+                                                    // a second frame
+                                                    // inside it.
+                                                    .frame(egui::Frame::NONE)
+                                                    .background_color(egui::Color32::TRANSPARENT)
+                                                    .font(egui::FontId::proportional(
+                                                        LAUNCHER_SEARCH_TEXT_SIZE,
+                                                    ))
+                                                    .hint_text("Search profiles…")
+                                                    .margin(egui::Margin::ZERO),
+                                            );
+                                            // The magnifier is painted,
+                                            // not a label widget, so the
+                                            // field would otherwise reach
+                                            // assistive technology
+                                            // unnamed.
+                                            let value = state.profile_search.clone();
+                                            search.widget_info(|| {
+                                                let mut info = WidgetInfo::text_edit(
+                                                    ui.is_enabled(),
+                                                    &value,
+                                                    &value,
+                                                    "Search profiles…",
                                                 );
-                                                // The magnifier is painted,
-                                                // not a label widget, so the
-                                                // field would otherwise reach
-                                                // assistive technology
-                                                // unnamed.
-                                                let value = state.profile_search.clone();
-                                                search.widget_info(|| {
-                                                    let mut info = WidgetInfo::text_edit(
-                                                        ui.is_enabled(),
-                                                        &value,
-                                                        &value,
-                                                        "Search profiles…",
-                                                    );
-                                                    info.label =
-                                                        Some("Search profiles…".to_owned());
-                                                    info
-                                                });
-                                            },
-                                        );
-                                    },
-                                );
-                            });
+                                                info.label = Some("Search profiles…".to_owned());
+                                                info
+                                            });
+                                        },
+                                    );
+                                },
+                            );
                         });
                         ui.add_space(14.0);
 
@@ -3525,7 +3610,7 @@ fn show_saved_profiles_panel(
                         match height {
                             Some(height) => {
                                 let list_height = (height
-                                    - 36.0
+                                    - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0
                                     - ui.min_rect().height()
                                     - LAUNCHER_FOOTER_HEIGHT
                                     - 18.0)
@@ -3631,11 +3716,13 @@ fn show_running_sessions_panel(
             egui::Frame::new()
                 .fill(theme::SURFACE_PANEL)
                 .corner_radius(LAUNCHER_PANEL_CORNER)
-                .inner_margin(egui::Margin::same(15))
+                .inner_margin(egui::Margin::same(LAUNCHER_PANEL_TOP_MARGIN))
                 .show(ui, |ui| {
-                    ui.set_width((width - 30.0).max(0.0));
+                    ui.set_width((width - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0).max(0.0));
                     if let Some(height) = height {
-                        ui.set_min_height((height - 30.0).max(0.0));
+                        ui.set_min_height(
+                            (height - LAUNCHER_PANEL_TOP_MARGIN as f32 * 2.0).max(0.0),
+                        );
                     }
                     ui.spacing_mut().item_spacing.y = 12.0;
                     // Measured from the cursor rather than from `min_rect`,
@@ -7721,6 +7808,60 @@ mod tests {
         assert!(
             compact_profile.top() < roomy_profile.top(),
             "shorter cards must pull the panels below them upward"
+        );
+    }
+
+    #[test]
+    fn a_launch_card_is_a_wide_strip_rather_than_a_tall_tile() {
+        // Stacking the mark above the title cost a card a whole mark's worth
+        // of height for no more information. The card row is a navigation
+        // strip, not the surface's content, so the mark and title share a
+        // line and the card stays short.
+        let mut harness = harness_with_profiles(vec![Profile::local(
+            "alpha",
+            "cargo",
+            vec!["run".to_owned()],
+            None,
+        )
+        .expect("test profile is valid")]);
+        harness.run();
+        let card = harness
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        assert!(
+            card.width() > card.height() * 1.4,
+            "expected a wide launch card rather than a tall tile, got {card:?}"
+        );
+    }
+
+    #[test]
+    fn both_panel_headings_share_one_line_with_their_own_controls() {
+        // Running Sessions carries a subtitle and Saved Profiles does not.
+        // Centring each heading block in its row therefore pushed the
+        // subtitled title higher than the other, and the two panels read as
+        // misaligned. Both now place mark, title, and controls on the same
+        // line measured from the panel's top edge.
+        let mut harness = harness_with_profiles(vec![Profile::local(
+            "alpha",
+            "cargo",
+            vec!["run".to_owned()],
+            None,
+        )
+        .expect("test profile is valid")]);
+        harness.run();
+
+        let profiles = harness.get_by_label("Saved Profiles").rect();
+        let sessions = harness.get_by_label("Running Sessions").rect();
+        assert!(
+            (profiles.center().y - sessions.center().y).abs() < 3.0,
+            "expected the two panel titles on one line, got {profiles:?} against {sessions:?}"
+        );
+
+        let search = harness.get_by_label("Search profiles…").rect();
+        assert!(
+            (search.center().y - profiles.center().y).abs() < 3.0,
+            "expected the search text centred on the heading line, got {search:?} against \
+             {profiles:?}"
         );
     }
 

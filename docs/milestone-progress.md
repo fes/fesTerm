@@ -1457,3 +1457,29 @@ measured with `min_rect`, so the list's computed height came out negative and
 clamped to zero, silently rendering an empty panel. Measuring the cursor
 delta instead of `min_rect` fixed it, and three existing tests caught it
 before the change left the worktree.
+
+A second review pass turned the launch cards from tall tiles into wide strips.
+Stacking the mark above the title cost every card a whole mark's worth of
+height for no more information, and the card row is a navigation strip rather
+than the surface's content: the mark and title now share the top line, the
+description sits below them, and the proceed arrow shares the description's
+vertical centre. That halved the row's height and gave the two panels the
+space they wanted.
+
+The same pass found that centring each panel heading inside its row made the
+two panels disagree with each other. Running Sessions carries a subtitle and
+Saved Profiles does not, so the taller block centred higher and the two titles
+sat on different lines. Both panels now reserve one heading row and place
+mark, title, and controls against a heading line measured from the panel's top
+edge; Saved Profiles also stopped nesting its heading inside an extra
+horizontal layout, which had been shifting it down independently. The search
+field's entry rect is sized to one line of text and centred on its pill rather
+than hanging from a fixed top margin.
+
+The SSH mark was redrawn from the mockup once the cards made it large enough
+to judge. The previous globe sat on the terminal's bottom-right corner at two
+thirds of the terminal's width, which read as a blot at 42 px; the mockup puts
+a smaller globe against the terminal's right edge at about two thirds of its
+height, with the terminal's right side notched away behind it. `remote-globe`
+repeats the globe at byte-identical coordinates so the two-tone overpaint
+still lands exactly on the mark it decorates.
