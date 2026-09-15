@@ -1489,3 +1489,13 @@ lines were also dropped from the globe: at 42 px with a three-pixel stroke they
 merged into a solid disc. `remote-globe` repeats the globe at byte-identical
 coordinates so the two-tone overpaint still lands exactly on the mark it
 decorates.
+
+Shrinking the globe to the mockup's proportions then cost it its identity: the
+mockup renders its mark at about eighty pixels, ours at forty-two, so every
+interior line arrived at half scale against a stroke that does not thin with
+the mark. The circle, equator, and meridian merged and the globe read as a
+plain blue dot. Marks that carry interior detail need a floor on their render
+size, so the launch-card mark grew to fifty pixels (forty-two compact) and the
+globe grew within the viewBox at the terminal's expense. The rule generalizes:
+a fixed-stroke mark cannot be scaled down past the point where its own strokes
+touch.
