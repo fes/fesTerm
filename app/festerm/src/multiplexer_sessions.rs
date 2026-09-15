@@ -221,6 +221,7 @@ pub fn client_attached(
     provider: festerm_config::PersistenceProviderKind,
     selected: &MultiplexerSession,
     pid: u32,
+    terminal_device: Option<&std::path::Path>,
 ) -> Result<bool, String> {
     use festerm_config::PersistenceProviderKind;
     match provider {
@@ -242,9 +243,41 @@ pub fn client_attached(
                     && format!("{}:{}", parts[2], parts[1]) == selected.match_key
             }))
         }
-        PersistenceProviderKind::Screen => Ok(list_screen_sessions()?
-            .iter()
-            .any(|session| session.match_key == selected.match_key && session.attached)),
+        PersistenceProviderKind::Screen => {
+            #[cfg(unix)]
+            {
+                use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+                let pid = i32::try_from(pid)
+                    .ok()
+                    .filter(|pid| *pid > 0)
+                    .ok_or("Invalid owned screen client PID")?;
+                match kill(Pid::from_raw(pid), None) {
+                    Ok(()) => {}
+                    Err(Errno::ESRCH) => return Ok(false),
+                    Err(error) => {
+                        return Err(format!("Could not inspect owned screen client: {error}"))
+                    }
+                }
+                let device = terminal_device.ok_or("Missing owned screen client terminal")?;
+                if !list_screen_sessions()?
+                    .iter()
+                    .any(|current| current.match_key == selected.match_key && current.attached)
+                {
+                    return Ok(false);
+                }
+                let server = screen_target(&selected.match_key)
+                    .split_once('.')
+                    .and_then(|(pid, _)| pid.parse::<u32>().ok())
+                    .filter(|pid| *pid > 0)
+                    .ok_or("Invalid screen server PID")?;
+                screen_process::server_has_terminal(server, device)
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = terminal_device;
+                Err("GNU screen client confirmation is only supported on Unix".into())
+            }
+        }
         _ => Err("Not a multiplexer provider".into()),
     }
 }
@@ -400,6 +433,24 @@ fn extract_screen_socket_directory(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn an_attached_screen_inventory_entry_does_not_confirm_a_missing_client() {
+        let selected = MultiplexerSession {
+            name: "already-attached".into(),
+            match_key: "42.already-attached|1700000000".into(),
+            attached: true,
+            started_at_unix_seconds: Some(1700000000),
+        };
+        assert!(!client_attached(
+            festerm_config::PersistenceProviderKind::Screen,
+            &selected,
+            i32::MAX as u32,
+            Some(std::path::Path::new("/dev/nonexistent-owned-terminal"))
+        )
+        .unwrap());
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 
 
 def run_checked(command, *, cwd, env, timeout):
@@ -97,7 +98,13 @@ def main():
             if path:
                 extra = " -f /dev/null -L festerm-churn" if tool == "tmux" else " -c /dev/null"
                 wrapper = binary_dir / tool
-                wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(path) + extra + ' "$@"\n')
+                gate = (
+                    'if [ "$1" = "-x" ] && [ -f "$FESTERM_MUX_CHURN_ROOT/screen-attach-failure" ]; then\n'
+                    "  /bin/sleep 1\n"
+                    "  printf 'controlled screen attachment failure\\n' >&2\n"
+                    "  exit 23\nfi\n"
+                ) if tool == "screen" else ""
+                wrapper.write_text("#!/bin/sh\n" + gate + "exec " + shlex.quote(path) + extra + ' "$@"\n')
                 wrapper.chmod(0o700)
                 tools[tool] = path
             else:
@@ -136,11 +143,18 @@ def main():
                         command = ["-S", key, "-X", "quit"]
                     subprocess.run([str(binary_dir / tool)] + command, env=env,
                                    capture_output=True, timeout=5, check=False)
-                remaining = subprocess.run([str(binary_dir / tool)] +
-                    (["list-sessions", "-F", "#{session_id}"] if tool == "tmux" else ["-ls"]),
-                    env=env, text=True, capture_output=True, timeout=5)
-                if owned_targets(tool, remaining.stdout):
-                    cleanup_errors.append(f"{tool} still lists live owned sessions")
+                deadline = time.monotonic() + 5
+                while True:
+                    remaining = subprocess.run([str(binary_dir / tool)] +
+                        (["list-sessions", "-F", "#{session_id}"] if tool == "tmux" else ["-ls"]),
+                        env=env, text=True, capture_output=True,
+                        timeout=max(0.01, deadline - time.monotonic()))
+                    if not owned_targets(tool, remaining.stdout):
+                        break
+                    if time.monotonic() >= deadline:
+                        cleanup_errors.append(f"{tool} still lists live owned sessions")
+                        break
+                    time.sleep(0.02)
             except (OSError, subprocess.SubprocessError) as error:
                 cleanup_errors.append(f"{tool} cleanup: {error}")
         if cleanup_errors:

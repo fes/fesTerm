@@ -95,6 +95,23 @@ class RunningSessionRunnerTests(unittest.TestCase):
             "There are screens on:\n 42.main (Detached)\n 43.main (Attached)\n 44.dead (Dead ???)\n"),
             ["42.main", "43.main"])
 
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix Screen namespace")
+    def test_cleanup_waits_for_screen_quit_without_reissuing_it(self):
+        owned = subprocess.CompletedProcess([], 0, "42.owned (Attached)\n", "")
+        empty = subprocess.CompletedProcess([], 1, "No Sockets found\n", "")
+        with patch("sys.argv", ["check_running_sessions.py", "--batch", "1", "--cycles", "1"]), \
+             patch.object(running_sessions, "run_checked"), \
+             patch.object(running_sessions.shutil, "which",
+                          side_effect=lambda tool: "/owned/screen" if tool == "screen" else None), \
+             patch.object(running_sessions.subprocess, "run",
+                          side_effect=[owned, empty, owned, empty]) as cleanup, \
+             patch.object(running_sessions.time, "sleep") as sleep:
+            running_sessions.main()
+        self.assertEqual(cleanup.call_count, 4)
+        self.assertEqual(cleanup.call_args_list[1].args[0][1:], ["-S", "42.owned", "-X", "quit"])
+        self.assertTrue(all(call.kwargs["timeout"] <= 5 for call in cleanup.call_args_list))
+        sleep.assert_called_once_with(0.02)
+
     def test_failure_status_is_not_masked(self):
         process = Mock()
         process.wait.return_value = 7

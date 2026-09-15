@@ -2676,10 +2676,13 @@ impl AppState {
                         &context,
                         dimensions,
                     );
-                    let pid = match tab.controller.session() {
-                        Some(ApplicationSession::Local(local)) => local
-                            .process_id()
-                            .ok_or("Missing client process identity")?,
+                    let (pid, terminal_device) = match tab.controller.session() {
+                        Some(ApplicationSession::Local(local)) => (
+                            local
+                                .process_id()
+                                .ok_or("Missing client process identity")?,
+                            local.terminal_device().map(std::path::Path::to_owned),
+                        ),
                         _ => {
                             return Err(tab
                                 .controller
@@ -2701,7 +2704,12 @@ impl AppState {
                                 tab.terminal.row_text(0).unwrap_or_default()
                             ));
                         }
-                        if crate::multiplexer_sessions::client_attached(provider, &session, pid)? {
+                        if crate::multiplexer_sessions::client_attached(
+                            provider,
+                            &session,
+                            pid,
+                            terminal_device.as_deref(),
+                        )? {
                             return Ok(tab);
                         }
                         if std::time::Instant::now() >= deadline {

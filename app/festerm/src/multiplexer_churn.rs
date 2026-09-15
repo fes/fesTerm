@@ -137,6 +137,131 @@ fn challenge(client: &LocalPtySession, nonce: &str, fresh: &str) -> String {
     answer.unwrap()
 }
 
+fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path::Path) {
+    use crate::tabs::{AppCommand, AppState, TabContent};
+    let selected = list(Provider::Screen).unwrap().remove(0);
+    let primary = LocalPtySession::start(
+        attach_profile(Provider::Screen, &selected).unwrap(),
+        TerminalSize::new(80, 24).unwrap(),
+    )
+    .unwrap();
+    poll(|| {
+        client_attached(
+            Provider::Screen,
+            &selected,
+            primary.process_id().unwrap(),
+            primary.terminal_device(),
+        )
+        .unwrap()
+    });
+    let pid = challenge(&primary, "sentinel", "primary");
+    let selected = list(Provider::Screen).unwrap().remove(0);
+    assert!(selected.attached);
+    assert!(!client_attached(
+        Provider::Screen,
+        &selected,
+        i32::MAX as u32,
+        primary.terminal_device()
+    )
+    .unwrap());
+
+    struct Gate(PathBuf);
+    impl Drop for Gate {
+        fn drop(&mut self) {
+            std::fs::remove_file(&self.0).unwrap();
+        }
+    }
+    let gate = Gate(root.join("screen-attach-failure"));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&gate.0)
+        .unwrap();
+    let context = eframe::egui::Context::default();
+    let mut state = AppState::for_test();
+    if !state.show_resumable_sessions() {
+        state.dispatch(AppCommand::ToggleShowResumableSessions, &context);
+    }
+    state.dispatch(
+        AppCommand::ResumeMultiplexerSession {
+            provider: Provider::Screen,
+            session: selected.clone(),
+        },
+        &context,
+    );
+    poll(|| {
+        state.update_running_sessions(&context);
+        assert!(
+            matches!(state.active_tab().content, TabContent::Launcher),
+            "another client's attachment must not publish this failed client"
+        );
+        state.resume_error.is_some()
+    });
+    let error = state.resume_error.as_ref().unwrap();
+    assert!(error.contains("No replacement shell"));
+    assert!(
+        error.contains("controlled screen attachment failure"),
+        "{error}"
+    );
+    assert_eq!(list(Provider::Screen).unwrap().len(), 1);
+    primary.try_send_input(b"unaffected\r").unwrap();
+    let mut output = Vec::new();
+    poll(|| {
+        while let Ok(event) = primary.try_recv_event() {
+            if let SessionEvent::Output(bytes) = event {
+                output.extend(bytes);
+            }
+        }
+        assert!(output.len() < 1024 * 1024);
+        String::from_utf8_lossy(&output).contains(&format!("STATE:sentinel:{pid}:unaffected"))
+    });
+    drop(gate);
+    state.dispatch(AppCommand::RefreshRunningSessions, &context);
+    state.dispatch(
+        AppCommand::ResumeMultiplexerSession {
+            provider: Provider::Screen,
+            session: selected,
+        },
+        &context,
+    );
+    poll(|| {
+        state.update_running_sessions(&context);
+        assert!(state.resume_error.is_none(), "{:?}", state.resume_error);
+        matches!(state.active_tab().content, TabContent::Session(_))
+    });
+    let TabContent::Session(tab) = &mut state.active_tab_mut().content else {
+        unreachable!()
+    };
+    tab.controller
+        .session()
+        .unwrap()
+        .try_send_input(b"recovered\r")
+        .unwrap();
+    poll(|| {
+        tab.controller.pump_events(&mut tab.terminal);
+        (0..24).any(|row| {
+            tab.terminal
+                .row_text(row)
+                .is_some_and(|text| text.contains(&format!("STATE:sentinel:{pid}:recovered")))
+        })
+    });
+    tab.controller
+        .session()
+        .unwrap()
+        .shutdown(Duration::from_secs(2))
+        .unwrap();
+    drop(state);
+    assert!(list(Provider::Screen).unwrap()[0].attached);
+    primary.shutdown(Duration::from_secs(2)).unwrap();
+    poll(|| {
+        list(Provider::Screen)
+            .unwrap()
+            .iter()
+            .all(|entry| !entry.attached)
+    });
+    eprintln!("provider=screen owned-client-failure-recovery-and-continuity status=pass");
+}
+
 #[test]
 #[ignore = "run via scripts/check_running_sessions.py for isolated provider namespaces"]
 fn isolated_multiplexer_discovery_churn() {
@@ -166,6 +291,9 @@ fn isolated_multiplexer_discovery_churn() {
         create(provider, sentinel, "sentinel");
         poll(|| list(provider).unwrap().len() == 1);
         let sentinel_identity = list(provider).unwrap()[0].match_key.clone();
+        if provider == Provider::Screen {
+            screen_attachment_failure_keeps_launcher_and_existing_client(&root);
+        }
         let context = eframe::egui::Context::default();
         let mut discovery = crate::discovery::Discovery::default();
         for cycle in 0..cycles {
@@ -193,7 +321,15 @@ fn isolated_multiplexer_discovery_churn() {
                 let profile = attach_profile(provider, selected).unwrap();
                 let client =
                     LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
-                poll(|| client_attached(provider, selected, client.process_id().unwrap()).unwrap());
+                poll(|| {
+                    client_attached(
+                        provider,
+                        selected,
+                        client.process_id().unwrap(),
+                        client.terminal_device(),
+                    )
+                    .unwrap()
+                });
                 let pid = challenge(&client, &nonce, "before");
                 // Duplicate clicks/refreshes cannot create another server shell.
                 assert_eq!(list(provider).unwrap().len(), batch + 1 - index);

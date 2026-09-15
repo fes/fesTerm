@@ -45,6 +45,19 @@ the daemon's socket error. Real-provider churn through a 188-byte checkout
 confirmed the path independence; cleanup failure remains explicit and retains
 only the test-owned namespace for diagnosis.
 
+Review then found three gaps not established by ordinary successful reattachment.
+A discovered native tab had forgotten its registry/generation on later reconnect;
+Screen mistook somebody else's attached flag for success of its own client; and
+forced daemon death left generation files behind the pruned registry. Reconnect
+now pins the original root and generation, Screen verifies its new terminal at
+the selected server, and kill/prune/startup failure clean exact dead-generation
+artifacts while retaining failed cleanup for retry. Fresh state challenges prove
+same-generation continuity and replacement rejection. The Screen regression
+drives a delayed/failing client through Launcher, retries successfully without
+disturbing an existing client, and exposed a separate harness cleanup race:
+Screen `quit` is asynchronous, so cleanup now waits boundedly for inventory
+removal rather than immediately reporting a leak.
+
 ## Foundation and acceptance history
 
 fesTerm began foundation-first: M0 through M3 established a testable terminal

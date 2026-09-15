@@ -3,6 +3,73 @@
 
 use std::collections::BTreeMap;
 
+/// Old GNU screen has no client-list query. Its server opens each attached
+/// client's slave terminal, which distinguishes our display from other clients.
+#[cfg(target_os = "linux")]
+pub(super) fn server_has_terminal(pid: u32, device: &std::path::Path) -> Result<bool, String> {
+    let directory = format!("/proc/{pid}/fd");
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect screen server terminals: {error}"
+            ))
+        }
+    };
+    for (index, entry) in entries.enumerate() {
+        if index >= 4096 {
+            return Err(
+                "Screen server exceeds 4096 open descriptors; cannot confirm attachment".into(),
+            );
+        }
+        let entry =
+            entry.map_err(|error| format!("Could not inspect screen descriptor: {error}"))?;
+        match std::fs::read_link(entry.path()) {
+            Ok(target) if target == device => return Ok(true),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not inspect screen terminal descriptor: {error}"
+                ))
+            }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(super) fn server_has_terminal(pid: u32, device: &std::path::Path) -> Result<bool, String> {
+    let device = device
+        .to_str()
+        .ok_or("Screen client terminal path is not UTF-8")?;
+    let output = super::bounded_output("lsof", &["-nP", "-p", &pid.to_string(), "-Fpn"])?
+        .ok_or("lsof is required to confirm this screen client's terminal attachment")?;
+    if !output.stderr.is_empty() || (!output.status.success() && output.status.code() != Some(1)) {
+        return Err(format!(
+            "Could not confirm screen client terminal: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(terminal_is_open_by(
+        &String::from_utf8_lossy(&output.stdout),
+        pid,
+        device,
+    ))
+}
+
+#[cfg(any(test, all(unix, not(target_os = "linux"))))]
+fn terminal_is_open_by(output: &str, pid: u32, device: &str) -> bool {
+    let mut owner = None;
+    output.lines().any(|line| {
+        if let Some(value) = line.strip_prefix('p') {
+            owner = value.parse::<u32>().ok();
+        }
+        owner == Some(pid) && line.strip_prefix('n') == Some(device)
+    })
+}
+
 #[cfg(unix)]
 pub(super) fn add_identity(sessions: &mut Vec<super::MultiplexerSession>) -> Result<(), String> {
     if sessions.is_empty() {
@@ -112,6 +179,15 @@ fn parse_start(line: &str) -> Option<(u32, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_confirmation_requires_the_selected_server_and_exact_client_terminal() {
+        let output = "p42\nn/dev/ttys001\nn/dev/ttys002\np43\nn/dev/ttys003\n";
+        assert!(terminal_is_open_by(output, 42, "/dev/ttys002"));
+        assert!(!terminal_is_open_by(output, 42, "/dev/ttys003"));
+        assert!(!terminal_is_open_by(output, 42, "/dev/ttys00"));
+        assert!(!terminal_is_open_by("", 42, "/dev/ttys002"));
+    }
 
     #[test]
     fn screen_process_start_is_stable_utc_generation_metadata() {

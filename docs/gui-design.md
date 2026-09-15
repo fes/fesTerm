@@ -279,10 +279,20 @@ not a universally unattached-only population. Empty provider groups are omitted,
 empty panel says that nothing local can be reattached right now.
 
 Reattach is asynchronous and attach-only, unlike saved profiles' intentional
-attach-or-create behavior. A stale/replaced selection or failed attachment stays
+attach-or-create behavior. External tmux reattachment preserves the existing
+session's status/options; saved profiles retain their intentional status-off
+policy. Screen success requires the selected server to hold this new client's
+terminal, not merely an attached flag belonging to another client. Linux uses
+the server's `/proc` descriptors; macOS uses bounded `lsof` inspection, compatible
+with older Screen versions without client queries. Unavailable or denied
+inspection produces an actionable attachment error, never assumed success.
+A stale/replaced selection or failed attachment stays
 on Launcher with an actionable diagnostic and refreshes inventory; it never
 opens a replacement shell or an error-only terminal. An attachment that succeeds
 and subsequently exits has the normal disconnected-terminal lifecycle.
+Native explicit reconnect retains both the discovered generation and registry
+root. It may take over that same generation, but cannot follow a same-name
+replacement; named saved-profile connection policy is unchanged.
 Missing providers/no running server are ordinary empty results; permissions,
 malformed registries, command failures, output limits, and timeouts are visible
 provider errors, not silently successful empty inventories. Provider commands

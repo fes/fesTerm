@@ -376,25 +376,18 @@ impl PersistentSession {
         root: &std::path::Path,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        let registry = load_registry_in(root)?;
-        if let Some(record) = registry.sessions.get(&selected.name) {
-            if !record_is_live(root, record)? {
-                return Err(PersistentSessionError::new(
-                    "The selected native daemon is no longer running. Refresh Running Sessions.",
-                ));
-            }
-        }
-        let record = registry.sessions.get(&selected.name).filter(|record| {
-            record.pid == selected.pid
-                && record.created_at_unix_ms == selected.created_at_unix_ms
-                && record.socket == selected.endpoint
-                && !record.attached
-                && process_alive(record.pid)
-        }).ok_or_else(|| PersistentSessionError::new(
-            "The selected native session exited, changed, or attached elsewhere. Refresh Running Sessions and try again."
-        ))?;
-        let stream = connect_record(record)?;
-        Self::from_named_stream(stream, notifier, selected.name.clone())
+        let stream = connect_discovered_with_cancel(selected, root, true, &AtomicBool::new(false))?;
+        let selected = selected.clone();
+        let root = root.to_owned();
+        Self::from_stream_with_reconnector(
+            stream,
+            notifier,
+            Some(Arc::new(move |cancelled| {
+                // Manual reconnect retains steal-on-reconnect, but only for
+                // the generation selected from this registry.
+                connect_discovered_with_cancel(&selected, &root, false, cancelled)
+            })),
+        )
     }
 
     fn from_named_stream(
@@ -618,6 +611,29 @@ fn finish_cancelled_reconnect(shared: &Shared, completion: &SyncSender<ShutdownR
 
 fn connect_existing(name: &str) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
     connect_existing_with_cancel(name, &AtomicBool::new(false))
+}
+
+fn connect_discovered_with_cancel(
+    selected: &UnattachedSession,
+    root: &std::path::Path,
+    require_unattached: bool,
+    cancelled: &AtomicBool,
+) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    let registry = load_registry_in_with_cancel(root, cancelled)?;
+    let record = registry.sessions.get(&selected.name).filter(|record| {
+        record.pid == selected.pid
+            && record.created_at_unix_ms == selected.created_at_unix_ms
+            && record.socket == selected.endpoint
+            && (!require_unattached || !record.attached)
+    }).ok_or_else(|| PersistentSessionError::new(
+        "The selected native session exited, changed, or attached elsewhere. Refresh Running Sessions and try again."
+    ))?;
+    if !record_is_live(root, record)? {
+        return Err(PersistentSessionError::new(
+            "The selected native daemon is no longer running. Refresh Running Sessions.",
+        ));
+    }
+    connect_record_with_cancel(record, cancelled)
 }
 
 fn connect_existing_with_cancel(
@@ -1245,6 +1261,16 @@ fn load_registry() -> Result<SessionRegistry, PersistentSessionError> {
 }
 
 fn load_registry_in(root: &std::path::Path) -> Result<SessionRegistry, PersistentSessionError> {
+    load_registry_in_with_cancel(root, &AtomicBool::new(false))
+}
+
+fn load_registry_in_with_cancel(
+    root: &std::path::Path,
+    cancelled: &AtomicBool,
+) -> Result<SessionRegistry, PersistentSessionError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(PersistentSessionError::new("session connection cancelled"));
+    }
     let lock_path = root.join("registry.lock");
     let registry_path = root.join("registry.json");
     let lock = match OpenOptions::new().read(true).open(&lock_path) {
@@ -1256,6 +1282,9 @@ fn load_registry_in(root: &std::path::Path) -> Result<SessionRegistry, Persisten
     };
     let deadline = Instant::now() + Duration::from_millis(500);
     loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(PersistentSessionError::new("session connection cancelled"));
+        }
         match FileExt::try_lock_shared(&lock) {
             Ok(()) => break,
             Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
@@ -2163,7 +2192,7 @@ mod tests {
         (header[4], payload)
     }
 
-    fn wait_for_lifecycle(
+    pub(super) fn wait_for_lifecycle(
         session: &PersistentSession,
         predicate: impl Fn(&SessionLifecycle) -> bool,
     ) -> SessionLifecycle {
@@ -2235,6 +2264,120 @@ mod registry_filtering_tests {
             .to_string()
             .contains("lock deadline"));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovered_reconnect_after_eof_keeps_root_and_rejects_each_changed_identity() {
+        use super::tests::wait_for_lifecycle;
+        use std::os::unix::net::UnixListener;
+
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        // A relative endpoint stays within Unix socket path limits while
+        // the explicitly selected registry remains an absolute path.
+        let endpoint =
+            PathBuf::from(fixture.0.file_name().unwrap()).join(format!("{pid}-123.sock"));
+        let listener = UnixListener::bind(&endpoint).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let lease = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join(format!("lease-{pid}-123")))
+            .unwrap();
+        lease.lock_exclusive().unwrap();
+        let original = serde_json::json!({
+            "name":"demo", "pid":pid, "socket":endpoint,
+            "created_at_unix_ms":123, "attached":false
+        });
+        let write = |record: &serde_json::Value| {
+            std::fs::write(
+                fixture.0.join("registry.json"),
+                serde_json::to_vec(&serde_json::json!({"sessions":{"demo":record}})).unwrap(),
+            )
+            .unwrap();
+        };
+        write(&original);
+        let selected = list_unattached_sessions_in(&fixture.0).unwrap().remove(0);
+        let session = PersistentSession::resume_discovered_in(
+            &selected,
+            &fixture.0,
+            noop_session_event_notifier(),
+        )
+        .unwrap();
+        let id = session.id();
+        let (server, _) = listener.accept().unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        drop(server);
+        wait_for_lifecycle(&session, |state| {
+            matches!(state, SessionLifecycle::Disconnected(_))
+        });
+        let mut attached = original.clone();
+        attached["attached"] = true.into();
+        write(&attached);
+        session.try_reconnect().unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        let (server, _) = listener.accept().unwrap();
+        assert_eq!(session.id(), id);
+        drop(server);
+        wait_for_lifecycle(&session, |state| {
+            matches!(state, SessionLifecycle::Disconnected(_))
+        });
+
+        for (field, replacement) in [
+            ("pid", serde_json::json!(pid + 1)),
+            ("created_at_unix_ms", serde_json::json!(124)),
+            ("socket", serde_json::json!("replacement.sock")),
+        ] {
+            let mut replaced = original.clone();
+            replaced[field] = replacement;
+            write(&replaced);
+            session.try_reconnect().unwrap();
+            wait_for_lifecycle(
+                &session,
+                |state| matches!(state, SessionLifecycle::Disconnected(error) if error.message().contains("changed")),
+            );
+            assert!(format!("{:?}", session.lifecycle()).contains("changed"));
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+        }
+        write(&original);
+        FileExt::unlock(&lease).unwrap();
+        session.try_reconnect().unwrap();
+        wait_for_lifecycle(
+            &session,
+            |state| matches!(state, SessionLifecycle::Disconnected(error) if error.message().contains("no longer running")),
+        );
+        assert!(format!("{:?}", session.lifecycle()).contains("no longer running"));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn selected_registry_load_honors_cancellation_before_reading_or_waiting() {
+        let fixture = RegistryFixture::new();
+        std::fs::write(fixture.0.join("registry.json"), b"broken").unwrap();
+        let cancelled = AtomicBool::new(true);
+        assert!(load_registry_in_with_cancel(&fixture.0, &cancelled)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("cancelled"));
+        let lock = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join("registry.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+        assert!(load_registry_in_with_cancel(&fixture.0, &cancelled)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("cancelled"));
     }
 
     #[test]

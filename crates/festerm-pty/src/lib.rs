@@ -649,6 +649,7 @@ impl Shared {
 /// A native local-shell session driven by bounded worker queues.
 pub struct LocalPtySession {
     process_id: Option<u32>,
+    terminal_device: Option<PathBuf>,
     shared: Arc<Shared>,
     command_sender: SyncSender<SessionCommand>,
     event_receiver: Mutex<Receiver<SessionEvent>>,
@@ -697,6 +698,10 @@ impl LocalPtySession {
             .spawn_command(command)
             .map_err(|error| LocalPtyError::new(format!("could not start local shell: {error}")))?;
         let process_id = child.process_id();
+        #[cfg(unix)]
+        let terminal_device = pair.master.tty_name();
+        #[cfg(not(unix))]
+        let terminal_device = None;
         let process_tree_result = {
             #[cfg(unix)]
             {
@@ -775,6 +780,7 @@ impl LocalPtySession {
 
         Ok(Self {
             process_id,
+            terminal_device,
             shared,
             command_sender,
             event_receiver: Mutex::new(event_receiver),
@@ -789,6 +795,11 @@ impl LocalPtySession {
     /// Identity of the directly owned client process (not its persistent server).
     pub fn process_id(&self) -> Option<u32> {
         self.process_id
+    }
+
+    /// The Unix slave device allocated for this client, not its server's PTY.
+    pub fn terminal_device(&self) -> Option<&Path> {
+        self.terminal_device.as_deref()
     }
 
     /// Starts the safe platform default shell with the caller's Windows

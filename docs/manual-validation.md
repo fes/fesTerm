@@ -258,6 +258,29 @@ command output or environment values. Deadline diagnostics include stdout/stderr
 byte counts, EOF state and whether exit-wait started. The two-second provider
 I/O/exit deadline is unchanged; runtime/spawn overhead is measured separately.
 
+Reviewer-correction evidence on the same macOS host: all six ignored native
+daemon tests and default 8-by-3 churn passed. The native additions pin reconnect
+to a nondefault registry and generation, reject a replaced generation while its
+new client stays usable, and assert socket/lease removal after kill, natural
+exit and forced-death pruning before deleting fixture roots. A nonignored
+startup-failure regression also checks artifacts directly. Screen 4.00.03
+coverage now includes an already-attached session and a delayed/failing new
+client through the actual Launcher command, useful failure diagnostics, explicit
+Refresh/retry, and fresh same-shell PID/state proof from the recovered client.
+Screen confirmation inspects the server's exact new terminal using bounded
+macOS `lsof` or Linux `/proc` descriptors; missing/denied inspection is an
+actionable error, not success. Linux descriptor permissions and native Windows
+execution of these new cases still require their own candidate runs. Earlier
+guest results on `59ba3b7` do not establish coverage for these corrections.
+The corrected candidate also passed sustained 32-by-10 host churn for all three
+providers (30 provider cycles), including the failing-client/recovery regression,
+with no command-error diagnostics and complete owned-namespace cleanup.
+Its 4,663 `ps` queries peaked at 70 ms and 337 `lsof` queries at 37 ms; the
+multiplexer test completed in 643.26 seconds. The owned test process sampled
+during Screen churn used 3.7% CPU rather than accumulating spinning workers.
+All required repository checks passed on the host. This remains backend/headless
+evidence, not updated guest or native-window qualification.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:
