@@ -187,11 +187,15 @@ Tab/Shift-Tab moves the highlighted launchable entry and Enter activates the
 same command a pointer click would. Local Shell has initial focus. The top
 region is a row of launch cards for the session types fesTerm can start from
 nothing: **Local Shell**, **SSH**, **SFTP**, **Serial**, and **Markdown**.
-Each card carries a large semantic session-type icon, a title, a two-line
-factual description, and a bottom-right proceed arrow. Every card wears the
-same quiet border whether or not it is the keyboard selection: selection and
-hover lift the card's fill and its arrow instead, because a heavier outline on
-one card reads as a modal or disabled state rather than as a cursor. The card
+Each card is a wide strip rather than a tall tile: a semantic session-type
+icon and the title share the top line, a two-line factual description sits
+below them, and a proceed arrow shares the description's vertical centre on
+the right. Stacking the mark above the title cost a card a whole mark's worth
+of height for no more information, and the card row is a navigation strip, not
+the surface's content. Every card wears the same quiet border whether or not
+it is the keyboard selection: selection and hover lift the card's fill and its
+arrow instead, because a heavier outline on one card reads as a modal or
+disabled state rather than as a cursor. The card
 row wraps to fewer columns at narrow widths rather than forcing horizontal
 scrolling, and the whole surface is inset from the window's content edge so
 the cards and panels read as objects on a background.
@@ -207,6 +211,10 @@ because the cards are the surface's primary actions and must not scroll out
 from under a user reading a list. Stacked, neither panel has a bounded height
 to scroll inside, so the surface as a whole scrolls instead. Either way the
 panels stay above footer/status chrome instead of running underneath it.
+
+Both panels reserve the same heading row and place their mark, title, and
+controls on the same line measured from the panel's top edge, so Running
+Sessions' subtitle does not lift its title above Saved Profiles'.
 
 The Saved Profiles panel uses the saved-profile collection icon, a search
 field, and a sort-order toggle. It is a table rather than a card grid, with
