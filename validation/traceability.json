@@ -151,6 +151,25 @@
       "status": "automated"
     },
     {
+      "id": "launcher-surface-scroll-containment",
+      "edges": [
+        "LAUNCH-21"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-launcher"
+      ],
+      "decisions": [
+        "ADR-0014"
+      ],
+      "automated_tests": [
+        "the_new_session_surface_is_inset_from_the_window_edge",
+        "the_launch_cards_stay_in_place_while_a_long_profile_list_scrolls",
+        "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns"
+      ],
+      "manual_scenarios": [],
+      "status": "automated"
+    },
+    {
       "id": "sftp-launcher",
       "edges": [
         "LAUNCH-09"

@@ -1427,6 +1427,33 @@ identity colors in the theme. Those colors describe session type, not
 connection state, and the icon silhouette and Type text still carry the same
 meaning without color. The existing `compact_launcher_grid` preference was
 kept because strict settings deserialization would reject old configuration
-files if the key disappeared; it now controls a compact launch-card layout,
-dropping card descriptions so the two panels start higher instead of trying
-to resurrect the removed profile grid.
+files if the key disappeared; it now controls a compact launch-card layout so
+the two panels start higher instead of trying to resurrect the removed
+profile grid.
+
+Running the finished surface against the mockup one more time found the parts
+a headless capture had hidden. The compact preference had been implemented as
+"drop the description", which meant every user who had turned it on for the
+old profile grid was now looking at cards that said `SSH` and nothing else —
+the one line that explains what a card does was the line the preference
+removed. Compact now trims the mark and the padding and keeps the text. The
+selected card's brighter outline read as a modal or disabled state rather than
+as a cursor, so selection moved to the card's fill and arrow and every card
+wears the same quiet border. The surface gained an inset from the window's
+content edge, the panel headings were placed in an explicitly centred rect
+because egui aligns a nested vertical layout to the top of its row rather than
+to the row's centre line, and the search field stopped painting a second frame
+inside the pill drawn around it.
+
+The scrolling model changed with it. One scroll area wrapped the whole
+surface, so a long profile list pushed the launch cards off the top and both
+panel footers off the bottom — the primary actions disappeared exactly when a
+user had the most to choose from. Side by side, the panels now fill the
+surface and each scrolls its own list internally; the cards and footers never
+move. Stacked, neither panel has a bounded height to scroll inside, so the
+surface still scrolls as one. Wiring that up surfaced a quiet trap: the
+Running Sessions panel called `set_min_height` on the same `Ui` it then
+measured with `min_rect`, so the list's computed height came out negative and
+clamped to zero, silently rendering an empty panel. Measuring the cursor
+delta instead of `min_rect` fixed it, and three existing tests caught it
+before the change left the worktree.

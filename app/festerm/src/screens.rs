@@ -2067,10 +2067,12 @@ fn show_sftp_form(
 /// and two lines of description whatever the window does, and a profile row
 /// holds one line of text. Only the horizontal split between the two panels
 /// and the card row's column count respond to width.
-const LAUNCH_CARD_HEIGHT: f32 = 205.0;
-/// The height a card takes once its description is dropped, for users who
-/// have turned the compact New Session layout on.
-const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 118.0;
+const LAUNCH_CARD_HEIGHT: f32 = 186.0;
+/// The height a card takes for users who have turned the compact New Session
+/// layout on. Compact trims the mark and the padding; it keeps the
+/// description, because a card that only says "SSH" does not tell a new user
+/// what activating it will do.
+const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 152.0;
 const LAUNCH_CARD_GAP: f32 = 16.0;
 const LAUNCH_CARD_PADDING: f32 = 20.0;
 /// Narrower than this and a card's title starts eliding, so the row wraps to
@@ -2098,6 +2100,9 @@ const LAUNCHER_PROFILE_COLUMNS: [f32; 4] = [0.103, 0.355, 0.482, 0.757];
 /// Height reserved for the Saved Profiles footer row when pinning it to the
 /// panel's bottom edge.
 const LAUNCHER_FOOTER_HEIGHT: f32 = 40.0;
+/// Inset kept between the window's content edge and the New Session surface,
+/// so the launch cards and panels do not sit flush against the frame.
+const LAUNCHER_SURFACE_MARGIN: f32 = 12.0;
 const LAUNCHER_COLUMN_GUTTER: f32 = 12.0;
 
 /// How the Saved Profiles list is ordered.
@@ -2240,58 +2245,56 @@ fn show_launch_card(
     }
 
     let active = selected || response.hovered();
-    // Every card carries a quiet border, matching the design mockup where all
-    // five sit in the same subtle frame; selection lifts that border a shade
-    // rather than switching to the loud action accent.
+    // Every card carries the same quiet border whether or not it is the
+    // keyboard selection: a heavier outline on one card reads as a disabled
+    // or modal state rather than as a cursor. Selection and hover lift the
+    // card's fill and its arrow instead.
     ui.painter().rect(
         rect,
         LAUNCHER_PANEL_CORNER,
-        if response.hovered() {
+        if active {
             theme::SURFACE_TAB_ACTIVE
         } else {
             theme::SURFACE_CARD
         },
-        if active {
-            Stroke::new(1.0, theme::BORDER_STRONG)
-        } else {
-            Stroke::new(1.0, theme::BORDER_SUBTLE)
-        },
+        Stroke::new(1.0, theme::BORDER_SUBTLE),
         egui::StrokeKind::Inside,
     );
 
+    let mark_size = if compact { 52.0 } else { 64.0 };
     let mark_rect = egui::Rect::from_min_size(
         egui::pos2(
             rect.left() + LAUNCH_CARD_PADDING,
-            rect.top() + if compact { LAUNCH_CARD_PADDING } else { 12.0 },
+            rect.top() + if compact { 14.0 } else { 18.0 },
         ),
-        egui::Vec2::splat(if compact { 28.0 } else { 72.0 }),
+        egui::Vec2::splat(mark_size),
     );
     paint_session_mark(ui.painter(), item, mark_rect);
 
     let text_left = rect.left() + LAUNCH_CARD_PADDING;
     let text_width = (rect.width() - LAUNCH_CARD_PADDING * 2.0).max(0.0);
-    let title = elided_galley(ui, &item.label, 20.0, theme::TEXT_PRIMARY, text_width, 1);
-    let title_top = mark_rect.bottom() + if compact { 10.0 } else { 8.0 };
+    let title = elided_galley(ui, &item.label, 18.0, theme::TEXT_PRIMARY, text_width, 1);
+    let title_top = mark_rect.bottom() + if compact { 8.0 } else { 10.0 };
     let title_height = title.size().y;
     ui.painter()
         .galley(egui::pos2(text_left, title_top), title, theme::TEXT_PRIMARY);
-    // The compact card drops the description rather than shrinking it: an
-    // elided one-line description says less than the title already does.
-    if !compact {
-        let description = elided_galley(
-            ui,
-            &item.description,
-            15.0,
-            theme::TEXT_SECONDARY,
-            text_width,
-            2,
-        );
-        ui.painter().galley(
-            egui::pos2(text_left, title_top + title_height + 8.0),
-            description,
-            theme::TEXT_SECONDARY,
-        );
-    }
+    // The description stays in the compact layout: it is the only text that
+    // says what the card does, and the arrow alone does not replace it.
+    let description = elided_galley(
+        ui,
+        &item.description,
+        14.0,
+        theme::TEXT_SECONDARY,
+        // The last description line shares its row with the corner arrow, so
+        // it wraps short of it rather than running underneath.
+        (text_width - 26.0).max(0.0),
+        2,
+    );
+    ui.painter().galley(
+        egui::pos2(text_left, title_top + title_height + 6.0),
+        description,
+        theme::TEXT_SECONDARY,
+    );
 
     let arrow = egui::Rect::from_min_size(
         egui::pos2(
@@ -2323,27 +2326,62 @@ fn show_panel_heading(
     subtitle: Option<&str>,
     controls: impl FnOnce(&mut Ui),
 ) {
-    let height = if subtitle.is_some() { 52.0 } else { 40.0 };
+    let height = if subtitle.is_some() { 52.0 } else { 44.0 };
+    // The text block is measured up front so it can be placed in a rect
+    // centred on the mark. Left to egui's own alignment it would sit at the
+    // top of the row and the heading would read as floating above the search
+    // and sort controls beside it instead of sharing their centre line.
+    let title_width = ui
+        .painter()
+        .layout_no_wrap(
+            title.to_owned(),
+            egui::FontId::proportional(20.0),
+            theme::TEXT_PRIMARY,
+        )
+        .size()
+        .x;
+    let subtitle_width = subtitle.map(|subtitle| {
+        ui.painter()
+            .layout_no_wrap(
+                subtitle.to_owned(),
+                egui::FontId::proportional(13.0),
+                theme::TEXT_SECONDARY,
+            )
+            .size()
+            .x
+    });
+    let text_width = title_width.max(subtitle_width.unwrap_or(0.0)).ceil() + 1.0;
+    let text_height = if subtitle.is_some() { 42.0 } else { 24.0 };
     ui.horizontal(|ui| {
         ui.set_height(height);
-        let (mark_rect, _) = ui.allocate_exact_size(egui::Vec2::splat(36.0), Sense::hover());
+        let (mark_rect, _) = ui.allocate_exact_size(egui::Vec2::splat(34.0), Sense::hover());
         icon::paint(ui.painter(), mark, mark_rect, theme::ACCENT_ACTION);
         ui.add_space(10.0);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(
-                egui::RichText::new(title)
-                    .size(20.0)
-                    .color(theme::TEXT_PRIMARY),
-            );
-            if let Some(subtitle) = subtitle {
+        let (text_slot, _) = ui.allocate_exact_size(vec2(text_width, height), Sense::hover());
+        let text_rect =
+            egui::Rect::from_center_size(text_slot.center(), vec2(text_slot.width(), text_height));
+        // Painted galleys would drop the heading out of the accessibility
+        // tree, so the labels stay real widgets inside a placed rect.
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(text_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(
-                    egui::RichText::new(subtitle)
-                        .size(13.0)
-                        .color(theme::TEXT_SECONDARY),
+                    egui::RichText::new(title)
+                        .size(20.0)
+                        .color(theme::TEXT_PRIMARY),
                 );
-            }
-        });
+                if let Some(subtitle) = subtitle {
+                    ui.label(
+                        egui::RichText::new(subtitle)
+                            .size(13.0)
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                }
+            },
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), controls);
     });
 }
@@ -3105,15 +3143,26 @@ pub fn show_launcher(
         ui.add_space(LAUNCH_CARD_GAP);
         let top = ui.cursor().top();
         let height = (content_viewport_bottom(ui) - top).max(0.0);
-        let scroll_rect =
-            egui::Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), height));
-        ui.scope_builder(egui::UiBuilder::new().max_rect(scroll_rect), |ui| {
+        // The surface is inset from the window's content edge on both sides
+        // so the cards and panels read as objects on a background rather
+        // than as panes bolted to the frame.
+        let surface_rect = egui::Rect::from_min_size(
+            ui.cursor().min + vec2(LAUNCHER_SURFACE_MARGIN, 0.0),
+            vec2(
+                (ui.available_width() - LAUNCHER_SURFACE_MARGIN * 2.0).max(0.0),
+                height,
+            ),
+        );
+        // Below the stacking threshold the two panels are laid out one above
+        // the other: side by side they would each be too narrow for their
+        // own columns, and a horizontal scrollbar would hide the right-hand
+        // panel entirely.
+        let side_by_side =
+            surface_rect.width() >= LAUNCHER_PANEL_MIN_WIDTH * 2.0 + LAUNCHER_PANEL_GAP;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(surface_rect), |ui| {
             configure_content_scrollbar(ui);
-            ScrollArea::vertical()
-                .id_salt((tab_id, "launcher_surface"))
-                .max_height(height)
-                .show(ui, |ui| {
-                    ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
+            let body =
+                |ui: &mut Ui, state: &mut LauncherState, command: &mut Option<AppCommand>| {
                     ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                     let content_width = ui.available_width();
 
@@ -3122,26 +3171,19 @@ pub fn show_launcher(
                         content_width,
                         compact_cards,
                         &items[..fixed_end],
-                        &mut state,
-                        &mut command,
+                        state,
+                        command,
                     );
                     ui.add_space(23.0);
 
-                    // Below the stacking threshold the two panels are laid
-                    // out one above the other: side by side they would each
-                    // be too narrow for their own columns, and a horizontal
-                    // scrollbar would hide the right-hand panel entirely.
-                    let side_by_side =
-                        content_width >= LAUNCHER_PANEL_MIN_WIDTH * 2.0 + LAUNCHER_PANEL_GAP;
-                    // Side by side, the panels fill the rest of the surface
-                    // so their footers sit on one line at the bottom edge
-                    // rather than floating under short content. Stacked,
+                    // Side by side, the panels fill the rest of the surface so
+                    // their footers sit on one line at the bottom edge rather
+                    // than floating under short content, and so each panel knows
+                    // the height it has to scroll its own list inside. Stacked,
                     // each panel is only as tall as it needs to be.
-                    let panel_height = if side_by_side {
-                        Some((height - (ui.cursor().top() - top) - 20.0).max(0.0))
-                    } else {
-                        None
-                    };
+                    let panel_height = side_by_side.then(|| {
+                        (height - (ui.cursor().top() - top) - LAUNCHER_SURFACE_MARGIN).max(0.0)
+                    });
                     let (profiles_width, sessions_width) = if side_by_side {
                         let usable = content_width - LAUNCHER_PANEL_GAP;
                         let profiles = (usable * LAUNCHER_PROFILES_PANEL_SHARE).floor();
@@ -3150,73 +3192,81 @@ pub fn show_launcher(
                         (content_width, content_width)
                     };
 
-                    let show_panels =
-                        |ui: &mut Ui,
-                         state: &mut LauncherState,
-                         command: &mut Option<AppCommand>| {
-                            if side_by_side {
-                                ui.horizontal_top(|ui| {
-                                    // The panels are columns: without an
-                                    // explicit top-down layout they would
-                                    // inherit the row's left-to-right flow
-                                    // and lay their own contents out
-                                    // sideways.
-                                    ui.spacing_mut().item_spacing.x = 0.0;
-                                    show_saved_profiles_panel(
-                                        ui,
-                                        profiles_width,
-                                        panel_height,
-                                        &items,
-                                        &profile_order,
-                                        now_unix_seconds,
-                                        state,
-                                        command,
-                                    );
-                                    ui.add_space(LAUNCHER_PANEL_GAP);
-                                    show_running_sessions_panel(
-                                        ui,
-                                        sessions_width,
-                                        panel_height,
-                                        &items,
-                                        fixed_end,
-                                        festerm_sessions_end,
-                                        tmux_sessions_end,
-                                        profiles_start,
-                                        now_unix_seconds,
-                                        state,
-                                        command,
-                                    );
-                                });
-                            } else {
-                                show_saved_profiles_panel(
-                                    ui,
-                                    profiles_width,
-                                    panel_height,
-                                    &items,
-                                    &profile_order,
-                                    now_unix_seconds,
-                                    state,
-                                    command,
-                                );
-                                ui.add_space(LAUNCHER_PANEL_GAP);
-                                show_running_sessions_panel(
-                                    ui,
-                                    sessions_width,
-                                    panel_height,
-                                    &items,
-                                    fixed_end,
-                                    festerm_sessions_end,
-                                    tmux_sessions_end,
-                                    profiles_start,
-                                    now_unix_seconds,
-                                    state,
-                                    command,
-                                );
-                            }
-                        };
-                    show_panels(ui, &mut state, &mut command);
-                    ui.add_space(20.0);
-                });
+                    if side_by_side {
+                        ui.horizontal_top(|ui| {
+                            // The panels are columns: without an explicit
+                            // top-down layout they would inherit the row's
+                            // left-to-right flow and lay their own contents out
+                            // sideways.
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            show_saved_profiles_panel(
+                                ui,
+                                profiles_width,
+                                panel_height,
+                                &items,
+                                &profile_order,
+                                now_unix_seconds,
+                                state,
+                                command,
+                            );
+                            ui.add_space(LAUNCHER_PANEL_GAP);
+                            show_running_sessions_panel(
+                                ui,
+                                sessions_width,
+                                panel_height,
+                                &items,
+                                fixed_end,
+                                festerm_sessions_end,
+                                tmux_sessions_end,
+                                profiles_start,
+                                now_unix_seconds,
+                                state,
+                                command,
+                            );
+                        });
+                    } else {
+                        show_saved_profiles_panel(
+                            ui,
+                            profiles_width,
+                            panel_height,
+                            &items,
+                            &profile_order,
+                            now_unix_seconds,
+                            state,
+                            command,
+                        );
+                        ui.add_space(LAUNCHER_PANEL_GAP);
+                        show_running_sessions_panel(
+                            ui,
+                            sessions_width,
+                            panel_height,
+                            &items,
+                            fixed_end,
+                            festerm_sessions_end,
+                            tmux_sessions_end,
+                            profiles_start,
+                            now_unix_seconds,
+                            state,
+                            command,
+                        );
+                        ui.add_space(20.0);
+                    }
+                };
+            if side_by_side {
+                // The launch cards stay put. They are this surface's primary
+                // actions, so they must not scroll out from under a user who
+                // is reading a long profile list; each panel scrolls its own
+                // list instead.
+                body(ui, &mut state, &mut command);
+            } else {
+                ScrollArea::vertical()
+                    .id_salt((tab_id, "launcher_surface"))
+                    .max_height(height)
+                    .show(ui, |ui| {
+                        ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
+                        body(ui, &mut state, &mut command);
+                    });
+            }
         });
         if let Some(status) = secure_storage_status {
             ui.add_space(8.0);
@@ -3399,6 +3449,13 @@ fn show_saved_profiles_panel(
                                                 let search = ui.add_sized(
                                                     entry.size(),
                                                     TextEdit::singleline(&mut state.profile_search)
+                                                        // The pill around the
+                                                        // field is painted by
+                                                        // this panel, so the
+                                                        // widget must not draw
+                                                        // a second frame
+                                                        // inside it.
+                                                        .frame(egui::Frame::NONE)
                                                         .background_color(
                                                             egui::Color32::TRANSPARENT,
                                                         )
@@ -3431,43 +3488,65 @@ fn show_saved_profiles_panel(
                         ui.add_space(14.0);
 
                         show_profile_column_headers(ui, width, inner);
-                        if order.is_empty() {
-                            ui.add_space(16.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(LAUNCHER_PANEL_PADDING);
-                                ui.label(
-                                    egui::RichText::new(
-                                        if state.profile_search.trim().is_empty() {
+                        let selected = state.selected;
+                        let search_is_empty = state.profile_search.trim().is_empty();
+                        let rows = |ui: &mut Ui, command: &mut Option<AppCommand>| {
+                            if order.is_empty() {
+                                ui.add_space(16.0);
+                                ui.horizontal(|ui| {
+                                    ui.add_space(LAUNCHER_PANEL_PADDING);
+                                    ui.label(
+                                        egui::RichText::new(if search_is_empty {
                                             "No saved profiles yet."
                                         } else {
                                             "No profiles match this search."
-                                        },
-                                    )
-                                    .size(14.0)
-                                    .color(theme::TEXT_MUTED),
+                                        })
+                                        .size(14.0)
+                                        .color(theme::TEXT_MUTED),
+                                    );
+                                });
+                            }
+                            for index in order {
+                                show_profile_row(
+                                    ui,
+                                    width,
+                                    &items[*index],
+                                    *index == selected,
+                                    now_unix_seconds,
+                                    command,
                                 );
-                            });
-                        }
-                        for index in order {
-                            show_profile_row(
-                                ui,
-                                width,
-                                &items[*index],
-                                *index == state.selected,
-                                now_unix_seconds,
-                                command,
-                            );
-                        }
+                            }
+                        };
 
-                        // The footer sits on the panel's bottom edge, so it
-                        // lines up with the other panel however short the
-                        // profile table happens to be.
-                        let footer_slack = height
-                            .map(|height| {
-                                height - 36.0 - ui.min_rect().height() - LAUNCHER_FOOTER_HEIGHT
-                            })
-                            .unwrap_or(18.0);
-                        ui.add_space(footer_slack.max(18.0));
+                        // The list scrolls inside the panel rather than
+                        // scrolling the whole surface, so the launch cards
+                        // above and this panel's own footer stay in place
+                        // however many profiles are saved.
+                        match height {
+                            Some(height) => {
+                                let list_height = (height
+                                    - 36.0
+                                    - ui.min_rect().height()
+                                    - LAUNCHER_FOOTER_HEIGHT
+                                    - 18.0)
+                                    .max(0.0);
+                                configure_content_scrollbar(ui);
+                                ScrollArea::vertical()
+                                    .id_salt("launcher_profile_list")
+                                    .max_height(list_height)
+                                    .min_scrolled_height(list_height)
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        ui.set_width(width);
+                                        rows(ui, command);
+                                    });
+                                ui.add_space(18.0);
+                            }
+                            None => {
+                                rows(ui, command);
+                                ui.add_space(18.0);
+                            }
+                        }
                         ui.horizontal(|ui| {
                             ui.add_space(LAUNCHER_PANEL_PADDING);
                             if launcher_button(ui, Icon::Settings, "Manage Profiles…", None, false)
@@ -3559,6 +3638,10 @@ fn show_running_sessions_panel(
                         ui.set_min_height((height - 30.0).max(0.0));
                     }
                     ui.spacing_mut().item_spacing.y = 12.0;
+                    // Measured from the cursor rather than from `min_rect`,
+                    // which `set_min_height` above has already stretched to
+                    // the panel's full height.
+                    let content_top = ui.cursor().top();
                     show_panel_heading(
                         ui,
                         Icon::RunningSessions,
@@ -3570,53 +3653,77 @@ fn show_running_sessions_panel(
                             }
                         },
                     );
-                    let groups = [
-                        (
-                            "fesTerm Native (sessiond)",
-                            fixed_end,
-                            festerm_sessions_end,
-                            &mut state.festerm_group_expanded,
-                        ),
-                        (
-                            "tmux",
-                            festerm_sessions_end,
-                            tmux_sessions_end,
-                            &mut state.tmux_group_expanded,
-                        ),
-                        (
-                            "screen",
-                            tmux_sessions_end,
-                            profiles_start,
-                            &mut state.screen_group_expanded,
-                        ),
+                    let ranges = [
+                        ("fesTerm Native (sessiond)", fixed_end, festerm_sessions_end),
+                        ("tmux", festerm_sessions_end, tmux_sessions_end),
+                        ("screen", tmux_sessions_end, profiles_start),
                     ];
-                    let mut any = false;
-                    for (title, start, end, expanded) in groups {
-                        if start >= end {
-                            continue;
+                    // The expansion flags travel through the closure as one
+                    // array rather than as three borrows of `state`, so the
+                    // body can be called from either the scrolled or the
+                    // unscrolled branch below.
+                    let mut expanded = [
+                        state.festerm_group_expanded,
+                        state.tmux_group_expanded,
+                        state.screen_group_expanded,
+                    ];
+                    let selected = state.selected;
+                    let body = |ui: &mut Ui,
+                                expanded: &mut [bool; 3],
+                                command: &mut Option<AppCommand>| {
+                        let mut any = false;
+                        for (index, (title, start, end)) in ranges.into_iter().enumerate() {
+                            if start >= end {
+                                continue;
+                            }
+                            any = true;
+                            show_session_group(
+                                ui,
+                                (width - 30.0).max(0.0),
+                                title,
+                                &items[start..end],
+                                start,
+                                selected,
+                                &mut expanded[index],
+                                now_unix_seconds,
+                                command,
+                            );
                         }
-                        any = true;
-                        show_session_group(
-                            ui,
-                            (width - 30.0).max(0.0),
-                            title,
-                            &items[start..end],
-                            start,
-                            state.selected,
-                            expanded,
-                            now_unix_seconds,
-                            command,
-                        );
+                        if !any {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Nothing is running locally that can be reattached right now.",
+                                )
+                                .size(14.0)
+                                .color(theme::TEXT_MUTED),
+                            );
+                        }
+                    };
+                    // As in Saved Profiles, a long list scrolls inside this
+                    // panel so the launch cards above it stay on screen.
+                    match height {
+                        Some(height) => {
+                            let list_height =
+                                (height - 30.0 - (ui.cursor().top() - content_top)).max(0.0);
+                            configure_content_scrollbar(ui);
+                            ScrollArea::vertical()
+                                .id_salt("launcher_running_sessions_list")
+                                .max_height(list_height)
+                                .min_scrolled_height(list_height)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.set_width((width - 30.0).max(0.0));
+                                    ui.spacing_mut().item_spacing.y = 12.0;
+                                    body(ui, &mut expanded, command);
+                                });
+                        }
+                        None => body(ui, &mut expanded, command),
                     }
-                    if !any {
-                        ui.label(
-                            egui::RichText::new(
-                                "Nothing is running locally that can be reattached right now.",
-                            )
-                            .size(14.0)
-                            .color(theme::TEXT_MUTED),
-                        );
-                    }
+                    [
+                        state.festerm_group_expanded,
+                        state.tmux_group_expanded,
+                        state.screen_group_expanded,
+                    ] = expanded;
                 });
         },
     );
@@ -7584,8 +7691,9 @@ mod tests {
     #[test]
     fn compact_new_session_layout_shortens_the_launch_cards() {
         // Feature request #64 asked for a denser New Session surface. The
-        // preference now trades the launch cards' descriptions for height,
-        // which is what actually buys room for the panels below them.
+        // preference trades card height for a smaller mark and tighter
+        // padding; it keeps the description, because a card that only says
+        // "SSH" does not tell a new user what activating it will do.
         let profiles = vec![
             Profile::local("alpha", "cargo", vec!["run".to_owned()], None)
                 .expect("test profile is valid"),
@@ -7613,6 +7721,83 @@ mod tests {
         assert!(
             compact_profile.top() < roomy_profile.top(),
             "shorter cards must pull the panels below them upward"
+        );
+    }
+
+    #[test]
+    fn the_new_session_surface_is_inset_from_the_window_edge() {
+        // Flush against the frame the cards read as panes bolted to the
+        // window rather than as objects sitting on a background.
+        let mut harness = harness_with_profiles(vec![Profile::local(
+            "alpha",
+            "cargo",
+            vec!["run".to_owned()],
+            None,
+        )
+        .expect("test profile is valid")]);
+        harness.run();
+        let card = harness
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        assert!(
+            card.left() >= LAUNCHER_SURFACE_MARGIN,
+            "expected the launch cards inset from the window edge, got {card:?}"
+        );
+    }
+
+    #[test]
+    fn the_launch_cards_stay_in_place_while_a_long_profile_list_scrolls() {
+        // The launch cards are this surface's primary actions, so a long
+        // profile list has to scroll inside its own panel rather than
+        // scrolling the cards and the panel footers off the top and bottom
+        // of the window.
+        let long: Vec<Profile> = (0..40)
+            .map(|index| {
+                Profile::local(
+                    format!("profile-{index:02}"),
+                    "cargo",
+                    vec!["run".to_owned()],
+                    None,
+                )
+                .expect("test profile is valid")
+            })
+            .collect();
+
+        let mut short = harness_with_profiles(vec![Profile::local(
+            "alpha",
+            "cargo",
+            vec!["run".to_owned()],
+            None,
+        )
+        .expect("test profile is valid")]);
+        short.run();
+        let short_card = short
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        let short_footer = short.get_by_label("Manage Profiles…").rect();
+
+        let mut long = harness_with_profiles(long);
+        long.run();
+        let long_card = long
+            .get_by_label("Local Shell — Start a local terminal session")
+            .rect();
+        let long_footer = long.get_by_label("Manage Profiles…").rect();
+
+        assert!(
+            (long_card.top() - short_card.top()).abs() < 1.0
+                && (long_card.height() - short_card.height()).abs() < 1.0,
+            "a long profile list must not move the launch cards, got {long_card:?} against \
+             {short_card:?}"
+        );
+        assert!(
+            (long_footer.top() - short_footer.top()).abs() < 1.0,
+            "the Saved Profiles footer stays pinned to the panel's bottom edge, got \
+             {long_footer:?} against {short_footer:?}"
+        );
+        assert!(
+            long_footer.bottom() <= 880.0,
+            "the footer must remain inside the window rather than being pushed below it, got \
+             {long_footer:?}"
         );
     }
 
