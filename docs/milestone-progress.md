@@ -1507,7 +1507,7 @@ nine explicit filled pins. The lesson is to inspect the renderer and compare
 negative spaces at the actual card and row sizes, not compensate for a
 misdiagnosed stroke problem by repeatedly enlarging the UI.
 
-### Local New Session density experiment
+### New Session density refinement
 
 After the icon correction, the launcher still read larger and heavier than
 fesTerm's other controls. A local-only experiment reduces its typography,
@@ -1523,8 +1523,8 @@ also use the actual margins, avoiding stale 30 px deductions after their
 insets shrink. A populated capture fixture shows twelve mixed profiles and
 all three session providers at four widths, alongside the existing full-app
 captures. Geometry assertions cover title fit, heading/search alignment,
-and minimum click targets. This is an exploration branch for visual feedback;
-the release branch and application-wide typography remain unchanged.
+and minimum click targets. The experiment was approved after visual feedback
+for inclusion in v0.1.13; application-wide typography remains unchanged.
 
 The visual pass also favored assigning a little more of a narrow table to
 Name instead of Last Used. Headers and rows use the same responsive origins,

@@ -206,8 +206,8 @@ row wraps to fewer columns at narrow widths rather than forcing horizontal
 scrolling, and the whole surface is inset from the window's content edge so
 the cards and panels read as objects on a background.
 
-**Local density experiment:** the `experiment/session-density` branch brings
-this landing surface closer to the rest of fesTerm without changing the
+**Density:** this landing surface matches the scale of the rest of fesTerm
+without changing the
 approved icon artwork or the connection forms. Card titles use 16 px text,
 panel headings 17 px, body/control text 13 px, and secondary text 12 px.
 Cards are 112 px high (96 px compact), profile rows 34 px, and labelled
@@ -217,7 +217,6 @@ ordinary profile names remain distinguishable; headers and rows share the
 same column origins.
 The existing compact-layout preference remains a second, tighter option;
 no new preference or application-wide zoom factor is introduced.
-These dimensions are exploratory, not a release acceptance decision.
 
 Below the launch cards, **Saved Profiles** and **Running Sessions** form two
 panels. At ordinary desktop widths Saved Profiles takes the left, wider share
