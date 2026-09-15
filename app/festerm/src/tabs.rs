@@ -1338,6 +1338,19 @@ pub struct Tab {
     pub content: TabContent,
 }
 
+/// Which blank profile editor `AppCommand::CreateProfile` should open.
+///
+/// The Launcher's New Profile control has to say *what* it is creating, so
+/// the kind travels with the command rather than being chosen again once
+/// the Profiles surface is on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NewProfileKind {
+    Local,
+    Ssh,
+    Sftp,
+    Serial,
+}
+
 /// Product-level application actions dispatched from any invocation surface
 /// (chip row, launcher buttons, and future shortcuts/command palette), per
 /// `docs/application-command-model.md`. UI code must not implement its own
@@ -1352,6 +1365,15 @@ pub enum AppCommand {
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
+    /// Opens the Profiles surface with a blank editor of `kind` already
+    /// open. Distinct from `OpenProfiles`, which lands on the list.
+    CreateProfile {
+        kind: NewProfileKind,
+    },
+    /// Opens the Markdown file picker and, once a file is chosen, a viewer
+    /// tab for it. Handled by the composition root because choosing the
+    /// file is host I/O, not state the tab layer owns.
+    OpenMarkdownWorkspace,
     OpenLocalMarkdownFile {
         path: PathBuf,
         /// Retarget this already-open Markdown viewer at `path` in place
@@ -1680,6 +1702,25 @@ pub enum AppCommand {
     },
 }
 
+impl AppCommand {
+    /// The saved profile this command launches, if any.
+    ///
+    /// Only commands that actually start a session from a stored definition
+    /// count: opening a profile's editor is not a use of that profile, and
+    /// counting it would make the launcher's ordering track editing rather
+    /// than working.
+    pub fn launched_profile_id(&self) -> Option<&str> {
+        match self {
+            Self::StartConfiguredLocalProfile { profile_id }
+            | Self::StartConfiguredSshProfile { profile_id }
+            | Self::StartConfiguredSftpProfile { profile_id }
+            | Self::StartConfiguredSerialProfile { profile_id }
+            | Self::StartStoredPasswordSshProfile { profile_id, .. } => Some(profile_id),
+            _ => None,
+        }
+    }
+}
+
 /// A one-shot password value awaiting native-store insertion.
 ///
 /// It has no public getter and redacts `Debug`, so application commands remain
@@ -1825,8 +1866,17 @@ pub struct AppState {
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
     /// via `take_pending_profile_edit`, since the Profiles surface's own
+    /// Set by `AppCommand::CreateProfile` so the Profiles surface opens
+    /// straight into a blank editor of the requested kind.
+    pending_profile_create: Option<NewProfileKind>,
     /// per-tab UI state lives in `egui`'s `ui.data`, not here.
     pending_profile_edit: Option<String>,
+    /// Set whenever a dispatched command launches a saved profile, so the
+    /// composition root can stamp that profile's last-used time and persist
+    /// it once per frame. Recorded here rather than at each launch surface
+    /// so every path -- launcher row, row menu, command palette, workspace
+    /// restore -- is covered by one rule.
+    pending_profile_usage: Option<String>,
     /// Set whenever a tab-list mutation (open/close/reorder/rename/activate)
     /// changes what `capture_workspace_configuration` would produce, so the
     /// composition root can autosave the workspace without every invocation
@@ -1872,6 +1922,8 @@ impl AppState {
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
             pending_profile_edit: None,
+            pending_profile_create: None,
+            pending_profile_usage: None,
             workspace_dirty: false,
         }
     }
@@ -1919,6 +1971,8 @@ impl AppState {
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
             pending_profile_edit: None,
+            pending_profile_create: None,
+            pending_profile_usage: None,
             workspace_dirty: false,
         };
         state.apply_scrollback_limit_to_sessions();
@@ -2046,6 +2100,8 @@ impl AppState {
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
             pending_profile_edit: None,
+            pending_profile_create: None,
+            pending_profile_usage: None,
             workspace_dirty: false,
         };
         state.apply_scrollback_limit_to_sessions();
@@ -2419,10 +2475,21 @@ impl AppState {
     /// every invocation surface must converge here rather than implementing
     /// independent tab/session policy.
     pub fn dispatch(&mut self, command: AppCommand, context: &egui::Context) {
+        if let Some(profile_id) = command.launched_profile_id() {
+            self.pending_profile_usage = Some(profile_id.to_owned());
+        }
         match command {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
+            AppCommand::CreateProfile { kind } => {
+                self.open_profiles();
+                self.pending_profile_create = Some(kind);
+            }
+            // Choosing the file is host I/O the composition root owns; if
+            // this command ever reaches here the picker was unavailable, so
+            // there is nothing to open.
+            AppCommand::OpenMarkdownWorkspace => {}
             AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                 self.open_local_markdown(path, replacing);
             }
@@ -2783,6 +2850,19 @@ impl AppState {
     /// cannot read `AppState` directly.
     pub fn take_pending_profile_edit(&mut self) -> Option<String> {
         self.pending_profile_edit.take()
+    }
+
+    /// One-shot consumption of a pending new-profile request set by
+    /// `AppCommand::CreateProfile`, consumed exactly like
+    /// `take_pending_profile_edit`.
+    pub fn take_pending_profile_create(&mut self) -> Option<NewProfileKind> {
+        self.pending_profile_create.take()
+    }
+
+    /// One-shot consumption of the saved profile launched this frame, for
+    /// the composition root to stamp into the configuration's usage record.
+    pub fn take_pending_profile_usage(&mut self) -> Option<String> {
+        self.pending_profile_usage.take()
     }
 
     /// One-shot consumption of the workspace-dirty flag set by any

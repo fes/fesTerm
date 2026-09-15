@@ -22,6 +22,9 @@ pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xa7, 0xb2, 0xbd);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x78, 0x85, 0x92);
 
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x35, 0x41, 0x4e);
+/// A slightly brighter frame than [`BORDER_SUBTLE`], used to lift a selected
+/// launch card without resorting to the loud action accent.
+pub const BORDER_STRONG: Color32 = Color32::from_rgb(0x4d, 0x5b, 0x6b);
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x91, 0xa7, 0xb8);
 pub const ACCENT_PRIMARY: Color32 = Color32::from_rgb(0x42, 0xbf, 0xd0);
 
@@ -32,6 +35,33 @@ pub const STATUS_DISCONNECTED: Color32 = Color32::from_rgb(0x7c, 0x87, 0x94);
 pub const STATUS_ATTENTION: Color32 = Color32::from_rgb(0xb5, 0x8a, 0xd4);
 pub const STATUS_ERROR: Color32 = Color32::from_rgb(0xd9, 0x68, 0x68);
 pub const STATUS_EXITED: Color32 = Color32::from_rgb(0x65, 0x72, 0x80);
+
+/// Launcher/New Session surfaces.
+///
+/// The New Session screen composes three nested wells: the window, a panel
+/// (Saved Profiles / Running Sessions), and cards sitting inside a panel. Each
+/// step is a small lightness increase rather than a border-only distinction, so
+/// the hierarchy survives without adding separators everywhere.
+pub const SURFACE_PANEL: Color32 = Color32::from_rgb(0x15, 0x1d, 0x26);
+pub const SURFACE_CARD: Color32 = Color32::from_rgb(0x19, 0x24, 0x2e);
+pub const SURFACE_FIELD: Color32 = Color32::from_rgb(0x13, 0x1b, 0x24);
+/// The accent used for affirmative, user-initiated actions (primary buttons,
+/// collection identity marks, and the remote-session globe badge). Distinct
+/// from `ACCENT_PRIMARY`, which marks live session state.
+pub const ACCENT_ACTION: Color32 = Color32::from_rgb(0x1c, 0x7e, 0xf5);
+
+/// Session-type identity colors.
+///
+/// `docs/gui-design.md` forbids tinting a chip by *connection state*; these
+/// instead encode the session's *type*, which is stable for a profile's whole
+/// life and is what makes a long saved-profile list scannable. Type is always
+/// also carried by the icon's distinct silhouette and by the Type column's
+/// text, so no meaning depends on color alone.
+pub const ICON_SESSION_LOCAL: Color32 = Color32::from_rgb(0x9a, 0xb2, 0xd3);
+pub const ICON_SESSION_REMOTE: Color32 = ICON_SESSION_LOCAL;
+pub const ICON_SESSION_FILE_TRANSFER: Color32 = Color32::from_rgb(0xcd, 0x8d, 0xf5);
+pub const ICON_SESSION_SERIAL: Color32 = Color32::from_rgb(0xff, 0xc8, 0x4f);
+pub const ICON_SESSION_MARKDOWN: Color32 = Color32::from_rgb(0xdf, 0xe6, 0xee);
 
 /// Maps the semantic palette onto egui's built-in widget vocabulary.
 pub fn default_visuals() -> Visuals {

@@ -181,33 +181,78 @@ The launcher may contain:
 
 Unavailable categories may be omitted until implemented rather than shown as disabled clutter.
 
-The launcher's fixed action rows form a compact keyboard-navigable list
-(`app/festerm/src/screens.rs`'s `show_launcher`): Up/Down moves a highlighted
-selection and Enter launches whichever option is currently highlighted,
-without requiring the mouse. Local Shell has initial focus. Each row uses its
-semantic icon, a short primary label, and one factual secondary line: **Local
-Shell** / “Default shell on this computer,” **SSH** / “Connect to a remote
-host,” **SFTP** / “Transfer files over SSH,” and **Serial** / “Open a local
-serial device.” Saved profiles remain in list order by default, but the
-Settings toggle may render them in a responsive multi-column grid when width
-allows. When the selected local shell or profile is reliably known, that
-identity may replace the generic Local Shell secondary line.
+The launcher is a three-region surface (`app/festerm/src/screens.rs`'s
+`show_launcher`), still backed by one keyboard selection model: Up/Down or
+Tab/Shift-Tab moves the highlighted launchable entry and Enter activates the
+same command a pointer click would. Local Shell has initial focus. The top
+region is a row of launch cards for the session types fesTerm can start from
+nothing: **Local Shell**, **SSH**, **SFTP**, **Serial**, and **Markdown**.
+Each card carries a large semantic session-type icon, a title, a two-line
+factual description when roomier density is enabled, and a bottom-right
+proceed arrow. The card row wraps to fewer columns at narrow widths rather
+than forcing horizontal scrolling.
 
-The initial target launcher shows the usable choices Local Shell, SSH, SFTP,
-and Serial. A choice whose transport is not yet implemented remains absent
-from a shipped build rather than appearing as a disabled promise. Empty
-Recent, Profiles, and Workspaces sections remain absent until their underlying
-models exist and contain real entries. Local Shell launches immediately; SSH,
-SFTP, and Serial navigate within the same launcher tab to focused connection
-forms.
-Back or Escape returns to the launcher without creating another chip. Escape
-closes a Launcher opened from another session and restores that session, but
-does nothing when Launcher is the window's only surface. Partially entered
-non-secret connection fields live only for that Launcher lifetime.
+Below the launch cards, **Saved Profiles** and **Running Sessions** form two
+panels. At ordinary desktop widths Saved Profiles takes the left, wider share
+(about three fifths) and Running Sessions takes the right share; below the
+minimum width needed for both panels' own columns, they stack vertically with
+Saved Profiles first. Both panels live inside the Launcher's normal bounded
+content scroll area, so they stay above footer/status chrome instead of
+running underneath it.
+
+The Saved Profiles panel uses the saved-profile collection icon, a search
+field, and a sort-order toggle. It is a table rather than a card grid, with
+left-aligned **Name**, **Type**, **Host / Path**, and **Last Used** columns
+and one 41 px row per saved profile. Each profile appears exactly once under
+the type it was saved as; an SSH profile's SFTP launch, and an SFTP profile's
+SSH launch, move to the row menu instead of duplicating the profile as a
+second row. Search filters by name, type, or host/path. The default order is
+recently used first, then never-launched profiles by name; the toggle switches
+between that order and plain name order. The Last Used value is `Never` until
+the profile has been launched on this installation, then a coarse relative
+age such as `Just now` or `3 days ago`. The panel footer offers **Manage
+Profiles…** (`AppCommand::OpenProfiles`) and a primary **New Profile** menu
+whose Local Shell, SSH, SFTP, and Serial entries dispatch
+`AppCommand::CreateProfile` with the selected kind.
+
+Each saved-profile row launches its normal profile command when activated:
+local, SSH, SFTP, and serial profiles dispatch their corresponding
+`StartConfigured*Profile` command. The row's `⋮` overflow control and a
+right-click anywhere on the row open the same menu. **Connect** dispatches the
+normal launch command; **Connect SFTP** appears only for SSH profiles and
+dispatches `AppCommand::StartConfiguredSftpProfile`; **Connect SSH** appears
+only for SFTP profiles and dispatches `AppCommand::StartConfiguredSshProfile`;
+**Edit** dispatches `AppCommand::OpenProfileEditor`. This replaces the old
+per-card edit icon.
+
+The Running Sessions panel uses the running-sessions identity icon and the
+subtitle “Local sessions available to reattach.” Its refresh control requests
+a repaint rather than routing through `AppCommand`, because the composition
+root repopulates the discovered session lists each frame. Locally reattachable
+sessions are grouped by provider: **fesTerm Native (sessiond)**, **tmux**, and
+**screen**. Each nonempty group has a disclosure header, count badge, and one
+row per session. Rows show the session name, `Started N ago` when the provider
+reported a start time, otherwise the provider/status description, and a
+**Reattach** button. fesTerm-sessiond rows dispatch
+`AppCommand::ResumeUnattachedSession`; tmux and screen rows dispatch
+`AppCommand::ResumeMultiplexerSession` with the provider, match key, and
+user-facing display name. Empty provider groups are omitted, and an entirely
+empty panel says that nothing local can be reattached right now.
+
+The initial launcher shows the usable top-level choices Local Shell, SSH,
+SFTP, Serial, and Markdown. A choice whose transport is not yet implemented
+remains absent from a shipped build rather than appearing as a disabled
+promise. Local Shell launches immediately; SSH, SFTP, and Serial navigate
+within the same launcher tab to focused connection forms, while Markdown opens
+the Markdown workspace picker. Back or Escape returns from a form to the
+launcher without creating another chip. Escape closes a Launcher opened from
+another session and restores that session, but does nothing when Launcher is
+the window's only surface. Partially entered non-secret connection fields live
+only for that Launcher lifetime.
 
 The launcher uses no welcome copy, promotional cards, tips carousel, version
 number, or decorative empty-state content. Its job is simply to select a real
-session type.
+session type, saved definition, file workspace, or local session to reattach.
 
 The current implementation still expands a compact one-off password form
 under the launcher choices. The approved target separates destination,
@@ -743,7 +788,7 @@ location or construction. The main mappings are:
 
 | Surface | Semantic icons |
 | --- | --- |
-| Session chips and launcher | `LocalTerminal`, `SshRemote`, `Serial`, `NewSession`, `Settings`, `Workspace`, `Profile` |
+| Session chips and launcher | `LocalTerminal`, `SshRemote`, `FileTransfer`, `Serial`, `NewSession`, `Settings`, `Workspace`, `Profile`, `SavedProfiles`, `RunningSessions`, `Proceed`, `NewProfile`, `SortOrder`, `Reattach`, `SectionExpanded`, `SectionCollapsed` |
 | Upper chrome | `NewSession`, `CommandPalette`, `SessionInspector`, `Overflow`; reserve `Search` for literal search/filter UI rather than the command-palette trigger |
 | Window controls | `Close`, `Minimize`, and state-dependent `Maximize` or `Restore` on Windows/Linux; native traffic lights on macOS |
 | Connection and trust UI | `Reconnect`, `Disconnect`, `AuthRequired`, `HostKeyVerification`, `Warning`, `Error` |
@@ -1257,9 +1302,12 @@ quiet rows with subtle dividers:
   "Configuration" below): unlike the four controls above, which always apply
   and save immediately, resurrecting a previous run's open tabs is an
   explicit opt-in.
-- **Compact multi-column New Session list** is an off-by-default switch that
-  lets saved profiles render in a responsive grid when width allows, while the
-  original single-column list remains the baseline.
+- **Compact New Session layout** is an off-by-default switch that shortens the
+  Launcher's top launch cards by dropping their descriptions. The old
+  multi-column saved-profile grid is obsolete because Saved Profiles is now a
+  table; the persisted `compact_launcher_grid` configuration key is retained
+  and repurposed instead of removed so existing configuration files remain
+  valid under strict settings deserialization.
 - **Pulse status dot on new background output** is an off-by-default switch
   that animates only background-session chip dots when unseen output arrives.
 - **Resume unattached local sessions from New Session** is an off-by-default

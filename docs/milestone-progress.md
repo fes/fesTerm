@@ -1387,3 +1387,46 @@ saved Local profile's durable session already uses, via a new
 `AppCommand::ResumeMultiplexerSession`. Both widgets reuse the existing
 resumable-sessions Settings toggle rather than adding a second preference,
 since they answer the same question the fesTerm-sessiond list already does.
+
+## October 2026: Launcher redesigned into launch cards, profiles, and running sessions
+
+The next Launcher pass replaced the single scrolling stack with the structure
+the mockup was actually asking for: a launch-card strip for things fesTerm can
+start from nothing, a Saved Profiles table, and a Running Sessions panel. That
+made the old saved-profile card grid obsolete. Profiles now appear exactly
+once, with Type and Host / Path columns carrying the distinctions that the
+duplicated SSH/SFTP cards had been trying to communicate indirectly.
+
+The profile row menu became the escape hatch for actions that belong to one
+saved definition rather than to the table itself. Clicking the row still
+launches its normal profile; the `⋮` control and right-click menu share
+Connect, the SSH/SFTP crossover action when it applies, and Edit. Moving Edit
+there removed the tiny per-card edit target and stopped an SSH profile from
+looking like two separate saved things just because it can also start SFTP.
+
+The table also needed a real recency signal. `festerm-config` now stores a
+separate `profile_usage` section keyed by profile identifier, validates that
+every usage entry references a current profile, prunes usage when a profile is
+deleted, and rejects unknown references. Launch commands expose their profile
+identifier to the app state, and the composition root records the timestamp
+after a profile launch through the normal configuration writer, silently: this
+is an ordering hint the app observed, not a user-authored setting that should
+claim status-line attention.
+
+Running-session discovery moved from quick-connect widgets into its own panel.
+fesTerm-sessiond, tmux, and screen stay in separate collapsible groups because
+their reattach mechanisms and semantics differ. tmux now reads
+`#{session_created}`, and screen estimates a start time from its socket file,
+so rows can say `Started N ago` when the provider supplies enough evidence and
+fall back honestly when it does not.
+
+The visual vocabulary grew with the surface: file-transfer, saved-profiles,
+running-sessions, proceed, new-profile, sort-order, reattach, disclosure, and
+remote-globe icons, plus panel/card/field/action surfaces and session-type
+identity colors in the theme. Those colors describe session type, not
+connection state, and the icon silhouette and Type text still carry the same
+meaning without color. The existing `compact_launcher_grid` preference was
+kept because strict settings deserialization would reject old configuration
+files if the key disappeared; it now controls a compact launch-card layout,
+dropping card descriptions so the two panels start higher instead of trying
+to resurrect the removed profile grid.

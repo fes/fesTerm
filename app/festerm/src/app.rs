@@ -1415,6 +1415,36 @@ impl FesTermApp {
         );
     }
 
+    /// Stamps a saved profile's last-used time and writes it through, so the
+    /// launcher's "Last Used" column and its recently-used ordering survive a
+    /// restart.
+    ///
+    /// Unlike every other configuration write this one is silent in both
+    /// directions: the user did not ask for it, so neither success nor
+    /// failure belongs in the status line, and a failed write costs only an
+    /// ordering hint. The in-memory configuration still changes only after
+    /// the atomic file replacement succeeds, matching
+    /// [`Self::save_workspace`]'s commit-only-on-success rule.
+    fn record_profile_launch(&mut self, profile_id: &str) {
+        let Some(now) = crate::screens::unix_now_seconds() else {
+            return;
+        };
+        let Ok(replacement) = self
+            .state
+            .configuration()
+            .with_profile_last_used(profile_id, now)
+        else {
+            return;
+        };
+        if self
+            .configuration_reloader
+            .save_configuration(&replacement)
+            .is_ok()
+        {
+            self.state.replace_configuration(replacement);
+        }
+    }
+
     /// Scrubs any previously saved workspace snapshot from disk after the
     /// "Workspace restore" preference is turned off (`docs/gui-design.md`
     /// "Workspace restore"). Infallible on the in-memory side - clearing a
@@ -4482,11 +4512,13 @@ impl FesTermApp {
                 }
                 TabContent::Profiles => {
                     let pending_edit = self.state.take_pending_profile_edit();
+                    let pending_create = self.state.take_pending_profile_create();
                     screen_command = screens::show_profiles(
                         ui,
                         active_tab_id,
                         self.state.configuration(),
                         pending_edit,
+                        pending_create,
                         detect_default_local_persistence_provider(),
                     );
                 }
@@ -4625,6 +4657,9 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                AppCommand::OpenMarkdownWorkspace => {
+                    self.open_markdown_file_picker(&ui.ctx().clone());
+                }
                 AppCommand::OpenLocalMarkdownFile { path, replacing } => {
                     let context = ui.ctx().clone();
                     self.state.dispatch(
@@ -4822,6 +4857,9 @@ impl FesTermApp {
         // preference is off.
         if self.state.take_workspace_dirty() && self.state.restore_workspace() {
             self.save_workspace();
+        }
+        if let Some(profile_id) = self.state.take_pending_profile_usage() {
+            self.record_profile_launch(&profile_id);
         }
 
         if self.native_smoke.is_some() {
@@ -6714,7 +6752,7 @@ mod tests {
 
     fn harness_with_configuration(configuration: Configuration) -> Harness<'static, FesTermApp> {
         Harness::builder()
-            .with_size(egui::vec2(900.0, 600.0))
+            .with_size(egui::vec2(1240.0, 880.0))
             .with_max_steps(16)
             .build_ui_state(
                 |ui, app: &mut FesTermApp| {
@@ -6873,7 +6911,9 @@ mod tests {
         let mut harness = harness_with_configuration(configuration);
         harness.run();
         harness
-            .get_by_label("development — Saved local profile")
+            .get_by_label(
+                "development — Local · festerm-inspector-test-command-that-does-not-exist",
+            )
             .click();
         harness.step();
         harness.run();
@@ -6967,14 +7007,41 @@ mod tests {
     #[ignore = "manual GUI mockup review capture"]
     fn capture_launcher_for_mockup_review() {
         let output_path = std::env::temp_dir().join("festerm-gui-review");
+        let configuration = Configuration::new(vec![
+            festerm_config::Profile::local("dev-shell", "/bin/zsh", Vec::new(), None)
+                .expect("capture profile is valid"),
+            festerm_config::Profile::ssh(
+                "prod-web-01",
+                "10.0.4.21",
+                22,
+                "deploy",
+                "xterm-256color",
+                100,
+                40,
+            )
+            .expect("capture profile is valid"),
+            festerm_config::Profile::sftp("build-artifacts", "artifacts.internal", 22, "ci", true)
+                .expect("capture profile is valid"),
+            festerm_config::Profile::serial(
+                "usb-console",
+                "/dev/tty.usbserial-1420",
+                115_200,
+                festerm_config::SerialDataBits::Eight,
+                festerm_config::SerialParity::None,
+                festerm_config::SerialStopBits::One,
+                festerm_config::SerialFlowControl::None,
+            )
+            .expect("capture profile is valid"),
+        ])
+        .expect("capture configuration is valid");
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(752.0, 516.0))
+            .with_size(egui::vec2(1239.0, 877.0))
             .build_ui_state(
                 |ui, app: &mut FesTermApp| {
                     ui.ctx().set_visuals(theme::default_visuals());
                     app.ui_content(ui);
                 },
-                FesTermApp::for_test_with_configuration(Configuration::empty()),
+                FesTermApp::for_test_with_configuration(configuration),
             );
         harness.run();
         harness.snapshot_options(
@@ -7614,7 +7681,7 @@ mod tests {
         harness.run();
 
         harness
-            .get_by_label("development — Saved local profile")
+            .get_by_label("development — Local · festerm-profile-test-command-that-does-not-exist")
             .click();
         harness.step();
 
