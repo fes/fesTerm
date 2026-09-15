@@ -1477,9 +1477,15 @@ field's entry rect is sized to one line of text and centred on its pill rather
 than hanging from a fixed top margin.
 
 The SSH mark was redrawn from the mockup once the cards made it large enough
-to judge. The previous globe sat on the terminal's bottom-right corner at two
-thirds of the terminal's width, which read as a blot at 42 px; the mockup puts
-a smaller globe against the terminal's right edge at about two thirds of its
-height, with the terminal's right side notched away behind it. `remote-globe`
-repeats the globe at byte-identical coordinates so the two-tone overpaint
-still lands exactly on the mark it decorates.
+to judge, and then redrawn again after the first attempt read as damaged. The
+mistake was measuring the mockup's terminal with a colour mask tight enough to
+drop its dimmer gradient edges, which made the terminal look like a wide, short
+box the globe had to be notched into. Measuring against the local background
+instead showed a plain closed rounded square with the globe hanging off its
+bottom-right corner and overlapping it by about a tenth of its width. A closed
+outline with the globe kissing one corner reads as two whole objects; a notched
+outline reads as one broken one, which is what the review caught. Two latitude
+lines were also dropped from the globe: at 42 px with a three-pixel stroke they
+merged into a solid disc. `remote-globe` repeats the globe at byte-identical
+coordinates so the two-tone overpaint still lands exactly on the mark it
+decorates.
