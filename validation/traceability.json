@@ -170,7 +170,11 @@
         "the_new_session_surface_is_inset_from_the_window_edge",
         "the_launch_cards_stay_in_place_while_a_long_profile_list_scrolls",
         "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns",
-        "a_launch_card_is_a_wide_strip_rather_than_a_tall_tile"
+        "a_launch_card_is_a_wide_strip_rather_than_a_tall_tile",
+        "tighter_launcher_preserves_alignment_and_click_targets_at_desktop_widths",
+        "tighter_launcher_fits_all_five_cards_on_a_thousand_pixel_window",
+        "tighter_launcher_titles_fit_the_minimum_card_width",
+        "tighter_launcher_prioritizes_distinguishable_names_in_narrow_panels"
       ],
       "manual_scenarios": [],
       "status": "automated"
