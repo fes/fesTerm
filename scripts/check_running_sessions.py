@@ -60,12 +60,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch", type=int, default=os.environ.get("FESTERM_SESSION_CHURN_BATCH", 8))
     parser.add_argument("--cycles", type=int, default=os.environ.get("FESTERM_SESSION_CHURN_CYCLES", 3))
+    parser.add_argument("--deny-screen-process-inspection", action="store_true",
+                        help="model denied server inspection; requires Screen with public -Q support")
     args = parser.parse_args()
     if not 1 <= args.batch <= 128 or not 1 <= args.cycles <= 100:
         parser.error("batch must be 1..128 and cycles 1..100")
     repo = Path(__file__).resolve().parent.parent
     env = dict(os.environ, FESTERM_SESSION_CHURN_BATCH=str(args.batch),
                FESTERM_SESSION_CHURN_CYCLES=str(args.cycles))
+    if args.deny_screen_process_inspection:
+        env["FESTERM_TEST_SCREEN_INSPECTION_DENIED"] = "1"
+        print("screen-process-inspection=denied-by-fixture", flush=True)
     root = create_runtime_root()
     binary_dir = root / "bin"
     screen_dir = root / "screen"

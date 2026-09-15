@@ -282,10 +282,14 @@ Reattach is asynchronous and attach-only, unlike saved profiles' intentional
 attach-or-create behavior. External tmux reattachment preserves the existing
 session's status/options; saved profiles retain their intentional status-off
 policy. Screen success requires the selected server to hold this new client's
-terminal, not merely an attached flag belonging to another client. Linux uses
-the server's `/proc` descriptors; macOS uses bounded `lsof` inspection, compatible
-with older Screen versions without client queries. Unavailable or denied
-inspection produces an actionable attachment error, never assumed success.
+terminal, not merely an attached flag belonging to another client. Newer Screen
+uses a bounded quiet public query with stdin on the owned terminal. Both its
+exact terminal context and frontend PID must match; fallback to another display
+is not success. This does not require `/proc` access or inspection privileges for
+setgid Screen packages. Only an explicit unsupported-`-Q` response selects the
+older Screen `lsof` compatibility path. Query/inspection errors never imply
+success. Private short-lived query directories keep timeout reply sockets out
+of the user's inventory and are cleaned on success and failure.
 A stale/replaced selection or failed attachment stays
 on Launcher with an actionable diagnostic and refreshes inventory; it never
 opens a replacement shell or an error-only terminal. An attachment that succeeds
@@ -295,8 +299,11 @@ root. It may take over that same generation, but cannot follow a same-name
 replacement; named saved-profile connection policy is unchanged.
 Closing a local multiplexer client does not send newline/EOF into its terminal:
 the server can retain that terminal after the client process exits. Unix PTY
-writer teardown closes only its owned descriptor; process-tree shutdown and
-bounded output draining remain unchanged.
+writer teardown closes only its owned descriptor. Running Sessions Screen
+clients receive the provider's graceful SIGHUP detach signal, with bounded
+SIGTERM/SIGKILL escalation if the owned client ignores it. Process-group ownership
+and bounded output draining are unchanged; ordinary shell shutdown keeps its
+existing policy.
 Missing providers/no running server are ordinary empty results; permissions,
 malformed registries, command failures, output limits, and timeouts are visible
 provider errors, not silently successful empty inventories. Provider commands

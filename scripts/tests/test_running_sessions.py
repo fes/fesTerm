@@ -95,6 +95,20 @@ class RunningSessionRunnerTests(unittest.TestCase):
             "There are screens on:\n 42.main (Detached)\n 43.main (Attached)\n 44.dead (Dead ???)\n"),
             ["42.main", "43.main"])
 
+    def test_process_inspection_denial_is_scoped_to_the_test_environment(self):
+        observed = []
+
+        def run(command, *, cwd, env, timeout):
+            observed.append(env["FESTERM_TEST_SCREEN_INSPECTION_DENIED"])
+
+        with patch("sys.argv", ["check_running_sessions.py", "--batch", "1", "--cycles", "1",
+                                "--deny-screen-process-inspection"]), \
+             patch.object(running_sessions, "run_checked", side_effect=run), \
+             patch.object(running_sessions.shutil, "which", return_value=None):
+            running_sessions.main()
+        self.assertTrue(observed)
+        self.assertTrue(all(value == "1" for value in observed))
+
     @unittest.skipIf(running_sessions.os.name == "nt", "Unix Screen namespace")
     def test_cleanup_waits_for_screen_quit_without_reissuing_it(self):
         owned = subprocess.CompletedProcess([], 0, "42.owned (Attached)\n", "")

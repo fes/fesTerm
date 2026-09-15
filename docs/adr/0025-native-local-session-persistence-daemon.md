@@ -409,6 +409,13 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
   destructor-injected newline/EOF when a local multiplexer retains the terminal
   after its frontend exits. The Unix client writer uses an owned safe descriptor;
   no queue, process-tree ownership or native daemon transport contract changes.
+  Modern Screen confirmation uses its public quiet query and requires both
+  initial owned-terminal context and frontend PID, without inspecting a setgid
+  server's descriptors. Tests reject fallback display identities, denied/malformed
+  replies and legacy-inspection errors. Private query reply sockets are removed
+  after timeout without following the selected server symlink. Controlled local
+  clients test graceful hangup and bounded escalation, preserving process-group
+  ownership and default shell behavior.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

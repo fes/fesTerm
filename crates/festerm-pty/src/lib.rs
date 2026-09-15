@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 use std::time::Instant;
 
 use festerm_session::{
@@ -71,6 +71,7 @@ pub struct LocalProfile {
     arguments: Vec<OsString>,
     working_directory: Option<PathBuf>,
     environment: EnvironmentPolicy,
+    hangup_on_shutdown: bool,
 }
 
 impl LocalProfile {
@@ -80,6 +81,7 @@ impl LocalProfile {
             arguments: Vec::new(),
             working_directory: None,
             environment: EnvironmentPolicy::Inherit,
+            hangup_on_shutdown: false,
         }
     }
 
@@ -97,6 +99,17 @@ impl LocalProfile {
 
     pub fn environment(&self) -> &EnvironmentPolicy {
         &self.environment
+    }
+
+    pub fn hangup_on_shutdown(&self) -> bool {
+        self.hangup_on_shutdown
+    }
+
+    /// Requests a graceful Unix terminal hangup before bounded signal escalation.
+    /// Windows process-tree shutdown is unchanged.
+    pub fn with_unix_hangup_on_shutdown(mut self) -> Self {
+        self.hangup_on_shutdown = true;
+        self
     }
 
     pub fn with_arguments<I, S>(mut self, arguments: I) -> Self
@@ -424,16 +437,24 @@ enum SessionCommand {
 struct ProcessTree {
     #[cfg(unix)]
     process_group: i32,
+    #[cfg(unix)]
+    hangup_on_shutdown: bool,
     #[cfg(windows)]
     job: WindowsJob,
 }
 
 impl ProcessTree {
     #[cfg(unix)]
-    fn from_master(master: &dyn MasterPty) -> Result<Self, LocalPtyError> {
+    fn from_master(
+        master: &dyn MasterPty,
+        hangup_on_shutdown: bool,
+    ) -> Result<Self, LocalPtyError> {
         master
             .process_group_leader()
-            .map(|process_group| Self { process_group })
+            .map(|process_group| Self {
+                process_group,
+                hangup_on_shutdown,
+            })
             .ok_or_else(|| {
                 LocalPtyError::new(
                     "could not determine the local PTY session process group for shutdown",
@@ -465,10 +486,11 @@ impl ProcessTree {
     fn terminate(&self) -> Result<(), String> {
         #[cfg(unix)]
         {
-            match kill(Pid::from_raw(-self.process_group), Signal::SIGTERM) {
-                Ok(()) | Err(Errno::ESRCH) => Ok(()),
-                Err(error) => Err(error.to_string()),
-            }
+            self.signal(if self.hangup_on_shutdown {
+                Signal::SIGHUP
+            } else {
+                Signal::SIGTERM
+            })
         }
 
         #[cfg(windows)]
@@ -479,6 +501,16 @@ impl ProcessTree {
         #[cfg(not(any(unix, windows)))]
         {
             Err("local PTY process-tree ownership is unsupported on this platform".to_owned())
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ProcessTree {
+    fn signal(&self, signal: Signal) -> Result<(), String> {
+        match kill(Pid::from_raw(-self.process_group), signal) {
+            Ok(()) | Err(Errno::ESRCH) => Ok(()),
+            Err(error) => Err(error.to_string()),
         }
     }
 }
@@ -705,7 +737,7 @@ impl LocalPtySession {
         let process_tree_result = {
             #[cfg(unix)]
             {
-                ProcessTree::from_master(&*pair.master)
+                ProcessTree::from_master(&*pair.master, profile.hangup_on_shutdown())
             }
             #[cfg(windows)]
             {
@@ -1073,6 +1105,8 @@ fn control_worker(
 ) {
     let mut stopping = false;
     let mut worker_failure = None;
+    #[cfg(unix)]
+    let mut hangup_progress = None;
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             stopping = true;
@@ -1142,6 +1176,35 @@ fn control_worker(
                 break;
             }
             Ok(None) if stopping => {
+                #[cfg(unix)]
+                if let Some(tree) = shared
+                    .process_tree
+                    .as_ref()
+                    .filter(|tree| tree.hangup_on_shutdown)
+                {
+                    let (started, phase) = hangup_progress.get_or_insert((Instant::now(), 0));
+                    let next = if started.elapsed() >= Duration::from_secs(1) {
+                        2
+                    } else if started.elapsed() >= Duration::from_millis(250) {
+                        1
+                    } else {
+                        0
+                    };
+                    if next > *phase {
+                        *phase = next;
+                        let signal = if next == 1 {
+                            Signal::SIGTERM
+                        } else {
+                            Signal::SIGKILL
+                        };
+                        if let Err(error) = tree.signal(signal) {
+                            shared.record_error(SessionError::new(
+                                SessionErrorKind::Shutdown,
+                                format!("could not escalate local client shutdown: {error}"),
+                            ));
+                        }
+                    }
+                }
                 // A disconnected command channel returns immediately.
                 thread::sleep(POLL_INTERVAL);
             }
@@ -1742,6 +1805,29 @@ mod tests {
              manually and re-run these tests"
         );
         path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn graceful_client_shutdown_uses_hangup_and_bounds_signal_escalation() {
+        for script in [
+            "trap 'exit 0' HUP; trap '' TERM; printf READY; sleep 5",
+            "trap '' HUP TERM; printf READY; exec sleep 5",
+        ] {
+            let profile = LocalProfile::new("/bin/sh").with_arguments(["-c", script]);
+            assert!(!profile.hangup_on_shutdown());
+            let session = LocalPtySession::start(
+                profile.with_unix_hangup_on_shutdown(),
+                TerminalSize::new(80, 24).unwrap(),
+            )
+            .unwrap();
+            let mut output = Vec::new();
+            wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+                bytes.windows(5).any(|window| window == b"READY")
+            });
+            session.shutdown(Duration::from_secs(3)).unwrap();
+            assert!(matches!(session.lifecycle(), SessionLifecycle::Stopped));
+        }
     }
 
     #[cfg(unix)]

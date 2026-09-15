@@ -41,6 +41,14 @@ async fn read_bounded(
 }
 
 pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, String> {
+    output_with_stdin(command, timeout, Stdio::null())
+}
+
+pub fn output_with_stdin(
+    command: Command,
+    timeout: Duration,
+    stdin: Stdio,
+) -> Result<Option<Output>, String> {
     let program = command.get_program().to_string_lossy().into_owned();
     let trace = std::env::var_os("FESTERM_DISCOVERY_TIMING").is_some();
     let arguments = trace.then(|| {
@@ -64,7 +72,7 @@ pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, Str
         .map_err(|error| error.to_string())?;
     runtime.block_on(async {
         let mut child = match tokio::process::Command::from(command)
-            .stdin(Stdio::null())
+            .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
@@ -139,6 +147,40 @@ pub fn output(command: Command, timeout: Duration) -> Result<Option<Output>, Str
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_command_preserves_an_explicit_owned_terminal_stdin() {
+        use festerm_session::Session;
+        use std::os::unix::fs::OpenOptionsExt;
+        let session = festerm_pty::LocalPtySession::start(
+            festerm_pty::LocalProfile::new("/bin/sh").with_arguments(["-c", "read value"]),
+            festerm_session::TerminalSize::new(80, 24).unwrap(),
+        )
+        .unwrap();
+        let terminal = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK)
+            .open(session.terminal_device().unwrap())
+            .unwrap();
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "if test -t 0; then printf owned-tty; else printf no-tty; fi",
+        ]);
+        let result = output_with_stdin(command, Duration::from_secs(2), terminal.into())
+            .unwrap()
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout, b"owned-tty");
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "if test -t 0; then printf owned-tty; else printf no-tty; fi",
+        ]);
+        let result = output(command, Duration::from_secs(2)).unwrap().unwrap();
+        assert_eq!(result.stdout, b"no-tty");
+        session.shutdown(Duration::from_secs(2)).unwrap();
+    }
 
     struct Marker(std::path::PathBuf);
     impl Drop for Marker {

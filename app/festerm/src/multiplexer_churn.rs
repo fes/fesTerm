@@ -68,7 +68,7 @@ fn kill(provider: Provider, target: &str) -> Result<(), String> {
 fn create(provider: Provider, name: &str, nonce: &str) {
     // The state and PID are expanded by the existing shell in response to a
     // *new* challenge after attach. Echo/replay cannot manufacture this line.
-    let script = format!("state={nonce}; printf 'READY:%s:%s\\n' \"$state\" \"$$\"; while IFS= read -r challenge; do case \"$challenge\" in exit) exit 0;; *) printf 'STATE:%s:%s:%s\\n' \"$state\" \"$$\" \"$challenge\";; esac; done");
+    let script = format!("state={nonce}; printf 'READY:%s:%s\\n' \"$state\" \"$$\"; while IFS= read -r challenge; do case \"$challenge\" in exit) exit 0;; *) printf 'STATE:%s:%s:%s:END\\n' \"$state\" \"$$\" \"$challenge\";; esac; done");
     let output = match provider {
         Provider::Tmux => bounded_output(
             "tmux",
@@ -99,7 +99,6 @@ fn poll(mut ready: impl FnMut() -> bool) {
 }
 
 fn challenge(client: &LocalPtySession, nonce: &str, fresh: &str) -> String {
-    let prefix = format!("STATE:{nonce}:");
     let mut output = Vec::new();
     let mut answer = None;
     let mut sent = false;
@@ -122,19 +121,36 @@ fn challenge(client: &LocalPtySession, nonce: &str, fresh: &str) -> String {
                 .unwrap();
             sent = true;
         }
-        for line in text.lines() {
-            if let Some(rest) = line.split(&prefix).nth(1) {
-                if let Some((pid, echoed)) = rest.split_once(':') {
-                    if echoed.trim() == fresh && pid.parse::<u32>().is_ok() {
-                        answer = Some(pid.to_owned());
-                        return true;
-                    }
-                }
-            }
+        if let Some(pid) = challenge_pid(&text, nonce, fresh) {
+            answer = Some(pid);
+            return true;
         }
         false
     });
     answer.unwrap()
+}
+
+fn challenge_pid(text: &str, nonce: &str, fresh: &str) -> Option<String> {
+    text.split(&format!("STATE:{nonce}:"))
+        .skip(1)
+        .find_map(|rest| {
+            let (pid, rest) = rest.split_once(':')?;
+            let (echoed, _) = rest.split_once(":END")?;
+            (pid.parse::<u32>().is_ok() && echoed == fresh).then(|| pid.to_owned())
+        })
+}
+
+#[test]
+fn screen_cursor_sequences_after_a_reply_preserve_exact_process_challenges() {
+    let text = "\x1b[2;1H\nSTATE:sentinel:80200:primary:END\x1b[3;1H\n";
+    assert_eq!(
+        challenge_pid(text, "sentinel", "primary").as_deref(),
+        Some("80200")
+    );
+    assert!(challenge_pid(text, "sentinel", "different").is_none());
+    assert!(challenge_pid(text, "different", "primary").is_none());
+    assert!(challenge_pid("STATE:sentinel:80200:primary", "sentinel", "primary").is_none());
+    assert!(challenge_pid("STATE:sentinel:bad:primary:END", "sentinel", "primary").is_none());
 }
 
 fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path::Path) {
@@ -213,7 +229,12 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
             }
         }
         assert!(output.len() < 1024 * 1024);
-        String::from_utf8_lossy(&output).contains(&format!("STATE:sentinel:{pid}:unaffected"))
+        let text = String::from_utf8_lossy(&output);
+        assert!(
+            !text.contains("unknown|") && !text.contains("xterm-256color|"),
+            "client confirmation must not show query messages on another display: {text}"
+        );
+        text.contains(&format!("STATE:sentinel:{pid}:unaffected:END"))
     });
     drop(gate);
     state.dispatch(AppCommand::RefreshRunningSessions, &context);
@@ -242,7 +263,7 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
         (0..24).any(|row| {
             tab.terminal
                 .row_text(row)
-                .is_some_and(|text| text.contains(&format!("STATE:sentinel:{pid}:recovered")))
+                .is_some_and(|text| text.contains(&format!("STATE:sentinel:{pid}:recovered:END")))
         })
     });
     tab.controller
@@ -268,14 +289,17 @@ fn screen_attachment_failure_keeps_launcher_and_existing_client(root: &std::path
             }
         }
         assert!(output.len() < 1024 * 1024);
-        String::from_utf8_lossy(&output).contains(&format!("STATE:sentinel:{pid}:after-detach"))
+        String::from_utf8_lossy(&output).contains(&format!("STATE:sentinel:{pid}:after-detach:END"))
     });
     primary.shutdown(Duration::from_secs(2)).unwrap();
     poll(|| {
-        list(Provider::Screen)
-            .unwrap()
-            .iter()
-            .all(|entry| !entry.attached)
+        let remaining = list(Provider::Screen).unwrap();
+        assert_eq!(
+            remaining.len(),
+            1,
+            "last-client detach must preserve the Screen shell"
+        );
+        remaining[0].match_key == selected.match_key && !remaining[0].attached
     });
     eprintln!("provider=screen owned-client-failure-recovery-and-continuity status=pass");
 }
@@ -350,7 +374,8 @@ fn isolated_multiplexer_discovery_churn() {
                 });
                 let pid = challenge(&client, &nonce, "before");
                 // Duplicate clicks/refreshes cannot create another server shell.
-                assert_eq!(list(provider).unwrap().len(), batch + 1 - index);
+                let remaining = list(provider).unwrap();
+                assert_eq!(remaining.len(), batch + 1 - index, "{remaining:?}");
                 client
                     .shutdown(Duration::from_secs(2))
                     .expect("detached client's control and reader workers must stop");

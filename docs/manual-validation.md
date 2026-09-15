@@ -295,6 +295,35 @@ must be rerun on this corrected candidate; earlier host passes are not that
 evidence. Discovery parsing, provider deadlines and Windows writer behavior are
 unchanged.
 
+Fedora portability follow-up: normal setgid Screen can be nondumpable, making
+`/proc/PID/fd` unsuitable as a required attachment check. Modern Screen now uses
+`-Q @echo` from the exact owned terminal, requiring initial terminal context and
+frontend PID to agree. It does not fall back to descriptor inspection after query
+failure. The old Apple `-Q`-unsupported case retains explicit `lsof` compatibility.
+Quiet-query tests reject another display's PID and a missing initial context,
+even when fallback returns the expected PID. A timeout regression checks removal
+of private query reply sockets while preserving the selected server socket.
+
+Actual source-built GNU Screen 4.9.1 and 5.0.1 on the macOS host passed 8-by-3 churn with
+`--deny-screen-process-inspection`, including delayed/failing attachment,
+Launcher recovery, no query messages on another display, fresh same-shell state
+and last-client detach. This switch injects denied inspection only into the Rust
+test binary, not production. Screen's graceful hangup handshake also resolved a
+last-client failure reproduced independently with the old inspection path;
+ignored hangups receive bounded escalation within the owned process group.
+These are host/provider and modeled-permission results, not an actual Fedora
+setgid-package or new VM qualification. Run
+`python3 scripts/check_running_sessions.py --batch 8 --cycles 3 --deny-screen-process-inspection`
+where the installed Screen supports public queries. Default runners retain old
+Screen compatibility; the fixed VM adapter requires no registration changes.
+Screen 5.0.1 places cursor-control sequences immediately after challenge text,
+which exposed a harness assumption that the response occupied an entire raw
+line. Explicit end markers now delimit the exact state/PID/challenge response;
+a deterministic regression rejects partial or mismatched replies while allowing
+the trailing terminal controls. This does not change production discovery or
+terminal parsing. Public-query authentication/permission failures stay on Launcher
+with diagnostics rather than publishing an unconfirmed client.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

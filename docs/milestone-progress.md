@@ -68,6 +68,26 @@ descriptor dependency was already locked through portable-pty. The isolated
 Screen regression also challenges the original shell after the second client's
 shutdown, rather than relying solely on an attached inventory flag.
 
+Fedora's normal setgid Screen package then exposed a portability limit in
+descriptor-based readiness: a nondumpable server can allow attachment while
+denying `/proc` inspection. Newer Screen now answers a quiet public query from
+the new client's own terminal. Initial terminal context and frontend PID must
+both match, rejecting Screen's fallback to another display. Its temporary reply
+sockets live in a private query namespace so a bounded timeout cannot leak files
+into user inventory. An explicit unsupported-query response retains old Apple
+Screen compatibility; errors never masquerade as success.
+
+Source-built Screen 4.9.1 exercised this path with process inspection deliberately
+denied. It also reproduced a distinct last-client shutdown failure with the old
+inspection path, while Screen's documented hangup handshake preserved the shell.
+Running Sessions now requests that graceful detach, escalating only against its
+owned process group if ignored. Real-provider churn covers failed clients,
+quiet confirmation, surviving-client state and last-client detach.
+Screen 5.0.1 additionally exposed a raw-output fixture assumption: terminal cursor
+controls can follow the response on the same line. Explicit response framing
+retains exact process/state verification without confusing terminal rendering
+bytes with the fresh challenge.
+
 ## Foundation and acceptance history
 
 fesTerm began foundation-first: M0 through M3 established a testable terminal

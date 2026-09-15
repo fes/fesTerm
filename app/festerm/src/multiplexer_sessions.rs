@@ -85,8 +85,12 @@ pub fn list_tmux_sessions() -> Result<Vec<MultiplexerSession>, String> {
 /// sessions exist. Old GNU screen also exits nonzero for successful listings;
 /// recognized output, not exit status alone, distinguishes those from errors.
 pub fn list_screen_sessions() -> Result<Vec<MultiplexerSession>, String> {
+    screen_inventory().map(|(sessions, _)| sessions)
+}
+
+fn screen_inventory() -> Result<(Vec<MultiplexerSession>, Option<std::path::PathBuf>), String> {
     let Some(output) = bounded_output("screen", &["-list"])? else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     };
     let text = String::from_utf8_lossy(&output.stdout);
     // Older GNU screen (including macOS's 4.00.03) returns a nonzero
@@ -100,7 +104,8 @@ pub fn list_screen_sessions() -> Result<Vec<MultiplexerSession>, String> {
         let mut sessions = parse_screen_sessions(&text);
         #[cfg(unix)]
         screen_process::add_identity(&mut sessions)?;
-        Ok(sessions)
+        let directory = extract_screen_socket_directory(&text).map(std::path::PathBuf::from);
+        Ok((sessions, directory))
     } else {
         Err(format!(
             "screen -list failed: {} {}",
@@ -122,6 +127,10 @@ fn bounded_output_with_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Option<std::process::Output>, String> {
+    crate::local_command::output(provider_command(program, args), timeout)
+}
+
+fn provider_command(program: &str, args: &[&str]) -> std::process::Command {
     let profile = provider_environment(festerm_pty::LocalProfile::new(program));
     let mut command = std::process::Command::new(program);
     command.args(args);
@@ -129,7 +138,7 @@ fn bounded_output_with_timeout(
         command.envs(overrides);
     }
     command.env("LC_ALL", "C").env("TZ", "UTC0");
-    crate::local_command::output(command, timeout)
+    command
 }
 
 fn provider_environment(profile: festerm_pty::LocalProfile) -> festerm_pty::LocalProfile {
@@ -205,7 +214,8 @@ pub fn attach_profile(
             ])
         }
         PersistenceProviderKind::Screen => festerm_pty::LocalProfile::new("screen")
-            .with_arguments(["-x", screen_target(&selected.match_key)]),
+            .with_arguments(["-x", screen_target(&selected.match_key)])
+            .with_unix_hangup_on_shutdown(),
         _ => unreachable!(),
     };
     Ok(provider_environment(profile))
@@ -247,11 +257,11 @@ pub fn client_attached(
             #[cfg(unix)]
             {
                 use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
-                let pid = i32::try_from(pid)
+                let client_pid = i32::try_from(pid)
                     .ok()
                     .filter(|pid| *pid > 0)
                     .ok_or("Invalid owned screen client PID")?;
-                match kill(Pid::from_raw(pid), None) {
+                match kill(Pid::from_raw(client_pid), None) {
                     Ok(()) => {}
                     Err(Errno::ESRCH) => return Ok(false),
                     Err(error) => {
@@ -259,7 +269,8 @@ pub fn client_attached(
                     }
                 }
                 let device = terminal_device.ok_or("Missing owned screen client terminal")?;
-                if !list_screen_sessions()?
+                let (inventory, directory) = screen_inventory()?;
+                if !inventory
                     .iter()
                     .any(|current| current.match_key == selected.match_key && current.attached)
                 {
@@ -270,7 +281,16 @@ pub fn client_attached(
                     .and_then(|(pid, _)| pid.parse::<u32>().ok())
                     .filter(|pid| *pid > 0)
                     .ok_or("Invalid screen server PID")?;
-                screen_process::server_has_terminal(server, device)
+                screen_process::client_is_attached(
+                    server,
+                    &directory
+                        .ok_or(
+                            "Screen did not report its socket directory; attachment not confirmed",
+                        )?
+                        .join(screen_target(&selected.match_key)),
+                    pid,
+                    device,
+                )
             }
             #[cfg(not(unix))]
             {
