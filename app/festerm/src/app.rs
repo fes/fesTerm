@@ -7034,20 +7034,30 @@ mod tests {
             .expect("capture profile is valid"),
         ])
         .expect("capture configuration is valid");
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(1239.0, 877.0))
-            .build_ui_state(
-                |ui, app: &mut FesTermApp| {
-                    ui.ctx().set_visuals(theme::default_visuals());
-                    app.ui_content(ui);
-                },
-                FesTermApp::for_test_with_configuration(configuration),
-            );
-        harness.run();
-        harness.snapshot_options(
-            "festerm-launcher-actual",
-            &SnapshotOptions::default().output_path(output_path),
-        );
+        let mut snapshots = egui_kittest::SnapshotResults::new();
+        for (compact, name) in [
+            (false, "festerm-launcher-actual"),
+            (true, "festerm-launcher-compact"),
+        ] {
+            let configuration = configuration
+                .with_interface_settings(
+                    festerm_config::InterfaceSettings::DEFAULT.with_compact_launcher_grid(compact),
+                )
+                .expect("capture interface settings are valid");
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1239.0, 877.0))
+                .build_ui_state(
+                    |ui, app: &mut FesTermApp| {
+                        ui.ctx().set_visuals(theme::default_visuals());
+                        app.ui_content(ui);
+                    },
+                    FesTermApp::for_test_with_configuration(configuration),
+                );
+            harness.run();
+            harness.snapshot_options(name, &SnapshotOptions::default().output_path(&output_path));
+            snapshots.extend(harness.take_snapshot_results());
+        }
+        snapshots.unwrap();
     }
 
     /// Produces the Session Inspector overlay with production widgets while

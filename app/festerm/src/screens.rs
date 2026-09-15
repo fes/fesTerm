@@ -2223,7 +2223,15 @@ fn elided_galley(
     ui.painter().layout_job(job)
 }
 
-/// Paints a session-type mark.
+fn session_mark_size(mark: Icon, height: f32) -> egui::Vec2 {
+    let aspect = match mark {
+        Icon::SshRemote | Icon::Serial => 1.3,
+        _ => 1.0,
+    };
+    vec2(height * aspect, height)
+}
+
+/// Paints a session-type mark in its optically sized slot.
 ///
 /// Remote marks get the accent globe painted over them: the asset layer is
 /// monochrome by contract, so the two-tone treatment is composed here out of
@@ -2231,9 +2239,12 @@ fn elided_galley(
 /// coordinates exactly.
 fn paint_session_mark(painter: &egui::Painter, item: &LauncherItem<'_>, rect: egui::Rect) {
     let (mark, color) = item.mark();
+    // Wide silhouettes occupy more horizontal space, not a smaller terminal
+    // or connector squeezed into the same square as a document.
+    let rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(rect.width()));
     icon::paint(painter, mark, rect, color);
     if matches!(mark, Icon::SshRemote) {
-        icon::paint(painter, Icon::RemoteGlobe, rect, theme::ACCENT_ACTION);
+        icon::paint(painter, Icon::RemoteGlobe, rect, theme::ICON_SESSION_GLOBE);
     }
 }
 
@@ -2286,13 +2297,10 @@ fn show_launch_card(
     } else {
         LAUNCH_CARD_PADDING
     };
-    // The marks carry interior detail — a globe's meridian, a plug's pins —
-    // drawn with a stroke that does not thin as the mark shrinks. Below about
-    // fifty pixels those strokes merge and the mark collapses into a blob.
     let mark_size = if compact { 42.0 } else { 50.0 };
     let mark_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + padding, rect.top() + padding),
-        egui::Vec2::splat(mark_size),
+        session_mark_size(item.mark().0, mark_size),
     );
     paint_session_mark(ui.painter(), item, mark_rect);
 
@@ -2492,9 +2500,13 @@ fn show_profile_row(
         Stroke::new(1.0, theme::BORDER_SUBTLE.gamma_multiply(0.5)),
     );
 
-    let mark_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + LAUNCHER_PANEL_PADDING + 13.0, rect.center().y),
-        egui::Vec2::splat(28.0),
+    let mark_size = session_mark_size(item.mark().0, 28.0);
+    let mark_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.left() + LAUNCHER_PANEL_PADDING - 1.0,
+            rect.center().y - 14.0,
+        ),
+        mark_size,
     );
     paint_session_mark(ui.painter(), item, mark_rect);
 
@@ -2686,7 +2698,8 @@ fn show_session_row(
 ) {
     ui.horizontal(|ui| {
         ui.set_height(52.0);
-        let (mark, _) = ui.allocate_exact_size(egui::Vec2::splat(30.0), Sense::hover());
+        let (mark, _) =
+            ui.allocate_exact_size(session_mark_size(item.mark().0, 30.0), Sense::hover());
         paint_session_mark(ui.painter(), item, mark);
         ui.add_space(10.0);
         ui.vertical(|ui| {
@@ -7812,6 +7825,22 @@ mod tests {
             compact_profile.top() < roomy_profile.top(),
             "shorter cards must pull the panels below them upward"
         );
+    }
+
+    #[test]
+    fn launcher_marks_keep_the_mockups_relative_widths_at_card_and_row_sizes() {
+        for height in [28.0, 42.0, 50.0] {
+            let local = session_mark_size(Icon::LocalTerminal, height);
+            let ssh = session_mark_size(Icon::SshRemote, height);
+            let serial = session_mark_size(Icon::Serial, height);
+            assert_eq!(local, egui::Vec2::splat(height));
+            assert_eq!(ssh.y, height);
+            assert_eq!(serial, ssh);
+            assert!((ssh.x / local.x - 1.3).abs() < 0.001);
+            // The SSH composite is wider, but its terminal body remains
+            // the same optical size as Local's 19.2-unit square.
+            assert!((ssh.x * 14.8 / 24.0 - local.x * 19.2 / 24.0).abs() < 0.1);
+        }
     }
 
     #[test]

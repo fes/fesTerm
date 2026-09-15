@@ -113,7 +113,7 @@ include!("icon_geometry.rs");
 
 /// Paints canonical 24-unit icon geometry into any logical-pixel rectangle.
 pub fn paint(painter: &Painter, icon: Icon, rect: Rect, color: Color32) {
-    let g = Geometry::new(painter, rect, color);
+    let g = Geometry::new(painter, rect, color, icon_stroke_width(icon));
     for primitive in icon_geometry(icon) {
         match *primitive {
             Primitive::Polyline(points) => g.poly(points),
@@ -139,12 +139,12 @@ struct Geometry<'a> {
 }
 
 impl<'a> Geometry<'a> {
-    fn new(painter: &'a Painter, rect: Rect, color: Color32) -> Self {
+    fn new(painter: &'a Painter, rect: Rect, color: Color32, source_stroke_width: f32) -> Self {
         let scale = rect.width().min(rect.height()) / 24.0;
         Self {
             painter,
             rect,
-            stroke: Stroke::new(1.75 * scale, color),
+            stroke: Stroke::new(source_stroke_width * scale, color),
         }
     }
     fn point(&self, x: f32, y: f32) -> Pos2 {
@@ -248,6 +248,67 @@ mod tests {
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());
+    }
+
+    #[test]
+    fn source_strokes_scale_at_card_and_profile_row_sizes() {
+        let ctx = egui::Context::default();
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        for size in [16.0, 20.0, 28.0, 42.0, 50.0] {
+            let rect = Rect::from_min_size(Pos2::ZERO, egui::Vec2::splat(size));
+            for (icon, source_width) in [
+                (Icon::SshRemote, 1.0),
+                (Icon::RemoteGlobe, 1.0),
+                (Icon::LocalTerminal, 1.25),
+                (Icon::Serial, 1.25),
+                (Icon::Search, 1.75),
+            ] {
+                let geometry =
+                    Geometry::new(&painter, rect, Color32::WHITE, icon_stroke_width(icon));
+                assert!((geometry.stroke.width - source_width * size / 24.0).abs() < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn remote_globe_overlay_matches_the_complete_ssh_mark() {
+        let globe = icon_geometry(Icon::RemoteGlobe);
+        assert!(icon_geometry(Icon::SshRemote).ends_with(globe));
+        assert_eq!(
+            icon_stroke_width(Icon::SshRemote),
+            icon_stroke_width(Icon::RemoteGlobe)
+        );
+        // Two parallels and one elliptical meridian, not an equatorial cross.
+        assert_eq!(globe.len(), 4);
+        let Primitive::Circle { radius, .. } = globe[0] else {
+            panic!("the globe must have a circular outline");
+        };
+        assert_eq!(radius, 4.5);
+        let Primitive::Polyline(meridian) = globe[3] else {
+            panic!("the globe must have an elliptical meridian");
+        };
+        let min_x = meridian.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
+        let max_x = meridian
+            .iter()
+            .map(|p| p.0)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!((max_x - min_x - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn serial_mark_has_two_staggered_rows_of_nine_filled_pins() {
+        let pins: Vec<_> = icon_geometry(Icon::Serial)
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::FilledCircle { x, y, radius } => Some((*x, *y, *radius)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pins.len(), 9);
+        assert_eq!(pins.iter().filter(|p| p.1 == 10.3).count(), 5);
+        assert_eq!(pins.iter().filter(|p| p.1 == 13.7).count(), 4);
+        assert!(pins.iter().all(|p| p.2 == 0.85));
+        assert!(pins[5].0 > pins[0].0 && pins[8].0 < pins[4].0);
     }
 
     #[test]
