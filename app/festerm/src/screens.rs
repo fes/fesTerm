@@ -2073,12 +2073,12 @@ const LAUNCH_CARD_DESCRIPTION_HEIGHT: f32 = 38.0;
 /// Width reserved on a card's right edge for the proceed arrow, so the
 /// description wraps beside it rather than underneath it.
 const LAUNCH_CARD_ARROW_LANE: f32 = 30.0;
-const LAUNCH_CARD_HEIGHT: f32 = 126.0;
+const LAUNCH_CARD_HEIGHT: f32 = 134.0;
 /// The height a card takes for users who have turned the compact New Session
 /// layout on. Compact trims the mark and the padding; it keeps the
 /// description, because a card that only says "SSH" does not tell a new user
 /// what activating it will do.
-const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 108.0;
+const LAUNCH_CARD_COMPACT_HEIGHT: f32 = 116.0;
 const LAUNCH_CARD_GAP: f32 = 16.0;
 const LAUNCH_CARD_PADDING: f32 = 18.0;
 const LAUNCH_CARD_COMPACT_PADDING: f32 = 14.0;
@@ -2286,7 +2286,10 @@ fn show_launch_card(
     } else {
         LAUNCH_CARD_PADDING
     };
-    let mark_size = if compact { 34.0 } else { 42.0 };
+    // The marks carry interior detail — a globe's meridian, a plug's pins —
+    // drawn with a stroke that does not thin as the mark shrinks. Below about
+    // fifty pixels those strokes merge and the mark collapses into a blob.
+    let mark_size = if compact { 42.0 } else { 50.0 };
     let mark_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + padding, rect.top() + padding),
         egui::Vec2::splat(mark_size),

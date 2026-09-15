@@ -190,8 +190,11 @@ nothing: **Local Shell**, **SSH**, **SFTP**, **Serial**, and **Markdown**.
 Each card is a wide strip rather than a tall tile: a semantic session-type
 icon and the title share the top line, a two-line factual description sits
 below them, and a proceed arrow shares the description's vertical centre on
-the right. Stacking the mark above the title cost a card a whole mark's worth
-of height for no more information, and the card row is a navigation strip, not
+the right. The icon is drawn at fifty pixels, or forty-two in the compact
+layout, because these marks carry interior detail — a globe's meridian, a
+plug's pins — with a stroke that does not thin as the mark shrinks; below that
+size the strokes merge and the mark reads as a blob. Stacking the mark above
+the title cost a card a whole mark's worth of height for no more information, and the card row is a navigation strip, not
 the surface's content. Every card wears the same quiet border whether or not
 it is the keyboard selection: selection and hover lift the card's fill and its
 arrow instead, because a heavier outline on one card reads as a modal or
