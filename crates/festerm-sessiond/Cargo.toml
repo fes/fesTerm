@@ -18,6 +18,7 @@ serde_json = "1.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+socket2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 festerm-windows-job = { path = "../festerm-windows-job" }

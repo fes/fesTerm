@@ -4443,28 +4443,17 @@ impl FesTermApp {
         let sftp_pane_order = self.state.sftp_pane_order();
         // Matches the guard used above when the bar is actually drawn.
         let status_bar_visible = self.state.status_bar_visible() && !self.focus_mode;
+        self.state.update_running_sessions(ui.ctx());
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
                 TabContent::Launcher => {
-                    let resumable_sessions = if self.state.show_resumable_sessions() {
-                        festerm_sessiond::list_unattached_local_sessions()
-                    } else {
-                        Vec::new()
-                    };
-                    // Reuses the same "show resumable sessions" toggle that
-                    // gates fesTerm-sessiond enumeration above: all three
-                    // durable-session providers' quick-connect widgets are
-                    // opt-in together, since they answer the same "what's
-                    // already running that I can jump back into" question.
-                    let (tmux_sessions, screen_sessions) = if self.state.show_resumable_sessions() {
-                        (
-                            crate::multiplexer_sessions::list_tmux_sessions(),
-                            crate::multiplexer_sessions::list_screen_sessions(),
-                        )
-                    } else {
-                        (Vec::new(), Vec::new())
-                    };
+                    for error in &self.state.discovery.inventory.errors {
+                        ui.colored_label(theme::TEXT_SECONDARY, error);
+                    }
+                    if let Some(error) = &self.state.resume_error {
+                        ui.colored_label(theme::TEXT_SECONDARY, error);
+                    }
                     screen_command = screens::show_launcher(
                         ui,
                         active_tab_id,
@@ -4472,9 +4461,9 @@ impl FesTermApp {
                         native_store_available,
                         secure_storage_status,
                         self.state.compact_launcher_grid(),
-                        &resumable_sessions,
-                        &tmux_sessions,
-                        &screen_sessions,
+                        &self.state.discovery.inventory.native,
+                        &self.state.discovery.inventory.tmux,
+                        &self.state.discovery.inventory.screen,
                     );
                 }
                 TabContent::Settings => {

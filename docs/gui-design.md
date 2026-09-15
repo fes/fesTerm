@@ -260,9 +260,11 @@ only for SFTP profiles and dispatches `AppCommand::StartConfiguredSshProfile`;
 per-card edit icon.
 
 The Running Sessions panel uses the running-sessions identity icon and the
-subtitle “Local sessions available to reattach.” Its refresh control requests
-a repaint rather than routing through `AppCommand`, because the composition
-root repopulates the discovered session lists each frame. Locally reattachable
+subtitle “Local sessions available to reattach.” Its refresh control dispatches
+`AppCommand::RefreshRunningSessions`. Opt-in discovery runs outside rendering,
+coalesces repeated requests into one pending refresh, and refreshes approximately
+every two seconds without a restart. A superseded/disabled request cannot
+overwrite newer inventory. Locally reattachable
 sessions are grouped by provider: **fesTerm Native (sessiond)**, **tmux**, and
 **screen**. Each nonempty group has a disclosure header, count badge, and one
 row per session. Rows show the session name, `Started N ago` when the provider
@@ -270,8 +272,49 @@ reported a start time, otherwise the provider/status description, and a
 **Reattach** button. fesTerm-sessiond rows dispatch
 `AppCommand::ResumeUnattachedSession`; tmux and screen rows dispatch
 `AppCommand::ResumeMultiplexerSession` with the provider, match key, and
-user-facing display name. Empty provider groups are omitted, and an entirely
+user-facing display name plus the discovered generation. Native entries exclude
+attached clients; tmux/screen entries include them with **Attached elsewhere**
+even when a start time is shown. Counts describe eligible displayed entries,
+not a universally unattached-only population. Empty provider groups are omitted, and an entirely
 empty panel says that nothing local can be reattached right now.
+
+Reattach is asynchronous and attach-only, unlike saved profiles' intentional
+attach-or-create behavior. External tmux reattachment preserves the existing
+session's status/options; saved profiles retain their intentional status-off
+policy. Screen success requires the selected server to hold this new client's
+terminal, not merely an attached flag belonging to another client. Newer Screen
+uses a bounded quiet public query with stdin on the owned terminal. Both its
+exact terminal context and frontend PID must match; fallback to another display
+is not success. This does not require `/proc` access or inspection privileges for
+setgid Screen packages. Only an explicit unsupported-`-Q` response selects the
+older Screen `lsof` compatibility path. Query/inspection errors never imply
+success. Private short-lived query directories keep timeout reply sockets out
+of the user's inventory and are cleaned on success and failure.
+A stale/replaced selection or failed attachment stays
+on Launcher with an actionable diagnostic and refreshes inventory; it never
+opens a replacement shell or an error-only terminal. An attachment that succeeds
+and subsequently exits has the normal disconnected-terminal lifecycle.
+Native explicit reconnect retains both the discovered generation and registry
+root. It may take over that same generation, but cannot follow a same-name
+replacement; named saved-profile connection policy is unchanged.
+Closing a local multiplexer client does not send newline/EOF into its terminal:
+the server can retain that terminal after the client process exits. Unix PTY
+writer teardown closes only its owned descriptor. Both Running Sessions and
+saved local Screen profiles (including relaunch and workspace restoration)
+receive the provider's graceful SIGHUP detach signal, with bounded
+SIGTERM/SIGKILL escalation if the owned client ignores it. Process-group ownership
+and bounded output draining are unchanged; ordinary shell shutdown keeps its
+existing policy.
+Missing providers/no running server are ordinary empty results; permissions,
+malformed registries, command failures, output limits, and timeouts are visible
+provider errors, not silently successful empty inventories. Provider commands
+have two-second deadlines and 1 MiB output caps, native registry reads have a
+500 ms lock deadline and 4 MiB cap, and offscreen running rows skip widget/text
+layout. The opt-in setting gates all three providers.
+On macOS discovery and attach share the existing login-environment correction
+without changing an inherited executable path that already finds the provider.
+The cached login-shell probe is also bounded and terminates its owned process
+group on timeout, rather than leaving an orphaned reader thread.
 
 The initial launcher shows the usable top-level choices Local Shell, SSH,
 SFTP, Serial, and Markdown. A choice whose transport is not yet implemented

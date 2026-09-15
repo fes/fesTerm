@@ -266,10 +266,43 @@ Two constraints follow for anyone changing the daemon's lifecycle:
   Shutdown closes the pseudoconsole explicitly and joins every worker with a
   bounded timeout, detaching stragglers, because the process is exiting anyway.
 
-Shutdown also deregisters *before* it joins anything, so a daemon that is
-going away can never remain advertised as resumable, and `kill` now drops the
-registry record even when terminating the process fails -- that is precisely
-the case where a leftover record is most harmful.
+The original shutdown correction deregistered before joining workers, including
+when `kill` failed. The discovery hardening below supersedes that removal policy:
+cleanup must retain an exact retry identity until termination and artifact
+removal succeed. Discovery independently excludes dead generation leases.
+
+## Discovery hardening (2026-09-15, issue #155)
+
+Running Sessions now reads metadata outside GUI rendering, with bounded registry
+lock acquisition, capped input and explicit failures. New daemon endpoints use
+PID/creation-time generations rather than reusable names and hold an owner-only
+generation lease file for their lifetime. Discovery and helper list/start/kill
+share that lease check: PID reuse alone cannot keep a new-format record live.
+Older named endpoints retain their legacy PID-based compatibility behavior;
+newly launched helpers receive generation-aware protection. A discovered resume
+checks the selected name/PID/creation-time/endpoint and refuses a replaced or
+already-attached record. Native connects are bounded on Unix as on Windows.
+The discovered tab's reconnect closure retains that generation and its explicit
+registry root. Manual reconnect may take over the same generation, but rejects a
+same-name replacement without touching its client; saved-profile named
+attach-or-create policy remains separate.
+
+Normal/error daemon shutdown releases its generation lease before acquiring the
+registry lock. Helper `kill` waits boundedly for lease release and removes only
+the exact dead generation's socket/lease before deregistration. Failed
+termination, timeout or artifact cleanup retains the registry retry identity and
+reports an error. Helper list/start pruning also cleans artifacts after forced
+termination bypasses the daemon epilogue. Startup assigns its generation before
+spawning the helper, so failure before registration can still clean precisely.
+Changed generations, live leases, unrelated files and redirected artifact paths
+are not cleanup targets. Legacy named endpoints retain compatibility but do not
+grant generation-safe artifact ownership. Per-name startup serialization locks
+are not generation artifacts and are not unlinked during this cleanup.
+
+Failed attachment-state publication remains pending and retries with a 500 ms
+backoff rather than permanently remembering a detach that was never saved.
+This is internal lifecycle/discovery hardening of the existing daemon contract,
+not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
 
 ## Alternatives considered
 
@@ -338,6 +371,9 @@ the case where a leftover record is most harmful.
 - **GUI/action edges affected:** `PROF-06` now covers selecting the native
   local provider, attach-or-create launch, Inspector facts, non-destructive
   tab detach, replay, and newest-client takeover.
+  `LAUNCH-12` additionally covers asynchronous bounded discovery, eligible
+  provider counts, generation-aware attach-only resume, stale-click recovery,
+  and explicit Refresh (`LAUNCH-20`); `LAUNCH-21` covers offscreen row layout.
 - **Automated tests required:** `festerm-sessiond` covers argument and identity
   validation, registry round trips and PID-safe removal, replay bounds,
   split-marker client handling, and an end-to-end Unix service-loop test in
@@ -346,6 +382,40 @@ the case where a leftover record is most harmful.
   without disconnecting; pending input must not prevent output or takeover.
   Manual reconnect must preserve session identity, reject duplicate attempts,
   avoid starting a missing daemon, and discard previous-connection input.
+  `native_discovery_churn_preserves_process_and_rejects_replaced_generations`
+  verifies isolated batches, same-child PID after fresh post-reattach input,
+  natural exit removal and rejection of same-name replacements. Registry tests
+  distinguish absence, corruption, lock deadlines and stale generation leases.
+  Shared Running Sessions acceptance also checks that local multiplexer client
+  teardown retires reader/control workers without terminating the persistent
+  shell, and that a visible provider timeout can recover through a coalesced
+  explicit Refresh. These are internal lifecycle/discovery corrections, not a
+  change to daemon ownership, transport queues or this ADR's provisional status.
+  `native_start_reports_socket_depth_without_starting_a_shell` covers actionable
+  Unix address-limit diagnostics and refusal before shell launch. Optional churn
+  uses short private temporary namespaces, with long-checkout and failure-cleanup
+  regressions, rather than depending on a runner's checkout depth.
+  `native_discovery_churn_reconnect_pins_generation_and_explicit_registry`
+  proves fresh same-process/state continuity in a nondefault registry and refuses
+  A-to-same-name-B reconnect while B remains usable.
+  `native_discovery_churn_prunes_forcibly_terminated_generation_artifacts` and
+  `native_start_failure_removes_generation_artifacts_before_root_cleanup`
+  assert exact artifact removal before fixture deletion can hide leaks.
+  Deterministic kill/prune tests cover failure retention, retry, lease timeout
+  and preservation of live replacements. Isolated Screen churn additionally
+  delays/fails a new client while another remains attached, verifies Launcher
+  diagnostics and Refresh recovery, and challenges the unchanged server shell.
+  `dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal` rejects
+  destructor-injected newline/EOF when a local multiplexer retains the terminal
+  after its frontend exits. The Unix client writer uses an owned safe descriptor;
+  no queue, process-tree ownership or native daemon transport contract changes.
+  Modern Screen confirmation uses its public quiet query and requires both
+  initial owned-terminal context and frontend PID, without inspecting a setgid
+  server's descriptors. Tests reject fallback display identities, denied/malformed
+  replies and legacy-inspection errors. Private query reply sockets are removed
+  after timeout without following the selected server symlink. Controlled local
+  clients test graceful hangup and bounded escalation, preserving process-group
+  ownership and default shell behavior.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

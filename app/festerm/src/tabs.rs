@@ -723,11 +723,16 @@ impl SessionTab {
     /// Attaches to an already-running, unattached `festerm-sessiond` session
     /// discovered on the Launcher's "Resume" list (feature request #70),
     /// without going through any saved profile's start-if-missing logic.
-    fn start_resumed_session(name: &str, context: &egui::Context) -> Self {
+    fn start_resumed_session(
+        selected: &festerm_sessiond::UnattachedSession,
+        context: &egui::Context,
+    ) -> Self {
+        let name = &selected.name;
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
-        let result = PersistentSession::resume_with_notifier(name, make_notifier(context))
-            .map(ApplicationSession::Persistent)
-            .map_err(|error| error.to_string());
+        let result =
+            PersistentSession::resume_discovered_with_notifier(selected, make_notifier(context))
+                .map(ApplicationSession::Persistent)
+                .map_err(|error| error.to_string());
         let inspector_persistence = Some(InspectorPersistence {
             provider_label: PersistenceProviderKind::FestermSessiond.label(),
             session_name: name.to_owned(),
@@ -735,17 +740,8 @@ impl SessionTab {
         Self::from_local_session_result(result, dimensions, name, None, None, inspector_persistence)
     }
 
-    /// Attaches to (or creates) a locally running tmux or GNU screen
-    /// session discovered on the Launcher's "tmux sessions"/"GNU Screen
-    /// sessions" widgets, without going through any saved profile's
-    /// start-if-missing logic. `profile` is `persistence.to_local_profile()`
-    /// (the real `tmux new-session -A`/`screen -xRR` invocation); `label`
-    /// is the tab's display label, distinct from `persistence.session_name()`
-    /// for screen (whose exact match key includes a `pid.` prefix the user
-    /// never sees). Unlike `start_local_profile`, this never records a
-    /// `profile_identifier`: there is no saved profile backing this launch,
-    /// so nothing should claim to be one for workspace-restore or Inspector
-    /// purposes -- mirroring `start_resumed_session`'s `None` above.
+    /// Starts the prevalidated attach-only provider client. No saved profile
+    /// backs this launch, so workspace/Inspector metadata cannot claim one.
     fn start_multiplexer_session(
         profile: LocalProfile,
         label: &str,
@@ -1645,10 +1641,9 @@ pub enum AppCommand {
     /// name, surfaced via the Launcher's "Resume" list (feature request
     /// #70). The composition root attaches to it and opens a new tab.
     ResumeUnattachedSession {
-        name: String,
+        session: festerm_sessiond::UnattachedSession,
     },
-    /// Resumes (or creates, since tmux's `-A`/screen's `-xRR` both attach-or-
-    /// create) a locally running tmux or GNU screen session by name,
+    /// Attaches only to the selected locally running tmux or GNU screen session,
     /// surfaced via the Launcher's "tmux sessions"/"GNU Screen sessions"
     /// quick-connect widgets. Unlike `ResumeUnattachedSession`, an already
     /// attached tmux/screen session is a normal, supported target: both
@@ -1656,16 +1651,10 @@ pub enum AppCommand {
     /// even for sessions another client is already attached to.
     ResumeMultiplexerSession {
         provider: PersistenceProviderKind,
-        /// The exact string passed to `PersistenceConfiguration::new` to
-        /// reattach this specific session: identical to `display_name` for
-        /// tmux, but screen's full `pid.name` identifier for GNU screen,
-        /// since screen's `-x`/`-r`/`-R` matching is substring-based.
-        name: String,
-        /// The user-facing label for the resulting tab (e.g. `main`,
-        /// without screen's `pid.` prefix). Kept separate from `name`
-        /// because the two differ for screen sessions.
-        display_name: String,
+        /// Provider-namespaced identity and display metadata from discovery.
+        session: crate::multiplexer_sessions::MultiplexerSession,
     },
+    RefreshRunningSessions,
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
     /// user-configurable").
@@ -1829,7 +1818,24 @@ const fn chip_layout_to_preference(layout: ChipLayout) -> ChipLayoutPreference {
 }
 
 /// Owns the always-nonempty tab collection and the active-tab cursor.
+struct PendingResume {
+    target: TabId,
+    receiver: std::sync::mpsc::Receiver<Result<SessionTab, String>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for PendingResume {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 pub struct AppState {
+    pub discovery: crate::discovery::Discovery,
+    pub resume_error: Option<String>,
+    pending_resume: Option<PendingResume>,
     tabs: Vec<Tab>,
     active: TabId,
     configuration: Configuration,
@@ -1895,6 +1901,9 @@ impl AppState {
         let id = TabId::next();
         let settings = configuration.interface_settings().clone();
         Self {
+            discovery: Default::default(),
+            resume_error: None,
+            pending_resume: None,
             tabs: vec![Tab {
                 id,
                 content: TabContent::Launcher,
@@ -1944,6 +1953,9 @@ impl AppState {
             SessionTab::start_primary(context, smoke_profile, settings.prefer_powershell());
         let id = TabId::next();
         let mut state = Self {
+            discovery: Default::default(),
+            resume_error: None,
+            pending_resume: None,
             tabs: vec![Tab {
                 id,
                 content: TabContent::Session(Box::new(session)),
@@ -2076,6 +2088,9 @@ impl AppState {
         let active = focused.unwrap_or_else(|| restored[0].id);
         let settings = configuration.interface_settings().clone();
         let mut state = Self {
+            discovery: Default::default(),
+            resume_error: None,
+            pending_resume: None,
             tabs: restored,
             active,
             configuration,
@@ -2638,15 +2653,73 @@ impl AppState {
             AppCommand::SetSftpPaneOrder(order) => {
                 self.sftp_pane_order = order;
             }
-            AppCommand::ResumeUnattachedSession { name } => {
-                self.start_resumed_session(&name, context);
+            AppCommand::RefreshRunningSessions => {
+                self.discovery.refresh();
+                self.resume_error = None;
             }
-            AppCommand::ResumeMultiplexerSession {
-                provider,
-                name,
-                display_name,
-            } => {
-                self.start_multiplexer_session(provider, &name, &display_name, context);
+            AppCommand::ResumeUnattachedSession { session } => {
+                let context = context.clone();
+                self.begin_resume(move || {
+                    Ok(SessionTab::start_resumed_session(&session, &context))
+                });
+            }
+            AppCommand::ResumeMultiplexerSession { provider, session } => {
+                let context = context.clone();
+                let dimensions = self.current_session_dimensions();
+                self.begin_resume(move || {
+                    let profile = crate::multiplexer_sessions::attach_profile(provider, &session)?;
+                    let persistence = PersistenceConfiguration::new(provider, &session.name);
+                    let mut tab = SessionTab::start_multiplexer_session(
+                        profile,
+                        &session.name,
+                        &persistence,
+                        &context,
+                        dimensions,
+                    );
+                    let (pid, terminal_device) = match tab.controller.session() {
+                        Some(ApplicationSession::Local(local)) => (
+                            local
+                                .process_id()
+                                .ok_or("Missing client process identity")?,
+                            local.terminal_device().map(std::path::Path::to_owned),
+                        ),
+                        _ => {
+                            return Err(tab
+                                .controller
+                                .start_error()
+                                .unwrap_or("Could not start attachment")
+                                .to_owned())
+                        }
+                    };
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    loop {
+                        tab.controller.pump_events(&mut tab.terminal);
+                        if !matches!(
+                            tab.controller.session().map(Session::lifecycle),
+                            Some(SessionLifecycle::Starting | SessionLifecycle::Running)
+                        ) {
+                            return Err(format!(
+                                "{} attachment exited before connecting: {}",
+                                provider.label(),
+                                tab.terminal.row_text(0).unwrap_or_default()
+                            ));
+                        }
+                        if crate::multiplexer_sessions::client_attached(
+                            provider,
+                            &session,
+                            pid,
+                            terminal_device.as_deref(),
+                        )? {
+                            return Ok(tab);
+                        }
+                        if std::time::Instant::now() >= deadline {
+                            return Err(
+                                "Timed out waiting for the selected session to attach".into()
+                            );
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                });
             }
             AppCommand::ResetInterfaceSettings => {
                 self.chip_layout =
@@ -2882,38 +2955,67 @@ impl AppState {
         ));
     }
 
-    fn start_resumed_session(&mut self, name: &str, context: &egui::Context) {
-        self.place_session(SessionTab::start_resumed_session(name, context));
+    fn begin_resume(
+        &mut self,
+        start: impl FnOnce() -> Result<SessionTab, String> + Send + 'static,
+    ) {
+        if self.pending_resume.is_some() || !self.show_resumable_sessions {
+            return;
+        }
+        self.resume_error = None;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let handle = std::thread::Builder::new()
+            .name("running-session-reattach".into())
+            .spawn(move || {
+                let result = start().and_then(|session| {
+                    if let Some(error) = session.controller.start_error() {
+                        Err(error.to_string())
+                    } else {
+                        Ok(session)
+                    }
+                });
+                let _ = sender.send(result);
+            });
+        match handle {
+            Ok(handle) => {
+                self.pending_resume = Some(PendingResume {
+                    target: self.active,
+                    receiver,
+                    handle: Some(handle),
+                })
+            }
+            Err(error) => {
+                self.resume_error = Some(format!(
+                    "Could not start Reattach: {error}. Refresh to retry."
+                ));
+                self.discovery.refresh();
+            }
+        }
     }
 
-    /// Resumes (or creates) a locally running tmux or GNU screen session
-    /// from the Launcher's quick-connect widgets. Mirrors
-    /// `start_configured_local_profile`'s use of `PersistenceConfiguration`
-    /// and `SessionTab::start_multiplexer_session`, but without a backing
-    /// saved profile: `name` is the exact identifier used to reattach (screen's
-    /// full `pid.name` for screen sessions), while `display_name` is the
-    /// friendlier label shown on the resulting tab -- the two differ for
-    /// screen, which is why they're passed separately rather than reusing
-    /// one string for both roles.
-    fn start_multiplexer_session(
-        &mut self,
-        provider: PersistenceProviderKind,
-        name: &str,
-        display_name: &str,
-        context: &egui::Context,
-    ) {
-        let persistence = PersistenceConfiguration::new(provider, name);
-        let Ok(local_profile) = persistence.to_local_profile() else {
-            return;
-        };
-        let dimensions = self.current_session_dimensions();
-        self.place_session(SessionTab::start_multiplexer_session(
-            local_profile,
-            display_name,
-            &persistence,
-            context,
-            dimensions,
-        ));
+    pub fn update_running_sessions(&mut self, context: &egui::Context) {
+        self.discovery.update(self.show_resumable_sessions, context);
+        if self.pending_resume.as_ref().is_some_and(|pending| {
+            pending
+                .handle
+                .as_ref()
+                .is_some_and(|handle| handle.is_finished())
+        }) {
+            let mut pending = self.pending_resume.take().unwrap();
+            let _ = pending.handle.take().unwrap().join();
+            let still_requested = self.show_resumable_sessions
+                && self.active == pending.target
+                && matches!(self.active_tab().content, TabContent::Launcher);
+            match pending.receiver.try_recv().unwrap_or_else(|_| Err("Reattach worker failed".into())) {
+                Ok(session) if still_requested => self.place_session(session),
+                Err(error) if still_requested => self.resume_error = Some(format!("Could not reattach: {error} No replacement shell was started. Refresh Running Sessions and try again.")),
+                _ => {},
+            }
+            self.discovery.refresh();
+        }
+        if self.pending_resume.is_some() {
+            context.request_repaint_after(std::time::Duration::from_millis(25));
+        }
     }
 
     fn start_configured_local_profile(&mut self, profile_id: &str, context: &egui::Context) {
@@ -5304,21 +5406,63 @@ mod tests {
         // surface an ordinary startup error, not panic.
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-
+        state.show_resumable_sessions = true;
+        let original = state.active();
         state.dispatch(
             AppCommand::ResumeUnattachedSession {
-                name: "nonexistent-resumable-session".to_owned(),
+                session: festerm_sessiond::UnattachedSession {
+                    name: "nonexistent-resumable-session".to_owned(),
+                    shell: String::new(),
+                    arguments: Vec::new(),
+                    working_directory: None,
+                    created_at_unix_ms: 0,
+                    pid: 0,
+                    endpoint: String::new(),
+                },
             },
             &context,
         );
 
-        let TabContent::Session(session) = &state.active_tab_mut().content else {
-            panic!("resuming a session always opens a session tab, even on failure");
-        };
-        assert!(
-            session.controller.start_error().is_some(),
-            "resuming a missing session must surface a startup error"
-        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while state.pending_resume.is_some() {
+            assert!(std::time::Instant::now() < deadline);
+            state.update_running_sessions(&context);
+            std::thread::yield_now();
+        }
+        assert_eq!(state.active(), original);
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
+        assert!(state
+            .resume_error
+            .as_ref()
+            .unwrap()
+            .contains("No replacement shell"));
+    }
+
+    #[test]
+    fn duplicate_resume_requests_are_bounded_and_disabled_discovery_does_not_launch() {
+        let mut state = AppState::for_test();
+        state.begin_resume(|| panic!("disabled resume must not launch"));
+        assert!(state.pending_resume.is_none());
+        state.show_resumable_sessions = true;
+        let (release, wait) = std::sync::mpsc::sync_channel(1);
+        state.begin_resume(move || {
+            wait.recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            Err("controlled stale entry".into())
+        });
+        for _ in 0..1000 {
+            state.begin_resume(|| panic!("duplicate resume must be coalesced"));
+        }
+        state.show_resumable_sessions = false;
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while state.pending_resume.is_some() {
+            assert!(std::time::Instant::now() < deadline);
+            state.update_running_sessions(&egui::Context::default());
+            std::thread::yield_now();
+        }
+        assert_eq!(state.tabs().len(), 1);
+        assert!(matches!(state.active_tab().content, TabContent::Launcher));
     }
 
     #[test]

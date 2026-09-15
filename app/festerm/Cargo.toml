@@ -24,13 +24,16 @@ festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 image = "0.25"
-tokio = { version = "1.17.0", default-features = false, features = ["rt", "sync", "time"] }
+tokio = { version = "1.17.0", default-features = false, features = ["rt", "sync", "time", "process", "io-util", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 cargo-packager-updater = "0.2.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

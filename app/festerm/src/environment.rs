@@ -133,28 +133,14 @@ fn run_with_timeout(
     shell: &std::ffi::OsStr,
     timeout: std::time::Duration,
 ) -> Option<std::process::Output> {
-    let child = std::process::Command::new(shell)
-        .arg("-l")
-        .arg("-c")
-        .arg(format!(
-            "echo {DELIMITER}; echo \"$PATH\"; echo \"$LANG\"; echo \"$LC_ALL\"; \
-             echo \"$LC_CTYPE\"; echo {DELIMITER}"
-        ))
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = sender.send(child.wait_with_output());
-    });
-
-    // Either branch leaves the sending thread to finish (or stay blocked
-    // forever on a truly hung shell) on its own; there is nothing further
-    // to reconcile it with once this function has an answer or has given up.
-    receiver.recv_timeout(timeout).ok()?.ok()
+    let mut command = std::process::Command::new(shell);
+    command.args(["-l", "-c"]).arg(format!(
+        "echo {DELIMITER}; echo \"$PATH\"; echo \"$LANG\"; echo \"$LC_ALL\"; \
+         echo \"$LC_CTYPE\"; echo {DELIMITER}"
+    ));
+    crate::local_command::output(command, timeout)
+        .ok()
+        .flatten()
 }
 
 #[cfg(all(test, target_os = "macos"))]

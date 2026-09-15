@@ -82,6 +82,7 @@ const WINDOWS_CLIENT_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long shutdown waits for the shell to be reaped before giving up on it.
 const CHILD_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const GENERATION_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the daemon keeps draining pseudoterminal output after it observes
 /// that the shell exited, so the last screenful still reaches the client.
 #[cfg(windows)]
@@ -185,6 +186,13 @@ impl SpawnedShell {
                 Ok(None) => thread::sleep(CLIENT_POLL_INTERVAL),
             }
         }
+    }
+}
+
+impl Drop for SpawnedShell {
+    fn drop(&mut self) {
+        self.terminate();
+        self.close_master();
     }
 }
 
@@ -415,20 +423,25 @@ fn run_start(
 
     with_registry_lock(|registry| {
         if let Some(record) = registry.sessions.get(&name) {
-            if process_alive(record.pid) {
+            if record_is_live(record)? {
                 return Err(format!("session '{name}' is already running").into());
             }
+            cleanup_dead_generation(&runtime_root, record, true)?;
             registry.sessions.remove(&name);
         }
         Ok(())
     })?;
 
     let exe = env::current_exe()?;
+    // The parent must know the generation even if the child fails before
+    // publishing its registry record.
+    let generation = now_ms();
 
     #[cfg(unix)]
     let mut daemon = {
         let mut command = Command::new(&exe);
         command
+            .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
             .arg("daemon")
             .arg("--name")
             .arg(&name)
@@ -483,6 +496,7 @@ fn run_start(
         let build_command = |creation_flags: u32| {
             let mut command = Command::new(&exe);
             command
+                .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
                 .arg("daemon")
                 .arg("--name")
                 .arg(&name)
@@ -523,6 +537,10 @@ fn run_start(
     let daemon_pid = daemon.id();
 
     let registration = (|| -> Result<SessionRecord, Box<dyn std::error::Error>> {
+        // Report address errors to the caller rather than losing them with
+        // the detached daemon's stderr. The actual child PID determines length.
+        #[cfg(unix)]
+        session_socket_path(&runtime_root, &format!("{daemon_pid}-{}", now_ms()))?;
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
             let registry = load_registry()?;
@@ -546,11 +564,17 @@ fn run_start(
     let record = match registration {
         Ok(record) => record,
         Err(error) => {
-            if daemon.try_wait()?.is_none() {
-                let _ = terminate_pid(daemon_pid);
-                let _ = daemon.wait();
-            }
-            return Err(error);
+            let record = generation_record(
+                &runtime_root,
+                name.clone(),
+                daemon_pid,
+                generation,
+                &shell,
+                cols,
+                rows,
+            )?;
+            let cleanup = cleanup_failed_start(&runtime_root, &mut daemon, &record);
+            return combine_cleanup_result(Err(error), cleanup);
         }
     };
     FileExt::unlock(&start_lock)?;
@@ -575,93 +599,134 @@ fn run_daemon(
     let runtime_root = runtime_root()?;
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
-
+    let generation = match env::var("FESTERM_SESSIOND_GENERATION") {
+        Ok(generation) => generation.parse::<u128>()?,
+        Err(env::VarError::NotPresent) => now_ms(),
+        Err(error) => return Err(error.into()),
+    };
+    let record = generation_record(
+        &runtime_root,
+        name.clone(),
+        process::id(),
+        generation,
+        &shell,
+        cols,
+        rows,
+    )?;
     #[cfg(unix)]
-    {
-        let socket_path = session_socket_path(&runtime_root, &name)?;
-        let listener = bind_unix_listener(&socket_path)?;
-        set_file_mode(&socket_path, 0o600)?;
-
-        let mut spawned = spawn_shell(&shell, cols, rows)?;
-        let record = SessionRecord {
-            name: name.clone(),
-            pid: process::id(),
-            socket: socket_path.to_string_lossy().into_owned(),
-            shell: shell.executable.clone(),
-            arguments: shell.arguments.clone(),
-            working_directory: shell.working_directory.clone(),
-            cols,
-            rows,
-            created_at_unix_ms: now_ms(),
-            attached: false,
-        };
-        if let Err(error) = save_registry_record(record) {
-            let _ = spawned.child.kill();
-            let _ = spawned.child.wait();
-            let _ = fs::remove_file(&socket_path);
-            return Err(error);
+    session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
+    with_daemon_generation(&runtime_root, &record, |socket_owned| {
+        #[cfg(unix)]
+        {
+            let socket_path = Path::new(&record.socket);
+            let listener = bind_unix_listener(socket_path)?;
+            *socket_owned = true;
+            set_file_mode(socket_path, 0o600)?;
+            let mut spawned = spawn_shell(&shell, cols, rows)?;
+            save_registry_record(record.clone())?;
+            let reader = spawned.master()?.try_clone_reader()?;
+            let writer = spawned.master()?.take_writer()?;
+            daemon_client_loop(listener, reader, writer, &mut spawned, &name)?;
         }
 
-        let reader = spawned.master()?.try_clone_reader()?;
-        let writer = spawned.master()?.take_writer()?;
-        daemon_client_loop(listener, reader, writer, &mut spawned, &name)?;
-        let _ = fs::remove_file(socket_path);
-    }
+        #[cfg(windows)]
+        {
+            let _ = socket_owned;
+            let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
+            let mut spawned = spawn_shell(&shell, cols, rows)?;
+            save_registry_record(record.clone())?;
+            let reader = spawned.master()?.try_clone_reader()?;
+            let writer = spawned.master()?.take_writer()?;
+            daemon_client_loop_windows(
+                &record.socket,
+                initial_listener,
+                reader,
+                writer,
+                &mut spawned,
+                &name,
+            )?;
+        }
+        Ok(())
+    })
+}
 
+fn generation_record(
+    root: &Path,
+    name: String,
+    pid: u32,
+    generation: u128,
+    shell: &ShellSpec,
+    cols: u16,
+    rows: u16,
+) -> Result<SessionRecord, Box<dyn std::error::Error>> {
+    let identity = format!("{pid}-{generation}");
+    #[cfg(unix)]
+    let socket = root
+        .join(format!("{identity}.sock"))
+        .to_string_lossy()
+        .into_owned();
     #[cfg(windows)]
-    {
-        let pipe_name = session_pipe_name(&name);
-        let initial_listener = create_secure_pipe_listener(&pipe_name, true)?;
-        let mut spawned = spawn_shell(&shell, cols, rows)?;
-        let record = SessionRecord {
-            name: name.clone(),
-            pid: process::id(),
-            socket: pipe_name.clone(),
-            shell: shell.executable.clone(),
-            arguments: shell.arguments.clone(),
-            working_directory: shell.working_directory.clone(),
-            cols,
-            rows,
-            created_at_unix_ms: now_ms(),
-            attached: false,
-        };
-        if let Err(error) = save_registry_record(record) {
-            let _ = spawned.child.kill();
-            let _ = spawned.child.wait();
-            return Err(error);
-        }
+    let socket = {
+        let _ = root;
+        session_pipe_name(&identity)
+    };
+    Ok(SessionRecord {
+        name,
+        pid,
+        socket,
+        shell: shell.executable.clone(),
+        arguments: shell.arguments.clone(),
+        working_directory: shell.working_directory.clone(),
+        cols,
+        rows,
+        created_at_unix_ms: generation,
+        attached: false,
+    })
+}
 
-        let reader = spawned.master()?.try_clone_reader()?;
-        let writer = spawned.master()?.take_writer()?;
-        daemon_client_loop_windows(
-            &pipe_name,
-            initial_listener,
-            reader,
-            writer,
-            &mut spawned,
-            &name,
-        )?;
+fn combine_cleanup_result(
+    result: Result<(), Box<dyn std::error::Error>>,
+    cleanup: Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match (result, cleanup) {
+        (Err(error), Err(cleanup)) => Err(format!("{error}; cleanup failed: {cleanup}").into()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
     }
+}
 
-    Ok(())
+fn with_daemon_generation(
+    root: &Path,
+    record: &SessionRecord,
+    serve: impl FnOnce(&mut bool) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    validate_artifact_root(root)?;
+    let lease_path = generation_lease_path(root, record);
+    let lease = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&lease_path)?;
+    let mut socket_owned = false;
+    let result = (|| {
+        lease.lock_exclusive()?;
+        set_file_mode(&lease_path, 0o600)?;
+        serve(&mut socket_owned)
+    })();
+    // Release before taking the registry lock: kill holds that lock while
+    // waiting for this generation's lease to become available.
+    drop(lease);
+    let cleanup = with_registry_lock(|registry| {
+        cleanup_dead_generation(root, record, socket_owned)?;
+        remove_registry_record_if_generation_matches(registry, record);
+        Ok(())
+    });
+    combine_cleanup_result(result, cleanup)
 }
 
 #[cfg(unix)]
 fn bind_unix_listener(path: &Path) -> io::Result<UnixListener> {
-    match UnixListener::bind(path) {
-        Ok(listener) => Ok(listener),
-        Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
-            if UnixStream::connect(path).is_ok() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AddrInUse,
-                    format!("session socket {} is already active", path.display()),
-                ));
-            }
-            fs::remove_file(path)?;
-            UnixListener::bind(path)
-        }
-        Err(error) => Err(error),
-    }
+    UnixListener::bind(path)
 }
 
 #[cfg(unix)]
@@ -690,15 +755,11 @@ fn daemon_client_loop<R: Read + Send + 'static>(
             || {
                 let _ = child.kill();
             },
-            move |attached| set_registry_attached(&name_owned, pid, attached),
+            attachment_reporter(name_owned, pid),
         )
     };
-    // Deregister first: a daemon that has stopped serving its session must
-    // never stay advertised as resumable while the rest of shutdown runs.
-    let deregistered = drop_registry_record(name, process::id());
     spawned.terminate();
     spawned.close_master();
-    deregistered?;
     Ok(result?)
 }
 
@@ -709,7 +770,7 @@ fn session_client_loop<R: Read + Send + 'static>(
     observer: Option<mpsc::Sender<ClientLoopEvent>>,
     mut handle_client_command: impl FnMut(ClientCommand) -> io::Result<()>,
     mut shutdown: impl FnMut(),
-    mut on_attach_changed: impl FnMut(bool),
+    mut on_attach_changed: impl FnMut(bool) -> bool,
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
     let (pty_rx, reader_thread) = spawn_pty_reader(reader);
@@ -815,11 +876,10 @@ fn session_client_loop<R: Read + Send + 'static>(
 fn report_attach_state_change(
     currently_attached: bool,
     previously_reported: &mut bool,
-    on_change: &mut impl FnMut(bool),
+    on_change: &mut impl FnMut(bool) -> bool,
 ) {
-    if currently_attached != *previously_reported {
+    if currently_attached != *previously_reported && on_change(currently_attached) {
         *previously_reported = currently_attached;
-        on_change(currently_attached);
     }
 }
 
@@ -864,15 +924,36 @@ enum ClientLoopEvent {
     OutputBuffered,
 }
 
-fn set_registry_attached(name: &str, pid: u32, attached: bool) {
-    let _ = with_registry_lock(|registry: &mut SessionRegistry| {
+fn attachment_reporter(name: String, pid: u32) -> impl FnMut(bool) -> bool {
+    let mut retry_after = Instant::now();
+    move |attached| {
+        if Instant::now() < retry_after {
+            return false;
+        }
+        match set_registry_attached(&name, pid, attached) {
+            Ok(()) => true,
+            Err(error) => {
+                sessiond_trace(format_args!("could not publish attachment state: {error}"));
+                retry_after = Instant::now() + Duration::from_millis(500);
+                false
+            }
+        }
+    }
+}
+
+fn set_registry_attached(
+    name: &str,
+    pid: u32,
+    attached: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    with_registry_lock(|registry: &mut SessionRegistry| {
         if let Some(record) = registry.sessions.get_mut(name) {
             if record.pid == pid {
                 record.attached = attached;
             }
         }
         Ok(())
-    });
+    })
 }
 
 #[cfg(windows)]
@@ -938,8 +1019,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut attached_reported = false;
     let pid = process::id();
     let name_owned = name.to_owned();
-    let mut on_attach_changed =
-        move |attached: bool| set_registry_attached(&name_owned, pid, attached);
+    let mut on_attach_changed = attachment_reporter(name_owned, pid);
     let mut shell_exited_at: Option<Instant> = None;
     let mut pending = PendingOutput::default();
     let result = loop {
@@ -1053,10 +1133,6 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
     retire_active(&mut active, &mut retired_clients, false);
     report_attach_state_change(false, &mut attached_reported, &mut on_attach_changed);
-    // Deregister before the joins below. A daemon that has stopped serving its
-    // session must never stay advertised as resumable, however slowly the rest
-    // of shutdown proceeds.
-    let deregistered = drop_registry_record(name, process::id());
     // The shell must not outlive the daemon that owns its pseudoterminal, and
     // closing the pseudoconsole is what finally lets the reader see end of
     // file. Both have to happen before any worker thread is joined.
@@ -1068,7 +1144,6 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
         .into_iter()
         .try_for_each(|client| join_client_thread_within(client, WORKER_JOIN_TIMEOUT));
     sessiond_trace("shutdown: complete");
-    deregistered?;
     reader_result?;
     accept_result?;
     client_result?;
@@ -1716,7 +1791,7 @@ const EXITED_NOTICE_BYTES: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
 fn run_list() -> Result<(), Box<dyn std::error::Error>> {
     let registry = with_registry_lock(|registry| {
-        prune_dead_records(registry);
+        prune_dead_records(registry)?;
         Ok(registry.clone())
     })?;
 
@@ -1737,30 +1812,44 @@ fn run_list() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_kill(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
+    let root = runtime_root()?;
     with_registry_lock(|registry: &mut SessionRegistry| {
-        kill_registered_session(registry, &name, terminate_pid)
+        kill_registered_session(
+            &root,
+            registry,
+            &name,
+            terminate_pid,
+            GENERATION_EXIT_TIMEOUT,
+        )
     })
 }
 
 fn kill_registered_session(
+    root: &Path,
     registry: &mut SessionRegistry,
     name: &str,
     terminate: impl FnOnce(u32) -> Result<(), Box<dyn std::error::Error>>,
+    timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(record) = registry.sessions.get(name).cloned() else {
         return Err(format!("session '{name}' is not registered").into());
     };
-    let terminated = if process_alive(record.pid) {
-        terminate(record.pid)
-    } else {
-        Ok(())
-    };
-    // Drop the record even when termination failed. Leaving it behind is what
-    // turns an unresponsive daemon into a session the Launcher keeps offering
-    // and no client can ever attach to, with no way back short of editing the
-    // registry by hand.
-    remove_registry_record_if_pid_matches(registry, name, record.pid);
-    terminated
+    if !generation_has_exited(root, &record)?
+        && festerm_sessiond::daemon_generation_is_live(
+            root,
+            record.pid,
+            record.created_at_unix_ms,
+            &record.socket,
+        )?
+    {
+        terminate(record.pid).map_err(|error| {
+            format!("could not terminate session '{name}': {error}; record retained; retry kill")
+        })?;
+    }
+    wait_for_dead_generation(root, &record, timeout)?;
+    cleanup_dead_generation(root, &record, true)?;
+    remove_registry_record_if_generation_matches(registry, &record);
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2010,7 +2099,15 @@ fn session_socket_path(
     runtime_root: &Path,
     name: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(runtime_root.join(format!("{name}.sock")))
+    let path = runtime_root.join(format!("{name}.sock"));
+    std::os::unix::net::SocketAddr::from_pathname(&path).map_err(|error| {
+        format!(
+            "invalid Unix session socket {} ({} path bytes): {error}; use a shorter XDG_STATE_HOME",
+            path.display(),
+            path.as_os_str().as_encoded_bytes().len()
+        )
+    })?;
+    Ok(path)
 }
 
 #[cfg(windows)]
@@ -2101,7 +2198,7 @@ fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
 fn save_registry_record(record: SessionRecord) -> Result<(), Box<dyn std::error::Error>> {
     with_registry_lock(|registry: &mut SessionRegistry| {
         if let Some(existing) = registry.sessions.get(&record.name) {
-            if existing.pid != record.pid && process_alive(existing.pid) {
+            if existing.pid != record.pid && record_is_live(existing)? {
                 return Err(format!("session '{}' is already running", record.name).into());
             }
         }
@@ -2112,27 +2209,325 @@ fn save_registry_record(record: SessionRecord) -> Result<(), Box<dyn std::error:
     })
 }
 
-fn drop_registry_record(name: &str, pid: u32) -> Result<(), Box<dyn std::error::Error>> {
-    with_registry_lock(|registry: &mut SessionRegistry| {
-        remove_registry_record_if_pid_matches(registry, name, pid);
-        Ok(())
-    })
-}
-
-fn remove_registry_record_if_pid_matches(registry: &mut SessionRegistry, name: &str, pid: u32) {
-    if registry
-        .sessions
-        .get(name)
-        .is_some_and(|record| record.pid == pid)
-    {
-        registry.sessions.remove(name);
+fn remove_registry_record_if_generation_matches(
+    registry: &mut SessionRegistry,
+    expected: &SessionRecord,
+) {
+    if registry.sessions.get(&expected.name).is_some_and(|record| {
+        record.pid == expected.pid
+            && record.created_at_unix_ms == expected.created_at_unix_ms
+            && record.socket == expected.socket
+    }) {
+        registry.sessions.remove(&expected.name);
     }
 }
 
-fn prune_dead_records(registry: &mut SessionRegistry) {
-    registry
-        .sessions
-        .retain(|_, record| process_alive(record.pid));
+fn record_is_live(record: &SessionRecord) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(festerm_sessiond::daemon_generation_is_live(
+        &runtime_root()?,
+        record.pid,
+        record.created_at_unix_ms,
+        &record.socket,
+    )?)
+}
+
+fn prune_dead_records(registry: &mut SessionRegistry) -> Result<(), Box<dyn std::error::Error>> {
+    prune_dead_records_in(&runtime_root()?, registry)
+}
+
+fn prune_dead_records_in(
+    root: &Path,
+    registry: &mut SessionRegistry,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Keep each record until its artifacts are removed. On failure the on-disk
+    // registry remains a retry inventory, including any earlier partial cleanup.
+    let records: Vec<_> = registry.sessions.values().cloned().collect();
+    for record in records {
+        validate_generation_endpoint(root, &record)?;
+        if !festerm_sessiond::daemon_generation_is_live(
+            root,
+            record.pid,
+            record.created_at_unix_ms,
+            &record.socket,
+        )? {
+            cleanup_dead_generation(root, &record, true)?;
+            remove_registry_record_if_generation_matches(registry, &record);
+        }
+    }
+    Ok(())
+}
+
+fn generation_lease_path(root: &Path, record: &SessionRecord) -> PathBuf {
+    root.join(format!(
+        "lease-{}-{}",
+        record.pid, record.created_at_unix_ms
+    ))
+}
+
+/// Only exact generation endpoints confer artifact ownership. Named endpoints
+/// remain usable for old helpers, but have no generation-safe artifacts to unlink.
+fn validate_generation_endpoint(
+    root: &Path,
+    record: &SessionRecord,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    validate_name(record.name.clone())?;
+    let generation = format!("{}-{}", record.pid, record.created_at_unix_ms);
+    #[cfg(unix)]
+    let (expected, legacy) = (
+        root.join(format!("{generation}.sock"))
+            .to_string_lossy()
+            .into_owned(),
+        root.join(format!("{}.sock", record.name))
+            .to_string_lossy()
+            .into_owned(),
+    );
+    #[cfg(windows)]
+    let (expected, legacy) = {
+        let _ = root;
+        (
+            session_pipe_name(&generation),
+            session_pipe_name(&record.name),
+        )
+    };
+    if record.socket == expected {
+        Ok(true)
+    } else if record.socket == legacy {
+        Ok(false)
+    } else {
+        Err(format!(
+            "session '{}' has an endpoint outside its exact owned generation; \
+             refusing to signal or remove artifacts; inspect the registry",
+            record.name
+        )
+        .into())
+    }
+}
+
+fn validate_artifact_root(root: &Path) -> io::Result<()> {
+    // Ancestors may be system aliases such as macOS /tmp -> /private/tmp.
+    // The selected registry directory and artifact leaves must not be links.
+    let metadata = fs::symlink_metadata(root)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::other(format!(
+            "refusing artifact cleanup through non-directory or symlink {}",
+            root.display()
+        )));
+    }
+    Ok(())
+}
+
+fn artifact_metadata(path: &Path, socket: bool) -> io::Result<Option<fs::Metadata>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    #[cfg(unix)]
+    let valid_type = {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        metadata.uid()
+            == fs::metadata(
+                path.parent()
+                    .ok_or("artifact has no parent")
+                    .map_err(io::Error::other)?,
+            )?
+            .uid()
+            && if socket {
+                metadata.file_type().is_socket()
+            } else {
+                metadata.is_file()
+            }
+    };
+    #[cfg(windows)]
+    let valid_type = !socket && metadata.is_file();
+    if metadata.file_type().is_symlink() || !valid_type {
+        return Err(io::Error::other(format!(
+            "refusing to remove unexpected artifact {}; restore the owned artifact and retry",
+            path.display()
+        )));
+    }
+    Ok(Some(metadata))
+}
+
+fn same_artifact(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        left.creation_time() == right.creation_time()
+            && left.last_write_time() == right.last_write_time()
+            && left.file_size() == right.file_size()
+            && left.file_attributes() == right.file_attributes()
+    }
+}
+
+fn open_generation_lease(path: &Path) -> io::Result<Option<fs::File>> {
+    let Some(metadata) = artifact_metadata(path, false)? else {
+        return Ok(None);
+    };
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let lease = match options.open(path) {
+        Ok(lease) => lease,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !same_artifact(&metadata, &lease.metadata()?) {
+        return Err(io::Error::other(format!(
+            "lease {} was replaced; retry",
+            path.display()
+        )));
+    }
+    Ok(Some(lease))
+}
+
+fn lock_is_contended(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+}
+
+fn generation_has_exited(
+    root: &Path,
+    record: &SessionRecord,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    if !validate_generation_endpoint(root, record)? {
+        return Ok(!festerm_sessiond::daemon_generation_is_live(
+            root,
+            record.pid,
+            record.created_at_unix_ms,
+            &record.socket,
+        )?);
+    }
+    validate_artifact_root(root)?;
+    let Some(lease) = open_generation_lease(&generation_lease_path(root, record))? else {
+        return Ok(true);
+    };
+    match lease.try_lock_exclusive() {
+        Ok(()) => Ok(true),
+        Err(error) if lock_is_contended(&error) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn wait_for_dead_generation(
+    root: &Path,
+    record: &SessionRecord,
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if generation_has_exited(root, record)? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "session '{}' generation {}-{} still holds its lifetime lease; \
+                 record and artifacts retained; retry kill",
+                record.name, record.pid, record.created_at_unix_ms
+            )
+            .into());
+        }
+        thread::sleep(CLIENT_POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
+    }
+}
+
+fn remove_artifact_if_unchanged(
+    path: &Path,
+    expected: &fs::Metadata,
+    socket: bool,
+) -> io::Result<()> {
+    if let Some(current) = artifact_metadata(path, socket)? {
+        if !same_artifact(&current, expected) {
+            return Err(io::Error::other(format!(
+                "artifact {} was replaced; refusing cleanup; retry",
+                path.display()
+            )));
+        }
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn cleanup_dead_generation(
+    root: &Path,
+    record: &SessionRecord,
+    socket_owned: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !validate_generation_endpoint(root, record)? {
+        return Ok(());
+    }
+    validate_artifact_root(root)?;
+    let lease_path = generation_lease_path(root, record);
+    let lease = open_generation_lease(&lease_path)?;
+    if let Some(lease) = &lease {
+        lease.try_lock_exclusive().map_err(|error| {
+            format!(
+                "cannot clean session '{}' lease {}: {error}; record retained; retry kill",
+                record.name,
+                lease_path.display()
+            )
+        })?;
+    }
+    #[cfg(unix)]
+    if socket_owned {
+        // This is derived, never an arbitrary registry-supplied path.
+        let socket = root.join(format!("{}-{}.sock", record.pid, record.created_at_unix_ms));
+        if let Some(metadata) = artifact_metadata(&socket, true)? {
+            remove_artifact_if_unchanged(&socket, &metadata, true)?;
+        }
+    }
+    #[cfg(windows)]
+    let _ = socket_owned;
+    if let Some(lease) = &lease {
+        remove_artifact_if_unchanged(&lease_path, &lease.metadata()?, false)?;
+    }
+    Ok(())
+}
+
+fn cleanup_failed_start(
+    root: &Path,
+    daemon: &mut process::Child,
+    record: &SessionRecord,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let stopped = (|| {
+        if daemon.try_wait()?.is_none() {
+            terminate_pid(daemon.id())?;
+        }
+        let deadline = Instant::now() + GENERATION_EXIT_TIMEOUT;
+        while daemon.try_wait()?.is_none() {
+            if Instant::now() >= deadline {
+                return Err("startup daemon did not exit; retry kill".into());
+            }
+            thread::sleep(CLIENT_POLL_INTERVAL);
+        }
+        cleanup_dead_generation(root, record, true)
+    })();
+    // Preserve a precise retry handle even when startup never registered.
+    let registry_result = with_registry_lock(|registry| {
+        if stopped.is_ok() {
+            remove_registry_record_if_generation_matches(registry, record);
+        } else if !registry.sessions.contains_key(&record.name) {
+            registry
+                .sessions
+                .insert(record.name.clone(), record.clone());
+        }
+        Ok(())
+    });
+    combine_cleanup_result(stopped, registry_result)
 }
 
 #[cfg(unix)]
@@ -2195,6 +2590,7 @@ fn spawn_shell(
     })
 }
 
+#[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -2205,11 +2601,6 @@ fn process_alive(pid: u32) -> bool {
             Err(Errno::ESRCH) => false,
             Err(_) => false,
         }
-    }
-
-    #[cfg(windows)]
-    {
-        festerm_windows_job::process_is_alive(pid)
     }
 }
 
@@ -2791,7 +3182,7 @@ mod tests {
                         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "test closed"))
                 },
                 || {},
-                |_attached| {},
+                |_attached| true,
             )
         });
 
@@ -2917,7 +3308,10 @@ mod tests {
                 None,
                 |_command| Ok(()),
                 || {},
-                move |attached| attach_events_clone.lock().unwrap().push(attached),
+                move |attached| {
+                    attach_events_clone.lock().unwrap().push(attached);
+                    true
+                },
             )
         });
 
@@ -3053,9 +3447,12 @@ mod tests {
             )]),
         };
 
-        remove_registry_record_if_pid_matches(&mut registry, "demo", 11);
+        let replacement = registry.sessions["demo"].clone();
+        let mut old = replacement.clone();
+        old.created_at_unix_ms = 1;
+        remove_registry_record_if_generation_matches(&mut registry, &old);
         assert_eq!(registry.sessions["demo"].pid, 22);
-        remove_registry_record_if_pid_matches(&mut registry, "demo", 22);
+        remove_registry_record_if_generation_matches(&mut registry, &replacement);
         assert!(!registry.sessions.contains_key("demo"));
     }
 
@@ -3355,53 +3752,215 @@ mod tests {
         assert!(err.to_string().contains("persistent session name"));
     }
 
-    /// `kill` used to abandon the registry entry when terminating the process
-    /// failed, which is exactly the case where the entry is most harmful: an
-    /// unresponsive daemon stayed advertised with no supported way to clear it.
     #[test]
-    fn killing_a_session_drops_its_record_even_when_termination_fails() {
+    fn killing_a_session_retains_retry_identity_when_termination_fails() {
+        let fixture = GenerationFixture::new();
+        let record = fixture.record("demo", 1);
+        let lease = fixture.artifacts(&record, true);
         let mut registry = SessionRegistry::default();
-        registry
-            .sessions
-            .insert("demo".to_owned(), test_record("demo", process::id()));
+        registry.sessions.insert("demo".into(), record.clone());
 
-        let error = kill_registered_session(&mut registry, "demo", |_| {
-            Err("access is denied".to_owned().into())
-        })
+        let error = kill_registered_session(
+            &fixture.0,
+            &mut registry,
+            "demo",
+            |_| Err("access is denied".to_owned().into()),
+            Duration::from_millis(20),
+        )
         .unwrap_err();
 
         assert!(error.to_string().contains("access is denied"));
         assert!(
-            registry.sessions.is_empty(),
-            "a session that could not be terminated must still be deregistered"
+            registry.sessions.contains_key("demo"),
+            "failed termination must preserve the generation needed for cleanup retry"
         );
+        assert!(generation_lease_path(&fixture.0, &record).exists());
+        kill_registered_session(
+            &fixture.0,
+            &mut registry,
+            "demo",
+            |pid| {
+                assert_eq!(pid, record.pid);
+                FileExt::unlock(&lease)?;
+                Ok(())
+            },
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        fixture.assert_removed(&record);
+        assert!(registry.sessions.is_empty());
     }
 
     #[test]
     fn killing_an_unregistered_session_reports_that_it_is_not_registered() {
         let mut registry = SessionRegistry::default();
 
-        let error = kill_registered_session(&mut registry, "missing", |_| {
-            panic!("an unregistered session must not be terminated")
-        })
+        let error = kill_registered_session(
+            Path::new("."),
+            &mut registry,
+            "missing",
+            |_| panic!("an unregistered session must not be terminated"),
+            Duration::ZERO,
+        )
         .unwrap_err();
 
         assert!(error.to_string().contains("is not registered"));
     }
 
-    fn test_record(name: &str, pid: u32) -> SessionRecord {
-        SessionRecord {
-            name: name.to_owned(),
-            pid,
-            socket: format!("/tmp/festerm-sessiond/{name}.sock"),
-            shell: "/bin/bash".to_owned(),
-            arguments: Vec::new(),
-            working_directory: None,
-            cols: 80,
-            rows: 24,
-            created_at_unix_ms: 1_700_000_000_000,
-            attached: false,
+    #[test]
+    fn killing_a_stale_generation_never_signals_a_reused_live_pid() {
+        let fixture = GenerationFixture::new();
+        let record = fixture.record("stale", 1);
+        let _lease = fixture.artifacts(&record, false);
+        let mut registry = SessionRegistry::default();
+        registry.sessions.insert("stale".into(), record.clone());
+        kill_registered_session(
+            &fixture.0,
+            &mut registry,
+            "stale",
+            |_| panic!("stale generation must not signal this live process"),
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(registry.sessions.is_empty());
+        fixture.assert_removed(&record);
+    }
+
+    struct GenerationFixture(PathBuf);
+
+    impl GenerationFixture {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let base = if cfg!(unix) {
+                PathBuf::from("/tmp")
+            } else {
+                env::temp_dir()
+            };
+            let path = base.join(format!(
+                "fsd-g-{}-{}-{}",
+                process::id(),
+                now_ms(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            set_dir_mode(&path, 0o700).unwrap();
+            Self(path)
         }
+
+        fn record(&self, name: &str, generation: u128) -> SessionRecord {
+            generation_record(
+                &self.0,
+                name.into(),
+                process::id(),
+                generation,
+                &ShellSpec {
+                    executable: "owned-test-shell".into(),
+                    arguments: Vec::new(),
+                    working_directory: None,
+                },
+                80,
+                24,
+            )
+            .unwrap()
+        }
+
+        fn artifacts(&self, record: &SessionRecord, locked: bool) -> fs::File {
+            let lease = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(generation_lease_path(&self.0, record))
+                .unwrap();
+            if locked {
+                lease.lock_exclusive().unwrap();
+            }
+            #[cfg(unix)]
+            drop(UnixListener::bind(&record.socket).unwrap());
+            lease
+        }
+
+        fn assert_removed(&self, record: &SessionRecord) {
+            assert!(!generation_lease_path(&self.0, record).exists());
+            #[cfg(unix)]
+            assert!(!Path::new(&record.socket).exists());
+        }
+    }
+
+    impl Drop for GenerationFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn generation_cleanup_preserves_live_replacement_and_unrelated_files() {
+        let fixture = GenerationFixture::new();
+        let old = fixture.record("same", 1);
+        let replacement = fixture.record("same", 2);
+        let _old = fixture.artifacts(&old, false);
+        let _replacement = fixture.artifacts(&replacement, true);
+        let sentinel = fixture.0.join("unrelated");
+        fs::write(&sentinel, b"preserve").unwrap();
+        cleanup_dead_generation(&fixture.0, &old, true).unwrap();
+        fixture.assert_removed(&old);
+        assert!(cleanup_dead_generation(&fixture.0, &replacement, true).is_err());
+        assert!(generation_lease_path(&fixture.0, &replacement).exists());
+        assert_eq!(fs::read(sentinel).unwrap(), b"preserve");
+    }
+
+    #[test]
+    fn pruning_removes_dead_generation_artifacts_but_not_live_sessions() {
+        let fixture = GenerationFixture::new();
+        let dead = fixture.record("dead", 1);
+        let live = fixture.record("live", 2);
+        let _dead = fixture.artifacts(&dead, false);
+        let _live = fixture.artifacts(&live, true);
+        let mut registry = SessionRegistry {
+            sessions: BTreeMap::from([
+                ("dead".into(), dead.clone()),
+                ("live".into(), live.clone()),
+            ]),
+        };
+        prune_dead_records_in(&fixture.0, &mut registry).unwrap();
+        fixture.assert_removed(&dead);
+        assert_eq!(registry.sessions.len(), 1);
+        assert!(registry.sessions.contains_key("live"));
+        assert!(generation_lease_path(&fixture.0, &live).exists());
+    }
+
+    #[test]
+    fn kill_timeout_keeps_the_generation_and_artifacts_for_retry() {
+        let fixture = GenerationFixture::new();
+        let record = fixture.record("held", 1);
+        let _lease = fixture.artifacts(&record, true);
+        let mut registry = SessionRegistry {
+            sessions: BTreeMap::from([("held".into(), record.clone())]),
+        };
+        let error = kill_registered_session(
+            &fixture.0,
+            &mut registry,
+            "held",
+            |_| Ok(()),
+            Duration::from_millis(10),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("retained"));
+        assert!(registry.sessions.contains_key("held"));
+        assert!(generation_lease_path(&fixture.0, &record).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generation_cleanup_rejects_redirected_artifact_leaves_and_endpoints() {
+        let fixture = GenerationFixture::new();
+        let mut record = fixture.record("redirected", 1);
+        let sentinel = fixture.0.join("sentinel");
+        fs::write(&sentinel, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&sentinel, generation_lease_path(&fixture.0, &record)).unwrap();
+        assert!(cleanup_dead_generation(&fixture.0, &record, true).is_err());
+        record.socket = sentinel.to_string_lossy().into_owned();
+        assert!(cleanup_dead_generation(&fixture.0, &record, true).is_err());
+        assert_eq!(fs::read(sentinel).unwrap(), b"untouched");
     }
 
     #[test]
@@ -3463,7 +4022,10 @@ mod tests {
         let events = Rc::new(RefCell::new(Vec::new()));
         let mut reported = false;
         let events_clone = Rc::clone(&events);
-        let mut on_change = move |attached: bool| events_clone.borrow_mut().push(attached);
+        let mut on_change = move |attached: bool| {
+            events_clone.borrow_mut().push(attached);
+            true
+        };
 
         report_attach_state_change(false, &mut reported, &mut on_change);
         assert!(events.borrow().is_empty());
@@ -3476,5 +4038,17 @@ mod tests {
 
         report_attach_state_change(false, &mut reported, &mut on_change);
         assert_eq!(*events.borrow(), vec![true, false]);
+    }
+
+    #[test]
+    fn failed_attachment_state_publication_is_retried_not_marked_complete() {
+        let mut reported = true;
+        report_attach_state_change(false, &mut reported, &mut |_| false);
+        assert!(reported, "failed detach publication must remain pending");
+        report_attach_state_change(false, &mut reported, &mut |_| true);
+        assert!(!reported);
+        report_attach_state_change(false, &mut reported, &mut |_| {
+            panic!("successful publication is not repeated")
+        });
     }
 }

@@ -61,7 +61,6 @@
       "edges": [
         "LAUNCH-0[1-5]",
         "LAUNCH-0[78]",
-        "LAUNCH-12",
         "LAUNCH-1[5-8]"
       ],
       "requirements": [
@@ -119,6 +118,60 @@
       "status": "automated"
     },
     {
+      "id": "running-session-discovery",
+      "edges": ["LAUNCH-12"],
+      "requirements": ["docs/gui-design.md#session-launcher"],
+      "decisions": ["ADR-0018", "ADR-0025"],
+      "automated_tests": [
+        "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
+        "a_provider_timeout_is_visible_and_explicit_refresh_recovers",
+        "dropping_a_client_with_pending_terminal_output_retires_its_workers",
+        "dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal",
+        "duplicate_resume_requests_are_bounded_and_disabled_discovery_does_not_launch",
+        "large_running_inventory_only_materializes_visible_rows",
+        "resuming_a_missing_session_surfaces_a_concise_error",
+        "the_running_sessions_refresh_control_dispatches_a_refresh_command",
+        "resumable_sessions_appear_in_the_running_sessions_panel_and_dispatch_resume",
+        "tmux_and_screen_sessions_appear_in_their_own_labeled_widgets_and_dispatch_resume",
+        "stable_tmux_ids_are_sorted_deduplicated_and_do_not_follow_recreated_names",
+        "modern_screen_dates_do_not_change_full_pid_identity",
+        "screen_process_start_is_stable_utc_generation_metadata",
+        "screen_confirmation_requires_the_selected_server_and_exact_client_terminal",
+        "screen_query_confirms_exact_client_without_process_inspection",
+        "screen_query_errors_never_fall_back_to_another_clients_attachment",
+        "timed_out_screen_query_cleans_only_its_private_reply_sockets",
+        "bounded_command_preserves_an_explicit_owned_terminal_stdin",
+        "graceful_client_shutdown_uses_hangup_and_bounds_signal_escalation",
+        "screen_cursor_sequences_after_a_reply_preserve_exact_process_challenges",
+        "an_attached_screen_inventory_entry_does_not_confirm_a_missing_client",
+        "provider_process_failures_timeouts_and_output_are_bounded",
+        "timed_out_command_terminates_its_owned_descendants",
+        "provider_attachment_keeps_inherited_executable_search_path",
+        "absolute_provider_executable_uses_login_environment_correction",
+        "unavailable_binary_is_not_a_provider_error",
+        "registry_absence_corruption_and_lock_contention_have_distinct_bounded_results",
+        "generation_lease_excludes_stale_pid_records_and_attached_native_sessions",
+        "killing_a_stale_generation_never_signals_a_reused_live_pid",
+        "failed_attachment_state_publication_is_retried_not_marked_complete",
+        "native_discovery_churn_preserves_process_and_rejects_replaced_generations",
+        "discovered_reconnect_after_eof_keeps_root_and_rejects_each_changed_identity",
+        "selected_registry_load_honors_cancellation_before_reading_or_waiting",
+        "native_discovery_churn_reconnect_pins_generation_and_explicit_registry",
+        "native_discovery_churn_prunes_forcibly_terminated_generation_artifacts",
+        "native_start_failure_removes_generation_artifacts_before_root_cleanup",
+        "killing_a_session_retains_retry_identity_when_termination_fails",
+        "kill_timeout_keeps_the_generation_and_artifacts_for_retry",
+        "generation_cleanup_preserves_live_replacement_and_unrelated_files",
+        "pruning_removes_dead_generation_artifacts_but_not_live_sessions",
+        "native_start_reports_socket_depth_without_starting_a_shell",
+        "cursor_query_guard_replies_once_to_fragmented_queries",
+        "isolated_multiplexer_discovery_churn"
+      ],
+      "manual_scenarios": ["CP-12"],
+      "status": "partial",
+      "prerequisites": []
+    },
+    {
       "id": "launcher-profile-search-sort",
       "edges": [
         "LAUNCH-1[34]"
@@ -150,7 +203,8 @@
       ],
       "automated_tests": [
         "a_running_session_group_collapses_and_expands_from_its_header",
-        "the_running_sessions_refresh_control_dispatches_no_command"
+        "the_running_sessions_refresh_control_dispatches_a_refresh_command",
+        "rapid_refresh_is_coalesced_and_stale_results_are_discarded"
       ],
       "manual_scenarios": [],
       "status": "automated"
@@ -169,6 +223,7 @@
       "automated_tests": [
         "the_new_session_surface_is_inset_from_the_window_edge",
         "the_launch_cards_stay_in_place_while_a_long_profile_list_scrolls",
+        "large_running_inventory_only_materializes_visible_rows",
         "the_two_panels_stack_when_the_window_is_too_narrow_for_two_columns",
         "a_launch_card_is_a_wide_strip_rather_than_a_tall_tile",
         "tighter_launcher_preserves_alignment_and_click_targets_at_desktop_widths",
@@ -1079,6 +1134,7 @@
         "profiles_new_local_profile_flow_reports_an_error_for_an_empty_name",
         "saved_local_profile_defaults_to_named_native_persistence",
         "saved_local_profile_can_explicitly_use_named_tmux_persistence",
+        "saved_local_screen_profiles_alone_request_graceful_hangup",
         "native_persistence_is_local_only_and_preserves_the_shell_profile",
         "session_backend_forwards_input_resize_output_and_takeover",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",

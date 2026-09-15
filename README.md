@@ -66,6 +66,14 @@ but native local session persistence is still not a validated supported
 capability until those broader checks complete and the ADR is formally
 accepted.
 
+With **Resume unattached local sessions from New Session** enabled, Running
+Sessions refreshes native sessiond, tmux and GNU screen inventories in bounded
+background work. Reattach targets an existing generation only; a deleted or
+recreated session produces an actionable Launcher error instead of a new shell.
+Repeatable isolated provider churn is available through
+`python3 scripts/check_running_sessions.py` and the optional-validation runners;
+native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
+
 ## Documentation
 
 - [Agent guide](AGENTS.md) — compact project map, invariants, and validation

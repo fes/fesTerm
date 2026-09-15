@@ -54,9 +54,13 @@ This framework extends, rather than replaces, the current validation layers:
 
 ## Workflow-automation extension
 
-The current fesTerm adapter accepts only `native-smoke`, `os-input-smoke`, and
-`optional-validation` with an empty payload. Do not overload those modes with
-long interaction scripts. Add a fourth `ui-workflow-smoke` adapter mode only
+The current fesTerm adapter accepts `native-smoke`, `os-input-smoke`,
+`optional-validation`, and `running-session-stress` with an empty payload. The
+last mode runs bounded, isolated backend churn without a GUI, including native
+Windows ConPTY on guests that cannot qualify for GPU/window evidence. It does
+not establish Launcher usability or native input qualification.
+Do not overload these modes with long interaction scripts. Add a
+`ui-workflow-smoke` adapter mode only
 after the guest drivers and result schema below are implemented and reviewed on
 one platform.
 
@@ -1147,7 +1151,7 @@ Parallels provider, and graphical-session relay:
   requires Xorg explicitly; the macOS relay requires the console user's
   `gui/<uid>` launchd domain. The shared relay rejects arbitrary job fields;
   the pinned fesTerm adapter additionally accepts only an exact fesTerm source,
-  empty payload, and its three fixed evidence modes.
+  empty payload, and its fixed allowlisted evidence modes.
 - The Windows relay is executed through Parallels as the active console user.
   It can automate ConPTY and CPU-rendered diagnostic evidence, but the
   Parallels Windows-on-ARM guest remains `diagnostic`: Parallels does not
@@ -1174,7 +1178,7 @@ and the allowed source ID `festerm`. A normal run is:
       "adapter_sha": "<reviewed-full-festerm-adapter-commit>",
       "adapter_repository": "/private/path/to/fesTerm",
       "adapter_path": "scripts/vm-evidence-adapter",
-      "safe_modes": ["native-smoke", "os-input-smoke", "optional-validation"],
+      "safe_modes": ["native-smoke", "os-input-smoke", "optional-validation", "running-session-stress"],
       "sources": {
         "festerm": {
           "repository": "/private/path/to/fesTerm"

@@ -13,6 +13,13 @@ set -eu
 printf 'status=pass\n' >"$FESTERM_OPTIONAL_VALIDATION_RESULT_PATH"
 EOF
 chmod 755 "$temporary_root/source/scripts/run-optional-validation.sh"
+cat >"$temporary_root/source/scripts/check_running_sessions.py" <<'EOF'
+import os
+import sys
+
+assert sys.argv[1:] == ["--batch", "8", "--cycles", "3"]
+sys.exit(3 if os.environ.get("FESTERM_TEST_STRESS_FAILURE") == "1" else 0)
+EOF
 
 for platform in linux macos; do
     cat >"$temporary_root/job.json" <<EOF
@@ -26,6 +33,34 @@ EOF
         "$temporary_root/source-map.json" \
         "$temporary_root/artifacts/$platform"
     grep -qx 'status=pass' "$temporary_root/artifacts/$platform/optional-validation.txt"
+
+    cat >"$temporary_root/job.json" <<EOF
+{"adapter_id":"festerm","adapter_schema_version":1,"platform":"$platform","mode":"running-session-stress","payload":{}}
+EOF
+    "$adapter_root/$platform.sh" \
+        "$temporary_root/job.json" \
+        "$temporary_root/source-map.json" \
+        "$temporary_root/artifacts/$platform"
+    grep -qx 'status=pass' "$temporary_root/artifacts/$platform/running-session-stress.txt"
+    if FESTERM_TEST_STRESS_FAILURE=1 "$adapter_root/$platform.sh" \
+        "$temporary_root/job.json" \
+        "$temporary_root/source-map.json" \
+        "$temporary_root/artifacts/$platform"; then
+        echo 'adapter masked a failed stress run' >&2
+        exit 1
+    fi
+    grep -qx 'status=fail' "$temporary_root/artifacts/$platform/running-session-stress.txt"
+
+    cat >"$temporary_root/invalid-job.json" <<EOF
+{"adapter_id":"festerm","adapter_schema_version":1,"platform":"$platform","mode":"running-session-stress","payload":{"batch":128}}
+EOF
+    if "$adapter_root/$platform.sh" \
+        "$temporary_root/invalid-job.json" \
+        "$temporary_root/source-map.json" \
+        "$temporary_root/artifacts/invalid"; then
+        echo 'adapter accepted arbitrary stress parameters' >&2
+        exit 1
+    fi
 done
 
 cat >"$temporary_root/invalid-job.json" <<'EOF'

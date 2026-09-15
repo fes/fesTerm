@@ -73,6 +73,7 @@ remain active rolling qualification but do not independently keep M6 open.
 | SSH interaction workflows | All supported platforms with repository-owned fixture plus controlled native UI | Host-key comprehension, authentication focus and secrets, explicit saved-password/store-unavailable feedback, no automatic workspace connection, disconnect/history behavior, conditional reconnect, port-forward manager state, and error recovery | Stored-password transport and headless UI paths automated; native secure-store/platform usability pass pending in umbrella [#42](https://github.com/fes/fesTerm/issues/42) |
 | Serial interaction workflows | Windows, macOS, Linux with representative adapters and permission states | Native discovery/open/close behavior, unavailable/busy devices, configuration clarity, exclusive ownership, disconnect/history/reopen, and permissions. Repository-owned automation now covers config validation, app-layer startup/failure paths, and the Linux `socat` loopback. | Manual pending; Windows/macOS real-adapter execution and permission-denied evidence remain open under CP-04 |
 | Native local session persistence daemon | Windows, macOS, Linux using signed/packaged builds | Executable installation, detach/reattach replay, newest-client takeover, process independence and cleanup, owner-only local IPC, Windows current-user pipe isolation and Job Object breakaway | Implementation provisional under ADR-0025; native evidence pending under CP-11 |
+| Running Sessions discovery and churn | Native Windows sessiond; macOS/Linux sessiond, tmux and GNU screen when installed | New Session refresh and provider counts, same-process continuity after GUI detach, stale-click diagnostics, attached annotations, large-inventory scrolling, unaffected unrelated sessions | Deterministic parser/worker/headless tests and isolated real-provider churn automated for #155 (follow-up to closed #70); refreshed native GUI/usability evidence remains CP-12 / [#43](https://github.com/fes/fesTerm/issues/43). WSL is Linux evidence, not native Windows |
 | Fixed native window title | Multiple simultaneous fesTerm windows; OS task switcher/overview | Whether fixed `fesTerm` identity remains understandable without dynamic session content | Usability pending in umbrella; create a focused issue only if evidence shows a concrete problem |
 
 ## Deferred desktop Store qualification
@@ -192,6 +193,175 @@ possible.
 | CP-09 | Open About from Launcher, Settings, and a live session at ordinary/narrow sizes; verify exact version/build/OS/architecture copy text, source link, license disclosure, no session/path/host/settings leakage, installation-appropriate update controls, keyboard reachability, and Close/Escape focus restoration. | Native functional + visual + accessibility | Automate semantic content, redaction, update eligibility, narrow geometry, and screenshot; retain link handoff and screen-reader review |
 | CP-10 | Review the Profiles editor (create/update/delete/reorder for local and SSH profiles, including stored-password/private-key and persistence-provider fields) and Settings' bundled terminal font/ligature selection for native keyboard/focus/error-presentation behavior and visual correctness at supported scales. | Native functional + visual + accessibility | Automate field validation/error-state and command-dispatch assertions; retain native keyboard-traversal and visual review |
 | CP-11 | From a signed native package, confirm `festerm-sessiond` is installed beside `festerm`. Start a uniquely named session, detach while output continues, reattach and verify bounded replay, then attach a second client and verify the first receives the takeover notice and closes while only the second receives subsequent output. After transport loss, use Reconnect beside Open Diagnostics (or Inspector Resume) and verify the same tab resumes the existing shell without replaying pending input. If the daemon is gone, recovery must report failure instead of starting a replacement shell. Verify natural shell exit and `kill` remove only the matching registry record, the daemon survives its launching terminal/application, and stale records are pruned. On Unix verify runtime directories are `0700` and registry/socket/lock files are owner-only. On Windows verify the named pipe rejects another local user's token, the daemon breaks away from the launcher's Job Object, and the trusted ConPTY runtime is selected or safely falls back to inbox ConPTY. | Native functional + security | The native daemon IPC/input/replay/takeover/kill flow and Unix modes/launcher independence are automated in `native_daemon_survives_launcher_and_supports_input_replay_and_takeover`; signed-package reconnect/focus acceptance, package presence, Windows launcher independence, cross-user DACL rejection, explicit Job Object breakaway, and natural-exit/stale-prune evidence remain pending |
+| CP-12 | Enable Running Sessions. Create unique test-owned native and available local tmux/screen sessions, detach the GUI, then verify provider/metadata/count/order and reattach a fresh challenge to the same shell PID/state. Native attached entries disappear; attached tmux/screen entries remain annotated. Delete/exit/recreate while refreshing; a stale click stays on Launcher with an actionable error and never creates a shell. Confirm empty groups disappear, unrelated sessions remain usable, and a large inventory scrolls/refreshes without stalling the window. | Native functional + usability | `python3 scripts/check_running_sessions.py --batch 8 --cycles 3` automates isolated native and Unix-provider process/state continuity, create/attach/detach/exit/delete/recreate, identity/count/order and stale-click refusal; both optional runners include it. `--batch 32 --cycles 10` increases stress. Missing binaries/native Windows tmux/screen are explicitly skipped, not passed; WSL remains separate Linux evidence. Native GUI interaction/focus and large-inventory feel still require recorded platform evidence; this does not close CP-11 package/security obligations or SSH recovery #49 |
+
+The pinned VM adapter exposes `running-session-stress` with an empty payload
+and fixed 8-by-3 bounds. It calls the same CP-12 harness without a GUI, so
+native Windows ConPTY evidence can run independently of a guest's GPU support.
+The guest log records unavailable providers explicitly. Backend success does
+not establish native-window, keyboard/focus, or usability qualification.
+
+CP-12 automated evidence, 2026-09-15: macOS 26.6.2 arm64 developer builds
+passed the full required CI commands, all four native-daemon smoke tests,
+and the final default 8×3 churn run for sessiond, tmux 3.7c and GNU screen
+4.00.03. A 16×3 run also passed during implementation. These are automated
+native-process/headless results, not signed-package, native-window visual,
+Windows, Linux, WSL, or VM acceptance evidence.
+
+The subsequent 32-by-10 host run initially failed on screen's bounded `ps`
+query. Instrumentation reproduced a live, zero-output `ps` at its deadline;
+sampling identified accumulated detached-client PTY control workers spinning in
+`wait4`, not a completed child awaiting an async notification. Shutdown now drains
+and discards final client output, and disconnected controllers do not busy-poll.
+The churn harness also requires each detached/exited client's reader and control
+workers to complete. A controlled drop regression records the former timeout,
+and a separate deterministic discovery test makes a real subprocess timeout
+visible before coalesced explicit Refresh restores a known inventory. Unexpected
+provider errors in foreground churn remain failures, not hidden retries.
+
+After the correction, the same macOS host passed all three providers at
+32-by-10 with no command-error diagnostics. Across 4,609 screen identity queries,
+`ps` had a 25 ms median and 120 ms maximum; 113 full 33-PID queries had a 40 ms
+median and 59 ms maximum. The owned test process sampled after the first tmux
+cycle fell from 917% CPU before the fix to 4.2% afterward. The full required CI
+commands and four existing isolated native-daemon smoke/churn tests also passed.
+This follow-up is host backend/headless evidence only; parent-owned candidate
+VM and native GUI qualification are separate.
+
+The macOS provider-PATH regressions distinguish a bare executable found on
+inherited PATH from an absolute executable using normal login-environment
+correction. A controlled login shell with a deliberately different PATH
+reproduced the former required-CI assertion failure; the corrected tests also
+check that discovery actually executes with the PATH retained for attachment.
+Production discovery/attachment environment policy is unchanged.
+
+The macOS VM backend failure at `59ba3b7` exposed a separate checkout-depth
+problem: its generated native socket pathname was 106 bytes, beyond macOS's
+103-byte pathname limit. A host reproduction exposed `SUN_LEN` from the daemon;
+the old `start` helper had reported only its exit status. Startup now surfaces
+the invalid address, byte count and shorter-state-directory guidance.
+The harness creates a private `0700` temporary namespace under `/tmp` on Unix
+(normal temporary storage on Windows), independent of checkout and macOS's
+potentially long `TMPDIR`. Native registry/socket, tmux socket and screen socket
+isolation all remain within that owned namespace. Direct native smoke tests
+also default to short private roots; explicit overlong test roots fail with
+an actionable diagnostic. Success and ordinary runner failure clean owned
+resources; incomplete cleanup retains and reports only the owned namespace.
+All three providers passed 8-by-3 through a controlled 188-byte checkout path
+on the macOS host, and all four native smoke/churn tests passed with their new
+default roots. These are host backend results, not a rerun of the failed VM.
+
+Set `FESTERM_DISCOVERY_TIMING=1` when running `check_running_sessions.py` to
+record command argv, owned child PIDs, spawn/total elapsed milliseconds and
+exit statuses. This opt-in log includes local session names; it does not dump
+command output or environment values. Deadline diagnostics include stdout/stderr
+byte counts, EOF state and whether exit-wait started. The two-second provider
+I/O/exit deadline is unchanged; runtime/spawn overhead is measured separately.
+
+Reviewer-correction evidence on the same macOS host: all six ignored native
+daemon tests and default 8-by-3 churn passed. The native additions pin reconnect
+to a nondefault registry and generation, reject a replaced generation while its
+new client stays usable, and assert socket/lease removal after kill, natural
+exit and forced-death pruning before deleting fixture roots. A nonignored
+startup-failure regression also checks artifacts directly. Screen 4.00.03
+coverage now includes an already-attached session and a delayed/failing new
+client through the actual Launcher command, useful failure diagnostics, explicit
+Refresh/retry, and fresh same-shell PID/state proof from the recovered client.
+That intermediate candidate inspected the server's exact new terminal using
+bounded macOS `lsof` or Linux `/proc` descriptors. The Fedora follow-up below
+replaced the modern Screen inspection requirement with a public query.
+Earlier guest results on `59ba3b7` did not establish coverage for these corrections.
+The corrected candidate also passed sustained 32-by-10 host churn for all three
+providers (30 provider cycles), including the failing-client/recovery regression,
+with no command-error diagnostics and complete owned-namespace cleanup.
+Its 4,663 `ps` queries peaked at 70 ms and 337 `lsof` queries at 37 ms; the
+multiplexer test completed in 643.26 seconds. The owned test process sampled
+during Screen churn used 3.7% CPU rather than accumulating spinning workers.
+All required repository checks passed on the host. This remains backend/headless
+evidence, not updated guest or native-window qualification.
+
+The subsequent Linux VM at `7321011`, using actual Screen 4.9.1, failed after
+successful discovery, client confirmation, Launcher recovery and fresh state
+challenges: shutting down the recovered client left no Screen session for the
+original client. This was not an initial-list parser or startup-readiness
+failure. A retained-terminal PTY regression reproduced the dependency writer's
+destructor injecting newline/EOF after client exit. Unix writer teardown now
+uses a safe owned descriptor that sends no bytes. The deterministic regression
+failed with the old writer and passed with the correction; all 12 PTY tests and
+macOS 8-by-3 churn passed, including a new fresh challenge from the surviving
+Screen client after the recovered client shuts down. Actual Linux Screen 4.9.1
+must be rerun on this corrected candidate; earlier host passes are not that
+evidence. Discovery parsing, provider deadlines and Windows writer behavior are
+unchanged.
+
+Fedora portability follow-up: normal setgid Screen can be nondumpable, making
+`/proc/PID/fd` unsuitable as a required attachment check. Modern Screen now uses
+`-Q @echo` from the exact owned terminal, requiring initial terminal context and
+frontend PID to agree. It does not fall back to descriptor inspection after query
+failure. The old Apple `-Q`-unsupported case retains explicit `lsof` compatibility.
+Quiet-query tests reject another display's PID and a missing initial context,
+even when fallback returns the expected PID. A timeout regression checks removal
+of private query reply sockets while preserving the selected server socket.
+
+Actual source-built GNU Screen 4.9.1 and 5.0.1 on the macOS host passed 8-by-3 churn with
+`--deny-screen-process-inspection`, including delayed/failing attachment,
+Launcher recovery, no query messages on another display, fresh same-shell state
+and last-client detach. This switch injects denied inspection only into the Rust
+test binary, not production. Screen's graceful hangup handshake also resolved a
+last-client failure reproduced independently with the old inspection path;
+ignored hangups receive bounded escalation within the owned process group.
+These are host/provider and modeled-permission results, not an actual Fedora
+setgid-package or new VM qualification. Run
+`python3 scripts/check_running_sessions.py --batch 8 --cycles 3 --deny-screen-process-inspection`
+where the installed Screen supports public queries. Default runners retain old
+Screen compatibility; the fixed VM adapter requires no registration changes.
+Screen 5.0.1 places cursor-control sequences immediately after challenge text,
+which exposed a harness assumption that the response occupied an entire raw
+line. Explicit end markers now delimit the exact state/PID/challenge response;
+a deterministic regression rejects partial or mismatched replies while allowing
+the trailing terminal controls. This does not change production discovery or
+terminal parsing. Public-query authentication/permission failures stay on Launcher
+with diagnostics rather than publishing an unconfirmed client.
+
+CP-12 candidate VM evidence, 2026-09-15: exact source
+`9ba4563f5dc0013a3ebbd4074598ea6e46918e02` passed the fixed
+`running-session-stress` mode on all three dedicated guests, using reviewed
+shared controller `f93d6b0` and adapter `59ba3b7`. Each native run includes the
+generation/root reconnect and artifact-cleanup regressions, plus 8-by-3 churn.
+Provider-level logs were recovered in addition to the aggregate manifests.
+
+| Guest | Native sessiond | Multiplexer coverage |
+| --- | --- | --- |
+| Ubuntu Noble ARM64 | Three native tests passed; 8-by-3 churn passed | tmux and GNU Screen 4.9.1 each passed 8-by-3, including failed-client recovery and surviving-shell challenges |
+| Windows ARM64 | Three native ConPTY tests passed; 8-by-3 churn passed | tmux and Screen explicitly skipped as non-native providers; this is not WSL or GPU/window qualification |
+| macOS ARM64 | Three native tests passed; 8-by-3 churn passed | Apple Screen 4.00.03 passed 8-by-3; tmux was absent and explicitly skipped in this guest, with separate host coverage above |
+
+Private manifest and guest-log run identifiers:
+
+- Linux: `20260915T231031Z-linux-festerm-94cbebde-b855-4918-8356-7a9ac35a3c01`
+- Windows: `20260915T231340Z-windows-festerm-a63c8b58-3842-449a-8578-a047aada87d7`
+- macOS: `20260915T231546Z-macos-festerm-e2bcb324-24d1-45f6-8e9e-3871719f8360`
+
+Earlier failures remain recorded, rather than being replaced by successful
+retries. Missing guest Python and Screen prerequisites were supplied in
+user-owned locations with separate task baselines; original snapshots and
+privilege policies were preserved. The macOS guest's original Parallels Tools
+update reboot interrupted a run after its native cases passed; the successful
+run used an explicit post-update baseline. All three guests were stopped after
+evidence collection.
+
+These results establish native-process/backend coverage, not signed-package,
+Launcher focus/usability, native keyboard delivery, or actual Fedora
+setgid-package qualification. The latter remains distinct from the real-provider
+modeled-denial tests above. Those remaining checks stay in CP-11/CP-12 and #43.
+
+The saved-profile conversion also opts into graceful Screen shutdown, covering
+configured launch, relaunch and workspace restoration rather than only Running
+Sessions. The same isolated provider harness now exercises
+`StartConfiguredLocalProfile` twice, checks last-client detach and verifies the
+original shell PID/state from a subsequent inventory attachment. A configuration
+regression asserts that only Screen receives this policy and that working
+directories and other providers retain their existing behavior.
 
 ## Intake rule for new work
 

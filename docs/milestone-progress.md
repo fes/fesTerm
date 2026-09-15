@@ -3,6 +3,100 @@
 **Status:** Active project story; detailed acceptance evidence remains in
 [`milestone-acceptance-record.md`](milestone-acceptance-record.md).
 
+## Running Sessions discovery under churn (#155, September 2026)
+
+The refreshed Launcher exposed two correctness gaps behind apparently simple
+lists: every frame synchronously queried three providers, and local tmux/screen
+Reattach reused saved profiles' attach-or-create commands. Discovery now has one
+bounded background job and one coalesced refresh, with visible provider errors.
+Reattach checks the selected generation, waits for attachment off-thread, and
+keeps failed/stale attempts on Launcher rather than manufacturing a new shell.
+Native generation leases reject dead/reused-PID inventory; tmux uses server PID
+and immutable session IDs; screen uses full PID/name plus process start time.
+
+Real-provider churn caught additional platform differences: tmux 3.7 sanitizes
+literal tab delimiters, older GNU screen returns nonzero status for valid lists,
+and screen socket metadata can change during attach/detach or socket recreation. The corrected
+parsers use stable delimiters, validate recognized listing output, and report
+actual screen process start time through one bounded, batched `ps` query. Isolated repeatable tests prove fresh challenges
+reach the same shell PID/state, not merely replayed titles. These checks advance
+closed #70's local resume behavior and `LAUNCH-12`/`PROF-06`, without claiming
+SSH #49 recovery or the broader CP-11/#43 package/security/native GUI obligations
+are complete. CP-12 records the remaining native Launcher/usability evidence.
+
+Sustained 32-by-10 host churn then exposed a teardown bug that smaller inventories
+had hidden. Detached tmux clients vanished from inventory while their PTY control
+workers remained: cancellation stopped the reader before the client's last output
+could drain, and the disconnected control channel turned exit polling into a
+busy loop. The test process reached 917% CPU before later screen `ps` queries
+hit their unchanged two-second deadline. Readers now drain and discard shutdown
+output without publishing events, and stopped controllers pace their exit polls.
+The harness requires reader/control completion as well as provider transitions;
+a provider-independent drop regression reproduced the old failure. Explicit
+timeout-to-Refresh recovery is tested separately rather than retrying stress
+errors until they disappear.
+
+The macOS VM then exposed a different portability trap before churn could
+start: placing test sockets beneath a longer checkout exceeded the Unix socket
+pathname limit. The harness now owns short private temporary namespaces for
+all providers rather than depending on a short checkout or global relay change.
+Native startup reports the invalid address and byte count instead of hiding
+the daemon's socket error. Real-provider churn through a 188-byte checkout
+confirmed the path independence; cleanup failure remains explicit and retains
+only the test-owned namespace for diagnosis.
+
+Review then found three gaps not established by ordinary successful reattachment.
+A discovered native tab had forgotten its registry/generation on later reconnect;
+Screen mistook somebody else's attached flag for success of its own client; and
+forced daemon death left generation files behind the pruned registry. Reconnect
+now pins the original root and generation, Screen verifies its new terminal at
+the selected server, and kill/prune/startup failure clean exact dead-generation
+artifacts while retaining failed cleanup for retry. Fresh state challenges prove
+same-generation continuity and replacement rejection. The Screen regression
+drives a delayed/failing client through Launcher, retries successfully without
+disturbing an existing client, and exposed a separate harness cleanup race:
+Screen `quit` is asynchronous, so cleanup now waits boundedly for inventory
+removal rather than immediately reporting a leak.
+
+The Linux VM's actual Screen 4.9.1 run then lost the shared shell after the
+recovered client shut down, not during initial discovery. The pinned PTY
+dependency's Unix writer destructor sends newline/EOF even after its child
+exits. A deterministic retained-slave regression reproduced that unwanted input
+without Screen or scheduling retries. Unix clients now use an owned, safely
+duplicated descriptor whose destructor sends no bytes; the existing safe
+descriptor dependency was already locked through portable-pty. The isolated
+Screen regression also challenges the original shell after the second client's
+shutdown, rather than relying solely on an attached inventory flag.
+
+Fedora's normal setgid Screen package then exposed a portability limit in
+descriptor-based readiness: a nondumpable server can allow attachment while
+denying `/proc` inspection. Newer Screen now answers a quiet public query from
+the new client's own terminal. Initial terminal context and frontend PID must
+both match, rejecting Screen's fallback to another display. Its temporary reply
+sockets live in a private query namespace so a bounded timeout cannot leak files
+into user inventory. An explicit unsupported-query response retains old Apple
+Screen compatibility; errors never masquerade as success.
+
+Source-built Screen 4.9.1 exercised this path with process inspection deliberately
+denied. It also reproduced a distinct last-client shutdown failure with the old
+inspection path, while Screen's documented hangup handshake preserved the shell.
+Running Sessions now requests that graceful detach, escalating only against its
+owned process group if ignored. Real-provider churn covers failed clients,
+quiet confirmation, surviving-client state and last-client detach.
+Screen 5.0.1 additionally exposed a raw-output fixture assumption: terminal cursor
+controls can follow the response on the same line. Explicit response framing
+retains exact process/state verification without confusing terminal rendering
+bytes with the fresh challenge.
+
+The final integration pass moved the same graceful Screen shutdown choice into
+the shared saved-profile conversion. Launch, relaunch and workspace restoration
+therefore cannot bypass the policy used by inventory attachment. Configuration
+coverage keeps fresh shells, tmux and native profiles unchanged, while the real
+Screen harness launches and relaunches a saved profile and challenges the same
+shell again after the last client closes.
+
+## Foundation and acceptance history
+
 fesTerm began foundation-first: M0 through M3 established a testable terminal
 core, ANSI/VT state, and interactive input before a native window or session
 backend could obscure defects. M4 added the egui renderer and input boundary;

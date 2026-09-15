@@ -7,8 +7,10 @@
 mod app;
 mod configuration_startup;
 mod diagnostics;
+mod discovery;
 mod environment;
 mod inspector;
+mod local_command;
 mod markdown_viewer;
 mod multiplexer_sessions;
 mod native_smoke;

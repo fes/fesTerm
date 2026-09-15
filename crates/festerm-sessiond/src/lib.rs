@@ -80,32 +80,98 @@ pub struct UnattachedSession {
     pub arguments: Vec<String>,
     pub working_directory: Option<String>,
     pub created_at_unix_ms: u128,
+    /// Daemon generation, not just the reusable display name.
+    pub pid: u32,
+    pub endpoint: String,
 }
 
 /// Enumerates locally registered `festerm-sessiond` sessions that are alive
 /// but currently have no attached client, suitable for surfacing as
 /// one-click "resume" entries on the New Session/Launcher screen.
 ///
-/// Returns an empty list (rather than an error) if the daemon's registry is
-/// unavailable, absent, or otherwise unreadable, since the Launcher should
-/// behave exactly as it does today when `festerm-sessiond` is disabled or
-/// not present.
-pub fn list_unattached_local_sessions() -> Vec<UnattachedSession> {
-    let Ok(registry) = load_registry() else {
-        return Vec::new();
-    };
-    registry
-        .sessions
-        .into_values()
-        .filter(|record| !record.attached && process_alive(record.pid))
-        .map(|record| UnattachedSession {
+/// A missing registry is ordinary absence; corrupt, inaccessible, or busy
+/// registries are explicit errors. The registry lock has a bounded deadline.
+pub fn list_unattached_local_sessions() -> Result<Vec<UnattachedSession>, PersistentSessionError> {
+    list_unattached_sessions_in(&runtime_root()?)
+}
+
+/// Explicit runtime-root seam for isolated native validation.
+pub fn list_unattached_sessions_in(
+    root: &std::path::Path,
+) -> Result<Vec<UnattachedSession>, PersistentSessionError> {
+    let mut sessions = Vec::new();
+    for (name, record) in load_registry_in(root)?.sessions {
+        if record.name != name || PersistentSessionName::new(&name).is_err() {
+            return Err(PersistentSessionError::new(
+                "session registry contains an invalid or inconsistent session identity",
+            ));
+        }
+        if record.attached || !record_is_live(root, &record)? {
+            continue;
+        }
+        sessions.push(UnattachedSession {
             name: record.name,
             shell: record.shell,
             arguments: record.arguments,
             working_directory: record.working_directory,
             created_at_unix_ms: record.created_at_unix_ms,
-        })
-        .collect()
+            pid: record.pid,
+            endpoint: record.socket,
+        });
+    }
+    sessions.sort_by(|a, b| a.name.cmp(&b.name).then(a.endpoint.cmp(&b.endpoint)));
+    Ok(sessions)
+}
+
+fn record_is_live(
+    root: &std::path::Path,
+    record: &SessionRecord,
+) -> Result<bool, PersistentSessionError> {
+    if cfg!(unix) && !std::path::Path::new(&record.socket).exists() {
+        return Ok(false);
+    }
+    daemon_generation_is_live(root, record.pid, record.created_at_unix_ms, &record.socket)
+}
+
+/// Shared by Launcher discovery and the helper's list/start/kill operations.
+/// New generations hold a lifetime lease; a reused PID is not a live daemon.
+/// Legacy endpoints retain their older PID-based compatibility behavior.
+pub fn daemon_generation_is_live(
+    root: &std::path::Path,
+    pid: u32,
+    created_at_unix_ms: u128,
+    endpoint: &str,
+) -> Result<bool, PersistentSessionError> {
+    if !process_alive(pid) {
+        return Ok(false);
+    }
+    let generation = format!("{pid}-{created_at_unix_ms}");
+    // Older helpers used name-based endpoints and have no lifetime lease.
+    if !endpoint.ends_with(&generation) && !endpoint.ends_with(&format!("{generation}.sock")) {
+        return Ok(true);
+    }
+    let path = root.join(format!("lease-{generation}"));
+    let lease = match OpenOptions::new().read(true).open(path) {
+        Ok(lease) => lease,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(PersistentSessionError::new(format!(
+                "could not inspect daemon lifetime: {error}"
+            )))
+        }
+    };
+    match FileExt::try_lock_shared(&lease) {
+        Ok(()) => Ok(false),
+        Err(error) if lock_is_contended(&error) => Ok(true),
+        Err(error) => Err(PersistentSessionError::new(format!(
+            "could not inspect daemon lifetime: {error}"
+        ))),
+    }
+}
+
+fn lock_is_contended(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
 }
 
 #[cfg(unix)]
@@ -294,6 +360,34 @@ impl PersistentSession {
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
         let stream = connect_existing(name.as_str())?;
         Self::from_named_stream(stream, notifier, name.as_str().to_owned())
+    }
+
+    /// Attach the selected generation only. A replaced name or newly attached
+    /// session is not permission to create a shell or steal another GUI client.
+    pub fn resume_discovered_with_notifier(
+        selected: &UnattachedSession,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::resume_discovered_in(selected, &runtime_root()?, notifier)
+    }
+
+    pub fn resume_discovered_in(
+        selected: &UnattachedSession,
+        root: &std::path::Path,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let stream = connect_discovered_with_cancel(selected, root, true, &AtomicBool::new(false))?;
+        let selected = selected.clone();
+        let root = root.to_owned();
+        Self::from_stream_with_reconnector(
+            stream,
+            notifier,
+            Some(Arc::new(move |cancelled| {
+                // Manual reconnect retains steal-on-reconnect, but only for
+                // the generation selected from this registry.
+                connect_discovered_with_cancel(&selected, &root, false, cancelled)
+            })),
+        )
     }
 
     fn from_named_stream(
@@ -517,6 +611,29 @@ fn finish_cancelled_reconnect(shared: &Shared, completion: &SyncSender<ShutdownR
 
 fn connect_existing(name: &str) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
     connect_existing_with_cancel(name, &AtomicBool::new(false))
+}
+
+fn connect_discovered_with_cancel(
+    selected: &UnattachedSession,
+    root: &std::path::Path,
+    require_unattached: bool,
+    cancelled: &AtomicBool,
+) -> Result<Box<dyn SessionStream>, PersistentSessionError> {
+    let registry = load_registry_in_with_cancel(root, cancelled)?;
+    let record = registry.sessions.get(&selected.name).filter(|record| {
+        record.pid == selected.pid
+            && record.created_at_unix_ms == selected.created_at_unix_ms
+            && record.socket == selected.endpoint
+            && (!require_unattached || !record.attached)
+    }).ok_or_else(|| PersistentSessionError::new(
+        "The selected native session exited, changed, or attached elsewhere. Refresh Running Sessions and try again."
+    ))?;
+    if !record_is_live(root, record)? {
+        return Err(PersistentSessionError::new(
+            "The selected native daemon is no longer running. Refresh Running Sessions.",
+        ));
+    }
+    connect_record_with_cancel(record, cancelled)
 }
 
 fn connect_existing_with_cancel(
@@ -1080,7 +1197,15 @@ fn connect_record_with_cancel(
     let _pid = record.pid;
     #[cfg(unix)]
     {
-        let stream = UnixStream::connect(&record.socket).map_err(|error| {
+        let connect = || -> io::Result<UnixStream> {
+            let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+            socket.connect_timeout(
+                &socket2::SockAddr::unix(&record.socket)?,
+                Duration::from_secs(2),
+            )?;
+            Ok(socket.into())
+        };
+        let stream = connect().map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
         })?;
         stream
@@ -1132,6 +1257,20 @@ fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
 
 fn load_registry() -> Result<SessionRegistry, PersistentSessionError> {
     let root = runtime_root()?;
+    load_registry_in(&root)
+}
+
+fn load_registry_in(root: &std::path::Path) -> Result<SessionRegistry, PersistentSessionError> {
+    load_registry_in_with_cancel(root, &AtomicBool::new(false))
+}
+
+fn load_registry_in_with_cancel(
+    root: &std::path::Path,
+    cancelled: &AtomicBool,
+) -> Result<SessionRegistry, PersistentSessionError> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(PersistentSessionError::new("session connection cancelled"));
+    }
     let lock_path = root.join("registry.lock");
     let registry_path = root.join("registry.json");
     let lock = match OpenOptions::new().read(true).open(&lock_path) {
@@ -1141,16 +1280,38 @@ fn load_registry() -> Result<SessionRegistry, PersistentSessionError> {
         }
         Err(error) => return Err(PersistentSessionError::new(error.to_string())),
     };
-    lock.lock_shared()
-        .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    let deadline = Instant::now() + Duration::from_millis(500);
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(PersistentSessionError::new("session connection cancelled"));
+        }
+        match FileExt::try_lock_shared(&lock) {
+            Ok(()) => break,
+            Err(error) if lock_is_contended(&error) && Instant::now() < deadline => {
+                thread::sleep(POLL_INTERVAL);
+            }
+            Err(error) => {
+                return Err(PersistentSessionError::new(format!(
+                    "session registry unavailable (lock deadline 500 ms): {error}"
+                )))
+            }
+        }
+    }
     let registry = read_registry(&registry_path);
     FileExt::unlock(&lock).map_err(|error| PersistentSessionError::new(error.to_string()))?;
     registry
 }
 
 fn read_registry(path: &PathBuf) -> Result<SessionRegistry, PersistentSessionError> {
-    match std::fs::read(path) {
-        Ok(bytes) if bytes.is_empty() => Ok(SessionRegistry::default()),
+    let bytes = std::fs::File::open(path).and_then(|file| {
+        let mut bytes = Vec::new();
+        file.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > 4 * 1024 * 1024 {
+            return Err(io::Error::other("session registry exceeds 4 MiB"));
+        }
+        Ok(bytes)
+    });
+    match bytes {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
             PersistentSessionError::new(format!("could not parse session registry: {error}"))
         }),
@@ -2031,7 +2192,7 @@ mod tests {
         (header[4], payload)
     }
 
-    fn wait_for_lifecycle(
+    pub(super) fn wait_for_lifecycle(
         session: &PersistentSession,
         predicate: impl Fn(&SessionLifecycle) -> bool,
     ) -> SessionLifecycle {
@@ -2062,6 +2223,204 @@ mod tests {
 #[cfg(test)]
 mod registry_filtering_tests {
     use super::*;
+
+    struct RegistryFixture(PathBuf);
+    impl RegistryFixture {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let path = std::env::current_dir().unwrap().join(format!(
+                ".registry-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for RegistryFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn registry_absence_corruption_and_lock_contention_have_distinct_bounded_results() {
+        let fixture = RegistryFixture::new();
+        assert!(list_unattached_sessions_in(&fixture.0).unwrap().is_empty());
+        std::fs::write(fixture.0.join("registry.json"), b"broken").unwrap();
+        assert!(list_unattached_sessions_in(&fixture.0)
+            .unwrap_err()
+            .to_string()
+            .contains("parse"));
+        let lock = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join("registry.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+        let started = Instant::now();
+        assert!(list_unattached_sessions_in(&fixture.0)
+            .unwrap_err()
+            .to_string()
+            .contains("lock deadline"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovered_reconnect_after_eof_keeps_root_and_rejects_each_changed_identity() {
+        use super::tests::wait_for_lifecycle;
+        use std::os::unix::net::UnixListener;
+
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        // A relative endpoint stays within Unix socket path limits while
+        // the explicitly selected registry remains an absolute path.
+        let endpoint =
+            PathBuf::from(fixture.0.file_name().unwrap()).join(format!("{pid}-123.sock"));
+        let listener = UnixListener::bind(&endpoint).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let lease = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join(format!("lease-{pid}-123")))
+            .unwrap();
+        lease.lock_exclusive().unwrap();
+        let original = serde_json::json!({
+            "name":"demo", "pid":pid, "socket":endpoint,
+            "created_at_unix_ms":123, "attached":false
+        });
+        let write = |record: &serde_json::Value| {
+            std::fs::write(
+                fixture.0.join("registry.json"),
+                serde_json::to_vec(&serde_json::json!({"sessions":{"demo":record}})).unwrap(),
+            )
+            .unwrap();
+        };
+        write(&original);
+        let selected = list_unattached_sessions_in(&fixture.0).unwrap().remove(0);
+        let session = PersistentSession::resume_discovered_in(
+            &selected,
+            &fixture.0,
+            noop_session_event_notifier(),
+        )
+        .unwrap();
+        let id = session.id();
+        let (server, _) = listener.accept().unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        drop(server);
+        wait_for_lifecycle(&session, |state| {
+            matches!(state, SessionLifecycle::Disconnected(_))
+        });
+        let mut attached = original.clone();
+        attached["attached"] = true.into();
+        write(&attached);
+        session.try_reconnect().unwrap();
+        wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        let (server, _) = listener.accept().unwrap();
+        assert_eq!(session.id(), id);
+        drop(server);
+        wait_for_lifecycle(&session, |state| {
+            matches!(state, SessionLifecycle::Disconnected(_))
+        });
+
+        for (field, replacement) in [
+            ("pid", serde_json::json!(pid + 1)),
+            ("created_at_unix_ms", serde_json::json!(124)),
+            ("socket", serde_json::json!("replacement.sock")),
+        ] {
+            let mut replaced = original.clone();
+            replaced[field] = replacement;
+            write(&replaced);
+            session.try_reconnect().unwrap();
+            wait_for_lifecycle(
+                &session,
+                |state| matches!(state, SessionLifecycle::Disconnected(error) if error.message().contains("changed")),
+            );
+            assert!(format!("{:?}", session.lifecycle()).contains("changed"));
+            assert_eq!(
+                listener.accept().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+        }
+        write(&original);
+        FileExt::unlock(&lease).unwrap();
+        session.try_reconnect().unwrap();
+        wait_for_lifecycle(
+            &session,
+            |state| matches!(state, SessionLifecycle::Disconnected(error) if error.message().contains("no longer running")),
+        );
+        assert!(format!("{:?}", session.lifecycle()).contains("no longer running"));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn selected_registry_load_honors_cancellation_before_reading_or_waiting() {
+        let fixture = RegistryFixture::new();
+        std::fs::write(fixture.0.join("registry.json"), b"broken").unwrap();
+        let cancelled = AtomicBool::new(true);
+        assert!(load_registry_in_with_cancel(&fixture.0, &cancelled)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("cancelled"));
+        let lock = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join("registry.lock"))
+            .unwrap();
+        lock.lock_exclusive().unwrap();
+        assert!(load_registry_in_with_cancel(&fixture.0, &cancelled)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("cancelled"));
+    }
+
+    #[test]
+    fn generation_lease_excludes_stale_pid_records_and_attached_native_sessions() {
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        let endpoint = fixture.0.join(format!("{pid}-123.sock"));
+        std::fs::write(&endpoint, b"").unwrap();
+        let lease = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(fixture.0.join(format!("lease-{pid}-123")))
+            .unwrap();
+        let write = |attached| {
+            let registry = serde_json::json!({"sessions":{"demo":{"name":"demo","pid":pid,"socket":endpoint,"shell":"test-shell","created_at_unix_ms":123,"attached":attached}}});
+            std::fs::write(
+                fixture.0.join("registry.json"),
+                serde_json::to_vec(&registry).unwrap(),
+            )
+            .unwrap();
+        };
+        write(false);
+        assert!(
+            list_unattached_sessions_in(&fixture.0).unwrap().is_empty(),
+            "a reused live PID is not a live daemon lease"
+        );
+        lease.lock_exclusive().unwrap();
+        let sessions = list_unattached_sessions_in(&fixture.0).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].pid, pid);
+        assert_eq!(sessions[0].shell, "test-shell");
+        write(true);
+        assert!(list_unattached_sessions_in(&fixture.0).unwrap().is_empty());
+        write(false);
+        FileExt::unlock(&lease).unwrap();
+        assert!(list_unattached_sessions_in(&fixture.0).unwrap().is_empty());
+        assert!(PersistentSession::resume_discovered_in(
+            &sessions[0],
+            &fixture.0,
+            noop_session_event_notifier()
+        )
+        .is_err());
+    }
 
     #[test]
     fn registry_round_trip_ignores_unknown_fields_and_defaults_new_ones() {
@@ -2094,6 +2453,8 @@ mod registry_filtering_tests {
             .into_values()
             .filter(|record| !record.attached)
             .map(|record| UnattachedSession {
+                pid: record.pid,
+                endpoint: record.socket,
                 name: record.name,
                 shell: record.shell,
                 arguments: record.arguments,

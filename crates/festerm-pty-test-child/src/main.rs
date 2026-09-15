@@ -16,6 +16,7 @@
 //! | `read-line` | Read one line from stdin; strip trailing CR/LF. |
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
+//! | `report-pid` | Write `PID:{pid}:END\n` for process-continuity assertions. |
 //! | `spin` | Sleep until the process is killed. |
 //! | `spawn` | Spawn self as a long-running descendant, write `CHILD:{pid}\n`, then wait for it. |
 //! | `exit:N` | Exit with decimal code N. |
@@ -69,6 +70,10 @@ fn main() {
             let mut out = stdout.lock();
             writeln!(out, "{prefix}:{last_line}").expect("echo: stdout write succeeds");
             out.flush().expect("echo: stdout flush succeeds");
+        } else if arg == "report-pid" {
+            let mut out = stdout.lock();
+            writeln!(out, "PID:{}:END", process::id()).expect("report-pid: stdout write succeeds");
+            out.flush().expect("report-pid: stdout flush succeeds");
         } else if arg == "report-size" {
             let (Width(cols), Height(rows)) =
                 terminal_size().expect("report-size: PTY provides terminal dimensions");

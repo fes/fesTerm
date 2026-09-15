@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-#[cfg(test)]
+#[cfg(any(test, unix))]
 use std::time::Instant;
 
 use festerm_session::{
@@ -71,6 +71,7 @@ pub struct LocalProfile {
     arguments: Vec<OsString>,
     working_directory: Option<PathBuf>,
     environment: EnvironmentPolicy,
+    hangup_on_shutdown: bool,
 }
 
 impl LocalProfile {
@@ -80,6 +81,7 @@ impl LocalProfile {
             arguments: Vec::new(),
             working_directory: None,
             environment: EnvironmentPolicy::Inherit,
+            hangup_on_shutdown: false,
         }
     }
 
@@ -97,6 +99,17 @@ impl LocalProfile {
 
     pub fn environment(&self) -> &EnvironmentPolicy {
         &self.environment
+    }
+
+    pub fn hangup_on_shutdown(&self) -> bool {
+        self.hangup_on_shutdown
+    }
+
+    /// Requests a graceful Unix terminal hangup before bounded signal escalation.
+    /// Windows process-tree shutdown is unchanged.
+    pub fn with_unix_hangup_on_shutdown(mut self) -> Self {
+        self.hangup_on_shutdown = true;
+        self
     }
 
     pub fn with_arguments<I, S>(mut self, arguments: I) -> Self
@@ -424,16 +437,24 @@ enum SessionCommand {
 struct ProcessTree {
     #[cfg(unix)]
     process_group: i32,
+    #[cfg(unix)]
+    hangup_on_shutdown: bool,
     #[cfg(windows)]
     job: WindowsJob,
 }
 
 impl ProcessTree {
     #[cfg(unix)]
-    fn from_master(master: &dyn MasterPty) -> Result<Self, LocalPtyError> {
+    fn from_master(
+        master: &dyn MasterPty,
+        hangup_on_shutdown: bool,
+    ) -> Result<Self, LocalPtyError> {
         master
             .process_group_leader()
-            .map(|process_group| Self { process_group })
+            .map(|process_group| Self {
+                process_group,
+                hangup_on_shutdown,
+            })
             .ok_or_else(|| {
                 LocalPtyError::new(
                     "could not determine the local PTY session process group for shutdown",
@@ -465,10 +486,11 @@ impl ProcessTree {
     fn terminate(&self) -> Result<(), String> {
         #[cfg(unix)]
         {
-            match kill(Pid::from_raw(-self.process_group), Signal::SIGTERM) {
-                Ok(()) | Err(Errno::ESRCH) => Ok(()),
-                Err(error) => Err(error.to_string()),
-            }
+            self.signal(if self.hangup_on_shutdown {
+                Signal::SIGHUP
+            } else {
+                Signal::SIGTERM
+            })
         }
 
         #[cfg(windows)]
@@ -479,6 +501,16 @@ impl ProcessTree {
         #[cfg(not(any(unix, windows)))]
         {
             Err("local PTY process-tree ownership is unsupported on this platform".to_owned())
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ProcessTree {
+    fn signal(&self, signal: Signal) -> Result<(), String> {
+        match kill(Pid::from_raw(-self.process_group), signal) {
+            Ok(()) | Err(Errno::ESRCH) => Ok(()),
+            Err(error) => Err(error.to_string()),
         }
     }
 }
@@ -648,6 +680,8 @@ impl Shared {
 
 /// A native local-shell session driven by bounded worker queues.
 pub struct LocalPtySession {
+    process_id: Option<u32>,
+    terminal_device: Option<PathBuf>,
     shared: Arc<Shared>,
     command_sender: SyncSender<SessionCommand>,
     event_receiver: Mutex<Receiver<SessionEvent>>,
@@ -688,17 +722,22 @@ impl LocalPtySession {
         let reader = pair.master.try_clone_reader().map_err(|error| {
             LocalPtyError::new(format!("could not open local PTY reader: {error}"))
         })?;
-        let writer = pair.master.take_writer().map_err(|error| {
+        let writer = local_pty_writer(&*pair.master).map_err(|error| {
             LocalPtyError::new(format!("could not open local PTY writer: {error}"))
         })?;
         let mut child = pair
             .slave
             .spawn_command(command)
             .map_err(|error| LocalPtyError::new(format!("could not start local shell: {error}")))?;
+        let process_id = child.process_id();
+        #[cfg(unix)]
+        let terminal_device = pair.master.tty_name();
+        #[cfg(not(unix))]
+        let terminal_device = None;
         let process_tree_result = {
             #[cfg(unix)]
             {
-                ProcessTree::from_master(&*pair.master)
+                ProcessTree::from_master(&*pair.master, profile.hangup_on_shutdown())
             }
             #[cfg(windows)]
             {
@@ -772,6 +811,8 @@ impl LocalPtySession {
             })?;
 
         Ok(Self {
+            process_id,
+            terminal_device,
             shared,
             command_sender,
             event_receiver: Mutex::new(event_receiver),
@@ -781,6 +822,16 @@ impl LocalPtySession {
     /// Starts the safe platform default interactive shell.
     pub fn start_default(size: TerminalSize) -> Result<Self, LocalPtyError> {
         Self::start_default_with_preference(size, true)
+    }
+
+    /// Identity of the directly owned client process (not its persistent server).
+    pub fn process_id(&self) -> Option<u32> {
+        self.process_id
+    }
+
+    /// The Unix slave device allocated for this client, not its server's PTY.
+    pub fn terminal_device(&self) -> Option<&Path> {
+        self.terminal_device.as_deref()
     }
 
     /// Starts the safe platform default shell with the caller's Windows
@@ -979,6 +1030,25 @@ fn send_command(
     }
 }
 
+#[cfg(unix)]
+fn local_pty_writer(master: &dyn MasterPty) -> Result<Box<dyn Write + Send>, LocalPtyError> {
+    // portable-pty's Unix writer injects newline/VEOF on Drop. A multiplexer
+    // can still own the slave after its client exits; shutdown must send no input.
+    let descriptor = master
+        .as_raw_fd()
+        .ok_or_else(|| LocalPtyError::new("local PTY master has no Unix descriptor"))?;
+    let writer = filedescriptor::FileDescriptor::dup(&descriptor)
+        .map_err(|error| LocalPtyError::new(error.to_string()))?;
+    Ok(Box::new(writer))
+}
+
+#[cfg(not(unix))]
+fn local_pty_writer(master: &dyn MasterPty) -> Result<Box<dyn Write + Send>, LocalPtyError> {
+    master
+        .take_writer()
+        .map_err(|error| LocalPtyError::new(error.to_string()))
+}
+
 fn reader_worker(
     shared: Arc<Shared>,
     mut reader: Box<dyn Read + Send>,
@@ -986,17 +1056,21 @@ fn reader_worker(
 ) {
     let mut buffer = vec![0_u8; MAX_IO_CHUNK_BYTES.min(16 * 1024)];
     loop {
-        if shared.cancel.load(Ordering::Acquire) {
-            let _ = done_sender.send(Ok(()));
-            return;
-        }
         match reader.read(&mut buffer) {
             Ok(0) => {
                 let _ = done_sender.send(Ok(()));
                 return;
             }
             Ok(read) => {
+                // Keep draining after cancellation, without publishing events:
+                // a terminal client can need its last output drained to exit.
+                if shared.cancel.load(Ordering::Acquire) {
+                    continue;
+                }
                 if !shared.emit_output(buffer[..read].to_vec()) {
+                    if shared.cancel.load(Ordering::Acquire) {
+                        continue;
+                    }
                     let _ = done_sender.send(Ok(()));
                     return;
                 }
@@ -1031,6 +1105,8 @@ fn control_worker(
 ) {
     let mut stopping = false;
     let mut worker_failure = None;
+    #[cfg(unix)]
+    let mut hangup_progress = None;
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             stopping = true;
@@ -1098,6 +1174,39 @@ fn control_worker(
                 }
                 shared.terminate_process_tree();
                 break;
+            }
+            Ok(None) if stopping => {
+                #[cfg(unix)]
+                if let Some(tree) = shared
+                    .process_tree
+                    .as_ref()
+                    .filter(|tree| tree.hangup_on_shutdown)
+                {
+                    let (started, phase) = hangup_progress.get_or_insert((Instant::now(), 0));
+                    let next = if started.elapsed() >= Duration::from_secs(1) {
+                        2
+                    } else if started.elapsed() >= Duration::from_millis(250) {
+                        1
+                    } else {
+                        0
+                    };
+                    if next > *phase {
+                        *phase = next;
+                        let signal = if next == 1 {
+                            Signal::SIGTERM
+                        } else {
+                            Signal::SIGKILL
+                        };
+                        if let Err(error) = tree.signal(signal) {
+                            shared.record_error(SessionError::new(
+                                SessionErrorKind::Shutdown,
+                                format!("could not escalate local client shutdown: {error}"),
+                            ));
+                        }
+                    }
+                }
+                // A disconnected command channel returns immediately.
+                thread::sleep(POLL_INTERVAL);
             }
             Ok(None) => {}
             Err(error) => {
@@ -1549,6 +1658,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn dropping_a_client_with_pending_terminal_output_retires_its_workers() {
+        let profile = LocalProfile::new("/bin/sh").with_arguments([
+            "-c",
+            "trap 'printf \"%65536s\" closing; exit 0' TERM; printf 'READY\\n'; while IFS= read -r line; do :; done",
+        ]);
+        let session = LocalPtySession::start(profile, TerminalSize::new(80, 24).unwrap()).unwrap();
+        let mut output = Vec::new();
+        wait_for(&session, Duration::from_secs(4), &mut output, |bytes| {
+            bytes.windows(5).any(|window| window == b"READY")
+        });
+        let shared = Arc::clone(&session.shared);
+        drop(session);
+        assert_eq!(
+            shared
+                .completion_receiver
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2)),
+            Ok(Ok(ShutdownResult::Stopped))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn shutdown_terminates_a_shell_descendant_in_its_process_group() {
         // Uses the repository-owned test child instead of /bin/sh + sleep.
         let profile = LocalProfile::new(test_child_path()).with_arguments(["spawn"]);
@@ -1672,6 +1805,72 @@ mod tests {
              manually and re-run these tests"
         );
         path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn graceful_client_shutdown_uses_hangup_and_bounds_signal_escalation() {
+        for script in [
+            "trap 'exit 0' HUP; trap '' TERM; printf READY; sleep 5",
+            "trap '' HUP TERM; printf READY; exec sleep 5",
+        ] {
+            let profile = LocalProfile::new("/bin/sh").with_arguments(["-c", script]);
+            assert!(!profile.hangup_on_shutdown());
+            let session = LocalPtySession::start(
+                profile.with_unix_hangup_on_shutdown(),
+                TerminalSize::new(80, 24).unwrap(),
+            )
+            .unwrap();
+            let mut output = Vec::new();
+            wait_for(&session, Duration::from_secs(2), &mut output, |bytes| {
+                bytes.windows(5).any(|window| window == b"READY")
+            });
+            session.shutdown(Duration::from_secs(3)).unwrap();
+            assert!(matches!(session.lifecycle(), SessionLifecycle::Stopped));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_pty_writer_does_not_send_input_to_a_retained_terminal() {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let pair = native_pty_system()
+            .openpty(to_portable_size(TerminalSize::new(80, 24).unwrap()))
+            .unwrap();
+        let mut retained = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(nix::libc::O_NOCTTY | nix::libc::O_NONBLOCK)
+            .open(pair.master.tty_name().unwrap())
+            .unwrap();
+        let writer = local_pty_writer(&*pair.master).unwrap();
+        let mut barrier =
+            filedescriptor::FileDescriptor::dup(&pair.master.as_raw_fd().unwrap()).unwrap();
+
+        // Model Screen retaining the client terminal after its attacher exits.
+        // A later explicit write orders the assertion without an absence timer.
+        drop(writer);
+        barrier.write_all(b"after-drop\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut observed = Vec::new();
+        let mut buffer = [0; 64];
+        while !observed.ends_with(b"after-drop\n") {
+            match retained.read(&mut buffer) {
+                Ok(0) => panic!("writer teardown injected EOF into the retained terminal"),
+                Ok(count) => observed.extend_from_slice(&buffer[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "terminal barrier timed out");
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("retained terminal read failed: {error}"),
+            }
+            assert!(
+                observed.len() <= 64,
+                "unexpected terminal input: {observed:?}"
+            );
+        }
+        assert_eq!(observed, b"after-drop\n");
     }
 
     #[cfg(unix)]

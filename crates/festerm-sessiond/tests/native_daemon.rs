@@ -15,8 +15,677 @@ const STOLEN_NOTICE: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 const EXITED_NOTICE: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
+#[cfg(unix)]
+#[test]
+fn native_start_reports_socket_depth_without_starting_a_shell() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let base = short_runtime_root("overlong");
+    let _base_cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: base.clone(),
+        names: Vec::new(),
+    };
+    let runtime = base.join("x".repeat(120));
+    fs::create_dir(&runtime).unwrap();
+    let _session_cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: "owned-overlong".into(),
+    };
+    let marker = base.join("unexpected-shell");
+    let mut command = daemon_command(&executable, &runtime);
+    command
+        .args([
+            "start",
+            "--name",
+            "owned-overlong",
+            "--shell",
+            "/usr/bin/touch",
+            "--arg",
+        ])
+        .arg(&marker);
+    let output = run_start_command(command);
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("invalid Unix session socket"), "{error}");
+    assert!(error.contains("path bytes"), "{error}");
+    assert!(error.contains("shorter XDG_STATE_HOME"), "{error}");
+    assert!(
+        !marker.exists(),
+        "an invalid endpoint must not start a shell"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn native_start_failure_removes_generation_artifacts_before_root_cleanup() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("failed-shell");
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: "failed-shell".into(),
+    };
+    let mut command = daemon_command(&executable, &runtime);
+    command.args([
+        "start",
+        "--name",
+        "failed-shell",
+        "--shell",
+        "/festerm-owned-nonexistent-shell",
+    ]);
+    let output = run_start_command(command);
+    assert!(!output.status.success());
+    let registry = runtime.join("festerm/sessiond");
+    assert!(festerm_sessiond::list_unattached_sessions_in(&registry)
+        .unwrap()
+        .is_empty());
+    assert!(
+        fs::read_dir(&registry).unwrap().all(|entry| {
+            let path = entry.unwrap().path();
+            !path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("lease-")
+                && path.extension().is_none_or(|extension| extension != "sock")
+        }),
+        "failed startup left generation artifacts"
+    );
+}
+
+fn assert_generation_artifacts_removed(
+    root: &Path,
+    selected: &festerm_sessiond::UnattachedSession,
+) {
+    let lease = root.join(format!(
+        "lease-{}-{}",
+        selected.pid, selected.created_at_unix_ms
+    ));
+    bounded_poll(
+        || {
+            !lease.try_exists().unwrap()
+                && (!cfg!(unix) || !Path::new(&selected.endpoint).try_exists().unwrap())
+        },
+        "generation artifact cleanup",
+    );
+}
+
+/// Uses the production inventory/resume APIs in an isolated registry. The
+/// deterministic child reports its PID *after* a fresh post-reattach input,
+/// so replay text alone cannot satisfy the continuity assertion.
+#[test]
+#[ignore = "isolated native churn; included in the optional-validation runner"]
+fn native_discovery_churn_preserves_process_and_rejects_replaced_generations() {
+    use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
+    use festerm_sessiond::{list_unattached_sessions_in, PersistentSession};
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let batch = churn_setting("FESTERM_SESSION_CHURN_BATCH", 8, 128);
+    let cycles = churn_setting("FESTERM_SESSION_CHURN_CYCLES", 3, 100);
+    let runtime = short_runtime_root("churn");
+    fs::create_dir_all(&runtime).unwrap();
+    let registry = runtime
+        .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
+        .join("sessiond");
+    let mut cleanups = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let mut windows_children = Vec::<std::process::Child>::new();
+    let inventory = || list_unattached_sessions_in(&registry).unwrap();
+    let read_until = read_session_until;
+    for cycle in 0..cycles {
+        for index in 0..batch {
+            let name = format!("churn-{}-{index:04}", std::process::id());
+            cleanups.names.push(name.clone());
+            let shell = pty_test_child(&executable);
+            let args = [
+                "report-pid",
+                "read-line",
+                "echo:BEFORE",
+                "read-line",
+                "report-pid",
+                "echo:AFTER",
+                "read-line",
+                "exit:0",
+            ];
+            #[cfg(unix)]
+            launch_session_with(&executable, &runtime, &name, &shell, &args);
+            #[cfg(windows)]
+            windows_children.push(launch_session_with(
+                &executable,
+                &runtime,
+                &name,
+                &shell,
+                &args,
+            ));
+        }
+        bounded_poll(|| inventory().len() == batch, "batch discovery");
+        let selected = inventory();
+        assert!(selected.windows(2).all(|pair| pair[0].name < pair[1].name));
+        for (index, selected) in selected.iter().enumerate() {
+            assert_eq!(
+                selected.shell,
+                pty_test_child(&executable).to_string_lossy()
+            );
+            let first = PersistentSession::resume_discovered_in(
+                selected,
+                &registry,
+                noop_session_event_notifier(),
+            )
+            .unwrap();
+            let pid_output = read_until(&first, "PID:");
+            let pid = pid_output
+                .split("PID:")
+                .nth(1)
+                .unwrap()
+                .split(":END")
+                .next()
+                .unwrap()
+                .trim()
+                .to_owned();
+            first
+                .try_send_input(&test_input(&format!("first-{cycle}-{index}")))
+                .unwrap();
+            read_until(&first, &format!("BEFORE:first-{cycle}-{index}"));
+            bounded_poll(
+                || !inventory().iter().any(|entry| entry.name == selected.name),
+                "attached native exclusion",
+            );
+            drop(first);
+            bounded_poll(
+                || inventory().iter().any(|entry| entry.name == selected.name),
+                "detach discovery",
+            );
+            let second = PersistentSession::resume_discovered_in(
+                selected,
+                &registry,
+                noop_session_event_notifier(),
+            )
+            .unwrap();
+            // Consume replay before the new challenge.
+            read_until(&second, &format!("BEFORE:first-{cycle}-{index}"));
+            second
+                .try_send_input(&test_input(&format!("second-{cycle}-{index}")))
+                .unwrap();
+            let resumed = read_until(&second, &format!("AFTER:second-{cycle}-{index}"));
+            assert!(
+                resumed.contains(&format!("PID:{pid}:END")),
+                "same child process must answer the fresh challenge"
+            );
+            if index % 2 == 0 {
+                second.try_send_input(&test_input("exit")).unwrap();
+                bounded_poll(
+                    || {
+                        matches!(
+                            second.lifecycle(),
+                            SessionLifecycle::Exited(_) | SessionLifecycle::Stopped
+                        )
+                    },
+                    "child exit",
+                );
+            } else {
+                kill_for_cleanup(&executable, &runtime, &selected.name).unwrap();
+                bounded_poll(
+                    || {
+                        !festerm_sessiond::daemon_generation_is_live(
+                            &registry,
+                            selected.pid,
+                            selected.created_at_unix_ms,
+                            &selected.endpoint,
+                        )
+                        .unwrap()
+                    },
+                    "explicit daemon termination",
+                );
+            }
+            drop(second);
+            bounded_poll(
+                || !inventory().iter().any(|entry| entry.name == selected.name),
+                "natural exit removal",
+            );
+            assert!(PersistentSession::resume_discovered_in(
+                selected,
+                &registry,
+                noop_session_event_notifier()
+            )
+            .is_err());
+            assert_generation_artifacts_removed(&registry, selected);
+        }
+        assert!(inventory().is_empty());
+        // Recreate the same names on the next pass; previous selections must
+        // remain invalid even after their labels become visible again.
+        if cycle + 1 < cycles {
+            let old = &selected[0];
+            let shell = pty_test_child(&executable);
+            #[cfg(unix)]
+            launch_session_with(
+                &executable,
+                &runtime,
+                &old.name,
+                &shell,
+                &["report-pid", "read-line", "exit:0"],
+            );
+            #[cfg(windows)]
+            windows_children.push(launch_session_with(
+                &executable,
+                &runtime,
+                &old.name,
+                &shell,
+                &["report-pid", "read-line", "exit:0"],
+            ));
+            bounded_poll(|| inventory().len() == 1, "recreated generation");
+            let replacement = inventory().remove(0);
+            assert_ne!(old.endpoint, replacement.endpoint);
+            assert!(PersistentSession::resume_discovered_in(
+                old,
+                &registry,
+                noop_session_event_notifier()
+            )
+            .is_err());
+            let client = PersistentSession::resume_discovered_in(
+                &replacement,
+                &registry,
+                noop_session_event_notifier(),
+            )
+            .unwrap();
+            read_until(&client, "PID:");
+            client.try_send_input(&test_input("exit")).unwrap();
+            bounded_poll(
+                || {
+                    matches!(
+                        client.lifecycle(),
+                        SessionLifecycle::Exited(_) | SessionLifecycle::Stopped
+                    )
+                },
+                "replacement child exit",
+            );
+            drop(client);
+            bounded_poll(|| inventory().is_empty(), "recreated exit");
+            assert_generation_artifacts_removed(&registry, &replacement);
+        }
+        eprintln!(
+            "sessiond-churn cycle={} batch={} status=pass",
+            cycle + 1,
+            batch
+        );
+    }
+    for child in &mut windows_children {
+        let _ = child.wait();
+    }
+    drop(cleanups);
+}
+
+fn churn_setting(name: &str, default: usize, max: usize) -> usize {
+    let value = std::env::var(name)
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .expect("churn setting must be an integer")
+        })
+        .unwrap_or(default);
+    assert!((1..=max).contains(&value), "{name} must be 1..={max}");
+    value
+}
+
+fn bounded_poll(mut ready: impl FnMut() -> bool, phase: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !ready() {
+        assert!(std::time::Instant::now() < deadline, "timed out: {phase}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn read_session_until(session: &festerm_sessiond::PersistentSession, marker: &str) -> String {
+    use festerm_session::{Session, SessionEvent, SessionTryReceiveError};
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut output = Vec::new();
+    #[cfg(windows)]
+    let mut replied_through = 0;
+    loop {
+        match session.try_recv_event() {
+            Ok(SessionEvent::Output(bytes)) => output.extend(bytes),
+            Ok(_) | Err(SessionTryReceiveError::Empty) => {}
+            Err(error) => panic!("client closed before {marker}: {error:?}"),
+        }
+        assert!(output.len() <= 1024 * 1024);
+        #[cfg(windows)]
+        if marker == "PID:" {
+            reply_to_cursor_queries(&output, &mut replied_through, |reply| {
+                session.try_send_input(reply).unwrap()
+            });
+        }
+        let text = String::from_utf8_lossy(&output);
+        let complete = if marker == "PID:" {
+            text.split_once("PID:")
+                .and_then(|(_, tail)| tail.split_once(":END"))
+                .is_some_and(|(pid, _)| pid.parse::<u32>().is_ok())
+        } else {
+            text.contains(marker)
+        };
+        if complete {
+            return String::from_utf8(output).unwrap();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "missing {marker}: {}",
+            String::from_utf8_lossy(&output)
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[ignore = "isolated native churn; included in the optional-validation runner"]
+fn native_discovery_churn_reconnect_pins_generation_and_explicit_registry() {
+    use festerm_session::{noop_session_event_notifier, Session, SessionLifecycle};
+    use festerm_sessiond::{list_unattached_sessions_in, PersistentSession};
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("reconnect");
+    let name = format!("reconnect-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let registry = runtime
+        .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
+        .join("sessiond");
+    let shell = pty_test_child(&executable);
+    let args = [
+        "report-pid",
+        "read-line",
+        "echo:BEFORE",
+        "read-line",
+        "report-pid",
+        "echo:AFTER",
+        "spin",
+    ];
+    #[cfg(unix)]
+    launch_session_with(&executable, &runtime, &name, &shell, &args);
+    #[cfg(windows)]
+    let mut first_child = launch_session_with(&executable, &runtime, &name, &shell, &args);
+    let inventory = || list_unattached_sessions_in(&registry).unwrap();
+    bounded_poll(|| inventory().len() == 1, "reconnect discovery");
+    let selected = inventory().remove(0);
+    let session = PersistentSession::resume_discovered_in(
+        &selected,
+        &registry,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    let id = session.id();
+    let output = read_session_until(&session, "PID:");
+    let pid = output
+        .split_once("PID:")
+        .unwrap()
+        .1
+        .split_once(":END")
+        .unwrap()
+        .0;
+    session.try_send_input(&test_input("original")).unwrap();
+    read_session_until(&session, "BEFORE:original");
+
+    let mut takeover = connect(&selected.endpoint);
+    assert_contains(&mut *takeover, b"BEFORE:original");
+    bounded_poll(|| session.reconnect_available(), "takeover disconnect");
+    // A stale Launcher selection cannot steal, but this tab's explicit
+    // reconnect must retain the existing same-generation takeover policy.
+    assert!(PersistentSession::resume_discovered_in(
+        &selected,
+        &registry,
+        noop_session_event_notifier()
+    )
+    .is_err());
+    session.try_reconnect().unwrap();
+    read_session_until(&session, "BEFORE:original");
+    assert_contains(&mut *takeover, STOLEN_NOTICE);
+    drop(takeover);
+    assert_eq!(session.id(), id);
+    session.try_send_input(&test_input("reconnected")).unwrap();
+    let output = read_session_until(&session, "AFTER:reconnected");
+    assert!(output.contains(&format!("PID:{pid}:END")), "{output}");
+
+    // Leave A reconnectable rather than naturally exited, then replace its
+    // name with B while keeping B's client attached throughout the attempt.
+    let mut takeover = connect(&selected.endpoint);
+    assert_contains(&mut *takeover, b"AFTER:reconnected");
+    bounded_poll(
+        || session.reconnect_available(),
+        "second takeover disconnect",
+    );
+    kill_for_cleanup(&executable, &runtime, &name).unwrap();
+    drop(takeover);
+    bounded_poll(|| inventory().is_empty(), "generation A removal");
+    assert_generation_artifacts_removed(&registry, &selected);
+    #[cfg(windows)]
+    first_child.wait().unwrap();
+    let args = [
+        "report-pid",
+        "read-line",
+        "report-pid",
+        "echo:REPLACEMENT",
+        "spin",
+    ];
+    #[cfg(unix)]
+    launch_session_with(&executable, &runtime, &name, &shell, &args);
+    #[cfg(windows)]
+    let mut replacement_child = launch_session_with(&executable, &runtime, &name, &shell, &args);
+    bounded_poll(|| inventory().len() == 1, "generation B discovery");
+    let replacement = inventory().remove(0);
+    assert_ne!(replacement.endpoint, selected.endpoint);
+    let client = PersistentSession::resume_discovered_in(
+        &replacement,
+        &registry,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    let output = read_session_until(&client, "PID:");
+    let replacement_pid = output
+        .split_once("PID:")
+        .unwrap()
+        .1
+        .split_once(":END")
+        .unwrap()
+        .0;
+    session.try_reconnect().unwrap();
+    bounded_poll(
+        || matches!(session.lifecycle(), SessionLifecycle::Disconnected(error) if error.message().contains("changed")),
+        "replacement reconnect rejection",
+    );
+    assert!(format!("{:?}", session.lifecycle()).contains("changed"));
+    assert_eq!(session.id(), id);
+    client.try_send_input(&test_input("unaffected")).unwrap();
+    let output = read_session_until(&client, "REPLACEMENT:unaffected");
+    assert!(
+        output.contains(&format!("PID:{replacement_pid}:END")),
+        "{output}"
+    );
+    assert!(matches!(client.lifecycle(), SessionLifecycle::Running));
+    assert!(
+        inventory().is_empty(),
+        "B remains attached; no replacement shell"
+    );
+    drop(client);
+    drop(session);
+    kill_for_cleanup(&executable, &runtime, &name).unwrap();
+    assert_generation_artifacts_removed(&registry, &replacement);
+    #[cfg(windows)]
+    replacement_child.wait().unwrap();
+}
+
+#[test]
+#[ignore = "isolated native churn; included in the optional-validation runner"]
+fn native_discovery_churn_prunes_forcibly_terminated_generation_artifacts() {
+    use festerm_session::{noop_session_event_notifier, Session};
+    use festerm_sessiond::{list_unattached_sessions_in, PersistentSession};
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("forced");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: vec!["owned-force".into(), "unrelated-sentinel".into()],
+    };
+    let shell = pty_test_child(&executable);
+    let args = ["report-pid", "read-line", "echo:ALIVE", "spin"];
+    #[cfg(unix)]
+    for name in ["owned-force", "unrelated-sentinel"] {
+        launch_session_with(&executable, &runtime, name, &shell, &args);
+    }
+    #[cfg(windows)]
+    let (mut forced_child, mut sentinel_child) = (
+        launch_session_with(&executable, &runtime, "owned-force", &shell, &args),
+        launch_session_with(&executable, &runtime, "unrelated-sentinel", &shell, &args),
+    );
+    let registry = runtime
+        .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
+        .join("sessiond");
+    let inventory = list_unattached_sessions_in(&registry).unwrap();
+    assert_eq!(inventory.len(), 2);
+    let selected = inventory
+        .iter()
+        .find(|session| session.name == "owned-force")
+        .unwrap();
+    let sentinel = inventory
+        .iter()
+        .find(|session| session.name == "unrelated-sentinel")
+        .unwrap();
+    let client =
+        PersistentSession::resume_discovered_in(selected, &registry, noop_session_event_notifier())
+            .unwrap();
+    read_session_until(&client, "PID:");
+    #[cfg(unix)]
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(i32::try_from(selected.pid).unwrap()),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    #[cfg(windows)]
+    {
+        forced_child.kill().unwrap();
+        forced_child.wait().unwrap();
+    }
+    bounded_poll(
+        || {
+            !festerm_sessiond::daemon_generation_is_live(
+                &registry,
+                selected.pid,
+                selected.created_at_unix_ms,
+                &selected.endpoint,
+            )
+            .unwrap()
+        },
+        "forced daemon exit",
+    );
+    let lease = registry.join(format!(
+        "lease-{}-{}",
+        selected.pid, selected.created_at_unix_ms
+    ));
+    assert!(
+        lease.exists(),
+        "forced termination should leave an artifact for prune to remove"
+    );
+    let mut command = daemon_command(&executable, &runtime);
+    command.arg("list");
+    #[cfg(unix)]
+    let output = run_start_command(command);
+    #[cfg(windows)]
+    let output = command.output().unwrap();
+    assert_success("prune", &output);
+    assert_generation_artifacts_removed(&registry, selected);
+    let remaining = list_unattached_sessions_in(&registry).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].endpoint, sentinel.endpoint);
+    let live =
+        PersistentSession::resume_discovered_in(sentinel, &registry, noop_session_event_notifier())
+            .unwrap();
+    read_session_until(&live, "PID:");
+    live.try_send_input(&test_input("unaffected")).unwrap();
+    read_session_until(&live, "ALIVE:unaffected");
+    drop(live);
+    drop(client);
+    kill_for_cleanup(&executable, &runtime, &sentinel.name).unwrap();
+    assert_generation_artifacts_removed(&registry, sentinel);
+    #[cfg(windows)]
+    sentinel_child.wait().unwrap();
+}
+
 trait ClientStream: Read + Write {}
 impl<T: Read + Write> ClientStream for T {}
+
+struct BatchCleanup {
+    executable: PathBuf,
+    runtime: PathBuf,
+    names: Vec<String>,
+}
+
+impl Drop for BatchCleanup {
+    fn drop(&mut self) {
+        let mut errors = Vec::new();
+        for name in &self.names {
+            if let Err(error) = kill_for_cleanup(&self.executable, &self.runtime, name) {
+                errors.push(error);
+            }
+        }
+        finish_cleanup(&self.runtime, errors);
+    }
+}
+
+fn finish_cleanup(root: &Path, mut errors: Vec<String>) {
+    if errors.is_empty() {
+        if let Err(error) = fs::remove_dir_all(root) {
+            if error.kind() != io::ErrorKind::NotFound {
+                errors.push(error.to_string());
+            }
+        }
+    }
+    if !errors.is_empty() {
+        eprintln!(
+            "cleanup incomplete; retained {}: {errors:?}",
+            root.display()
+        );
+        assert!(
+            std::thread::panicking(),
+            "native cleanup failed: {errors:?}"
+        );
+    }
+}
+
+fn kill_for_cleanup(executable: &Path, runtime: &Path, name: &str) -> Result<(), String> {
+    use std::process::Stdio;
+    let mut child = daemon_command(executable, runtime)
+        .args(["kill", "--name", name])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| error.to_string())?;
+                let message = String::from_utf8_lossy(&output.stderr);
+                return if output.status.success() || message.contains("is not registered") {
+                    Ok(())
+                } else {
+                    Err(format!("kill {name}: {message}"))
+                };
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("kill {name} exceeded cleanup deadline"));
+            }
+        }
+    }
+}
 
 struct SessionCleanup {
     executable: PathBuf,
@@ -26,10 +695,11 @@ struct SessionCleanup {
 
 impl Drop for SessionCleanup {
     fn drop(&mut self) {
-        let _ = daemon_command(&self.executable, &self.runtime_root)
-            .args(["kill", "--name", &self.name])
-            .output();
-        let _ = fs::remove_dir_all(&self.runtime_root);
+        let errors = kill_for_cleanup(&self.executable, &self.runtime_root, &self.name)
+            .err()
+            .into_iter()
+            .collect();
+        finish_cleanup(&self.runtime_root, errors);
     }
 }
 
@@ -352,8 +1022,28 @@ fn launch_session_with(
     for argument in arguments {
         command.arg("--arg").arg(argument);
     }
-    let output = command.output().unwrap();
+    let output = run_start_command(command);
     assert_success("start", &output);
+}
+
+#[cfg(unix)]
+fn run_start_command(mut command: Command) -> Output {
+    let mut child = command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("native start deadline exceeded");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().unwrap()
 }
 
 #[cfg(windows)]
@@ -424,19 +1114,61 @@ fn daemon_command(executable: &Path, runtime_root: &Path) -> Command {
     command
 }
 
-#[cfg(unix)]
-fn short_runtime_root(suffix: &str) -> PathBuf {
+fn short_runtime_root(_suffix: &str) -> PathBuf {
     static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let index = NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    match std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT") {
-        Some(root) => PathBuf::from(root).join(format!("{suffix}-{index}")),
-        None => PathBuf::from(format!("/tmp/fsd-native-{suffix}-{index}")),
+    let (base, leaf) = match std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT") {
+        Some(root) => (
+            PathBuf::from(root),
+            format!("{}-{index}", std::process::id()),
+        ),
+        None => (
+            if cfg!(unix) {
+                PathBuf::from("/tmp")
+            } else {
+                std::env::temp_dir()
+            },
+            format!(
+                "fsd-{}-{index}-{:x}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ),
+        ),
+    };
+    let root = base.join(leaf);
+    #[cfg(unix)]
+    {
+        let probe = root.join(format!(
+            "festerm/sessiond/{}-{}.sock",
+            u32::MAX,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::os::unix::net::SocketAddr::from_pathname(&probe).unwrap_or_else(|error| {
+            panic!(
+                "native test runtime {} cannot fit a generation socket ({} path bytes): {error}; set FESTERM_SESSIOND_TEST_RUNTIME_ROOT to a short private directory",
+                root.display(), probe.as_os_str().as_encoded_bytes().len()
+            )
+        });
     }
-}
-
-#[cfg(windows)]
-fn short_runtime_root(suffix: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fsd-native-{suffix}"))
+    fs::create_dir_all(&base).expect("native test runtime base can be created");
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&root)
+        .expect("native test runtime must be a new owned directory");
+    eprintln!("sessiond-native runtime={}", root.display());
+    root
 }
 
 #[cfg(unix)]
@@ -596,15 +1328,50 @@ fn assert_windows_ready(stream: &mut dyn ClientStream) {
         let count = stream.read(&mut buffer).unwrap();
         assert_ne!(count, 0, "stream closed before READY arrived");
         received.extend_from_slice(&buffer[..count]);
-        let query_count = received[replied_through..]
-            .windows(4)
-            .filter(|sequence| *sequence == b"\x1b[6n")
-            .count();
-        for _ in 0..query_count {
-            send_input(stream, b"\x1b[1;1R").unwrap();
-        }
-        replied_through = received.len().saturating_sub(3);
+        reply_to_cursor_queries(&received, &mut replied_through, |reply| {
+            send_input(stream, reply).unwrap()
+        });
     }
+}
+
+#[cfg(any(windows, test))]
+fn reply_to_cursor_queries(
+    received: &[u8],
+    replied_through: &mut usize,
+    mut send: impl FnMut(&[u8]),
+) {
+    let query_count = received[*replied_through..]
+        .windows(4)
+        .filter(|sequence| *sequence == b"\x1b[6n")
+        .count();
+    for _ in 0..query_count {
+        send(b"\x1b[1;1R");
+    }
+    *replied_through = received.len().saturating_sub(3);
+}
+
+#[test]
+fn cursor_query_guard_replies_once_to_fragmented_queries() {
+    let mut received = b"\x1b[6".to_vec();
+    let mut replied = 0;
+    let mut replies = Vec::new();
+    reply_to_cursor_queries(&received, &mut replied, |reply| {
+        replies.push(reply.to_vec())
+    });
+    assert!(replies.is_empty());
+    received.extend_from_slice(b"nPID:42:END");
+    reply_to_cursor_queries(&received, &mut replied, |reply| {
+        replies.push(reply.to_vec())
+    });
+    reply_to_cursor_queries(&received, &mut replied, |reply| {
+        replies.push(reply.to_vec())
+    });
+    assert_eq!(replies, vec![b"\x1b[1;1R".to_vec()]);
+    received.extend_from_slice(b"\x1b[6n");
+    reply_to_cursor_queries(&received, &mut replied, |reply| {
+        replies.push(reply.to_vec())
+    });
+    assert_eq!(replies.len(), 2);
 }
 
 fn assert_contains(stream: &mut dyn ClientStream, expected: &[u8]) {
@@ -655,6 +1422,10 @@ fn assert_native_permissions(registry: &Path, endpoint: &str) {
         registry.join("registry.json"),
         registry.join("registry.lock"),
         PathBuf::from(endpoint),
+        registry.join(format!(
+            "lease-{}",
+            Path::new(endpoint).file_stem().unwrap().to_string_lossy()
+        )),
     ] {
         assert_eq!(
             fs::metadata(path).unwrap().permissions().mode() & 0o777,
