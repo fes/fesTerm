@@ -523,6 +523,10 @@ fn run_start(
     let daemon_pid = daemon.id();
 
     let registration = (|| -> Result<SessionRecord, Box<dyn std::error::Error>> {
+        // Report address errors to the caller rather than losing them with
+        // the detached daemon's stderr. The actual child PID determines length.
+        #[cfg(unix)]
+        session_socket_path(&runtime_root, &format!("{daemon_pid}-{}", now_ms()))?;
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
             let registry = load_registry()?;
@@ -576,6 +580,9 @@ fn run_daemon(
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
     let generation = now_ms();
+    #[cfg(unix)]
+    let socket_path =
+        session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
     let lease_path = runtime_root.join(format!("lease-{}-{generation}", process::id()));
     let lease = OpenOptions::new()
         .read(true)
@@ -587,10 +594,6 @@ fn run_daemon(
 
     #[cfg(unix)]
     {
-        // Endpoint lifetime follows a daemon generation, not a reusable name.
-        // A stale Launcher selection can never reach a same-name replacement.
-        let socket_path =
-            session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
         let listener = bind_unix_listener(&socket_path)?;
         set_file_mode(&socket_path, 0o600)?;
 
@@ -2043,7 +2046,15 @@ fn session_socket_path(
     runtime_root: &Path,
     name: &str,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(runtime_root.join(format!("{name}.sock")))
+    let path = runtime_root.join(format!("{name}.sock"));
+    std::os::unix::net::SocketAddr::from_pathname(&path).map_err(|error| {
+        format!(
+            "invalid Unix session socket {} ({} path bytes): {error}; use a shorter XDG_STATE_HOME",
+            path.display(),
+            path.as_os_str().as_encoded_bytes().len()
+        )
+    })?;
+    Ok(path)
 }
 
 #[cfg(windows)]

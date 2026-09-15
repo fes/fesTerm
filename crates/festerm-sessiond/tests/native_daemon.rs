@@ -15,6 +15,47 @@ const STOLEN_NOTICE: &[u8] =
     b"\n[festerm-sessiond] SESSION_STOLEN: reattached from another client\n";
 const EXITED_NOTICE: &[u8] = b"\n[festerm-sessiond] SESSION_EXITED\n";
 
+#[cfg(unix)]
+#[test]
+fn native_start_reports_socket_depth_without_starting_a_shell() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let base = short_runtime_root("overlong");
+    let _base_cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: base.clone(),
+        names: Vec::new(),
+    };
+    let runtime = base.join("x".repeat(120));
+    fs::create_dir(&runtime).unwrap();
+    let _session_cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: "owned-overlong".into(),
+    };
+    let marker = base.join("unexpected-shell");
+    let mut command = daemon_command(&executable, &runtime);
+    command
+        .args([
+            "start",
+            "--name",
+            "owned-overlong",
+            "--shell",
+            "/usr/bin/touch",
+            "--arg",
+        ])
+        .arg(&marker);
+    let output = run_start_command(command);
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("invalid Unix session socket"), "{error}");
+    assert!(error.contains("path bytes"), "{error}");
+    assert!(error.contains("shorter XDG_STATE_HOME"), "{error}");
+    assert!(
+        !marker.exists(),
+        "an invalid endpoint must not start a shell"
+    );
+}
+
 /// Uses the production inventory/resume APIs in an isolated registry. The
 /// deterministic child reports its PID *after* a fresh post-reattach input,
 /// so replay text alone cannot satisfy the continuity assertion.
@@ -689,6 +730,12 @@ fn launch_session_with(
     for argument in arguments {
         command.arg("--arg").arg(argument);
     }
+    let output = run_start_command(command);
+    assert_success("start", &output);
+}
+
+#[cfg(unix)]
+fn run_start_command(mut command: Command) -> Output {
     let mut child = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -704,8 +751,7 @@ fn launch_session_with(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    let output = child.wait_with_output().unwrap();
-    assert_success("start", &output);
+    child.wait_with_output().unwrap()
 }
 
 #[cfg(windows)]
@@ -779,16 +825,58 @@ fn daemon_command(executable: &Path, runtime_root: &Path) -> Command {
 fn short_runtime_root(_suffix: &str) -> PathBuf {
     static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let index = NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let root = std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .canonicalize()
-                .expect("workspace root exists")
-                .join(".fsd")
+    let (base, leaf) = match std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT") {
+        Some(root) => (
+            PathBuf::from(root),
+            format!("{}-{index}", std::process::id()),
+        ),
+        None => (
+            if cfg!(unix) {
+                PathBuf::from("/tmp")
+            } else {
+                std::env::temp_dir()
+            },
+            format!(
+                "fsd-{}-{index}-{:x}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ),
+        ),
+    };
+    let root = base.join(leaf);
+    #[cfg(unix)]
+    {
+        let probe = root.join(format!(
+            "festerm/sessiond/{}-{}.sock",
+            u32::MAX,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::os::unix::net::SocketAddr::from_pathname(&probe).unwrap_or_else(|error| {
+            panic!(
+                "native test runtime {} cannot fit a generation socket ({} path bytes): {error}; set FESTERM_SESSIOND_TEST_RUNTIME_ROOT to a short private directory",
+                root.display(), probe.as_os_str().as_encoded_bytes().len()
+            )
         });
-    root.join(format!("{}-{index}", std::process::id()))
+    }
+    fs::create_dir_all(&base).expect("native test runtime base can be created");
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&root)
+        .expect("native test runtime must be a new owned directory");
+    eprintln!("sessiond-native runtime={}", root.display());
+    root
 }
 
 #[cfg(unix)]

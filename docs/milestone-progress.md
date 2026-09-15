@@ -36,6 +36,15 @@ a provider-independent drop regression reproduced the old failure. Explicit
 timeout-to-Refresh recovery is tested separately rather than retrying stress
 errors until they disappear.
 
+The macOS VM then exposed a different portability trap before churn could
+start: placing test sockets beneath a longer checkout exceeded the Unix socket
+pathname limit. The harness now owns short private temporary namespaces for
+all providers rather than depending on a short checkout or global relay change.
+Native startup reports the invalid address and byte count instead of hiding
+the daemon's socket error. Real-provider churn through a 188-byte checkout
+confirmed the path independence; cleanup failure remains explicit and retains
+only the test-owned namespace for diagnosis.
+
 ## Foundation and acceptance history
 
 fesTerm began foundation-first: M0 through M3 established a testable terminal

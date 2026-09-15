@@ -9,7 +9,7 @@ import shlex
 import shutil
 import signal
 import subprocess
-import uuid
+import tempfile
 
 
 def run_checked(command, *, cwd, env, timeout):
@@ -49,6 +49,12 @@ def owned_targets(tool, output):
     return targets
 
 
+def create_runtime_root():
+    # macOS TMPDIR and checkout paths can exceed sockaddr_un.sun_path before
+    # the daemon's generation suffix is added. mkdtemp owns a private 0700 leaf.
+    return Path(tempfile.mkdtemp(prefix="fs-mux-", dir="/tmp" if os.name != "nt" else None))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch", type=int, default=os.environ.get("FESTERM_SESSION_CHURN_BATCH", 8))
@@ -59,18 +65,23 @@ def main():
     repo = Path(__file__).resolve().parent.parent
     env = dict(os.environ, FESTERM_SESSION_CHURN_BATCH=str(args.batch),
                FESTERM_SESSION_CHURN_CYCLES=str(args.cycles))
-    root = repo / (".mux-" + uuid.uuid4().hex[:8])
-    root.mkdir(mode=0o700)
+    root = create_runtime_root()
     binary_dir = root / "bin"
-    binary_dir.mkdir(mode=0o700)
     screen_dir = root / "screen"
-    screen_dir.mkdir(mode=0o700)
     tmux_dir = root / "tmux"
-    tmux_dir.mkdir(mode=0o700)
-    (root / "owned-running-session-validation").write_text("isolated\n")
     tools = {}
     env["FESTERM_SESSIOND_TEST_RUNTIME_ROOT"] = str(root / "n")
+    env.update(PATH=str(binary_dir) + os.pathsep + env.get("PATH", ""),
+               SCREENDIR=str(screen_dir), TMUX_TMPDIR=str(tmux_dir),
+               FESTERM_MUX_CHURN_ROOT=str(root), TERM="xterm-256color",
+               XDG_STATE_HOME=str(root / "native-empty"))
+    env.pop("TMUX", None)
+    env.pop("STY", None)
     try:
+        for directory in (binary_dir, screen_dir, tmux_dir, root / "n"):
+            directory.mkdir(mode=0o700)
+        (root / "owned-running-session-validation").write_text("isolated\n")
+        print(f"running-session-churn checkout={repo} runtime={root}", flush=True)
         run_checked(["cargo", "build", "--quiet", "-p", "festerm-sessiond", "-p",
                         "festerm-pty-test-child"], cwd=repo, env=env, timeout=900)
         run_checked(["cargo", "test", "--quiet", "-p", "festerm-sessiond", "--test",
@@ -84,19 +95,13 @@ def main():
         for tool in ("tmux", "screen"):
             path = shutil.which(tool)
             if path:
-                tools[tool] = path
                 extra = " -f /dev/null -L festerm-churn" if tool == "tmux" else " -c /dev/null"
                 wrapper = binary_dir / tool
                 wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(path) + extra + ' "$@"\n')
                 wrapper.chmod(0o700)
+                tools[tool] = path
             else:
                 print(f"provider={tool} status=skipped reason=binary-unavailable", flush=True)
-        env.update(PATH=str(binary_dir) + os.pathsep + env.get("PATH", ""),
-                   SCREENDIR=str(screen_dir), TMUX_TMPDIR=str(tmux_dir),
-                   FESTERM_MUX_CHURN_ROOT=str(root), TERM="xterm-256color",
-                   XDG_STATE_HOME=str(root / "native-empty"))
-        env.pop("TMUX", None)
-        env.pop("STY", None)
         run_checked(["cargo", "test", "--quiet", "-p", "festerm",
                         "isolated_multiplexer_discovery_churn", "--", "--ignored",
                         "--nocapture"], cwd=repo, env=env,

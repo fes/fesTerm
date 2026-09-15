@@ -145,6 +145,7 @@
         "killing_a_stale_generation_never_signals_a_reused_live_pid",
         "failed_attachment_state_publication_is_retried_not_marked_complete",
         "native_discovery_churn_preserves_process_and_rejects_replaced_generations",
+        "native_start_reports_socket_depth_without_starting_a_shell",
         "cursor_query_guard_replies_once_to_fragmented_queries",
         "isolated_multiplexer_discovery_churn"
       ],

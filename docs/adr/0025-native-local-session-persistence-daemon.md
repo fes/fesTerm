@@ -374,6 +374,10 @@ not a new provider, IPC protocol, terminal owner, or acceptance of CP-11.
   shell, and that a visible provider timeout can recover through a coalesced
   explicit Refresh. These are internal lifecycle/discovery corrections, not a
   change to daemon ownership, transport queues or this ADR's provisional status.
+  `native_start_reports_socket_depth_without_starting_a_shell` covers actionable
+  Unix address-limit diagnostics and refusal before shell launch. Optional churn
+  uses short private temporary namespaces, with long-checkout and failure-cleanup
+  regressions, rather than depending on a runner's checkout depth.
 - **Native/manual evidence required:** `CP-11` verifies packaged executable
   presence, detach/reattach replay, single-client stealing, natural-exit and
   kill cleanup, lifecycle independence, Unix ownership modes, and Windows

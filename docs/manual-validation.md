@@ -235,6 +235,22 @@ reproduced the former required-CI assertion failure; the corrected tests also
 check that discovery actually executes with the PATH retained for attachment.
 Production discovery/attachment environment policy is unchanged.
 
+The macOS VM backend failure at `59ba3b7` exposed a separate checkout-depth
+problem: its generated native socket pathname was 106 bytes, beyond macOS's
+103-byte pathname limit. A host reproduction exposed `SUN_LEN` from the daemon;
+the old `start` helper had reported only its exit status. Startup now surfaces
+the invalid address, byte count and shorter-state-directory guidance.
+The harness creates a private `0700` temporary namespace under `/tmp` on Unix
+(normal temporary storage on Windows), independent of checkout and macOS's
+potentially long `TMPDIR`. Native registry/socket, tmux socket and screen socket
+isolation all remain within that owned namespace. Direct native smoke tests
+also default to short private roots; explicit overlong test roots fail with
+an actionable diagnostic. Success and ordinary runner failure clean owned
+resources; incomplete cleanup retains and reports only the owned namespace.
+All three providers passed 8-by-3 through a controlled 188-byte checkout path
+on the macOS host, and all four native smoke/churn tests passed with their new
+default roots. These are host backend results, not a rerun of the failed VM.
+
 Set `FESTERM_DISCOVERY_TIMING=1` when running `check_running_sessions.py` to
 record command argv, owned child PIDs, spawn/total elapsed milliseconds and
 exit statuses. This opt-in log includes local session names; it does not dump
