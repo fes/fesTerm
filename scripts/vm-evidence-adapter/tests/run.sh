@@ -133,6 +133,19 @@ EOF
     done
 done
 
+jq -e '.modes | index("windows-conpty-prompt-stress") != null' \
+    "$adapter_root/policy.json" >/dev/null
+cat >"$temporary_root/windows-only-job.json" <<'EOF'
+{"adapter_id":"festerm","adapter_schema_version":1,"platform":"linux","mode":"windows-conpty-prompt-stress","payload":{}}
+EOF
+if "$adapter_root/linux.sh" \
+    "$temporary_root/windows-only-job.json" \
+    "$temporary_root/source-map.json" \
+    "$temporary_root/artifacts/invalid"; then
+    echo 'Unix adapter accepted Windows-only ConPTY qualification' >&2
+    exit 1
+fi
+
 cat >"$temporary_root/invalid-job.json" <<'EOF'
 {"adapter_id":"festerm","adapter_schema_version":1,"platform":"linux","mode":"optional-validation","payload":{"command":"untrusted"}}
 EOF
