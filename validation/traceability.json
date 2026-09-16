@@ -666,8 +666,8 @@
       "manual_scenarios": [
         "AS-04",
         "TI-02",
-        "TI-10",
-        "TI-11"
+        "TI-12",
+        "TI-13"
       ],
       "status": "partial",
       "prerequisites": []

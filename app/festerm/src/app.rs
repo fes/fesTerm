@@ -6786,7 +6786,7 @@ mod tests {
             Some(if cfg!(target_os = "macos") {
                 "\u{2318}+C"
             } else {
-                "Ctrl+C"
+                "Ctrl+Shift+C"
             })
         );
 
@@ -6799,7 +6799,7 @@ mod tests {
             Some(if cfg!(target_os = "macos") {
                 "\u{2318}+V"
             } else {
-                "Ctrl+V"
+                "Ctrl+Shift+V"
             })
         );
     }
