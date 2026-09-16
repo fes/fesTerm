@@ -338,18 +338,23 @@ in [SSH session creation](#ssh-session-creation). Saved profiles, agents,
 key-file selection, and OpenSSH-config import controls appear only when their
 capabilities are implemented and available, never as disabled placeholders.
 
-Selecting SSH opens **Quick Connect** by default: a `user@host[:port]` field
-and Connect button, plus an initially off **Durable remote session** control.
+Selecting SSH opens the **Connect with SSH** form: a **Connection** section
+carrying Host, Port and Username, an **Authentication** section, and an
+initially off **Durable remote session** control.
 Enabling it exposes the shared provider (`tmux` or GNU screen), validated
 session-name, and per-launch automatic-recovery controls, allowing an ad-hoc
 connection to attach to or create a durable session without first saving a
 profile. When fesTerm already has persisted host trust plus a non-interactive
 credential for that destination, it may run a best-effort background tmux
 probe and default the provider to `tmux` if detected or GNU Screen if not; an
-explicit user choice is never overwritten. A "Show advanced settings"
-checkbox reveals the full destination and authentication-method form while
-reusing those same durable-session controls
-(`app/festerm/src/screens.rs`'s `show_ssh_quick_connect`/`show_ssh_form`).
+explicit user choice is never overwritten. The SSH form presents its
+destination and authentication-method controls directly, grouped into
+**Connection** and **Authentication** sections above the durable-session
+band, and folds only the port-forward controls behind an "Advanced settings"
+disclosure. A **Save as Profile...** action carries the connection, session
+and forward metadata -- deliberately never the password, private key or
+certificate -- into the Profiles editor
+(`app/festerm/src/screens.rs`'s `show_ssh_form`).
 The Launcher list, SSH connection surface, and profile editor use the same
 surface-owned scrollbar behavior as Settings: content reserves a right-side
 lane, the bar does not overlap controls, and ordinary content hover does not
@@ -1324,15 +1329,18 @@ does not imply continued synchronization. Recent one-off destinations are not
 silently converted into profiles.
 
 A standalone **Profiles** surface (a singleton chip, opened from More actions'
-"Open Profiles" button, mirroring Settings) lists every saved profile with its kind
-and a short description, plus "New Local Profile" and "New SSH Profile"
-buttons, plus "New Serial Profile" when serial support is available. Each row
-offers Edit, Duplicate, and Delete. Local editing currently covers
+"Open Profiles" button, mirroring Settings) lists every saved profile in the
+same Name / Type / Host / Path / Last Used table the Launcher uses, above a
+"Search profiles..." field that narrows the list by name, kind, host and
+path. A single accent "+ New Profile" dropdown offers every creatable kind --
+local, SSH, SFTP, and serial when serial support is available -- in place of
+one button per kind. Each row carries an overflow menu offering Connect, Open
+SFTP, Edit, Duplicate, and Delete. Local editing currently covers
 name/executable/arguments/working directory and explicit local
 `festerm-sessiond`/tmux/screen persistence; SSH editing currently covers
 name/host/port/username, saved local/remote port forwards, stored
 password/private-key replacement and removal, and tmux/screen durable-session
-settings. As in Quick Connect, a best-effort tmux probe may default a newly
+settings. As in the SSH connect form, a best-effort tmux probe may default a newly
 enabled durable remote session to `tmux` when detected or GNU Screen
 otherwise, but never overrides an explicit provider choice and never treats
 `festerm-sessiond` as a remote option. SSH-agent, key-file-path, and
@@ -1473,7 +1481,7 @@ people actually scan straight down the table while each chord stays one
 contiguous group; reserving a column per modifier instead would make every
 row hold space for modifiers it does not use and split short chords across
 gaps.
-A chord is set either by typing it or by **Press keys**, which
+A chord is set either by typing it or by **Record shortcut**, which
 captures the next combination pressed; while capturing, those keys are taken
 by the editor instead of being dispatched, so binding a shortcut cannot also
 fire it, and Escape cancels. Capture is re-armed on every frame the editor

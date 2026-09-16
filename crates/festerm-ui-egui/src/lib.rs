@@ -9,6 +9,7 @@ use festerm_core::{Cell, ContentPosition, Cursor, CursorStyle, Terminal, Termina
 
 mod cache;
 pub mod chrome;
+pub mod controls;
 mod fonts;
 mod geometry;
 pub mod icon;

@@ -72,10 +72,12 @@ Launch cards sit above saved profiles of every kind plus resumable local, tmux, 
 
 Each transport has its own form, and they share a deliberate shape: the
 minimum needed to connect is visible immediately, and everything else is
-behind *Show advanced settings*. A first-time SSH connection needs a
-username and a host; durable sessions, port forwards and the choice between
-password, private-key and certificate authentication are all available but
-never in the way.
+behind *Advanced settings*. The SSH form separates that minimum into a
+**Connection** section (host, port, username) and an **Authentication**
+section (password, private-key or certificate), with the durable-session
+toggle on its own band beneath them; only port forwards remain folded away.
+A first-time SSH connection therefore needs a username and a host, and
+nothing else is in the way.
 
 Two details worth noticing in review. Saving a password requires a saved
 profile, and the form says so at the point of decision rather than failing
@@ -96,17 +98,17 @@ The SFTP launch surface defaults to opening the graphical two-pane file manager 
 
 ![SFTP connect form](images/ui-state/sftp-connect-form.png)
 
-### SSH connect form with advanced settings shown
+### SSH connect form with Advanced settings expanded
 
-Revealing 'Show advanced settings' exposes durable-session, port forwarding, and authentication-method controls.
+Expanding 'Advanced settings' reveals the port-forwarding controls beneath the always-visible connection, authentication and durable-session sections.
 
-![SSH connect form with advanced settings shown](images/ui-state/ssh-connect-advanced.png)
+![SSH connect form with Advanced settings expanded](images/ui-state/ssh-connect-advanced.png)
 
-### SSH connect form, Quick Connect
+### SSH connect form
 
-The default SSH launch surface: host/username/password only, with advanced settings collapsed.
+The default SSH launch surface: a Connection section for host, port and username, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.
 
-![SSH connect form, Quick Connect](images/ui-state/ssh-connect-collapsed.png)
+![SSH connect form](images/ui-state/ssh-connect-collapsed.png)
 
 ## Working in a session
 
@@ -305,7 +307,7 @@ reasoning is the same as right-aligning numbers.
 
 Selecting an action expands its editor inline beneath its own row, and
 clicking the row again closes it. A binding is assigned by pressing
-**Press keys** and then pressing the combination; capture takes the frame's
+**Record shortcut** and then pressing the combination; capture takes the frame's
 key events before the shortcut dispatcher sees them, so binding a shortcut
 does not also fire it. Recorded modifiers are normalised to the portable
 `Primary` spelling, which is Command on macOS and Ctrl elsewhere, so a chord
@@ -330,7 +332,7 @@ Typing into Search narrows the list to matching actions and hides scope groups w
 
 ### Keyboard bindings editor capturing a chord
 
-'Press keys' arms live chord capture; the editor waits for a chord instead of dispatching whatever is pressed next.
+'Record shortcut' arms live chord capture; the editor waits for a chord instead of dispatching whatever is pressed next.
 
 ![Keyboard bindings editor capturing a chord](images/ui-state/keyboard-editor-press-keys.png)
 
@@ -353,7 +355,7 @@ do before it is launched.
 
 ### Profiles list
 
-Every saved local, SSH, SFTP, and serial profile in one reorderable list.
+Every saved local, SSH, SFTP, and serial profile in a single searchable table, each row carrying an overflow menu for connecting, editing, duplicating, and deleting.
 
 ![Profiles list](images/ui-state/profiles-list.png)
 

@@ -48,24 +48,24 @@
     {
       "id": "ssh-connect-advanced",
       "section": "connection-forms",
-      "title": "SSH connect form with advanced settings shown",
-      "caption": "Revealing 'Show advanced settings' exposes durable-session, port forwarding, and authentication-method controls.",
+      "title": "SSH connect form with Advanced settings expanded",
+      "caption": "Expanding 'Advanced settings' reveals the port-forwarding controls beneath the always-visible connection, authentication and durable-session sections.",
       "image": "ssh-connect-advanced.png",
-      "width": 597,
-      "height": 549,
+      "width": 804,
+      "height": 650,
       "tier": "headless",
-      "sha256": "60d1ec4e682abd48786cef8a8f91d2a0e59ce8970bb737be1c3cecc35e180643"
+      "sha256": "4495b91843547f63d84f17fa7251855c4230cccb323c3f560ddf24099734ff9b"
     },
     {
       "id": "ssh-connect-collapsed",
       "section": "connection-forms",
-      "title": "SSH connect form, Quick Connect",
-      "caption": "The default SSH launch surface: host/username/password only, with advanced settings collapsed.",
+      "title": "SSH connect form",
+      "caption": "The default SSH launch surface: a Connection section for host, port and username, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.",
       "image": "ssh-connect-collapsed.png",
-      "width": 424,
-      "height": 336,
+      "width": 804,
+      "height": 607,
       "tier": "headless",
-      "sha256": "714bb7d52bdff5c71aa3266164879368aec719acb193f2f4d4f5c26a48e5dd85"
+      "sha256": "ab107118ce1e9de4bb08ad23656915921553ca226eee84f3e09f1c1030eca914"
     },
     {
       "id": "diagnostics-durable-session",
@@ -96,9 +96,9 @@
       "caption": "Actions grouped by scope, each showing its current chord as keycaps; one customized action carries a 'Customized' badge.",
       "image": "keyboard-editor-collapsed.png",
       "width": 640,
-      "height": 1008,
+      "height": 1300,
       "tier": "headless",
-      "sha256": "7ce28069cb9d47e7e393f692ffa9a19c174e1aea5050c343f7192b2d3ef86b72"
+      "sha256": "babe344eba0ba761608d547d2a6daa96e6d00fae4be85c9575d40692947213b7"
     },
     {
       "id": "keyboard-editor-filtered",
@@ -107,20 +107,20 @@
       "caption": "Typing into Search narrows the list to matching actions and hides scope groups with no match.",
       "image": "keyboard-editor-filtered.png",
       "width": 960,
-      "height": 268,
+      "height": 592,
       "tier": "headless",
-      "sha256": "75e113ac0953c49ecd25d04fea10b5ff2f8c819d13eed41f4639393f1a619556"
+      "sha256": "14e628ef8784199bfec214c60a2fa90973dcbd8c4746ad56dec3338e30f4c9bf"
     },
     {
       "id": "keyboard-editor-press-keys",
       "section": "keyboard",
       "title": "Keyboard bindings editor capturing a chord",
-      "caption": "'Press keys' arms live chord capture; the editor waits for a chord instead of dispatching whatever is pressed next.",
+      "caption": "'Record shortcut' arms live chord capture; the editor waits for a chord instead of dispatching whatever is pressed next.",
       "image": "keyboard-editor-press-keys.png",
       "width": 960,
-      "height": 1223,
+      "height": 1300,
       "tier": "headless",
-      "sha256": "26e4cdcd1546e26ef5189a93a4da2fe191e46f65a0b08c9c9d7192a359c3bcbc"
+      "sha256": "3fbcf8fe42a2a16a3a4f7f8a4fd07169e29f2b75664da38f41836545d52172de"
     },
     {
       "id": "keyboard-editor-selected",
@@ -129,9 +129,9 @@
       "caption": "Selecting an action expands its inline editor directly under its own row, showing scope, default, and current chord as read-only context.",
       "image": "keyboard-editor-selected.png",
       "width": 960,
-      "height": 1223,
+      "height": 1300,
       "tier": "headless",
-      "sha256": "e017b771ae6c9f67a5d6819dc7fbe28494fa226e03b14d858dddf454aaf76825"
+      "sha256": "1d878056b7f9df76c446c71c40c4da8584698f988e3c92aaccb177f56931e051"
     },
     {
       "id": "markdown-outline",
@@ -175,7 +175,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "c60d80c6521ad43934eb501c5e8f0b125259dd170dbf0e8135cadfedf19e4d57"
+      "sha256": "ee0aa95b5c685fb24cf8b5fea8f87039d61747305e2eb0221e145dbd22cf5db8"
     },
     {
       "id": "launcher-empty",
@@ -186,7 +186,7 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "3b0174bf44dace5d8394ee82b894b44a4e3bc8e508bb781d1164c03bab48db5e"
+      "sha256": "cff01dc9c29fa859c418104ab89b33a69d69a41ff82d8788d4572c64caa2e4bd"
     },
     {
       "id": "launcher-narrow",
@@ -197,7 +197,7 @@
       "width": 522,
       "height": 920,
       "tier": "headless",
-      "sha256": "ba11a8dbb90ae7db489edb7eb92ed20724a7a4f6865ed7aa2dddc0b61c757e96"
+      "sha256": "d61aa08412c759c3318d84af361d34c5c6ed09d5523962f52490076dc2cf1dfa"
     },
     {
       "id": "launcher-populated",
@@ -208,18 +208,18 @@
       "width": 1228,
       "height": 876,
       "tier": "headless",
-      "sha256": "ae599244ce58c206b9028509bddfc8795970acb01e487a93f1865f8215af2bff"
+      "sha256": "6daca02042179866656e563ffb1b04f1fc53ff04cdae0ef08316cb1418546171"
     },
     {
       "id": "profiles-list",
       "section": "profiles",
       "title": "Profiles list",
-      "caption": "Every saved local, SSH, SFTP, and serial profile in one reorderable list.",
+      "caption": "Every saved local, SSH, SFTP, and serial profile in a single searchable table, each row carrying an overflow menu for connecting, editing, duplicating, and deleting.",
       "image": "profiles-list.png",
       "width": 760,
-      "height": 635,
+      "height": 721,
       "tier": "headless",
-      "sha256": "275f54ebf9a5319e074c7cfe4380c0aea290c7d2a8ccd0d5eca88e5abafcaf7c"
+      "sha256": "2d7fce720ea7dc80643a81a62fcc9164bcb94796609ddb01715c4a4763b120e8"
     },
     {
       "id": "profiles-serial-editor",

@@ -20,6 +20,7 @@ pub const SURFACE_SELECTION: Color32 = Color32::from_rgb(0x28, 0x51, 0x6b);
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xe8, 0xed, 0xf2);
 pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xa7, 0xb2, 0xbd);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x78, 0x85, 0x92);
+pub const TEXT_ON_ACCENT: Color32 = Color32::WHITE;
 
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x35, 0x41, 0x4e);
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x91, 0xa7, 0xb8);

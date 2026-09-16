@@ -115,17 +115,19 @@ fn scenarios() -> Vec<Scenario> {
         Scenario {
             id: "ssh-connect-collapsed",
             section: "connection-forms",
-            title: "SSH connect form, Quick Connect",
-            caption: "The default SSH launch surface: host/username/password only, with \
-                      advanced settings collapsed.",
+            title: "SSH connect form",
+            caption: "The default SSH launch surface: a Connection section for host, port \
+                      and username, an Authentication section for the credential method, and \
+                      the durable-remote-session toggle, with Advanced settings collapsed.",
             capture: capture_ssh_connect_collapsed,
         },
         Scenario {
             id: "ssh-connect-advanced",
             section: "connection-forms",
-            title: "SSH connect form with advanced settings shown",
-            caption: "Revealing 'Show advanced settings' exposes durable-session, port \
-                      forwarding, and authentication-method controls.",
+            title: "SSH connect form with Advanced settings expanded",
+            caption: "Expanding 'Advanced settings' reveals the port-forwarding controls \
+                      beneath the always-visible connection, authentication and \
+                      durable-session sections.",
             capture: capture_ssh_connect_advanced,
         },
         Scenario {
@@ -198,8 +200,8 @@ fn scenarios() -> Vec<Scenario> {
             id: "keyboard-editor-press-keys",
             section: "keyboard",
             title: "Keyboard bindings editor capturing a chord",
-            caption: "'Press keys' arms live chord capture; the editor waits for a chord \
-                      instead of dispatching whatever is pressed next.",
+            caption: "'Record shortcut' arms live chord capture; the editor waits for a \
+                      chord instead of dispatching whatever is pressed next.",
             capture: capture_keyboard_editor_press_keys,
         },
         Scenario {
@@ -215,8 +217,9 @@ fn scenarios() -> Vec<Scenario> {
             id: "profiles-list",
             section: "profiles",
             title: "Profiles list",
-            caption: "Every saved local, SSH, SFTP, and serial profile in one reorderable \
-                      list.",
+            caption: "Every saved local, SSH, SFTP, and serial profile in a single \
+                      searchable table, each row carrying an overflow menu for connecting, \
+                      editing, duplicating, and deleting.",
             capture: capture_profiles_list,
         },
         Scenario {
@@ -639,18 +642,15 @@ fn open_launcher_card(harness: &mut Harness<'static, ()>, label: &str) {
 }
 
 fn show_advanced_settings(harness: &mut Harness<'static, ()>) {
-    harness.get_by_label("Show advanced settings").click();
+    harness.get_by_label("Advanced settings").click();
     harness.run();
 }
 
 /// How a connect form should be prefilled before its screenshot, mirroring
-/// what a user would already have typed. `None` is the genuinely-empty
-/// first-use state, which is only ever used for the collapsed SSH form --
-/// every other form is shown mid-use with a representative, synthetic
-/// identity and (per the no-PII/no-credential rule) an always-empty
-/// password.
+/// what a user would already have typed. Every form is shown mid-use with a
+/// representative, synthetic identity and (per the no-PII/no-credential rule)
+/// an always-empty password.
 enum Prefill {
-    None,
     /// Fills the advanced form's separate Username/Host fields.
     UsernameAndHost {
         username: &'static str,
@@ -667,7 +667,6 @@ enum Prefill {
 impl Prefill {
     fn apply(self, harness: &mut Harness<'static, ()>) {
         match self {
-            Prefill::None => {}
             Prefill::UsernameAndHost { username, host } => {
                 enter_text(harness, "Username", username);
                 enter_text(harness, "Host", host);
@@ -721,20 +720,22 @@ fn render_launcher_form(
 }
 
 fn capture_ssh_connect_collapsed() -> image::RgbaImage {
-    // The genuinely empty first-use state: worth showing as-is.
     render_launcher_form(
-        720.0,
-        820.0,
+        860.0,
+        900.0,
         "SSH — Connect to a remote host over SSH",
         false,
-        Prefill::None,
+        Prefill::UsernameAndHost {
+            username: "devuser",
+            host: "web-1.staging.example.com",
+        },
     )
 }
 
 fn capture_ssh_connect_advanced() -> image::RgbaImage {
     render_launcher_form(
-        720.0,
-        1100.0,
+        860.0,
+        1000.0,
         "SSH — Connect to a remote host over SSH",
         true,
         Prefill::UsernameAndHost {
@@ -896,7 +897,7 @@ fn capture_keyboard_editor_press_keys() -> image::RgbaImage {
         .get_by_role_and_label(accesskit::Role::Button, "New Session")
         .click();
     harness.run();
-    harness.get_by_label("Press keys").click();
+    harness.get_by_label("Record shortcut").click();
     harness.run();
     finish(&mut harness)
 }
@@ -904,7 +905,7 @@ fn capture_keyboard_editor_press_keys() -> image::RgbaImage {
 fn capture_keyboard_editor_filtered() -> image::RgbaImage {
     let mut harness = keyboard_editor_harness(960.0, 1300.0, KeyboardBindings::default());
     harness.run();
-    harness.get_by_label("Search").click();
+    harness.get_by_label("Search actions…").click();
     harness.event(egui::Event::Text("markdown".into()));
     harness.run();
     finish(&mut harness)

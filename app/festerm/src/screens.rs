@@ -22,14 +22,20 @@ use festerm_ssh::{
     RecoveryPolicy, SessionStrategy, SshAuthentication, SshCertificate, SshConnectionProfile,
     SshKeyPassphrase, SshPrivateKey, SshPrivateKeyError, SshSessionOptions,
 };
-use festerm_ui_egui::{icon, icon::Icon, theme};
+use festerm_ui_egui::{
+    controls::{self, ActionButtonRole},
+    icon,
+    icon::Icon,
+    theme,
+};
 
 #[cfg(test)]
 use festerm_config::SshPortForwardConfiguration;
 
 use crate::port_forward_draft::PortForwardDraft as SshPortForwardDraft;
 use crate::tabs::{
-    AppCommand, NewProfileKind, PasswordToStore, PrivateKeyToStore, ProfileCredentialToStore, TabId,
+    AppCommand, NewProfileKind, PasswordToStore, PrivateKeyToStore, ProfileCredentialToStore,
+    SshPortForwardDraftSeed, SshProfileDraftSeed, TabId,
 };
 
 mod profiles;
@@ -83,6 +89,80 @@ struct LauncherItem<'a> {
     last_used_unix_seconds: Option<u64>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ProfileTableKind {
+    Local,
+    Ssh,
+    Sftp,
+    Serial,
+}
+
+impl ProfileTableKind {
+    fn type_label(self) -> &'static str {
+        match self {
+            Self::Local => "Local",
+            Self::Ssh => "SSH",
+            Self::Sftp => "SFTP",
+            Self::Serial => "Serial",
+        }
+    }
+
+    fn mark(self) -> (Icon, egui::Color32) {
+        match self {
+            Self::Local => (Icon::LocalTerminal, theme::ICON_SESSION_LOCAL),
+            Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
+            Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
+            Self::Serial => (Icon::Serial, theme::ICON_SESSION_SERIAL),
+        }
+    }
+}
+
+struct ProfileTableItem {
+    identifier: String,
+    label: String,
+    subtitle: Option<String>,
+    kind: ProfileTableKind,
+    location: String,
+    last_used_unix_seconds: Option<u64>,
+}
+
+impl ProfileTableItem {
+    fn connect_command(&self) -> AppCommand {
+        match self.kind {
+            ProfileTableKind::Local => AppCommand::StartConfiguredLocalProfile {
+                profile_id: self.identifier.clone(),
+            },
+            ProfileTableKind::Ssh => AppCommand::StartConfiguredSshProfile {
+                profile_id: self.identifier.clone(),
+            },
+            ProfileTableKind::Sftp => AppCommand::StartConfiguredSftpProfile {
+                profile_id: self.identifier.clone(),
+            },
+            ProfileTableKind::Serial => AppCommand::StartConfiguredSerialProfile {
+                profile_id: self.identifier.clone(),
+            },
+        }
+    }
+
+    fn launcher_crossover(&self) -> Option<(&'static str, AppCommand)> {
+        match self.kind {
+            ProfileTableKind::Ssh => Some((
+                "Connect SFTP",
+                AppCommand::StartConfiguredSftpProfile {
+                    profile_id: self.identifier.clone(),
+                },
+            )),
+            ProfileTableKind::Sftp => Some((
+                "Connect SSH",
+                AppCommand::StartConfiguredSshProfile {
+                    profile_id: self.identifier.clone(),
+                },
+            )),
+            _ => None,
+        }
+    }
+}
+
 impl<'a> LauncherItem<'a> {
     /// Builds an item that is not a Saved Profiles row, leaving the three
     /// table-only columns empty.
@@ -99,6 +179,27 @@ impl<'a> LauncherItem<'a> {
 }
 
 impl LauncherItem<'_> {
+    fn profile_table_item(&self) -> ProfileTableItem {
+        let kind = match self.kind {
+            LauncherItemKind::LocalProfile(_) => ProfileTableKind::Local,
+            LauncherItemKind::SshProfile(_) => ProfileTableKind::Ssh,
+            LauncherItemKind::SftpProfile(_) => ProfileTableKind::Sftp,
+            LauncherItemKind::SerialProfile(_) => ProfileTableKind::Serial,
+            _ => unreachable!("only saved profiles are rendered by the profile table"),
+        };
+        ProfileTableItem {
+            identifier: self
+                .profile_id()
+                .expect("saved profile rows carry a profile id")
+                .to_owned(),
+            label: self.label.clone(),
+            subtitle: None,
+            kind,
+            location: self.location.clone(),
+            last_used_unix_seconds: self.last_used_unix_seconds,
+        }
+    }
+
     fn profile_id(&self) -> Option<&str> {
         match self.kind {
             LauncherItemKind::LocalDefault
@@ -137,32 +238,6 @@ impl LauncherItem<'_> {
                 (Icon::Serial, theme::ICON_SESSION_SERIAL)
             }
             LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
-        }
-    }
-
-    /// The command that connects this saved profile over its *other*
-    /// protocol, for the row menu's cross-protocol entry.
-    ///
-    /// An SSH profile already carries everything an SFTP session needs (and
-    /// the reverse), so offering the crossover here saves duplicating one
-    /// host under two profiles. Only the two remote kinds have a crossover;
-    /// local and serial profiles return `None` and their menus simply omit
-    /// the entry rather than showing it disabled.
-    fn crossover(&self) -> Option<(&'static str, AppCommand)> {
-        match self.kind {
-            LauncherItemKind::SshProfile(profile_id) => Some((
-                "Connect SFTP",
-                AppCommand::StartConfiguredSftpProfile {
-                    profile_id: profile_id.to_owned(),
-                },
-            )),
-            LauncherItemKind::SftpProfile(profile_id) => Some((
-                "Connect SSH",
-                AppCommand::StartConfiguredSshProfile {
-                    profile_id: profile_id.to_owned(),
-                },
-            )),
-            _ => None,
         }
     }
 
@@ -593,17 +668,11 @@ struct SshLauncherForm {
     host: String,
     port: String,
     username: String,
-    /// The default, minimal entry point: a single `user@host[:port]` field
-    /// parsed by `parse_quick_connect`. Shown instead of the full form until
-    /// `advanced_open` is set, matching how most SSH clients' fast path
-    /// works; IPv6 bracket notation (`user@[::1]:22`) is not specially
-    /// handled and needs the advanced form's separate Host field instead.
+    /// The legacy SFTP quick-connect entry point: a single `user@host[:port]`
+    /// field parsed by `parse_quick_connect`.
     quick_connect: String,
-    /// Whether the full connection form (separate Host/Port/persistence/
-    /// authentication-method fields) is shown instead of the single Quick
-    /// Connect field. Always `true` once a saved or restored profile is
-    /// prefilled (`prefill_from_profile`), since its host/username are
-    /// already known and Quick Connect's only purpose is fast ad-hoc entry.
+    /// Whether the SSH launcher's Advanced settings disclosure is open. The
+    /// SFTP sibling still reuses this field for its legacy quick/full toggle.
     advanced_open: bool,
     authentication_method: SshAuthenticationMethod,
     password: String,
@@ -745,10 +814,7 @@ impl SshLauncherForm {
         &self,
         configuration: Option<&Configuration>,
     ) -> Option<RemoteTmuxProbeRequest> {
-        let mut probe_form = self.clone();
-        if !probe_form.advanced_open {
-            probe_form.sync_advanced_from_quick_connect();
-        }
+        let probe_form = self.clone();
         let profile = probe_form.connection_profile().ok()?;
         let known_host_fingerprint = configuration?
             .known_host_fingerprint(profile.identity().host(), profile.identity().port())?
@@ -811,6 +877,36 @@ impl SshLauncherForm {
             authentication,
             known_host_fingerprint,
         })
+    }
+
+    fn profile_draft_seed(&self) -> SshProfileDraftSeed {
+        let trimmed_host = self.host.trim();
+        let trimmed_username = self.username.trim();
+        let name = if trimmed_host.is_empty() {
+            "SSH profile".to_owned()
+        } else {
+            trimmed_host.to_owned()
+        };
+        SshProfileDraftSeed {
+            name,
+            host: trimmed_host.to_owned(),
+            port: self.port.trim().to_owned(),
+            username: trimmed_username.to_owned(),
+            port_forwards: self
+                .port_forwards
+                .iter()
+                .map(|forward| SshPortForwardDraftSeed {
+                    direction: forward.direction,
+                    bind_host: forward.bind_host.clone(),
+                    bind_port: forward.bind_port.clone(),
+                    destination_host: forward.destination_host.clone(),
+                    destination_port: forward.destination_port.clone(),
+                })
+                .collect(),
+            durable_session_enabled: self.durable_session.enabled,
+            durable_session_provider: self.durable_session.provider,
+            durable_session_name: self.durable_session.session_name.clone(),
+        }
     }
 
     /// Converts the transient form into the application's typed SSH command.
@@ -939,6 +1035,7 @@ impl SshLauncherForm {
     /// password. That empty password is exactly what routes the connection
     /// to the in-terminal password prompt (see `submit()`'s Password
     /// branch) rather than attempting to connect with no credential.
+    #[cfg(test)]
     fn submit_quick_connect(&mut self) -> Result<AppCommand, String> {
         self.parse_quick_connect()?;
         self.password.clear();
@@ -1199,6 +1296,7 @@ fn ssh_form_has_focus(ui: &Ui, tab_id: TabId) -> bool {
         "password",
         "private_key",
         "key_passphrase",
+        "certificate",
     ]
     .into_iter()
     .map(|field| ssh_field_id(ui, tab_id, field))
@@ -1265,6 +1363,67 @@ fn ssh_text_edit(
     .inner
 }
 
+fn ssh_labeled_text_edit(
+    ui: &mut Ui,
+    tab_id: TabId,
+    field: &'static str,
+    label: &str,
+    value: &mut String,
+    request_focus: bool,
+    desired_width: f32,
+) -> egui::Response {
+    ui.vertical(|ui| {
+        let label = ui.add(
+            egui::Label::new(egui::RichText::new(label).color(theme::TEXT_SECONDARY))
+                .selectable(false),
+        );
+        let field = ui.add(
+            TextEdit::singleline(value)
+                .id_salt(("launcher_ssh", tab_id, field))
+                .desired_width(desired_width),
+        );
+        if request_focus {
+            field.request_focus();
+        }
+        field.labelled_by(label.id)
+    })
+    .inner
+}
+
+fn ssh_password_edit_with_hint(
+    ui: &mut Ui,
+    tab_id: TabId,
+    value: &mut String,
+    request_focus: bool,
+) -> egui::Response {
+    ui.vertical(|ui| {
+        let label = ui
+            .horizontal(|ui| {
+                let primary = ui.add(
+                    egui::Label::new(egui::RichText::new("Password").color(theme::TEXT_PRIMARY))
+                        .selectable(false),
+                );
+                ui.label(
+                    egui::RichText::new(" (optional — leave blank to prompt securely)")
+                        .color(theme::TEXT_SECONDARY),
+                );
+                primary
+            })
+            .inner;
+        let field = ui.add(
+            TextEdit::singleline(value)
+                .id_salt(("launcher_ssh", tab_id, "password"))
+                .password(true)
+                .desired_width(f32::INFINITY),
+        );
+        if request_focus {
+            field.request_focus();
+        }
+        field.labelled_by(label.id)
+    })
+    .inner
+}
+
 fn ssh_multiline_text_edit(
     ui: &mut Ui,
     tab_id: TabId,
@@ -1295,69 +1454,6 @@ fn ssh_multiline_secret_text_edit(
     value: &mut String,
 ) -> egui::Response {
     ssh_multiline_text_edit(ui, tab_id, field, label, value, true)
-}
-
-/// The default, minimal launcher surface for a fresh SSH connection: a
-/// single `user@host[:port]` field and a Connect button, matching how most
-/// SSH clients' fast path works (`SshLauncherForm::quick_connect`).
-/// Submitting always goes through `submit_quick_connect`, which leaves the
-/// password empty so the connection starts interactively (host-key-first,
-/// then `show_ssh_live_password_prompt`) rather than collecting a password
-/// blind before a connection exists — exactly mirroring how other SSH
-/// clients defer the password prompt until it's actually needed.
-fn show_ssh_quick_connect(
-    ui: &mut Ui,
-    tab_id: TabId,
-    form: &mut SshLauncherForm,
-    focus_quick_connect: bool,
-    configuration: Option<&Configuration>,
-) -> Option<AppCommand> {
-    let mut result = None;
-    ssh_section_heading(ui, "Quick Connect");
-    let submit_with_enter = ui
-        .horizontal(|ui| {
-            ui.add_space(2.0);
-            let label = ui.add(
-                egui::Label::new(egui::RichText::new("user@host").color(theme::TEXT_SECONDARY))
-                    .selectable(false),
-            );
-            let field = ui.add(
-                TextEdit::singleline(&mut form.quick_connect)
-                    .id_salt(("launcher_ssh", tab_id, "quick_connect"))
-                    .hint_text("example@169.254.1.1")
-                    .desired_width(220.0),
-            );
-            if focus_quick_connect {
-                field.request_focus();
-            }
-            let field = field.labelled_by(label.id);
-            field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
-        })
-        .inner;
-    ui.add_space(8.0);
-    form.sync_remote_durable_provider_default(ui.ctx(), configuration);
-    show_durable_session_controls(
-        ui,
-        tab_id,
-        &mut form.durable_session,
-        DurableSessionTarget::Remote,
-        true,
-    );
-    ui.add_space(8.0);
-    if ui.button("Connect").clicked() || submit_with_enter {
-        match form.submit_quick_connect() {
-            Ok(command) => {
-                form.feedback = None;
-                result = Some(command);
-            }
-            Err(feedback) => form.feedback = Some(feedback),
-        }
-    }
-    if let Some(feedback) = &form.feedback {
-        ui.add_space(4.0);
-        ui.colored_label(theme::STATUS_ERROR, feedback);
-    }
-    result
 }
 
 fn show_sftp_quick_connect(
@@ -1413,11 +1509,18 @@ enum DurableSessionTarget {
     Remote,
 }
 
+#[derive(Clone, Copy)]
+enum DurableSessionLayout {
+    Inline,
+    Band,
+}
+
 fn show_durable_session_controls(
     ui: &mut Ui,
     tab_id: TabId,
     draft: &mut DurableSessionDraft,
     target: DurableSessionTarget,
+    layout: DurableSessionLayout,
     show_automatic_recovery: bool,
 ) {
     let (heading, toggle_label, description) = match target {
@@ -1432,16 +1535,35 @@ fn show_durable_session_controls(
             "Attach to the named remote tmux or screen session, creating it when needed.",
         ),
     };
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(heading).color(theme::TEXT_PRIMARY));
-        if toggle_switch(ui, draft.enabled, toggle_label).clicked() {
-            draft.enabled = !draft.enabled;
-            if draft.enabled && matches!(target, DurableSessionTarget::Local) {
-                draft.provider = draft.local_default_provider;
-            }
+    // Both layouts share one toggle meaning; only the arrangement of the
+    // heading, description and switch differs.
+    let mut toggled = false;
+    match layout {
+        DurableSessionLayout::Inline => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(heading).color(theme::TEXT_PRIMARY));
+                toggled = toggle_switch(ui, draft.enabled, toggle_label).clicked();
+            });
+            ssh_paragraph(ui, description);
         }
-    });
-    ssh_paragraph(ui, description);
+        DurableSessionLayout::Band => {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(heading).color(theme::TEXT_PRIMARY));
+                    ssh_paragraph(ui, description);
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    toggled = toggle_switch(ui, draft.enabled, toggle_label).clicked();
+                });
+            });
+        }
+    }
+    if toggled {
+        draft.enabled = !draft.enabled;
+        if draft.enabled && matches!(target, DurableSessionTarget::Local) {
+            draft.provider = draft.local_default_provider;
+        }
+    }
     if !draft.enabled {
         return;
     }
@@ -1474,17 +1596,29 @@ fn show_durable_session_controls(
             draft.select_provider(PersistenceProviderKind::Screen);
         }
     });
-    if ssh_text_edit(
-        ui,
-        tab_id,
-        "durable_session_name",
-        "Session name",
-        &mut draft.session_name,
-        false,
-        false,
-    )
-    .changed()
-    {
+    let name_changed = match layout {
+        DurableSessionLayout::Inline => ssh_text_edit(
+            ui,
+            tab_id,
+            "durable_session_name",
+            "Session name",
+            &mut draft.session_name,
+            false,
+            false,
+        )
+        .changed(),
+        DurableSessionLayout::Band => ssh_labeled_text_edit(
+            ui,
+            tab_id,
+            "durable_session_name",
+            "Session name",
+            &mut draft.session_name,
+            false,
+            f32::INFINITY,
+        )
+        .changed(),
+    };
+    if name_changed {
         draft.session_name_touched = true;
     }
     ssh_paragraph(
@@ -1616,89 +1750,95 @@ fn show_ssh_form(
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
-            ui.set_width(340.0);
-            // Rendered once, in a single fixed spot, regardless of which
-            // form (quick connect vs. advanced) is showing below it -- so
-            // toggling this checkbox never makes the checkbox itself jump
-            // to a different position.
-            let mut show_advanced = form.advanced_open;
-            if ui
-                .checkbox(&mut show_advanced, "Show advanced settings")
-                .changed()
-            {
-                if show_advanced {
-                    form.open_advanced_settings();
-                } else {
-                    form.close_advanced_settings();
-                }
-            }
-            ui.add_space(10.0);
-            if !form.advanced_open {
-                result = show_ssh_quick_connect(ui, tab_id, form, focus_username, configuration);
-                return;
-            }
+            let card_width = ui.available_width().clamp(340.0, 720.0);
+            ui.set_min_width(card_width);
+            ui.set_max_width(card_width);
+
             ssh_section_heading(ui, "Connection");
-            ssh_text_edit(
+            let host_port_width = ui.available_width();
+            if host_port_width >= 460.0 {
+                ui.horizontal(|ui| {
+                    let port_width = 110.0;
+                    let host_width =
+                        (ui.available_width() - port_width - ui.spacing().item_spacing.x).max(180.0);
+                    ssh_labeled_text_edit(
+                        ui,
+                        tab_id,
+                        "host",
+                        "Host",
+                        &mut form.host,
+                        false,
+                        host_width,
+                    );
+                    ssh_labeled_text_edit(
+                        ui,
+                        tab_id,
+                        "port",
+                        "Port",
+                        &mut form.port,
+                        false,
+                        port_width,
+                    );
+                });
+            } else {
+                ssh_labeled_text_edit(
+                    ui,
+                    tab_id,
+                    "host",
+                    "Host",
+                    &mut form.host,
+                    false,
+                    f32::INFINITY,
+                );
+                ssh_labeled_text_edit(
+                    ui,
+                    tab_id,
+                    "port",
+                    "Port",
+                    &mut form.port,
+                    false,
+                    110.0,
+                );
+            }
+            ui.add_space(8.0);
+            ssh_labeled_text_edit(
                 ui,
                 tab_id,
                 "username",
                 "Username",
                 &mut form.username,
-                false,
                 focus_username,
-            );
-            ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false, false);
-            ssh_text_edit(ui, tab_id, "port", "Port", &mut form.port, false, false);
-
-            ui.add_space(10.0);
-            ssh_section_heading(ui, "Durable session");
-            form.sync_remote_durable_provider_default(ui.ctx(), configuration);
-            show_durable_session_controls(
-                ui,
-                tab_id,
-                &mut form.durable_session,
-                DurableSessionTarget::Remote,
-                true,
+                f32::INFINITY,
             );
 
-            ui.add_space(10.0);
-            ssh_section_heading(ui, "Port forwards");
-            show_port_forward_drafts(
-                ui,
-                tab_id,
-                "ssh_launcher_port_forward",
-                &mut form.port_forwards,
-            );
-
-            ui.add_space(10.0);
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(14.0);
             ssh_section_heading(ui, "Authentication");
             ui.horizontal(|ui| {
                 ui.radio_value(
                     &mut form.authentication_method,
                     SshAuthenticationMethod::Password,
-                    "Password authentication",
+                    "Password or prompt",
                 );
                 ui.radio_value(
                     &mut form.authentication_method,
                     SshAuthenticationMethod::PrivateKey,
-                    "Private-key authentication",
+                    "Private key",
                 );
                 ui.radio_value(
                     &mut form.authentication_method,
                     SshAuthenticationMethod::Certificate,
-                    "Certificate authentication",
+                    "Certificate",
                 );
             });
-            ui.add_space(4.0);
+            ui.add_space(12.0);
             let submit_with_enter = match form.authentication_method {
                 SshAuthenticationMethod::Password => {
-                    let submit = ssh_text_edit(
+                    let submit = ssh_password_edit_with_hint(
                         ui,
                         tab_id,
-                        "password",
-                        "Password",
                         &mut form.password,
-                        true,
                         focus_password,
                     )
                     .lost_focus()
@@ -1798,26 +1938,71 @@ fn show_ssh_form(
                 }
             };
 
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(14.0);
+            form.sync_remote_durable_provider_default(ui.ctx(), configuration);
+            show_durable_session_controls(
+                ui,
+                tab_id,
+                &mut form.durable_session,
+                DurableSessionTarget::Remote,
+                DurableSessionLayout::Band,
+                true,
+            );
+
+            ui.add_space(14.0);
+            let was_advanced_open = form.advanced_open;
+            let advanced_response = egui::CollapsingHeader::new(
+                egui::RichText::new("Advanced settings").color(theme::TEXT_SECONDARY),
+            )
+            .id_salt(("ssh_launcher_advanced_settings", tab_id))
+            .open(Some(was_advanced_open))
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                ssh_section_heading(ui, "Port forwards");
+                show_port_forward_drafts(
+                    ui,
+                    tab_id,
+                    "ssh_launcher_port_forward",
+                    &mut form.port_forwards,
+                );
+            });
+            // The header is fully controlled by `advanced_open`, so the click is the only
+            // authority on its state. Deriving it back from `body_response` would re-open
+            // the section every frame of the close animation, which never finishes.
+            if advanced_response.header_response.clicked() {
+                form.advanced_open = !was_advanced_open;
+                form.feedback = None;
+            }
+
             if result.is_none() {
+                ui.add_space(14.0);
+                ui.separator();
                 ui.add_space(12.0);
-                let submit_label = match form.authentication_method {
-                    SshAuthenticationMethod::Password => "Connect with password",
-                    SshAuthenticationMethod::PrivateKey => "Connect with private key",
-                    SshAuthenticationMethod::Certificate => "Connect with certificate",
-                };
-                if ui.button(submit_label).clicked() || submit_with_enter {
-                    match form.submit() {
-                        Ok(command) => {
-                            form.feedback = None;
-                            result = Some(command);
-                        }
-                        Err(feedback) => form.feedback = Some(feedback),
-                    }
-                }
                 if let Some(feedback) = &form.feedback {
-                    ui.add_space(4.0);
                     ui.colored_label(theme::STATUS_ERROR, feedback);
+                    ui.add_space(8.0);
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if launcher_text_button(ui, "Connect", None, true).clicked()
+                        || submit_with_enter
+                    {
+                        match form.submit() {
+                            Ok(command) => {
+                                form.feedback = None;
+                                result = Some(command);
+                            }
+                            Err(feedback) => form.feedback = Some(feedback),
+                        }
+                    }
+                    if launcher_text_button(ui, "Save as Profile…", None, false).clicked() {
+                        form.feedback = None;
+                        result = Some(AppCommand::CreateSshProfileFromDraft {
+                            draft: form.profile_draft_seed(),
+                        });
+                    }
+                });
             }
         });
     result
@@ -2266,6 +2451,15 @@ fn session_mark_size(mark: Icon, height: f32) -> egui::Vec2 {
 /// coordinates exactly.
 fn paint_session_mark(painter: &egui::Painter, item: &LauncherItem<'_>, rect: egui::Rect) {
     let (mark, color) = item.mark();
+    paint_mark(painter, mark, color, rect);
+}
+
+fn paint_profile_table_mark(painter: &egui::Painter, item: &ProfileTableItem, rect: egui::Rect) {
+    let (mark, color) = item.kind.mark();
+    paint_mark(painter, mark, color, rect);
+}
+
+fn paint_mark(painter: &egui::Painter, mark: Icon, color: egui::Color32, rect: egui::Rect) {
     // Wide silhouettes occupy more horizontal space, not a smaller terminal
     // or connector squeezed into the same square as a document.
     let rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(rect.width()));
@@ -2486,37 +2680,92 @@ fn show_panel_heading(
     });
 }
 
+#[derive(Clone, Copy)]
+struct ProfileTableOptions {
+    row_height: f32,
+    show_mark: bool,
+    show_subtitle: bool,
+    column_origins: [f32; 4],
+}
+
+impl ProfileTableOptions {
+    fn launcher(width: f32) -> Self {
+        Self {
+            row_height: LAUNCHER_PROFILE_ROW_HEIGHT,
+            show_mark: true,
+            show_subtitle: false,
+            column_origins: launcher_profile_columns(width),
+        }
+    }
+
+    fn profiles(width: f32) -> Self {
+        let column_origins = if width < 760.0 {
+            [0.028, 0.340, 0.500, 0.775]
+        } else {
+            [0.028, 0.295, 0.445, 0.770]
+        };
+        Self {
+            row_height: 64.0,
+            show_mark: false,
+            show_subtitle: true,
+            column_origins,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProfileTableMenu {
+    Launcher,
+    Profiles,
+}
+
+enum ProfileTableAction {
+    Connect,
+    LauncherCrossover(Box<AppCommand>),
+    OpenSftpFileManager,
+    Edit,
+    Duplicate,
+    Delete,
+}
+
+struct ProfileTableRowResponse {
+    response: egui::Response,
+    action: Option<ProfileTableAction>,
+}
+
 /// Renders one Saved Profiles row and its menu.
 ///
-/// The menu opens from either the row's overflow control or a right-click
-/// anywhere on the row: the two gestures are the same affordance, so they
-/// share one popup rather than diverging.
+/// The same renderer is used by the Launcher and the full Profiles tab; the
+/// options decide whether the compact launcher mark or the wider tab subtitle
+/// is shown, and the menu kind decides which action set the row exposes.
 fn show_profile_row(
     ui: &mut Ui,
     width: f32,
-    item: &LauncherItem<'_>,
+    item: &ProfileTableItem,
     selected: bool,
     now_unix_seconds: Option<u64>,
-    command: &mut Option<AppCommand>,
-) {
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(width, LAUNCHER_PROFILE_ROW_HEIGHT), Sense::hover());
+    options: ProfileTableOptions,
+    menu_kind: ProfileTableMenu,
+) -> ProfileTableRowResponse {
+    let mut action = None;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, options.row_height), Sense::hover());
     let menu_center = egui::pos2(rect.right() - LAUNCHER_ROW_MENU_INSET, rect.center().y);
     let menu_rect = egui::Rect::from_center_size(menu_center, egui::Vec2::splat(24.0));
-    // The row's own click target stops short of the overflow control so the
-    // two never contend for the same pointer press.
     let response = ui.interact(
         rect.with_max_x(menu_rect.left()),
-        ui.id().with(("profile_row", &item.label)),
-        Sense::click(),
+        ui.id().with(("profile_row", &item.identifier)),
+        Sense::click_and_drag(),
     );
-    // Matches the launch cards: the row's columns are visual, so the
-    // accessible name has to restate the type and host the eye reads across.
     response.widget_info(|| {
         WidgetInfo::labeled(
             WidgetType::Button,
             ui.is_enabled(),
-            format!("{} — {}", item.label, item.description),
+            format!(
+                "{} — {} · {}",
+                item.label,
+                item.kind.type_label(),
+                item.location
+            ),
         )
     });
 
@@ -2531,31 +2780,75 @@ fn show_profile_row(
         Stroke::new(1.0, theme::BORDER_SUBTLE.gamma_multiply(0.5)),
     );
 
-    let mark_size = session_mark_size(item.mark().0, LAUNCHER_PROFILE_MARK_SIZE);
-    let mark_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            rect.left() + LAUNCHER_PANEL_PADDING - 1.0,
-            rect.center().y - mark_size.y / 2.0,
-        ),
-        mark_size,
-    );
-    paint_session_mark(ui.painter(), item, mark_rect);
+    if options.show_mark {
+        let mark_size = session_mark_size(item.kind.mark().0, LAUNCHER_PROFILE_MARK_SIZE);
+        let mark_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.left() + LAUNCHER_PANEL_PADDING - 1.0,
+                rect.center().y - mark_size.y / 2.0,
+            ),
+            mark_size,
+        );
+        paint_profile_table_mark(ui.painter(), item, mark_rect);
+    }
 
     let last_used = item
         .last_used_unix_seconds
         .zip(now_unix_seconds)
         .map(|(then, now)| relative_age(now, then))
         .unwrap_or_else(|| "Never".to_owned());
-    let columns = [
-        (
-            item.label.clone(),
+    let name_left = rect.left() + width * options.column_origins[0];
+    let name_right = rect.left() + width * options.column_origins[1];
+    if options.show_subtitle {
+        let title = elided_galley(
+            ui,
+            &item.label,
+            16.0,
+            theme::TEXT_PRIMARY,
+            (name_right - name_left - LAUNCHER_COLUMN_GUTTER).max(0.0),
+            1,
+        );
+        let detail = elided_galley(
+            ui,
+            item.subtitle.as_deref().unwrap_or(""),
+            14.0,
+            theme::TEXT_SECONDARY,
+            (name_right - name_left - LAUNCHER_COLUMN_GUTTER).max(0.0),
+            1,
+        );
+        let text_height = title.size().y + 4.0 + detail.size().y;
+        let top = rect.center().y - text_height / 2.0;
+        ui.painter()
+            .galley(egui::pos2(name_left, top), title, theme::TEXT_PRIMARY);
+        let detail_y = top + text_height - detail.size().y;
+        ui.painter().galley(
+            egui::pos2(name_left, detail_y),
+            detail,
+            theme::TEXT_SECONDARY,
+        );
+    } else {
+        let galley = elided_galley(
+            ui,
+            &item.label,
             LAUNCHER_BODY_TEXT_SIZE,
             theme::TEXT_PRIMARY,
-        ),
+            (name_right - name_left - LAUNCHER_COLUMN_GUTTER).max(0.0),
+            1,
+        );
+        let top = rect.center().y - galley.size().y / 2.0;
+        ui.painter()
+            .galley(egui::pos2(name_left, top), galley, theme::TEXT_PRIMARY);
+    }
+
+    for (offset, (text, size, color)) in [
         (
-            item.type_label.to_owned(),
+            item.kind.type_label().to_owned(),
             LAUNCHER_BODY_TEXT_SIZE,
-            theme::TEXT_SECONDARY,
+            if options.show_subtitle {
+                theme::TEXT_PRIMARY
+            } else {
+                theme::TEXT_SECONDARY
+            },
         ),
         (
             item.location.clone(),
@@ -2563,11 +2856,14 @@ fn show_profile_row(
             theme::TEXT_SECONDARY,
         ),
         (last_used, LAUNCHER_DETAIL_TEXT_SIZE, theme::TEXT_SECONDARY),
-    ];
-    let column_origins = launcher_profile_columns(width);
-    for (index, (text, size, color)) in columns.into_iter().enumerate() {
-        let left = rect.left() + width * column_origins[index];
-        let right = column_origins
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let index = offset + 1;
+        let left = rect.left() + width * options.column_origins[index];
+        let right = options
+            .column_origins
             .get(index + 1)
             .map(|fraction| rect.left() + width * fraction)
             .unwrap_or(menu_center.x - 12.0);
@@ -2585,7 +2881,7 @@ fn show_profile_row(
 
     let menu_response = ui.interact(
         menu_rect,
-        ui.id().with(("profile_row_menu", &item.label)),
+        ui.id().with(("profile_row_menu", &item.identifier)),
         Sense::click(),
     );
     let menu_name = format!("More actions for {}", item.label);
@@ -2603,42 +2899,60 @@ fn show_profile_row(
     );
     let menu_response = menu_response.on_hover_text("More actions");
 
-    // The overflow control and a right-click on the row are the same
-    // affordance, so both open one menu built in one place rather than two
-    // that could drift apart.
-    egui::Popup::menu(&menu_response).show(|ui| show_profile_row_menu(ui, item, command));
-    response.context_menu(|ui| show_profile_row_menu(ui, item, command));
+    egui::Popup::menu(&menu_response).show(|ui| {
+        action = show_profile_row_menu(ui, item, menu_kind).or(action.take());
+    });
+    response.context_menu(|ui| {
+        action = show_profile_row_menu(ui, item, menu_kind).or(action.take());
+    });
 
     if response.clicked() {
-        *command = Some(item.command());
+        action = Some(ProfileTableAction::Connect);
     }
+
+    ProfileTableRowResponse { response, action }
 }
 
-/// The row menu: launch, edit, and -- for the two remote profile kinds --
-/// connect over the other protocol.
-///
-/// Every entry dispatches an existing `AppCommand`, so a profile launched
-/// from here takes exactly the path it takes from anywhere else.
-fn show_profile_row_menu(ui: &mut Ui, item: &LauncherItem<'_>, command: &mut Option<AppCommand>) {
+fn show_profile_row_menu(
+    ui: &mut Ui,
+    item: &ProfileTableItem,
+    menu_kind: ProfileTableMenu,
+) -> Option<ProfileTableAction> {
     if ui.button("Connect").clicked() {
-        *command = Some(item.command());
         ui.close();
+        return Some(ProfileTableAction::Connect);
     }
-    if let Some((label, crossover)) = item.crossover() {
-        if ui.button(label).clicked() {
-            *command = Some(crossover);
-            ui.close();
+    match menu_kind {
+        ProfileTableMenu::Launcher => {
+            if let Some((label, crossover)) = item.launcher_crossover() {
+                if ui.button(label).clicked() {
+                    ui.close();
+                    return Some(ProfileTableAction::LauncherCrossover(Box::new(crossover)));
+                }
+            }
+        }
+        ProfileTableMenu::Profiles => {
+            if item.kind == ProfileTableKind::Ssh && ui.button("Open SFTP").clicked() {
+                ui.close();
+                return Some(ProfileTableAction::OpenSftpFileManager);
+            }
         }
     }
     if ui.button("Edit").clicked() {
-        *command = Some(AppCommand::OpenProfileEditor {
-            identifier: item
-                .profile_id()
-                .expect("Saved Profiles rows always carry a profile id")
-                .to_owned(),
-        });
         ui.close();
+        return Some(ProfileTableAction::Edit);
     }
+    if matches!(menu_kind, ProfileTableMenu::Profiles) {
+        if ui.button("Duplicate").clicked() {
+            ui.close();
+            return Some(ProfileTableAction::Duplicate);
+        }
+        if ui.button("Delete").clicked() {
+            ui.close();
+            return Some(ProfileTableAction::Delete);
+        }
+    }
+    None
 }
 
 /// Renders one running-session group: a disclosure header naming the
@@ -2811,6 +3125,64 @@ fn launcher_button(
     accessible_name: Option<&str>,
     accent: bool,
 ) -> egui::Response {
+    launcher_button_with_optional_icon(ui, Some(mark), label, accessible_name, accent, 0.0)
+}
+
+fn launcher_text_button(
+    ui: &mut Ui,
+    label: &str,
+    accessible_name: Option<&str>,
+    accent: bool,
+) -> egui::Response {
+    launcher_button_with_optional_icon(ui, None, label, accessible_name, accent, 0.0)
+}
+
+fn launcher_dropdown_button(
+    ui: &mut Ui,
+    mark: Icon,
+    label: &str,
+    accessible_name: Option<&str>,
+    accent: bool,
+) -> egui::Response {
+    let response = launcher_button_with_optional_icon(
+        ui,
+        Some(mark),
+        label,
+        accessible_name,
+        accent,
+        LAUNCHER_DROPDOWN_CHEVRON_LANE,
+    );
+    if ui.is_rect_visible(response.rect) {
+        let chevron = egui::Rect::from_center_size(
+            egui::pos2(response.rect.right() - 12.0, response.rect.center().y + 1.0),
+            egui::Vec2::splat(10.0),
+        );
+        icon::paint(
+            ui.painter(),
+            Icon::NextMatch,
+            chevron,
+            if accent {
+                theme::TEXT_ON_ACCENT
+            } else {
+                theme::TEXT_PRIMARY
+            },
+        );
+    }
+    response
+}
+
+/// Width reserved at a dropdown button's right edge for its chevron, so the
+/// chevron sits beside the label instead of on top of it.
+const LAUNCHER_DROPDOWN_CHEVRON_LANE: f32 = 18.0;
+
+fn launcher_button_with_optional_icon(
+    ui: &mut Ui,
+    mark: Option<Icon>,
+    label: &str,
+    accessible_name: Option<&str>,
+    accent: bool,
+    trailing_lane: f32,
+) -> egui::Response {
     let text_width = ui
         .painter()
         .layout_no_wrap(
@@ -2821,10 +3193,15 @@ fn launcher_button(
         .size()
         .x
         .ceil();
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(text_width + 48.0, LAUNCHER_CONTROL_HEIGHT),
-        Sense::click(),
-    );
+    let button_width = text_width
+        + trailing_lane
+        + if mark.is_some() {
+            48.0
+        } else {
+            LAUNCHER_PANEL_PADDING * 2.0
+        };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(button_width, LAUNCHER_CONTROL_HEIGHT), Sense::click());
     // Several buttons on this surface share one visible word ("Reattach"),
     // so the caller may name them apart for anyone navigating by label.
     let name = accessible_name.unwrap_or(label);
@@ -2832,40 +3209,35 @@ fn launcher_button(
     if !ui.is_rect_visible(rect) {
         return response;
     }
-    let fill = if accent {
-        theme::ACCENT_ACTION
-    } else if response.hovered() {
-        theme::SURFACE_OVERLAY
+    let role = if accent {
+        ActionButtonRole::Accent
     } else {
-        theme::SURFACE_TAB_ACTIVE
+        ActionButtonRole::Secondary
     };
-    let foreground = if accent {
-        egui::Color32::WHITE
-    } else {
-        theme::TEXT_PRIMARY
-    };
+    let visuals = controls::action_button_visuals(role, response.hovered());
     ui.painter().rect(
         rect,
-        6.0,
-        fill,
-        if accent {
-            Stroke::NONE
-        } else {
-            Stroke::new(1.0, theme::BORDER_SUBTLE)
-        },
+        controls::ACTION_BUTTON_CORNER_RADIUS,
+        visuals.fill,
+        visuals.stroke,
         egui::StrokeKind::Inside,
     );
-    let mark_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 18.0, rect.center().y),
-        egui::Vec2::splat(LAUNCHER_CONTROL_ICON_SIZE),
-    );
-    icon::paint(ui.painter(), mark, mark_rect, foreground);
+    let text_left = if let Some(mark) = mark {
+        let mark_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 18.0, rect.center().y),
+            egui::Vec2::splat(LAUNCHER_CONTROL_ICON_SIZE),
+        );
+        icon::paint(ui.painter(), mark, mark_rect, visuals.foreground);
+        mark_rect.right() + 8.0
+    } else {
+        rect.center().x - trailing_lane / 2.0 - text_width / 2.0
+    };
     ui.painter().text(
-        egui::pos2(mark_rect.right() + 8.0, rect.center().y),
+        egui::pos2(text_left, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(LAUNCHER_BODY_TEXT_SIZE),
-        foreground,
+        visuals.foreground,
     );
     response
 }
@@ -2885,6 +3257,18 @@ fn launcher_icon_button(ui: &mut Ui, mark: Icon, tooltip: &str) -> egui::Respons
         },
     );
     response.on_hover_text(tooltip)
+}
+
+fn show_profile_search_field(ui: &mut Ui, field_width: f32, search_text: &mut String) {
+    controls::SearchField {
+        width: field_width,
+        height: LAUNCHER_CONTROL_HEIGHT,
+        icon_inset: 16.0,
+        icon_size: LAUNCHER_CONTROL_ICON_SIZE,
+        text_size: LAUNCHER_SEARCH_TEXT_SIZE,
+        hint: "Search profiles…",
+    }
+    .show(ui, search_text);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3049,7 +3433,9 @@ pub fn show_launcher(
                                 .color(theme::TEXT_PRIMARY),
                         );
                         ui.label(
-                            egui::RichText::new("Enter connection details.")
+                            egui::RichText::new(
+                                "Enter the destination now. Authentication is requested when the server needs it.",
+                            )
                                 .size(11.0)
                                 .color(theme::TEXT_SECONDARY),
                         );
@@ -3566,95 +3952,22 @@ fn show_saved_profiles_panel(
                                     }
                                     ui.add_space(8.0);
                                     let field_width = (ui.available_width() - 28.0).max(80.0);
-                                    let (field, _) = ui.allocate_exact_size(
-                                        vec2(field_width, LAUNCHER_CONTROL_HEIGHT),
-                                        Sense::hover(),
-                                    );
-                                    ui.painter().rect(
-                                        field,
-                                        8.0,
-                                        theme::SURFACE_FIELD,
-                                        Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                    let glass = egui::Rect::from_center_size(
-                                        egui::pos2(field.left() + 16.0, field.center().y),
-                                        egui::Vec2::splat(LAUNCHER_CONTROL_ICON_SIZE),
-                                    );
-                                    icon::paint(
-                                        ui.painter(),
-                                        Icon::Search,
-                                        glass,
-                                        theme::TEXT_MUTED,
-                                    );
-                                    // The entry is sized to one line of
-                                    // text and centred on the pill, so
-                                    // the text sits on the pill's centre
-                                    // line instead of hanging from a
-                                    // fixed top margin.
-                                    let line = ui
-                                        .painter()
-                                        .layout_no_wrap(
-                                            "Ag".to_owned(),
-                                            egui::FontId::proportional(LAUNCHER_SEARCH_TEXT_SIZE),
-                                            theme::TEXT_PRIMARY,
-                                        )
-                                        .size()
-                                        .y;
-                                    let entry = egui::Rect::from_min_max(
-                                        egui::pos2(
-                                            glass.right() + 8.0,
-                                            field.center().y - line / 2.0,
-                                        ),
-                                        egui::pos2(
-                                            field.right() - 10.0,
-                                            field.center().y + line / 2.0,
-                                        ),
-                                    );
-                                    ui.scope_builder(
-                                        egui::UiBuilder::new().max_rect(entry),
-                                        |ui| {
-                                            let search = ui.add_sized(
-                                                entry.size(),
-                                                TextEdit::singleline(&mut state.profile_search)
-                                                    // The pill around the
-                                                    // field is painted by
-                                                    // this panel, so the
-                                                    // widget must not draw
-                                                    // a second frame
-                                                    // inside it.
-                                                    .frame(egui::Frame::NONE)
-                                                    .background_color(egui::Color32::TRANSPARENT)
-                                                    .font(egui::FontId::proportional(
-                                                        LAUNCHER_SEARCH_TEXT_SIZE,
-                                                    ))
-                                                    .hint_text("Search profiles…")
-                                                    .margin(egui::Margin::ZERO),
-                                            );
-                                            // The magnifier is painted,
-                                            // not a label widget, so the
-                                            // field would otherwise reach
-                                            // assistive technology
-                                            // unnamed.
-                                            let value = state.profile_search.clone();
-                                            search.widget_info(|| {
-                                                let mut info = WidgetInfo::text_edit(
-                                                    ui.is_enabled(),
-                                                    &value,
-                                                    &value,
-                                                    "Search profiles…",
-                                                );
-                                                info.label = Some("Search profiles…".to_owned());
-                                                info
-                                            });
-                                        },
+                                    show_profile_search_field(
+                                        ui,
+                                        field_width,
+                                        &mut state.profile_search,
                                     );
                                 },
                             );
                         });
                         ui.add_space(8.0);
 
-                        show_profile_column_headers(ui, width, inner);
+                        show_profile_column_headers(
+                            ui,
+                            width,
+                            inner,
+                            ProfileTableOptions::launcher(width),
+                        );
                         let selected = state.selected;
                         let search_is_empty = state.profile_search.trim().is_empty();
                         let rows = |ui: &mut Ui, command: &mut Option<AppCommand>| {
@@ -3674,14 +3987,32 @@ fn show_saved_profiles_panel(
                                 });
                             }
                             for index in order {
-                                show_profile_row(
+                                let item = items[*index].profile_table_item();
+                                let row = show_profile_row(
                                     ui,
                                     width,
-                                    &items[*index],
+                                    &item,
                                     *index == selected,
                                     now_unix_seconds,
-                                    command,
+                                    ProfileTableOptions::launcher(width),
+                                    ProfileTableMenu::Launcher,
                                 );
+                                if let Some(action) = row.action {
+                                    *command = Some(match action {
+                                        ProfileTableAction::Connect => item.connect_command(),
+                                        ProfileTableAction::LauncherCrossover(command) => *command,
+                                        ProfileTableAction::Edit => AppCommand::OpenProfileEditor {
+                                            identifier: item.identifier.clone(),
+                                        },
+                                        ProfileTableAction::OpenSftpFileManager
+                                        | ProfileTableAction::Duplicate
+                                        | ProfileTableAction::Delete => {
+                                            unreachable!(
+                                                "launcher profile rows do not expose this action"
+                                            )
+                                        }
+                                    });
+                                }
                             }
                         };
 
@@ -3730,7 +4061,7 @@ fn show_saved_profiles_panel(
                                     // the same list as Manage Profiles and
                                     // the two controls would be one control
                                     // wearing two labels.
-                                    let new_profile = launcher_button(
+                                    let new_profile = launcher_dropdown_button(
                                         ui,
                                         Icon::NewProfile,
                                         "New Profile",
@@ -3761,7 +4092,7 @@ fn show_saved_profiles_panel(
 
 /// Paints the table's column headers from the same column origins the rows
 /// use, so the two can never drift apart.
-fn show_profile_column_headers(ui: &mut Ui, width: f32, inner: f32) {
+fn show_profile_column_headers(ui: &mut Ui, width: f32, inner: f32, options: ProfileTableOptions) {
     let _ = inner;
     let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
     for (index, heading) in ["Name", "Type", "Host / Path", "Last Used"]
@@ -3776,7 +4107,7 @@ fn show_profile_column_headers(ui: &mut Ui, width: f32, inner: f32) {
             width * 0.2,
             1,
         );
-        let left = rect.left() + width * launcher_profile_columns(width)[index];
+        let left = rect.left() + width * options.column_origins[index];
         let top = rect.center().y - galley.size().y / 2.0;
         ui.painter()
             .galley(egui::pos2(left, top), galley, theme::TEXT_MUTED);
@@ -4371,10 +4702,6 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
-        // Quick Connect is the default surface; these tests exercise the
-        // full advanced form, so reveal it the same way a user would.
-        harness.get_by_label("Show advanced settings").click();
-        harness.run();
     }
 
     fn generated_openssh_private_key() -> String {
@@ -4433,23 +4760,26 @@ mod tests {
     }
 
     #[test]
-    fn ssh_form_orders_fields_username_then_host_then_port_prefilled_with_22() {
-        // Regression test pinning the requested field order (Username,
-        // Host, Port) and that Port is prefilled with the actual default
+    fn ssh_form_orders_fields_host_port_then_username_and_prefills_port_with_22() {
+        // Regression test pinning the mockup field order (Host/Port first,
+        // Username below) and that Port is prefilled with the actual default
         // value (not left empty with "(default: 22)"-style wording).
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
 
-        let username_top = harness.get_by_label("Username").rect().top();
         let host_top = harness.get_by_label("Host").rect().top();
         let port_top = harness.get_by_label("Port").rect().top();
+        let username_top = harness.get_by_label("Username").rect().top();
 
         assert!(
-            username_top < host_top,
-            "Username must be positioned above Host"
+            (host_top - port_top).abs() < 2.0,
+            "Host and Port must share a row on wide launchers"
         );
-        assert!(host_top < port_top, "Host must be positioned above Port");
+        assert!(
+            host_top < username_top,
+            "Username must be positioned below Host/Port"
+        );
 
         assert!(
             harness.query_by_label("Port (optional)").is_none(),
@@ -4479,7 +4809,9 @@ mod tests {
         enter_text(&mut harness, "Username", "test-user");
         enter_text(&mut harness, "Password", "transient-test-password");
 
-        harness.get_by_label("Connect with password").click();
+        harness.get_by_label("Connect").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Connect").click();
         harness.run();
 
         let Some(AppCommand::StartSshSession {
@@ -4505,7 +4837,7 @@ mod tests {
     }
 
     #[test]
-    fn ssh_launcher_defaults_to_quick_connect_not_the_advanced_form() {
+    fn ssh_launcher_defaults_to_the_full_connection_form() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4514,32 +4846,17 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.query_by_label("user@host").is_some(),
-            "a freshly opened SSH launcher must show the Quick Connect field"
+            harness.query_by_label("Host").is_some(),
+            "a freshly opened SSH launcher must show the full connection form"
         );
         assert!(
-            harness.query_by_label("Username").is_none(),
-            "the advanced form must stay hidden until 'Show advanced settings' is checked"
-        );
-    }
-
-    #[test]
-    fn quick_connect_focuses_its_field_when_the_launcher_opens() {
-        let mut harness = harness();
-        harness.run();
-        harness
-            .get_by_label("SSH — Connect to a remote host over SSH")
-            .click();
-        harness.run();
-
-        assert!(
-            harness.get_by_label("user@host").is_focused(),
-            "Quick Connect's field must have initial keyboard focus"
+            harness.query_by_label("user@host").is_none(),
+            "the SSH launcher no longer uses the old one-line Quick Connect field"
         );
     }
 
     #[test]
-    fn quick_connect_with_no_password_opens_the_in_terminal_password_prompt() {
+    fn ssh_launcher_focuses_username_when_it_opens() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4547,7 +4864,23 @@ mod tests {
             .click();
         harness.run();
 
-        harness.get_by_label("user@host").type_text("fes@10.1.2.3");
+        assert!(
+            harness.get_by_label("Username").is_focused(),
+            "the preserved focus_username affordance must focus Username"
+        );
+    }
+
+    #[test]
+    fn ssh_form_with_no_password_opens_the_in_terminal_password_prompt() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("SSH — Connect to a remote host over SSH")
+            .click();
+        harness.run();
+
+        enter_text(&mut harness, "Host", "10.1.2.3");
+        enter_text(&mut harness, "Username", "fes");
         harness.run();
         harness.get_by_label("Connect").scroll_to_me();
         harness.run();
@@ -4620,7 +4953,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_connect_parses_an_explicit_port() {
+    fn ssh_form_uses_an_explicit_port() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4628,10 +4961,13 @@ mod tests {
             .click();
         harness.run();
 
-        harness
-            .get_by_label("user@host")
-            .type_text("fes@10.1.2.3:2222");
+        enter_text(&mut harness, "Host", "10.1.2.3");
+        harness.get_by_label("Port").click();
         harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Port").type_text("2222");
+        harness.run();
+        enter_text(&mut harness, "Username", "fes");
         harness.get_by_label("Connect").click();
         harness.run();
 
@@ -4647,7 +4983,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_connect_can_attach_to_a_named_tmux_session() {
+    fn ssh_form_can_attach_to_a_named_tmux_session() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4805,7 +5141,7 @@ mod tests {
     }
 
     #[test]
-    fn quick_connect_rejects_a_destination_with_no_at_sign() {
+    fn ssh_form_rejects_a_missing_host() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4813,8 +5149,7 @@ mod tests {
             .click();
         harness.run();
 
-        harness.get_by_label("user@host").type_text("10.1.2.3");
-        harness.run();
+        enter_text(&mut harness, "Username", "fes");
         harness.get_by_label("Connect").click();
         harness.run();
 
@@ -4823,12 +5158,12 @@ mod tests {
             "an invalid quick-connect destination must not dispatch a command"
         );
         assert!(harness
-            .query_by_label("Enter a destination as user@host")
+            .query_by_label("SSH host must not be empty")
             .is_some());
     }
 
     #[test]
-    fn checking_show_advanced_settings_reveals_the_full_form_and_focuses_username() {
+    fn advanced_settings_disclosure_reveals_port_forwards() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4836,16 +5171,44 @@ mod tests {
             .click();
         harness.run();
 
-        harness.get_by_label("Show advanced settings").click();
+        assert!(
+            harness.query_by_label("Add port forward").is_none(),
+            "port forwards must start hidden behind Advanced settings"
+        );
+
+        harness.get_by_label("Advanced settings").click();
         harness.run();
 
         assert!(
-            harness.query_by_label("Username").is_some(),
-            "checking 'Show advanced settings' must reveal the full form"
+            harness.query_by_label("Add port forward").is_some(),
+            "Advanced settings must reveal the Port forwards section"
         );
+    }
+
+    #[test]
+    fn save_as_profile_opens_profiles_with_a_secret_free_ssh_draft() {
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+        enter_text(&mut harness, "Host", "ssh.example.test");
+        enter_text(&mut harness, "Username", "deploy");
+        enter_text(&mut harness, "Password", "transient-secret");
+
+        harness.get_by_label("Save as Profile…").click();
+        harness.run();
+
+        let Some(AppCommand::CreateSshProfileFromDraft { draft }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("Save as Profile must open the SSH profile editor with a draft");
+        };
+        assert_eq!(draft.name, "ssh.example.test");
+        assert_eq!(draft.host, "ssh.example.test");
+        assert_eq!(draft.port, "22");
+        assert_eq!(draft.username, "deploy");
         assert!(
-            harness.get_by_label("Username").is_focused(),
-            "revealing the advanced form must move focus to Username"
+            !format!("{draft:?}").contains("transient-secret"),
+            "live authentication secrets must not be copied into the profile draft"
         );
     }
 
@@ -4920,7 +5283,7 @@ mod tests {
     }
 
     #[test]
-    fn toggling_advanced_settings_clears_quick_connect_feedback() {
+    fn toggling_advanced_settings_clears_form_feedback() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4928,44 +5291,86 @@ mod tests {
             .click();
         harness.run();
 
-        harness.get_by_label("Connect").click();
-        harness.run();
-        assert!(harness
-            .query_by_label("Enter a destination, e.g. user@host")
-            .is_some());
-
-        harness.get_by_label("Show advanced settings").click();
-        harness.run();
-
-        assert!(
-            harness
-                .query_by_label("Enter a destination, e.g. user@host")
-                .is_none(),
-            "stale Quick Connect feedback must not survive a toggle to the advanced form"
-        );
-    }
-
-    #[test]
-    fn toggling_quick_connect_clears_advanced_form_feedback() {
-        let mut harness = harness();
-        harness.run();
-        open_ssh_form(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
-
-        harness.get_by_label("Connect with password").click();
+        harness.get_by_label("Connect").click();
         harness.run();
         assert!(harness
             .query_by_label("SSH host must not contain whitespace")
             .is_some());
 
-        harness.get_by_label("Show advanced settings").click();
+        harness.get_by_label("Advanced settings").click();
         harness.run();
 
         assert!(
             harness
                 .query_by_label("SSH host must not contain whitespace")
                 .is_none(),
-            "stale advanced-form feedback must not survive a toggle back to Quick Connect"
+            "stale form feedback must not survive a toggle of Advanced settings"
+        );
+    }
+
+    #[test]
+    fn closing_advanced_settings_clears_form_feedback() {
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+        enter_text(&mut harness, "Host", "invalid host");
+
+        harness.get_by_label("Connect").click();
+        harness.run();
+        assert!(harness
+            .query_by_label("SSH host must not contain whitespace")
+            .is_some());
+
+        harness.get_by_label("Advanced settings").click();
+        harness.run();
+        harness.get_by_label("Advanced settings").click();
+        harness.run();
+
+        assert!(
+            harness
+                .query_by_label("SSH host must not contain whitespace")
+                .is_none(),
+            "stale form feedback must not survive closing Advanced settings"
+        );
+    }
+
+    #[test]
+    fn advanced_settings_collapses_again_even_while_its_close_animation_runs() {
+        let mut harness = harness();
+        // Test harnesses disable animation, which hides the real-app behaviour: while the
+        // close animation runs the body is still rendered, so any state derived from the
+        // body's presence re-opens the section every frame and it can never be closed.
+        harness
+            .ctx
+            .all_styles_mut(|style| style.animation_time = 0.5);
+        harness.run();
+        open_ssh_form(&mut harness);
+
+        harness.get_by_label("Advanced settings").click();
+        harness.run();
+        assert!(
+            harness.query_by_label("Add port forward").is_some(),
+            "expanding Advanced settings must reveal the port-forward controls"
+        );
+
+        harness.get_by_label("Advanced settings").click();
+        harness.step();
+        assert!(
+            harness.query_by_label("Add port forward").is_some(),
+            "this test is only meaningful while the body is still rendered mid-close; if \
+             the animation now finishes within one frame the regression window is gone \
+             and this test must be rewritten rather than deleted"
+        );
+
+        for _ in 0..10 {
+            harness.run();
+        }
+
+        assert!(
+            harness.query_by_label("Add port forward").is_none(),
+            "clicking Advanced settings a second time must collapse it, even though the \
+             body stays rendered while the close animation runs"
         );
     }
 
@@ -4977,7 +5382,7 @@ mod tests {
         enter_text(&mut harness, "Host", "example.invalid");
         enter_text(&mut harness, "Username", "test-user");
 
-        harness.get_by_label("Connect with password").click();
+        harness.get_by_label("Connect").click();
         harness.run();
 
         let Some(AppCommand::StartSshSession {
@@ -6143,7 +6548,7 @@ mod tests {
         harness
             .get_by_label("Password")
             .type_text("transient-test-password");
-        harness.get_by_label("Connect with password").click();
+        harness.key_press(egui::Key::Enter);
         harness.run();
 
         let Some(AppCommand::StartSshSession {
@@ -6171,7 +6576,7 @@ mod tests {
 
         assert!(harness.query_by_label("OpenSSH private key").is_none());
 
-        harness.get_by_label("Private-key authentication").click();
+        harness.get_by_label("Private key").click();
         harness.run();
 
         assert!(harness.query_by_label("Password").is_none());
@@ -6192,7 +6597,7 @@ mod tests {
 
         assert!(harness.query_by_label("OpenSSH certificate").is_none());
 
-        harness.get_by_label("Certificate authentication").click();
+        harness.get_by_label("Certificate").click();
         harness.run();
 
         assert!(harness.query_by_label("Password").is_none());
@@ -6210,7 +6615,7 @@ mod tests {
         open_ssh_form(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
 
-        harness.get_by_label("Connect with password").click();
+        harness.get_by_label("Connect").click();
         harness.run();
 
         assert!(harness.state().command.is_none());

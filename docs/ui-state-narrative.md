@@ -53,10 +53,12 @@ descriptions.
 
 Each transport has its own form, and they share a deliberate shape: the
 minimum needed to connect is visible immediately, and everything else is
-behind *Show advanced settings*. A first-time SSH connection needs a
-username and a host; durable sessions, port forwards and the choice between
-password, private-key and certificate authentication are all available but
-never in the way.
+behind *Advanced settings*. The SSH form separates that minimum into a
+**Connection** section (host, port, username) and an **Authentication**
+section (password, private-key or certificate), with the durable-session
+toggle on its own band beneath them; only port forwards remain folded away.
+A first-time SSH connection therefore needs a username and a host, and
+nothing else is in the way.
 
 Two details worth noticing in review. Saving a password requires a saved
 profile, and the form says so at the point of decision rather than failing
@@ -178,7 +180,7 @@ reasoning is the same as right-aligning numbers.
 
 Selecting an action expands its editor inline beneath its own row, and
 clicking the row again closes it. A binding is assigned by pressing
-**Press keys** and then pressing the combination; capture takes the frame's
+**Record shortcut** and then pressing the combination; capture takes the frame's
 key events before the shortcut dispatcher sees them, so binding a shortcut
 does not also fire it. Recorded modifiers are normalised to the portable
 `Primary` spelling, which is Command on macOS and Ctrl elsewhere, so a chord
