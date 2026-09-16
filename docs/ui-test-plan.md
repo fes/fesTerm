@@ -52,11 +52,12 @@ chords and labels, including `Ctrl+Tab`/`Ctrl+Shift+Tab` for session switching
 on every platform. A logged-in native Tier 6 run must additionally verify that
 the menu installs without an in-window duplicate; New Session, Settings,
 Command Palette, and active-surface Close dispatch the shared application
-commands; Close and Session Inspector update with active-surface context; and
-AppKit responder-chain Copy/Paste operate on terminal selection/focus without
-leaking an intercepted keystroke into the PTY. About, Help, Find, Focus Mode,
-and application zoom entries must remain absent until those capabilities are
-implemented.
+commands; Start Local Shell, Clear Terminal, Reset Terminal, and Focus Mode
+dispatch the same semantic paths as the palette and application shortcuts;
+Close and Session Inspector update with active-surface context; and AppKit
+responder-chain Copy/Paste operate on terminal selection/focus without leaking
+an intercepted keystroke into the PTY. About, Help, Find, and application zoom
+commands remain absent until those capabilities have native menu entries.
 
 ## Tier 1: Core Fixtures and Parser Tests
 

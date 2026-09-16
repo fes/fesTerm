@@ -1681,3 +1681,137 @@ bookkeeping with double handling. Native event identity and remote application
 consumption remain unknown. Native driver samples, selected-URL/platform-layout
 checks and usability evidence remain distinct from headless regression passes;
 the macOS baseline's Accessibility consent blocker is explicitly recorded.
+
+## October 2026: the keyboard editor, and what the base model costs
+
+The Settings shortcut editor shipped with #154 as a flat list of thirty-five
+rows labelled `<action> — <chord>`. Everything it needed was there and none of
+it was legible: no way to tell a terminal-only action from a global one, no
+statement of what an action did, no way to find what had been changed, and a
+second read-only card restating two chords the editor already owned — so a
+customized binding could appear twice with two different values.
+
+The redesign came from two owner-supplied mockups. Actions are now grouped
+under the scope they apply in, each with a one-line description that search
+also matches; a **Show** filter narrows to one scope or to only the customized
+or unbound actions; chords render as keycaps. The duplicate card lost its
+shortcut rows and became **Quick switch**.
+
+Three rounds of owner feedback on the running application then found what
+neither the mockups nor the tests had:
+
+- **The table was unusable at its own size.** It sat in a 280-pixel nested
+  scroll area inside a Settings page that already scrolls, showing three of
+  thirty-five actions. Removing the inner viewport was a one-line change that
+  no test could have asked for, because every test harness was tall enough to
+  lay the whole table out.
+- **The resets were invisible.** `docs/gui-design.md` says a reset appears
+  only for a non-default value, and applied literally that rule answered "is
+  there a reset?" with silence — neither button existed until after the user
+  had already changed something some other way. Both are now always present
+  and disabled while they would be a no-op. The rule in `gui-design.md` now
+  carries that exception, because the rule was right and its application here
+  was not.
+- **Assignment required typing schema text.** The field wanted the literal
+  word `Primary`, with a placeholder as its only clue. A **Press keys** button
+  now captures the next combination pressed. That is not a text-entry
+  convenience: capture has to take the frame's key events *before*
+  `handle_shortcuts` dispatches them, or binding a shortcut also fires it. The
+  arming flag is cleared by the dispatcher as it hands the events over and
+  re-armed by the editor on every frame it draws, so leaving Settings
+  mid-capture releases the keyboard on the next frame instead of swallowing
+  input indefinitely.
+
+Two later rounds were pure alignment. Keycaps were first given one column per
+modifier, which aligned the key column but made every row reserve space for
+modifiers it did not use, splitting short chords across a wide gap. Columns
+are now counted from the right — column zero is the key, each chord fills
+leftwards — which keeps the scanned column straight *and* each chord
+contiguous, for the same reason numbers are right-aligned. The editor also
+moved from the end of the table to inline beneath its own row, since changing
+the third of thirty-five actions had meant scrolling to the bottom to edit it
+and back up to see the result.
+
+### What the base model cost
+
+The SFTP rounds above compared models on a task. This stretch accidentally
+measured something else: what it costs to change the *base* model for a long
+session. Recorded per-model usage from the session store, main conversation
+thread only, for the 206-turn session that produced #155, #154, the
+reliability automation and this editor.
+
+| Model | Turns | API calls | Calls/turn | AIU | AIU/turn | Min/turn |
+| --- | --- | --- | --- | --- | --- | --- |
+| GPT-6 Astra | 29 | 425 | 14.7 | 17,637 | 608 | 5.7 |
+| Claude Opus 5 | 21 | 982 | 46.8 | 8,970 | 427 | 6.7 |
+| GPT-5.6 Sol | 6 | 85 | 14.2 | 818 | 136 | 1.9 |
+| Claude Sonnet 5 | 151 | 5,370 | 35.6 | 18,637 | 123 | 3.5 |
+
+Per API call the spread looks damning — Astra runs about 41 AIU per call
+against Opus 5's 9 and Sonnet's 3.5. Per *turn*, the unit of work anyone
+actually asks for, it collapses: Astra costs about **1.4×** Opus 5, not 4.5×,
+because it does roughly three times as much per call. Against Sonnet 5 the
+gap is real and large, about **5×** per turn.
+
+The latency finding contradicts the impression at the keyboard. Astra *felt*
+markedly slower, and per call it is: 23.2 s against Opus 5's 8.5 s, with 17.9 s
+to first token against 2.6 s. But its inter-token latency is *lower* once it
+starts (17.8 ms against 39.7 ms), and it needs a third as many calls, so per
+turn it finished slightly **faster** than Opus 5 — 5.7 minutes against 6.7.
+What is being felt is not throughput. It is a long, silent think before any
+output appears, repeated at every step, which reads as a stall in a way that
+a fast-but-chatty model does not.
+
+The dominant cost was not the base model's own turns at all:
+
+| Thread | Astra API calls | AIU | Share of Astra spend |
+| --- | --- | --- | --- |
+| Main conversation | 425 | 17,637 | 40% |
+| Sub-agents (13 of them) | 981 | 26,594 | 60% |
+
+**Sub-agents inherit the base model.** Across those same turns, the four
+sub-agents deliberately routed to cheaper models — search, a doc lookup, two
+small checks — cost **252 AIU combined**. The thirteen that inherited Astra
+cost 26,594. Astra ran 14% of the session's turns and consumed **50% of its
+total spend**, and most of that went to delegated work that did not need the
+expensive model: running test suites, grepping, collecting captures.
+
+The operational conclusions, in order of leverage:
+
+1. **Route delegated work explicitly.** The default of "sub-agent inherits the
+   base model" is the single largest multiplier observed here, larger than the
+   choice of base model itself. Verbose, mechanical work — test runs, builds,
+   log collection, file sweeps — should name a cheap model.
+2. **Judge cost per turn, not per call.** A model that makes fewer, larger
+   calls looks expensive per call and may not be. The same correction applies
+   to speed: per-call latency is what is felt, per-turn latency is what is
+   spent.
+3. **Match the model to the phase.** The expensive model earned its place on
+   ambiguous design work — reading mockups, choosing a column scheme,
+   recognising that a documented rule was being applied wrongly. It was poor
+   value for the long mechanical stretches around that, which is most of a
+   session.
+4. **A cheaper base model with explicit escalation is probably the better
+   default** than an expensive base model with implicit inheritance. This
+   session did not run that configuration, so that remains a hypothesis and
+   not a measurement.
+
+### Honest caveats on that comparison
+
+The same warnings as the SFTP comparison apply, plus one more: these models
+did not do the same work. Astra's turns were concentrated on UI iteration with
+sub-agent review rounds; Sonnet 5's 151 turns cover the whole rest of the
+session, including long mechanical stretches that are cheap for any model.
+The per-turn figures are therefore a record of what this session cost, not a
+controlled ranking of the models.
+
+### Automating what the agent was doing by hand
+
+The related change, merged just before this one, is the other half of the same
+economy problem. Validation that had been driven turn-by-turn by an agent —
+building, running targeted suites, collecting captures, checking the static
+gates — moved into one-shot scripts grouped by functional need rather than a
+single do-everything entry point. Work an agent performs by issuing twenty
+tool calls is work it pays for every time; the same work behind a script is
+one call. That is the cheapest available saving, and unlike model selection it
+does not trade anything away.
