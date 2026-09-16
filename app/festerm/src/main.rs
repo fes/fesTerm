@@ -22,6 +22,8 @@ mod search;
 pub mod session_controller;
 mod sftp_file_manager;
 mod tabs;
+#[cfg(test)]
+mod ui_gallery;
 mod updates;
 
 use app::FesTermApp;

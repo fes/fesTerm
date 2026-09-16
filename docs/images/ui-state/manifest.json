@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "serial-connect-form",
+      "section": "connection-forms",
+      "title": "Serial connect form",
+      "caption": "Serial launches ask only for a device path and line settings; there is no host/credential concept for a local serial device.",
+      "image": "serial-connect-form.png",
+      "width": 363,
+      "height": 476,
+      "tier": "headless",
+      "sha256": "0570ac05df549ef89cbf7e375360691265492fa26dae7ae65f29f7d5881c60a2"
+    },
+    {
+      "id": "sftp-connect-form",
+      "section": "connection-forms",
+      "title": "SFTP connect form",
+      "caption": "The SFTP launch surface defaults to opening the graphical two-pane file manager once connected.",
+      "image": "sftp-connect-form.png",
+      "width": 424,
+      "height": 301,
+      "tier": "headless",
+      "sha256": "64077444ee73c2f35ceda164c0026287aba9c4d523b4eb8b71bf48bfa59f0c98"
+    },
+    {
+      "id": "ssh-connect-advanced",
+      "section": "connection-forms",
+      "title": "SSH connect form with advanced settings shown",
+      "caption": "Revealing 'Show advanced settings' exposes durable-session, port forwarding, and authentication-method controls.",
+      "image": "ssh-connect-advanced.png",
+      "width": 597,
+      "height": 549,
+      "tier": "headless",
+      "sha256": "60d1ec4e682abd48786cef8a8f91d2a0e59ce8970bb737be1c3cecc35e180643"
+    },
+    {
+      "id": "ssh-connect-collapsed",
+      "section": "connection-forms",
+      "title": "SSH connect form, Quick Connect",
+      "caption": "The default SSH launch surface: host/username/password only, with advanced settings collapsed.",
+      "image": "ssh-connect-collapsed.png",
+      "width": 424,
+      "height": 336,
+      "tier": "headless",
+      "sha256": "714bb7d52bdff5c71aa3266164879368aec719acb193f2f4d4f5c26a48e5dd85"
+    },
+    {
+      "id": "keyboard-editor-collapsed",
+      "section": "keyboard",
+      "title": "Keyboard bindings editor, collapsed",
+      "caption": "Actions grouped by scope, each showing its current chord as keycaps; one customized action carries a 'Customized' badge.",
+      "image": "keyboard-editor-collapsed.png",
+      "width": 640,
+      "height": 1008,
+      "tier": "headless",
+      "sha256": "7ce28069cb9d47e7e393f692ffa9a19c174e1aea5050c343f7192b2d3ef86b72"
+    },
+    {
+      "id": "keyboard-editor-filtered",
+      "section": "keyboard",
+      "title": "Keyboard bindings editor filtered by search",
+      "caption": "Typing into Search narrows the list to matching actions and hides scope groups with no match.",
+      "image": "keyboard-editor-filtered.png",
+      "width": 960,
+      "height": 268,
+      "tier": "headless",
+      "sha256": "75e113ac0953c49ecd25d04fea10b5ff2f8c819d13eed41f4639393f1a619556"
+    },
+    {
+      "id": "keyboard-editor-press-keys",
+      "section": "keyboard",
+      "title": "Keyboard bindings editor capturing a chord",
+      "caption": "'Press keys' arms live chord capture; the editor waits for a chord instead of dispatching whatever is pressed next.",
+      "image": "keyboard-editor-press-keys.png",
+      "width": 960,
+      "height": 1223,
+      "tier": "headless",
+      "sha256": "26e4cdcd1546e26ef5189a93a4da2fe191e46f65a0b08c9c9d7192a359c3bcbc"
+    },
+    {
+      "id": "keyboard-editor-selected",
+      "section": "keyboard",
+      "title": "Keyboard bindings editor with an action selected",
+      "caption": "Selecting an action expands its inline editor directly under its own row, showing scope, default, and current chord as read-only context.",
+      "image": "keyboard-editor-selected.png",
+      "width": 960,
+      "height": 1223,
+      "tier": "headless",
+      "sha256": "e017b771ae6c9f67a5d6819dc7fbe28494fa226e03b14d858dddf454aaf76825"
+    },
+    {
+      "id": "launcher-compact",
+      "section": "new-session",
+      "title": "New Session in the compact launcher-grid layout",
+      "caption": "The 'Compact New Session layout' preference shrinks the launch cards so saved profiles and running sessions start higher up the window.",
+      "image": "launcher-compact.png",
+      "width": 1228,
+      "height": 876,
+      "tier": "headless",
+      "sha256": "c60d80c6521ad43934eb501c5e8f0b125259dd170dbf0e8135cadfedf19e4d57"
+    },
+    {
+      "id": "launcher-empty",
+      "section": "new-session",
+      "title": "New Session on first run, before any profile exists",
+      "caption": "The empty/first-run state: only the fixed launch cards, with no saved profiles or resumable sessions panels to show yet.",
+      "image": "launcher-empty.png",
+      "width": 1228,
+      "height": 876,
+      "tier": "headless",
+      "sha256": "3b0174bf44dace5d8394ee82b894b44a4e3bc8e508bb781d1164c03bab48db5e"
+    },
+    {
+      "id": "launcher-narrow",
+      "section": "new-session",
+      "title": "New Session at a narrow, responsive width",
+      "caption": "The same populated launcher reflowing at a narrow window: cards and panels stack instead of sitting side by side.",
+      "image": "launcher-narrow.png",
+      "width": 522,
+      "height": 920,
+      "tier": "headless",
+      "sha256": "ba11a8dbb90ae7db489edb7eb92ed20724a7a4f6865ed7aa2dddc0b61c757e96"
+    },
+    {
+      "id": "launcher-populated",
+      "section": "new-session",
+      "title": "New Session with saved profiles and running sessions",
+      "caption": "Launch cards sit above saved profiles of every kind plus resumable local, tmux, and screen sessions, at a normal desktop width.",
+      "image": "launcher-populated.png",
+      "width": 1228,
+      "height": 876,
+      "tier": "headless",
+      "sha256": "ae599244ce58c206b9028509bddfc8795970acb01e487a93f1865f8215af2bff"
+    },
+    {
+      "id": "profiles-list",
+      "section": "profiles",
+      "title": "Profiles list",
+      "caption": "Every saved local, SSH, SFTP, and serial profile in one reorderable list.",
+      "image": "profiles-list.png",
+      "width": 760,
+      "height": 635,
+      "tier": "headless",
+      "sha256": "275f54ebf9a5319e074c7cfe4380c0aea290c7d2a8ccd0d5eca88e5abafcaf7c"
+    },
+    {
+      "id": "profiles-serial-editor",
+      "section": "profiles",
+      "title": "Serial profile editor",
+      "caption": "Device path and line settings (baud, data bits, parity, stop bits, flow control) for a saved serial profile.",
+      "image": "profiles-serial-editor.png",
+      "width": 348,
+      "height": 264,
+      "tier": "headless",
+      "sha256": "71e4c3705205e64b5e7b1c7b7312b293033af1e13cd8a017176fe569ef92cbfa"
+    },
+    {
+      "id": "profiles-sftp-editor",
+      "section": "profiles",
+      "title": "SFTP profile editor",
+      "caption": "The same SSH-family editor in SFTP mode, offering the graphical file-manager toggle instead of a terminal type.",
+      "image": "profiles-sftp-editor.png",
+      "width": 416,
+      "height": 447,
+      "tier": "headless",
+      "sha256": "58106f3de6034dfd6a0bc79ef311debb50f57a915696d264db3bcff3006863ef"
+    },
+    {
+      "id": "profiles-ssh-editor",
+      "section": "profiles",
+      "title": "SSH profile editor",
+      "caption": "Editing an existing SSH profile's connection metadata and durable- session settings.",
+      "image": "profiles-ssh-editor.png",
+      "width": 520,
+      "height": 518,
+      "tier": "headless",
+      "sha256": "10c7f6947dee98b8b0f489e96eb00f8175117b4fccb9d3e8f2f871e09e367926"
+    },
+    {
+      "id": "settings-interface-scrolling",
+      "section": "settings",
+      "title": "Settings: Interface and Scrolling",
+      "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
+      "image": "settings-interface-scrolling.png",
+      "width": 874,
+      "height": 869,
+      "tier": "headless",
+      "sha256": "e2691d3d170cff5566504354003705f528fd2246b7b64cf3178e1e403a710b74"
+    },
+    {
+      "id": "settings-quick-switch",
+      "section": "settings",
+      "title": "Settings: Quick switch",
+      "caption": "The single toggle controlling whether held quick-switch modifiers overlay chip numbers.",
+      "image": "settings-quick-switch.png",
+      "width": 874,
+      "height": 105,
+      "tier": "headless",
+      "sha256": "8b4ae37e17d0a5ef3275dbd8c83db34813abc732fee5e5fc9d10b896d79d9345"
+    },
+    {
+      "id": "settings-sftp-card",
+      "section": "settings",
+      "title": "Settings: SFTP",
+      "caption": "Pane order and the default local directory used when opening new SFTP tabs.",
+      "image": "settings-sftp-card.png",
+      "width": 874,
+      "height": 178,
+      "tier": "headless",
+      "sha256": "2941371e2ee3eca12f643c45d9cb2d28a3846c03bddb31cb29ff631a193f7ffe"
+    },
+    {
+      "id": "settings-terminal-typography",
+      "section": "settings",
+      "title": "Settings: Terminal typography",
+      "caption": "Font family, programming ligatures, and emoji presentation, all scoped to terminal cell rendering only.",
+      "image": "settings-terminal-typography.png",
+      "width": 874,
+      "height": 233,
+      "tier": "headless",
+      "sha256": "d35c60e76eb3a0dca73c2a416788ed07ac696c0b94b5622f8cce87d3f9f4c731"
+    }
+  ]
+}
