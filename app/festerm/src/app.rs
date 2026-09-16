@@ -2740,6 +2740,12 @@ impl FesTermApp {
             .data_mut(|data| data.remove_temp::<Vec<egui::Event>>(deferred_id))
             .unwrap_or_default();
         events.extend(ctx.input_mut(|input| std::mem::take(&mut input.events)));
+        // The keyboard editor is capturing a chord: hand it the keys rather
+        // than dispatching them, or assigning a shortcut would also fire it.
+        if crate::keyboard::recording(ctx) {
+            crate::keyboard::stash_recorded_events(ctx, events);
+            return;
+        }
         if events
             .iter()
             .any(|event| matches!(event, egui::Event::WindowFocused(false)))
@@ -6898,7 +6904,7 @@ mod tests {
         app.state
             .dispatch(AppCommand::OpenSettings, &egui::Context::default());
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(752.0, 2400.0))
+            .with_size(egui::vec2(752.0, 5200.0))
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         harness

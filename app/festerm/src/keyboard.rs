@@ -354,6 +354,114 @@ struct Editor {
     selected: Option<Action>,
     draft: String,
     feedback: Option<String>,
+    recording: bool,
+}
+
+/// Set by the editor while it is capturing a chord, and read by
+/// `App::handle_shortcuts` before it dispatches anything. Without this the
+/// captured keys would fire the shortcut they are being bound to.
+const RECORDING_ID: &str = "keyboard-editor-recording";
+/// Where `App::handle_shortcuts` parks the frame's key events for the editor,
+/// which runs later in the same frame and so cannot read `input.events`.
+const RECORDED_EVENTS_ID: &str = "keyboard-editor-recorded-events";
+
+/// True while the keyboard editor is waiting for the user to press a chord.
+pub fn recording(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(egui::Id::new(RECORDING_ID)))
+        .unwrap_or(false)
+}
+
+/// Hands this frame's input to the editor instead of the shortcut dispatcher.
+/// The events are deliberately not forwarded anywhere else: a chord being
+/// recorded must not also reach the terminal or trigger its own action. The
+/// arming flag is cleared here and re-armed by the editor on every frame it
+/// draws, so closing Settings mid-capture releases the keyboard next frame
+/// instead of swallowing input forever.
+pub fn stash_recorded_events(ctx: &egui::Context, events: Vec<egui::Event>) {
+    ctx.data_mut(|data| {
+        data.remove_temp::<bool>(egui::Id::new(RECORDING_ID));
+        data.insert_temp(egui::Id::new(RECORDED_EVENTS_ID), events);
+    });
+}
+
+/// Canonical chord text for a pressed key, or `None` for keys the schema
+/// cannot express. Modifier order matches `KeyboardAction::default_chord`.
+fn recorded_chord(key: egui::Key, modifiers: egui::Modifiers, mac: bool) -> Option<String> {
+    let key = match key {
+        egui::Key::A => "A",
+        egui::Key::B => "B",
+        egui::Key::C => "C",
+        egui::Key::D => "D",
+        egui::Key::E => "E",
+        egui::Key::F => "F",
+        egui::Key::G => "G",
+        egui::Key::H => "H",
+        egui::Key::I => "I",
+        egui::Key::J => "J",
+        egui::Key::K => "K",
+        egui::Key::L => "L",
+        egui::Key::M => "M",
+        egui::Key::N => "N",
+        egui::Key::O => "O",
+        egui::Key::P => "P",
+        egui::Key::Q => "Q",
+        egui::Key::R => "R",
+        egui::Key::S => "S",
+        egui::Key::T => "T",
+        egui::Key::U => "U",
+        egui::Key::V => "V",
+        egui::Key::W => "W",
+        egui::Key::X => "X",
+        egui::Key::Y => "Y",
+        egui::Key::Z => "Z",
+        egui::Key::Num0 => "0",
+        egui::Key::Num1 => "1",
+        egui::Key::Num2 => "2",
+        egui::Key::Num3 => "3",
+        egui::Key::Num4 => "4",
+        egui::Key::Num5 => "5",
+        egui::Key::Num6 => "6",
+        egui::Key::Num7 => "7",
+        egui::Key::Num8 => "8",
+        egui::Key::Num9 => "9",
+        egui::Key::F1 => "F1",
+        egui::Key::F2 => "F2",
+        egui::Key::F3 => "F3",
+        egui::Key::F4 => "F4",
+        egui::Key::F5 => "F5",
+        egui::Key::F6 => "F6",
+        egui::Key::F7 => "F7",
+        egui::Key::F8 => "F8",
+        egui::Key::F9 => "F9",
+        egui::Key::F10 => "F10",
+        egui::Key::F11 => "F11",
+        egui::Key::F12 => "F12",
+        egui::Key::Tab => "Tab",
+        egui::Key::Insert => "Insert",
+        egui::Key::Comma => "Comma",
+        egui::Key::Period => "Period",
+        egui::Key::Plus => "Plus",
+        egui::Key::Equals => "Equals",
+        egui::Key::Minus => "Minus",
+        _ => return None,
+    };
+    let mut chord = String::new();
+    // Primary is what the schema stores for the portable modifier: Command on
+    // macOS, Ctrl everywhere else. Recording the platform-specific spelling
+    // would produce a binding that stops working on the user's other machine.
+    if (mac && modifiers.mac_cmd) || (!mac && modifiers.ctrl) {
+        chord.push_str("Primary+");
+    } else if mac && modifiers.ctrl {
+        chord.push_str("Ctrl+");
+    }
+    if modifiers.alt {
+        chord.push_str("Alt+");
+    }
+    if modifiers.shift {
+        chord.push_str("Shift+");
+    }
+    chord.push_str(key);
+    Some(chord)
 }
 
 fn customized(bindings: &KeyboardBindings, action: Action) -> bool {
@@ -500,7 +608,6 @@ pub fn show_editor(
     let mut editor = ui.data(|data| data.get_temp::<Editor>(id).unwrap_or_default());
     let mac = cfg!(target_os = "macos");
     let mut replacement = None;
-    let mut reset_all = false;
 
     ui.add(
         egui::Label::new(
@@ -563,16 +670,17 @@ pub fn show_editor(
                 }
             });
     });
-    // `docs/gui-design.md`: a reset appears only for a non-default value, so
-    // the all-bindings reset stays out of the way until something is actually
-    // customized.
-    if !bindings.is_empty() {
-        ui.add_space(6.0);
-        reset_all = ui
-            .button("Reset all keyboard bindings")
-            .on_hover_text("Restore every action to its platform default chord.")
-            .clicked();
-    }
+    ui.add_space(6.0);
+    // Enabled only when something is actually overridden, but always present:
+    // hiding it entirely left users unable to tell whether a reset exists.
+    let reset_all = ui
+        .add_enabled(
+            !bindings.is_empty(),
+            egui::Button::new("Reset all keyboard bindings"),
+        )
+        .on_hover_text("Restore every action to its platform default chord.")
+        .on_disabled_hover_text("Every action already uses its default chord.")
+        .clicked();
 
     if ui
         .ctx()
@@ -595,56 +703,56 @@ pub fn show_editor(
     let query = editor.search.to_lowercase();
     let mut matched = 0usize;
     let mut chosen = None;
-    egui::ScrollArea::vertical()
-        .id_salt("keyboard-action-list")
-        .max_height(280.0)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            // Grouping by scope keeps all 35 actions navigable; a flat list
-            // makes the terminal-only entries indistinguishable from global ones.
-            for scope in Scope::ALL {
-                let actions: Vec<Action> = Action::ALL
-                    .into_iter()
-                    .filter(|action| {
-                        action.scope() == scope
-                            && editor.filter.matches(*action, bindings)
-                            && (query.is_empty()
-                                || action.title().to_lowercase().contains(&query)
-                                || action.description().to_lowercase().contains(&query))
-                    })
-                    .collect();
-                if actions.is_empty() {
-                    continue;
-                }
-                matched += actions.len();
-                ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new(scope.title().to_uppercase())
-                        .size(10.0)
-                        .color(theme::TEXT_MUTED),
-                );
-                for action in actions {
-                    ui.push_id(action as usize, |ui| {
-                        if show_row(ui, bindings, action, editor.selected == Some(action)) {
-                            chosen = Some(action);
-                        }
-                    });
-                }
+    // No inner scroll area: the whole Settings page already scrolls, and a
+    // short nested viewport made 35 actions painful to page through.
+    ui.vertical(|ui| {
+        ui.set_min_width(ui.available_width());
+        // Grouping by scope keeps all 35 actions navigable; a flat list
+        // makes the terminal-only entries indistinguishable from global ones.
+        for scope in Scope::ALL {
+            let actions: Vec<Action> = Action::ALL
+                .into_iter()
+                .filter(|action| {
+                    action.scope() == scope
+                        && editor.filter.matches(*action, bindings)
+                        && (query.is_empty()
+                            || action.title().to_lowercase().contains(&query)
+                            || action.description().to_lowercase().contains(&query))
+                })
+                .collect();
+            if actions.is_empty() {
+                continue;
             }
-            if matched == 0 {
-                ui.add_space(6.0);
-                ui.label(
-                    egui::RichText::new("No actions match this search and filter.")
-                        .size(12.0)
-                        .color(theme::TEXT_MUTED),
-                );
+            matched += actions.len();
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(scope.title().to_uppercase())
+                    .size(10.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            for action in actions {
+                ui.push_id(action as usize, |ui| {
+                    if show_row(ui, bindings, action, editor.selected == Some(action)) {
+                        chosen = Some(action);
+                    }
+                });
             }
-        });
+        }
+        if matched == 0 {
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("No actions match this search and filter.")
+                    .size(12.0)
+                    .color(theme::TEXT_MUTED),
+            );
+        }
+    });
 
     if let Some(action) = chosen {
         editor.selected = Some(action);
         editor.draft = bindings.effective(action, mac).into();
         editor.feedback = None;
+        editor.recording = false;
     }
 
     if let Some(action) = editor.selected {
@@ -718,44 +826,122 @@ pub fn show_editor(
             show_chord(ui, action.default_chord(mac), false);
         });
         ui.add_space(8.0);
+        // Recording is resolved before the field is drawn so a chord captured
+        // this frame is already in the box the user is looking at.
+        let mut assign_recorded = false;
+        if editor.recording {
+            let events = ui
+                .ctx()
+                .data_mut(|data| {
+                    data.remove_temp::<Vec<egui::Event>>(egui::Id::new(RECORDED_EVENTS_ID))
+                })
+                .unwrap_or_default();
+            for event in events {
+                let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                else {
+                    continue;
+                };
+                if key == egui::Key::Escape {
+                    editor.recording = false;
+                    break;
+                }
+                match recorded_chord(key, modifiers, mac) {
+                    Some(chord) => {
+                        editor.draft = chord;
+                        editor.recording = false;
+                        editor.feedback = None;
+                        assign_recorded = true;
+                    }
+                    None => {
+                        editor.feedback = Some(
+                            "That key cannot be bound; use A-Z, 0-9, F1-F12, Tab, Insert, Comma, \
+                         Period, Plus, Equals or Minus."
+                                .into(),
+                        )
+                    }
+                }
+                break;
+            }
+        }
         let chord_label = ui.label(
             egui::RichText::new("Binding chord")
                 .size(12.0)
                 .color(theme::TEXT_SECONDARY),
         );
-        ui.add(
-            egui::TextEdit::singleline(&mut editor.draft)
-                .hint_text("Primary+Shift+P")
-                .desired_width(200.0),
-        )
-        .labelled_by(chord_label.id)
-        .on_hover_text(
-            "Combine Primary, Ctrl, Alt or Shift with A-Z, 0-9, F1-F12, Tab, Insert, Comma, \
-             Period, Plus, Equals or Minus.",
-        );
+        ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut editor.draft)
+                    .hint_text("Primary+Shift+P")
+                    .desired_width(200.0),
+            )
+            .labelled_by(chord_label.id)
+            .on_hover_text(
+                "Type a chord, or use Press keys to capture one. Combine Primary, Ctrl, Alt or \
+                 Shift with A-Z, 0-9, F1-F12, Tab, Insert, Comma, Period, Plus, Equals or Minus.",
+            );
+            ui.add_space(6.0);
+            let capture = ui
+                .selectable_label(
+                    editor.recording,
+                    if editor.recording {
+                        "Press a shortcut…"
+                    } else {
+                        "Press keys"
+                    },
+                )
+                .on_hover_text("Capture the next key combination you press.");
+            if capture.clicked() {
+                editor.recording = !editor.recording;
+                editor.feedback = None;
+            }
+        });
         ui.add(
             egui::Label::new(
-                egui::RichText::new(
+                egui::RichText::new(if editor.recording {
+                    "Listening — press the combination you want, or Escape to cancel. The keys \
+                     are captured, not acted on."
+                } else {
                     "Primary is Command on macOS and Ctrl elsewhere. Every binding needs \
-                     Primary or Ctrl, except Shift+Insert.",
-                )
+                     Primary or Ctrl, except Shift+Insert."
+                })
                 .size(11.0)
-                .color(theme::TEXT_MUTED),
+                .color(if editor.recording {
+                    theme::ACCENT_PRIMARY
+                } else {
+                    theme::TEXT_MUTED
+                }),
             )
             .wrap(),
         );
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             let mut update = None;
-            if ui.button("Assign binding").clicked() {
+            // A recorded chord is applied straight away: having just pressed
+            // the combination, a second confirmation step reads as the capture
+            // having failed.
+            if ui.button("Assign binding").clicked() || assign_recorded {
                 update = Some(Some(editor.draft.clone()));
             }
             if ui.button("Unbind action").clicked() {
                 update = Some(Some(String::new()));
             }
-            // A per-action reset is only meaningful once that action has
-            // been overridden (`docs/gui-design.md`).
-            if customized(bindings, action) && ui.button("Restore default").clicked() {
+            // Always present, so the per-action reset is discoverable before
+            // anything has been changed, and disabled while it would be a
+            // no-op.
+            if ui
+                .add_enabled(
+                    customized(bindings, action),
+                    egui::Button::new("Restore default"),
+                )
+                .on_hover_text("Put this action back on its default chord.")
+                .on_disabled_hover_text("This action already uses its default chord.")
+                .clicked()
+            {
                 update = Some(None);
             }
             if let Some(update) = update {
@@ -776,6 +962,17 @@ pub fn show_editor(
         ui.add_space(6.0);
         ui.colored_label(theme::STATUS_ERROR, feedback);
     }
+    editor.recording = editor.recording && editor.selected.is_some();
+    // Re-armed on every frame the editor is visible, and cleared by
+    // `handle_shortcuts` as it stashes. Closing Settings mid-capture therefore
+    // releases the keyboard on the next frame instead of swallowing input.
+    let recording = editor.recording;
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(egui::Id::new(RECORDING_ID), recording);
+        if !recording {
+            data.remove_temp::<Vec<egui::Event>>(egui::Id::new(RECORDED_EVENTS_ID));
+        }
+    });
     ui.data_mut(|data| data.insert_temp(id, editor));
     replacement.map(crate::tabs::AppCommand::SetKeyboardBindings)
 }
@@ -991,11 +1188,27 @@ mod tests {
         output.textures_delta.clear();
     }
 
+    /// A control that is present but inert. Disabled affordances are how the
+    /// editor answers "does a reset exist?" before anything is customized.
+    fn is_disabled(harness: &Harness<'static, KeyboardBindings>, label: &str) -> bool {
+        use egui_kittest::kittest::NodeT;
+        harness.get_by_label(label).accesskit_node().is_disabled()
+    }
+
     fn editor_harness() -> Harness<'static, KeyboardBindings> {
         Harness::builder()
-            .with_size(egui::vec2(600.0, 850.0))
+            .with_size(egui::vec2(600.0, 2400.0))
             .build_ui_state(
                 |ui, bindings: &mut KeyboardBindings| {
+                    // Mirrors `App::handle_shortcuts`, which parks input for
+                    // the editor rather than dispatching it while a chord is
+                    // being captured.
+                    if recording(ui.ctx()) {
+                        let events = ui
+                            .ctx()
+                            .input_mut(|input| std::mem::take(&mut input.events));
+                        stash_recorded_events(ui.ctx(), events);
+                    }
                     if let Some(crate::tabs::AppCommand::SetKeyboardBindings(next)) =
                         show_editor(ui, bindings)
                     {
@@ -1004,6 +1217,131 @@ mod tests {
                 },
                 KeyboardBindings::default(),
             )
+    }
+
+    #[test]
+    fn recorded_chords_use_the_portable_modifier_spelling() {
+        let primary = Modifiers {
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            recorded_chord(Key::P, primary | Modifiers::SHIFT, true).as_deref(),
+            Some("Primary+Shift+P"),
+            "Command on macOS must record as the portable Primary, not Command"
+        );
+        assert_eq!(
+            recorded_chord(Key::P, Modifiers::CTRL | Modifiers::SHIFT, false).as_deref(),
+            Some("Primary+Shift+P"),
+            "Ctrl off macOS is the same portable modifier"
+        );
+        assert_eq!(
+            recorded_chord(Key::R, Modifiers::CTRL, true).as_deref(),
+            Some("Ctrl+R"),
+            "macOS Control is a modifier of its own and stays spelled out"
+        );
+        assert_eq!(
+            recorded_chord(Key::R, primary | Modifiers::ALT, true).as_deref(),
+            Some("Primary+Alt+R"),
+            "modifier order must match the stored default chords"
+        );
+        assert_eq!(
+            recorded_chord(Key::Comma, primary, true).as_deref(),
+            Some("Primary+Comma")
+        );
+        assert_eq!(
+            recorded_chord(Key::Num1, primary, true).as_deref(),
+            Some("Primary+1")
+        );
+        assert!(
+            recorded_chord(Key::ArrowLeft, primary, true).is_none(),
+            "keys the chord schema cannot express must be rejected, not recorded"
+        );
+        for action in Action::ALL {
+            for mac in [true, false] {
+                let chord = action.default_chord(mac);
+                if chord.is_empty() {
+                    continue;
+                }
+                assert!(
+                    Chord::parse(chord, mac).is_ok(),
+                    "recorder ordering is only canonical if defaults parse: {chord}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_editor_captures_a_pressed_chord_instead_of_firing_it() {
+        let mac = cfg!(target_os = "macos");
+        let mut harness = editor_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+        assert!(
+            !recording(&harness.ctx),
+            "the editor must not hold the keyboard until capture is requested"
+        );
+        harness.get_by_label("Press keys").click();
+        harness.run();
+        assert!(
+            recording(&harness.ctx),
+            "requesting capture must tell the dispatcher to hand over its input"
+        );
+
+        harness.key_press_modifiers(Modifiers::CTRL | Modifiers::SHIFT, Key::F8);
+        harness.run();
+        harness.run();
+        assert_eq!(
+            harness.state().effective(Action::NewSession, mac),
+            if mac {
+                "Ctrl+Shift+F8"
+            } else {
+                "Primary+Shift+F8"
+            },
+            "the pressed combination must become the binding"
+        );
+        assert!(
+            !recording(&harness.ctx),
+            "capture must end once a chord has been taken"
+        );
+    }
+
+    #[test]
+    fn keyboard_capture_is_cancelled_by_escape_and_leaves_the_binding_alone() {
+        let mut harness = editor_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+        harness.get_by_label("Press keys").click();
+        harness.run();
+        harness.key_press(Key::Escape);
+        harness.run();
+        harness.run();
+        assert!(
+            !recording(&harness.ctx),
+            "Escape must release the keyboard back to the rest of the app"
+        );
+        assert!(
+            harness.state().is_empty(),
+            "a cancelled capture must not change any binding"
+        );
+    }
+
+    #[test]
+    fn stashing_recorded_events_releases_the_keyboard_for_the_next_frame() {
+        // The editor re-arms every frame it draws, so a Settings screen that
+        // stops rendering mid-capture cannot strand the keyboard.
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new(RECORDING_ID), true));
+        assert!(recording(&ctx));
+        stash_recorded_events(&ctx, Vec::new());
+        assert!(!recording(&ctx));
     }
 
     #[test]
@@ -1172,14 +1510,12 @@ mod tests {
         harness.run();
         assert!(harness.state().is_empty());
         assert!(
-            harness.query_by_label("Restore default").is_none(),
-            "a per-action reset is meaningless once the action is back to its default"
+            is_disabled(&harness, "Restore default"),
+            "a per-action reset must stay visible but inert once the action is back to its default"
         );
         assert!(
-            harness
-                .query_by_label("Reset all keyboard bindings")
-                .is_none(),
-            "the all-bindings reset must stay hidden while nothing is customized"
+            is_disabled(&harness, "Reset all keyboard bindings"),
+            "the all-bindings reset must stay visible but inert while nothing is customized"
         );
         harness.get_by_label("Binding chord").click();
         harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
