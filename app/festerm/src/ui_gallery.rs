@@ -33,6 +33,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 use eframe::egui;
@@ -44,12 +45,23 @@ use festerm_config::{
     ScrollbackLimitPreference, SerialDataBits, SerialFlowControl, SerialParity, SerialStopBits,
     SftpPaneOrderPreference, TerminalFontPreference,
 };
+use festerm_core::{Dimensions, Terminal};
+use festerm_markdown::{RemoteMarkdownSource, RemoteSourceOwner};
 use festerm_sessiond::UnattachedSession;
-use festerm_ui_egui::chrome::ChipLayout;
+use festerm_ssh::{
+    SftpDirectoryItem, SftpDirectorySnapshot, SftpEntryType, SftpLocation, SftpPath,
+};
+use festerm_ui_egui::{
+    chrome::{self, ChipId, ChipLayout, ChipStatus, ChipViewModel},
+    EncodedInputSink, TerminalView,
+};
 
 use crate::{
+    inspector::{self, InspectorContent, PersistentSessionFacts, TransportFacts},
+    markdown_viewer::MarkdownViewerTab,
     multiplexer_sessions::MultiplexerSession,
     screens::{self, SettingsViewModel},
+    sftp_file_manager::SftpFileManagerTab,
     tabs::{AppCommand, AppState, NewProfileKind},
 };
 
@@ -230,6 +242,95 @@ fn scenarios() -> Vec<Scenario> {
             caption: "Device path and line settings (baud, data bits, parity, stop bits, \
                       flow control) for a saved serial profile.",
             capture: capture_profiles_serial_editor,
+        },
+        // -- terminal-sessions ----------------------------------------------
+        Scenario {
+            id: "terminal-ssh-session",
+            section: "terminal-sessions",
+            title: "A connected SSH terminal session",
+            caption: "A remote shell mid-use: service status, a log tail, and the resting \
+                      prompt, rendered by the same grid the terminal view paints for a real \
+                      PTY.",
+            capture: capture_terminal_ssh_session,
+        },
+        Scenario {
+            id: "terminal-sftp-cli",
+            section: "terminal-sessions",
+            title: "The sftp command-line interface",
+            caption: "The terminal-driven `sftp` client, distinct from the graphical file \
+                      manager: directory listing, a `get`, and its transfer-progress line.",
+            capture: capture_terminal_sftp_cli,
+        },
+        // -- sftp-workspace ---------------------------------------------------
+        Scenario {
+            id: "sftp-workspace-browser",
+            section: "sftp-workspace",
+            title: "The SFTP graphical file-manager workspace",
+            caption: "Local and remote panes browsed side by side; the local pane lists an \
+                      invented project directory, never the real filesystem.",
+            capture: capture_sftp_workspace_browser,
+        },
+        // -- markdown ---------------------------------------------------------
+        Scenario {
+            id: "markdown-preview",
+            section: "markdown",
+            title: "Markdown workspace, rendered preview",
+            caption: "A fictional project's Markdown fetched over an already-authenticated \
+                      SFTP session, shown in rendered preview mode with headings, a list, \
+                      and a code block.",
+            capture: capture_markdown_preview,
+        },
+        Scenario {
+            id: "markdown-source",
+            section: "markdown",
+            title: "Markdown workspace, source mode",
+            caption: "The same document toggled to raw source, for readers who want to see \
+                      the Markdown itself rather than its rendering.",
+            capture: capture_markdown_source,
+        },
+        Scenario {
+            id: "markdown-outline",
+            section: "markdown",
+            title: "Markdown workspace with the outline open",
+            caption: "The heading outline docked alongside the document, letting a reader \
+                      jump straight to a section of a longer file.",
+            capture: capture_markdown_outline,
+        },
+        // -- diagnostics --------------------------------------------------
+        Scenario {
+            id: "diagnostics-ssh-session",
+            section: "diagnostics",
+            title: "Session Inspector over an SSH session",
+            caption: "The inspector overlay reporting connection facts and a pending \
+                      host-key fingerprint for a plain SSH shell, without covering the \
+                      terminal it describes.",
+            capture: capture_diagnostics_ssh_session,
+        },
+        Scenario {
+            id: "diagnostics-durable-session",
+            section: "diagnostics",
+            title: "Session Inspector over a durable tmux session",
+            caption: "The same overlay for a session attached through fesTerm's durable \
+                      persistence provider, showing the extra 'Durable session' facts and \
+                      'Resume' (rather than 'Reconnect') action.",
+            capture: capture_diagnostics_durable_session,
+        },
+        // -- chips ----------------------------------------------------------
+        Scenario {
+            id: "chips-verbose",
+            section: "chips",
+            title: "Session chips with details shown",
+            caption: "The same five sessions with 'Show session details in chips' enabled: \
+                      each chip carries a secondary line under its title.",
+            capture: capture_chips_verbose,
+        },
+        Scenario {
+            id: "chips-compact",
+            section: "chips",
+            title: "Session chips in compact mode",
+            caption: "The identical five sessions with session details turned off: chips \
+                      shrink to a single line, fitting more of them in the same row.",
+            capture: capture_chips_compact,
         },
     ]
 }
@@ -443,7 +544,7 @@ fn enter_text(harness: &mut Harness<'static, ()>, label: &str, text: &str) {
 /// path every scenario's capture goes through, so a screenshot never shows
 /// the cursor artifact or dead background left over from reaching its
 /// target state.
-fn finish(harness: &mut Harness<'_, ()>) -> image::RgbaImage {
+fn finish<State>(harness: &mut Harness<'_, State>) -> image::RgbaImage {
     harness.remove_cursor();
     harness.run();
     let image = harness.render().expect("headless render must succeed");
@@ -844,6 +945,501 @@ fn capture_profiles_sftp_editor() -> image::RgbaImage {
 
 fn capture_profiles_serial_editor() -> image::RgbaImage {
     render_profiles(520.0, 820.0, Some("Bench serial adapter".to_owned()))
+}
+
+// -- terminal-sessions -------------------------------------------------------
+
+/// Discards every byte instead of retaining it: these scenarios never send
+/// real keystrokes, but `TerminalView::show` requires a sink to route to.
+#[derive(Default)]
+struct GallerySink;
+
+impl EncodedInputSink for GallerySink {
+    fn record_encoded_input(&mut self, _bytes: &[u8]) {}
+}
+
+struct TerminalSessionState {
+    view: TerminalView,
+    terminal: Terminal,
+    sink: GallerySink,
+}
+
+/// A remote shell mid-use: a status check, a log tail, and the resting
+/// prompt. Every host, IP, and PID below is invented -- this is never bytes
+/// captured from a real shell.
+const SSH_TRANSCRIPT: &str = "\x1b[32mdevuser@web-1\x1b[0m:\x1b[34m~\x1b[0m$ uptime\r\n \
+     14:32:07 up 21 days,  4:12,  1 user,  load average: 0.08, 0.05, 0.01\r\n\
+     \x1b[32mdevuser@web-1\x1b[0m:\x1b[34m~\x1b[0m$ systemctl status festerm-agent --no-pager\r\n\
+     \x1b[32m\u{25cf}\x1b[0m festerm-agent.service - fesTerm background agent\r\n\
+     \x20\x20\x20\x20Loaded: loaded (/etc/systemd/system/festerm-agent.service; enabled)\r\n\
+     \x20\x20\x20\x20Active: \x1b[32mactive (running)\x1b[0m since Mon 2024-09-01 03:11:02 UTC; 2 weeks 0 days ago\r\n\
+     \x20\x20\x20Main PID: 4821 (festerm-agent)\r\n\
+     \x20\x20\x20\x20\x20Tasks: 6 (limit: 4915)\r\n\
+     \x20\x20\x20\x20Memory: 38.2M\r\n\
+     \x1b[32mdevuser@web-1\x1b[0m:\x1b[34m~\x1b[0m$ tail -n 4 /var/log/festerm-agent.log\r\n\
+     2024-09-15T14:31:58Z INFO  accepted connection from 198.51.100.42:53214\r\n\
+     2024-09-15T14:31:58Z INFO  session negotiated: user=devuser\r\n\
+     2024-09-15T14:32:03Z INFO  heartbeat ok\r\n\
+     2024-09-15T14:32:07Z INFO  heartbeat ok\r\n\
+     \x1b[32mdevuser@web-1\x1b[0m:\x1b[34m~\x1b[0m$ ";
+
+/// A terminal-driven `sftp` client transcript, distinct from the graphical
+/// file manager: a directory listing and a `get`. Invented, not captured.
+const SFTP_CLI_TRANSCRIPT: &str = "Connected to web-1.staging.example.com.\r\n\
+     sftp> cd /srv/releases\r\n\
+     sftp> ls -l\r\n\
+     -rw-r--r--   1 devuser  devuser   4831201 Sep 14 09:02 release-2024.09.tar.gz\r\n\
+     -rw-r--r--   1 devuser  devuser   4790112 Aug 30 22:47 release-2024.08.tar.gz\r\n\
+     drwxr-xr-x   2 devuser  devuser      4096 Sep 01 03:10 logs\r\n\
+     sftp> get release-2024.09.tar.gz\r\n\
+     Fetching /srv/releases/release-2024.09.tar.gz to release-2024.09.tar.gz\r\n\
+     /srv/releases/release-2024.09.tar.gz                          100% 4718KB   6.1MB/s   00:00\r\n\
+     sftp> ";
+
+fn render_terminal_session(
+    width: f32,
+    height: f32,
+    cols: usize,
+    rows: usize,
+    transcript: &str,
+) -> image::RgbaImage {
+    let mut terminal =
+        Terminal::new(Dimensions::new(cols, rows).expect("valid gallery terminal size"))
+            .expect("gallery terminal allocation");
+    terminal.ingest(transcript.as_bytes());
+    let state = TerminalSessionState {
+        view: TerminalView::default(),
+        terminal,
+        sink: GallerySink,
+    };
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, height))
+        .build_ui_state(
+            |ui, state: &mut TerminalSessionState| {
+                state.view.show(ui, &mut state.terminal, &mut state.sink);
+            },
+            state,
+        );
+    // The view's first frame or two may only install the terminal font
+    // family and request a repaint rather than paint the grid; settle
+    // before rendering so the transcript is actually on screen.
+    harness.run();
+    harness.run();
+    finish(&mut harness)
+}
+
+fn capture_terminal_ssh_session() -> image::RgbaImage {
+    // The transcript fills ~15 rows; size the grid to that plus a few
+    // blank rows below the prompt rather than the full 28-row grid a real
+    // window might use, so the figure isn't half empty background.
+    render_terminal_session(980.0, 400.0, 100, 18, SSH_TRANSCRIPT)
+}
+
+fn capture_terminal_sftp_cli() -> image::RgbaImage {
+    // Same reasoning as above: the sftp transcript is ~10 rows, so a
+    // 13-row grid leaves a few trailing blank rows without wasting most
+    // of the figure on empty background.
+    render_terminal_session(980.0, 312.0, 100, 13, SFTP_CLI_TRANSCRIPT)
+}
+
+// -- sftp-workspace -----------------------------------------------------------
+
+/// A fixed synthetic instant used for every "modified"/"loaded" timestamp
+/// in this file's SFTP fixtures. Using `SystemTime::now()` here would make
+/// the rendered "Modified" column (and therefore the PNG bytes and their
+/// recorded sha256) drift every time the gallery is regenerated -- exactly
+/// the kind of non-determinism this generator is supposed to avoid.
+/// 2024-09-15T12:00:00Z, chosen to line up with the synthetic release dates
+/// used elsewhere in these fixtures.
+fn synthetic_timestamp() -> SystemTime {
+    std::time::UNIX_EPOCH + Duration::from_secs(1_726_401_600)
+}
+
+fn synthetic_directory_item(
+    parent: &SftpPath,
+    name: &str,
+    file_type: SftpEntryType,
+    size: Option<u64>,
+) -> SftpDirectoryItem {
+    SftpDirectoryItem {
+        name: name.to_owned(),
+        path: parent.join_child(name),
+        file_type,
+        size,
+        modified_at: Some(synthetic_timestamp()),
+        permissions: None,
+    }
+}
+
+/// An invented local project directory -- never the real filesystem the
+/// test process happens to run in.
+fn synthetic_local_project_snapshot() -> SftpDirectorySnapshot {
+    let path = SftpPath::local("/home/devuser/projects/nimbus-relay");
+    let entries = vec![
+        synthetic_directory_item(&path, "src", SftpEntryType::Directory, None),
+        synthetic_directory_item(&path, "target", SftpEntryType::Directory, None),
+        synthetic_directory_item(&path, "Cargo.lock", SftpEntryType::File, Some(89_213)),
+        synthetic_directory_item(&path, "Cargo.toml", SftpEntryType::File, Some(612)),
+        synthetic_directory_item(&path, "deploy.sh", SftpEntryType::File, Some(1_875)),
+        synthetic_directory_item(&path, "README.md", SftpEntryType::File, Some(4_204)),
+    ];
+    SftpDirectorySnapshot {
+        location: SftpLocation::Local,
+        path,
+        loaded_at: synthetic_timestamp(),
+        entries,
+    }
+}
+
+/// An invented remote releases directory on the same synthetic staging host
+/// used elsewhere in this gallery.
+fn synthetic_remote_releases_snapshot() -> SftpDirectorySnapshot {
+    let path = SftpPath::remote("/srv/releases");
+    let entries = vec![
+        synthetic_directory_item(&path, "logs", SftpEntryType::Directory, None),
+        synthetic_directory_item(&path, "config.yaml", SftpEntryType::File, Some(512)),
+        synthetic_directory_item(
+            &path,
+            "release-2024.08.tar.gz",
+            SftpEntryType::File,
+            Some(4_790_112),
+        ),
+        synthetic_directory_item(
+            &path,
+            "release-2024.09.tar.gz",
+            SftpEntryType::File,
+            Some(4_831_201),
+        ),
+    ];
+    SftpDirectorySnapshot {
+        location: SftpLocation::Remote,
+        path,
+        loaded_at: synthetic_timestamp(),
+        entries,
+    }
+}
+
+fn capture_sftp_workspace_browser() -> image::RgbaImage {
+    let ctx = egui::Context::default();
+    let tab = SftpFileManagerTab::for_gallery(
+        "devuser@web-1.staging.example.com".to_owned(),
+        "devuser".to_owned(),
+        "web-1.staging.example.com".to_owned(),
+        22,
+        synthetic_local_project_snapshot(),
+        synthetic_remote_releases_snapshot(),
+        Some("deploy.sh"),
+        Some("release-2024.09.tar.gz"),
+        SftpPaneOrderPreference::LocalLeft,
+        &ctx,
+    );
+    let tab_id = AppState::for_test().active();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1180.0, 760.0))
+        .build_ui_state(
+            move |ui, tab: &mut SftpFileManagerTab| {
+                let _ = tab.show(ui, tab_id);
+            },
+            tab,
+        );
+    harness.run();
+    finish(&mut harness)
+}
+
+// -- markdown -----------------------------------------------------------------
+
+/// Invented prose about a fictional project, never a real repository
+/// document: this is what the reader should see, not what fesTerm's own
+/// documentation says.
+fn synthetic_markdown_prose() -> String {
+    "# Nimbus Relay — Project Notes\n\n\
+     Nimbus Relay is a small message-relay service. This file exists only to \
+     exercise the Markdown viewer with representative, synthetic content.\n\n\
+     ## Overview\n\n\
+     The relay accepts webhook events from `ci.example.net` and republishes \
+     them onto an internal queue consumed by worker nodes such as \
+     `web-1.staging.example.com`.\n\n\
+     ## Configuration\n\n\
+     - `relay.toml` — top-level service configuration\n\
+     - `queues/*.toml` — one file per queue definition\n\
+     - `RELAY_LOG_LEVEL` — overrides the default `info` log level\n\n\
+     ```toml\n\
+     [relay]\n\
+     listen = \"0.0.0.0:8443\"\n\
+     queue_backend = \"memory\"\n\
+     ```\n\n\
+     ## Operational Notes\n\n\
+     1. Restart the service with `systemctl restart nimbus-relay`.\n\
+     2. Queue depth is exposed on `/metrics` for the `operator` role to check.\n\
+     3. See `docs/runbooks/relay-failover.md` for the failover procedure.\n\n\
+     ## Known Issues\n\n\
+     - Queue draining is slow under heavy backpressure.\n\
+     - The `/health` endpoint does not yet report per-queue status.\n"
+        .to_owned()
+}
+
+fn synthetic_markdown_source() -> RemoteMarkdownSource {
+    RemoteMarkdownSource::new(
+        "web-1.staging.example.com",
+        22,
+        RemoteSourceOwner::username("devuser").expect("synthetic username is non-empty"),
+        "SHA256:EXAMPLE0000000000000000000000000000000000",
+        "/home/devuser/projects/nimbus-relay/NOTES.md",
+        1,
+    )
+    .expect("synthetic remote markdown source is valid")
+}
+
+fn render_markdown(
+    width: f32,
+    height: f32,
+    adjust: impl FnOnce(&mut MarkdownViewerTab),
+    interact: impl FnOnce(&mut Harness<'_, MarkdownViewerTab>),
+) -> image::RgbaImage {
+    let mut tab = MarkdownViewerTab::open_remote(
+        synthetic_markdown_source(),
+        "~/projects/nimbus-relay/NOTES.md".to_owned(),
+        synthetic_markdown_prose().into_bytes(),
+    );
+    adjust(&mut tab);
+    let tab_id = AppState::for_test().active();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, height))
+        .build_ui_state(
+            move |ui, tab: &mut MarkdownViewerTab| {
+                let _ = tab.show(ui, tab_id);
+            },
+            tab,
+        );
+    harness.run();
+    interact(&mut harness);
+    harness.run();
+    finish(&mut harness)
+}
+
+fn capture_markdown_preview() -> image::RgbaImage {
+    render_markdown(900.0, 820.0, |_| {}, |_| {})
+}
+
+fn capture_markdown_source() -> image::RgbaImage {
+    render_markdown(900.0, 820.0, |tab| tab.toggle_mode(), |_| {})
+}
+
+fn capture_markdown_outline() -> image::RgbaImage {
+    // The outline is open by default, so a plain preview render can't be
+    // told apart from this scenario. Click a later heading so the outline's
+    // navigation behaviour (highlighting the selected heading and scrolling
+    // the document to it) is actually visible in the picture.
+    render_markdown(
+        900.0,
+        820.0,
+        |_| {},
+        |harness| {
+            harness
+                .get_by_role_and_label(
+                    egui::accesskit::Role::Button,
+                    "Heading level 2: Known Issues",
+                )
+                .click();
+        },
+    )
+}
+
+// -- diagnostics ----------------------------------------------------------
+
+struct DiagnosticsSessionState {
+    view: TerminalView,
+    terminal: Terminal,
+    sink: GallerySink,
+}
+
+fn render_inspector_over_terminal(
+    width: f32,
+    height: f32,
+    cols: usize,
+    rows: usize,
+    transcript: &str,
+    content: InspectorContent<'static>,
+) -> image::RgbaImage {
+    let mut terminal =
+        Terminal::new(Dimensions::new(cols, rows).expect("valid gallery terminal size"))
+            .expect("gallery terminal allocation");
+    terminal.ingest(transcript.as_bytes());
+    let state = DiagnosticsSessionState {
+        view: TerminalView::default(),
+        terminal,
+        sink: GallerySink,
+    };
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, height))
+        .build_ui_state(
+            move |ui, state: &mut DiagnosticsSessionState| {
+                let content_rect = ui.max_rect();
+                state.view.show(ui, &mut state.terminal, &mut state.sink);
+                let _ = inspector::show(ui.ctx(), content_rect, content.clone(), false);
+            },
+            state,
+        );
+    harness.run();
+    harness.run();
+    finish(&mut harness)
+}
+
+fn capture_diagnostics_ssh_session() -> image::RgbaImage {
+    render_inspector_over_terminal(
+        980.0,
+        900.0,
+        100,
+        28,
+        SSH_TRANSCRIPT,
+        InspectorContent {
+            subject_id: 1,
+            identity: "Staging web-1",
+            type_label: "SSH session",
+            state: "Connected",
+            state_message: None,
+            state_color: festerm_ui_egui::theme::STATUS_RUNNING,
+            grid: Some("100 × 28"),
+            terminal_title: Some("devuser@web-1: ~"),
+            profile: Some("Staging web-1"),
+            transport: TransportFacts::Ssh {
+                username: "devuser",
+                host: "web-1.staging.example.com",
+                port: 22,
+            },
+            trust_fingerprint: Some("SHA256:EXAMPLE0000000000000000000000000000000000"),
+            diagnostics: "queue_depth=0 last_outcome=Delivered",
+            input_recording: false,
+            input_report: "No input has been recorded for this session.",
+            reconnect_available: true,
+            open_sftp_available: true,
+            persistent_session: None,
+        },
+    )
+}
+
+fn capture_diagnostics_durable_session() -> image::RgbaImage {
+    render_inspector_over_terminal(
+        980.0,
+        900.0,
+        100,
+        28,
+        SSH_TRANSCRIPT,
+        InspectorContent {
+            subject_id: 2,
+            identity: "deploy-watch",
+            type_label: "tmux session",
+            state: "Attached",
+            state_message: None,
+            state_color: festerm_ui_egui::theme::STATUS_RUNNING,
+            grid: Some("100 × 28"),
+            terminal_title: Some("deploy-watch"),
+            profile: None,
+            transport: TransportFacts::Local,
+            trust_fingerprint: None,
+            diagnostics: "queue_depth=0 last_outcome=Delivered",
+            input_recording: false,
+            input_report: "No input has been recorded for this session.",
+            reconnect_available: true,
+            open_sftp_available: false,
+            persistent_session: Some(PersistentSessionFacts {
+                provider_label: "tmux",
+                session_name: "deploy-watch",
+            }),
+        },
+    )
+}
+
+// -- chips ------------------------------------------------------------------
+
+fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
+    vec![
+        ChipViewModel {
+            id: ChipId(1),
+            primary: "New Session".to_owned(),
+            secondary: None,
+            status: ChipStatus::Neutral,
+            closable: false,
+            renamable: false,
+            quick_switch_number: Some(1),
+            pulse_new_output: false,
+        },
+        ChipViewModel {
+            id: ChipId(2),
+            primary: "Staging web-1".to_owned(),
+            secondary: Some("web-1.staging.example.com".to_owned()),
+            status: ChipStatus::Connected,
+            closable: true,
+            renamable: true,
+            quick_switch_number: Some(2),
+            pulse_new_output: false,
+        },
+        ChipViewModel {
+            id: ChipId(3),
+            primary: "deploy-watch".to_owned(),
+            secondary: Some("tmux session".to_owned()),
+            status: ChipStatus::Connected,
+            closable: true,
+            renamable: true,
+            quick_switch_number: Some(3),
+            pulse_new_output: true,
+        },
+        ChipViewModel {
+            id: ChipId(4),
+            primary: "Bastion host".to_owned(),
+            secondary: Some("Reconnecting…".to_owned()),
+            status: ChipStatus::Reconnecting,
+            closable: true,
+            renamable: true,
+            quick_switch_number: Some(4),
+            pulse_new_output: false,
+        },
+        ChipViewModel {
+            id: ChipId(5),
+            primary: "NOTES.md".to_owned(),
+            secondary: Some("Markdown".to_owned()),
+            status: ChipStatus::Neutral,
+            closable: true,
+            renamable: false,
+            quick_switch_number: Some(5),
+            pulse_new_output: false,
+        },
+    ]
+}
+
+fn render_chips(show_session_details: bool) -> image::RgbaImage {
+    let chips = synthetic_chip_view_models();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 160.0))
+        .build_ui(move |ui| {
+            let _ = chrome::show(
+                ui,
+                &chips,
+                ChipId(2),
+                false,
+                true,
+                ChipLayout::Wrap,
+                show_session_details,
+                false,
+            );
+        });
+    // One chip deliberately demonstrates the "new output" pulse cue
+    // (`pulse_new_output: true`), which keeps requesting a repaint forever
+    // by design. `finish`'s `Harness::run()` would treat that as a hang and
+    // panic, so settle with a fixed number of steps instead of waiting for
+    // repaints to stop.
+    harness.remove_cursor();
+    harness.run_steps(2);
+    let image = harness.render().expect("headless render must succeed");
+    trim_to_content(&image, GALLERY_MARGIN)
+}
+
+fn capture_chips_verbose() -> image::RgbaImage {
+    render_chips(true)
+}
+
+fn capture_chips_compact() -> image::RgbaImage {
+    render_chips(false)
 }
 
 // --------------------------------------------------------------------

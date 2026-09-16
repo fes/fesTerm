@@ -1588,6 +1588,84 @@ pub(crate) struct SftpFileManagerTab {
 }
 
 impl SftpFileManagerTab {
+    /// Builds a fully "connected" tab directly from synthetic panes, for the
+    /// headless "State of the UI" gallery (`ui_gallery.rs`). Unlike
+    /// [`Self::new`], this never spawns the SFTP worker thread and never
+    /// touches a real network connection or the real filesystem: the caller
+    /// supplies both panes' contents as already-loaded snapshots, so the
+    /// local pane can show invented rows instead of walking the real local
+    /// directory the test process happens to run in.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn for_gallery(
+        label: String,
+        username: String,
+        host: String,
+        port: u16,
+        local_snapshot: SftpDirectorySnapshot,
+        remote_snapshot: SftpDirectorySnapshot,
+        selected_local_entry: Option<&str>,
+        selected_remote_entry: Option<&str>,
+        pane_order: SftpPaneOrderPreference,
+        context: &egui::Context,
+    ) -> Self {
+        let target = SftpFileManagerLaunchTarget {
+            label: label.clone(),
+            username,
+            host,
+            port,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: false,
+        };
+        let mut local_pane = SftpPaneState::new(local_snapshot.path.clone());
+        let local_selection =
+            selected_local_entry.map(|name| path_key(&local_snapshot.path.join_child(name)));
+        local_pane.set_snapshot(local_snapshot, None);
+        if let Some(key) = local_selection {
+            local_pane.selected_paths.insert(key);
+        }
+        let mut remote_pane = SftpPaneState::new(remote_snapshot.path.clone());
+        let remote_selection =
+            selected_remote_entry.map(|name| path_key(&remote_snapshot.path.join_child(name)));
+        remote_pane.set_snapshot(remote_snapshot, None);
+        if let Some(key) = remote_selection {
+            remote_pane.selected_paths.insert(key);
+        }
+        let (command_sender, _command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = mpsc::channel();
+        Self {
+            label,
+            profile_identifier: None,
+            launch_target: target,
+            local_pane,
+            remote_pane,
+            pane_order,
+            status_bar_visible: true,
+            focused_pane: PaneFocus::Local,
+            narrow_focus: PaneFocus::Local,
+            connection_state: SftpConnectionState::Ready,
+            has_connected_once: true,
+            transfer_drawer: TransferDrawerState::default(),
+            collision_dialog: None,
+            command_sender,
+            event_receiver,
+            event_sender,
+            local_loader: LocalDirectoryLoader::new("festerm-gallery-sftp-local".to_owned()),
+            repaint: context.clone(),
+            next_local_request_id: 1,
+            pending_host_key: None,
+            verified_host_key_fingerprint: None,
+            next_markdown_request_id: 1,
+            pending_markdown_request: None,
+            pending_markdown_open: None,
+            operation_error: None,
+            pending_markdown_command: None,
+            last_local_pane_rect: None,
+            last_remote_pane_rect: None,
+        }
+    }
+
     pub(crate) fn new(
         target: SftpFileManagerLaunchTarget,
         authentication: SftpFileManagerAuthentication,

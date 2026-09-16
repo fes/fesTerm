@@ -2,6 +2,28 @@
   "schema_version": 1,
   "scenarios": [
     {
+      "id": "chips-compact",
+      "section": "chips",
+      "title": "Session chips in compact mode",
+      "caption": "The identical five sessions with session details turned off: chips shrink to a single line, fitting more of them in the same row.",
+      "image": "chips-compact.png",
+      "width": 1000,
+      "height": 52,
+      "tier": "headless",
+      "sha256": "ee189a9221fae915e6685f02878a1286aff1ec5b284de5d5f555e577abcfcf8a"
+    },
+    {
+      "id": "chips-verbose",
+      "section": "chips",
+      "title": "Session chips with details shown",
+      "caption": "The same five sessions with 'Show session details in chips' enabled: each chip carries a secondary line under its title.",
+      "image": "chips-verbose.png",
+      "width": 1000,
+      "height": 58,
+      "tier": "headless",
+      "sha256": "4b959ad73a5732612aed24e7d2700f9327d7b5668eee67d0a60eeac0e9cb5eba"
+    },
+    {
       "id": "serial-connect-form",
       "section": "connection-forms",
       "title": "Serial connect form",
@@ -46,6 +68,28 @@
       "sha256": "714bb7d52bdff5c71aa3266164879368aec719acb193f2f4d4f5c26a48e5dd85"
     },
     {
+      "id": "diagnostics-durable-session",
+      "section": "diagnostics",
+      "title": "Session Inspector over a durable tmux session",
+      "caption": "The same overlay for a session attached through fesTerm's durable persistence provider, showing the extra 'Durable session' facts and 'Resume' (rather than 'Reconnect') action.",
+      "image": "diagnostics-durable-session.png",
+      "width": 980,
+      "height": 900,
+      "tier": "headless",
+      "sha256": "df2053b5459500bd070e0610c00499bd1dc9b63f75b0ccf22035d87eb749512f"
+    },
+    {
+      "id": "diagnostics-ssh-session",
+      "section": "diagnostics",
+      "title": "Session Inspector over an SSH session",
+      "caption": "The inspector overlay reporting connection facts and a pending host-key fingerprint for a plain SSH shell, without covering the terminal it describes.",
+      "image": "diagnostics-ssh-session.png",
+      "width": 980,
+      "height": 900,
+      "tier": "headless",
+      "sha256": "73c5b1557c52e5d666c910681cb85eff4d073ea12d89b69f5125d17b95eda93c"
+    },
+    {
       "id": "keyboard-editor-collapsed",
       "section": "keyboard",
       "title": "Keyboard bindings editor, collapsed",
@@ -88,6 +132,39 @@
       "height": 1223,
       "tier": "headless",
       "sha256": "e017b771ae6c9f67a5d6819dc7fbe28494fa226e03b14d858dddf454aaf76825"
+    },
+    {
+      "id": "markdown-outline",
+      "section": "markdown",
+      "title": "Markdown workspace with the outline open",
+      "caption": "The heading outline docked alongside the document, letting a reader jump straight to a section of a longer file.",
+      "image": "markdown-outline.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "c0f752bcb260ee0e65b339a42a1209ffa80069ee63531ba14ed034f311c76524"
+    },
+    {
+      "id": "markdown-preview",
+      "section": "markdown",
+      "title": "Markdown workspace, rendered preview",
+      "caption": "A fictional project's Markdown fetched over an already-authenticated SFTP session, shown in rendered preview mode with headings, a list, and a code block.",
+      "image": "markdown-preview.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "3e1b11303d4a5911a6272861af44cfcda5677a045da7faf17e9389835a6f2e88"
+    },
+    {
+      "id": "markdown-source",
+      "section": "markdown",
+      "title": "Markdown workspace, source mode",
+      "caption": "The same document toggled to raw source, for readers who want to see the Markdown itself rather than its rendering.",
+      "image": "markdown-source.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "efcda8d878c87235237bea15bb987a8be7077dc802d5974abeb1aa53f0cd1eb8"
     },
     {
       "id": "launcher-compact",
@@ -220,6 +297,39 @@
       "height": 233,
       "tier": "headless",
       "sha256": "d35c60e76eb3a0dca73c2a416788ed07ac696c0b94b5622f8cce87d3f9f4c731"
+    },
+    {
+      "id": "sftp-workspace-browser",
+      "section": "sftp-workspace",
+      "title": "The SFTP graphical file-manager workspace",
+      "caption": "Local and remote panes browsed side by side; the local pane lists an invented project directory, never the real filesystem.",
+      "image": "sftp-workspace-browser.png",
+      "width": 1176,
+      "height": 756,
+      "tier": "headless",
+      "sha256": "f4e4783acc0090be31270678878ba7408fac16521921d468be476a206bc42fa7"
+    },
+    {
+      "id": "terminal-sftp-cli",
+      "section": "terminal-sessions",
+      "title": "The sftp command-line interface",
+      "caption": "The terminal-driven `sftp` client, distinct from the graphical file manager: directory listing, a `get`, and its transfer-progress line.",
+      "image": "terminal-sftp-cli.png",
+      "width": 980,
+      "height": 312,
+      "tier": "headless",
+      "sha256": "b4c68311617e3580672120a4d0b4e1ea9999a9501e31fd3171faad0339f6506c"
+    },
+    {
+      "id": "terminal-ssh-session",
+      "section": "terminal-sessions",
+      "title": "A connected SSH terminal session",
+      "caption": "A remote shell mid-use: service status, a log tail, and the resting prompt, rendered by the same grid the terminal view paints for a real PTY.",
+      "image": "terminal-ssh-session.png",
+      "width": 980,
+      "height": 400,
+      "tier": "headless",
+      "sha256": "3cee1676082ff9c1ea86ad739fe7d484b05bb045b17ebef19970484c18e31b14"
     }
   ]
 }

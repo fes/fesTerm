@@ -108,6 +108,147 @@ The default SSH launch surface: host/username/password only, with advanced setti
 
 ![SSH connect form, Quick Connect](images/ui-state/ssh-connect-collapsed.png)
 
+## Working in a session
+
+A connected session is the point of the product, and the terminal surface is
+deliberately the least decorated thing in it: no gutter, no persistent
+sidebar, no ornament competing with the program's own output. Chrome gets out
+of the way once a session is live.
+
+The two captures here show the same surface serving different kinds of work —
+an interactive remote shell, and the line-oriented `sftp` client. The second
+is worth including precisely because fesTerm also ships a graphical SFTP
+workspace: the command-line client remains available and unmodified, and
+choosing the GUI is a preference rather than a replacement. Users with muscle
+memory for `get` and `put` keep it.
+
+### The sftp command-line interface
+
+The terminal-driven `sftp` client, distinct from the graphical file manager: directory listing, a `get`, and its transfer-progress line.
+
+![The sftp command-line interface](images/ui-state/terminal-sftp-cli.png)
+
+### A connected SSH terminal session
+
+A remote shell mid-use: service status, a log tail, and the resting prompt, rendered by the same grid the terminal view paints for a real PTY.
+
+![A connected SSH terminal session](images/ui-state/terminal-ssh-session.png)
+
+## The SFTP workspace
+
+The graphical SFTP workspace is a two-pane browser: local on the left, remote
+on the right, with the transfer direction made explicit by the two buttons
+between them rather than implied by drag direction alone.
+
+Several choices here are worth review. Each pane carries its own breadcrumb,
+filter box and sort state, so the two sides are navigated independently. Each
+pane's footer reports item count, selection count and selected size, which is
+the information needed immediately before a transfer. The local pane is
+labelled *This computer* and the remote pane carries the account and host it
+is actually connected to, because the single most costly mistake in a file
+manager is acting on the wrong side.
+
+The pane order is configurable in Settings, for users who think of the remote
+side as the primary one.
+
+### The SFTP graphical file-manager workspace
+
+Local and remote panes browsed side by side; the local pane lists an invented project directory, never the real filesystem.
+
+![The SFTP graphical file-manager workspace](images/ui-state/sftp-workspace-browser.png)
+
+## Markdown workspaces
+
+Markdown is a first-class surface rather than a preview pane, which follows
+from where these files usually live: a README or runbook on the far end of an
+SSH connection, reached over SFTP. Opening one should not require copying it
+locally, and the header here shows a document opened directly from a remote
+path.
+
+Preview and Source are peers rather than a mode and its escape hatch, and the
+outline is a navigation control — selecting a heading moves the document and
+the outline tracks position. For a runbook consulted while something is
+broken, that navigation matters more than the rendering does.
+
+### Markdown workspace with the outline open
+
+The heading outline docked alongside the document, letting a reader jump straight to a section of a longer file.
+
+![Markdown workspace with the outline open](images/ui-state/markdown-outline.png)
+
+### Markdown workspace, rendered preview
+
+A fictional project's Markdown fetched over an already-authenticated SFTP session, shown in rendered preview mode with headings, a list, and a code block.
+
+![Markdown workspace, rendered preview](images/ui-state/markdown-preview.png)
+
+### Markdown workspace, source mode
+
+The same document toggled to raw source, for readers who want to see the Markdown itself rather than its rendering.
+
+![Markdown workspace, source mode](images/ui-state/markdown-source.png)
+
+## Session diagnostics
+
+The Session Inspector answers "what exactly am I connected to, and how?" — a
+question that becomes urgent precisely when something is wrong and least
+convenient to answer by reading scrollback.
+
+It opens beside the session rather than over it, so the terminal stays visible
+and readable while the facts are consulted. Content is grouped by what is
+being asserted: session identity and grid geometry, the connection's
+destination, username and transport, and trust — the key fingerprint and
+whether verification is pending or settled. Grouping trust separately is
+deliberate, since it is the part a user may need to compare against an
+out-of-band source.
+
+The second capture shows a durable multiplexer-backed session, where the facts
+on offer differ: what matters is the multiplexer and the session name it can
+be rejoined by.
+
+### Session Inspector over a durable tmux session
+
+The same overlay for a session attached through fesTerm's durable persistence provider, showing the extra 'Durable session' facts and 'Resume' (rather than 'Reconnect') action.
+
+![Session Inspector over a durable tmux session](images/ui-state/diagnostics-durable-session.png)
+
+### Session Inspector over an SSH session
+
+The inspector overlay reporting connection facts and a pending host-key fingerprint for a plain SSH shell, without covering the terminal it describes.
+
+![Session Inspector over an SSH session](images/ui-state/diagnostics-ssh-session.png)
+
+## Session chips
+
+Chips are the persistent record of what is open. Each carries a status dot, a
+name, and — in the verbose form — a second line of detail: the host for a
+remote session, the multiplexer for a durable one, the file type for a
+document. Only the active chip shows a close control, so a row of chips
+presents one destructive affordance rather than one per session.
+
+The two captures are the same five sessions under the two settings, which is
+the only useful way to view this choice. Verbose chips carry the second line;
+compact chips drop it and shrink to roughly half the height. The trade is
+worth judging directly from the pair: the second line is what distinguishes
+two sessions with similar names on different hosts, and it is also the thing
+you stop reading once you know which chip is which.
+
+Note what compact mode does *not* do — it does not abbreviate names, and it
+does not drop the status dot. Reconnecting and healthy sessions stay
+distinguishable at both densities.
+
+### Session chips in compact mode
+
+The identical five sessions with session details turned off: chips shrink to a single line, fitting more of them in the same row.
+
+![Session chips in compact mode](images/ui-state/chips-compact.png)
+
+### Session chips with details shown
+
+The same five sessions with 'Show session details in chips' enabled: each chip carries a secondary line under its title.
+
+![Session chips with details shown](images/ui-state/chips-verbose.png)
+
 ## Settings
 
 Settings is a single scrolling column of cards, each grouping one concern:
