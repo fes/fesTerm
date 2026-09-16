@@ -1486,3 +1486,1130 @@ mod history_overlay_tests {
         assert_eq!(view.selected_text(&terminal), Some("sele".to_owned()));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use egui::Vec2;
+    use egui_kittest::{kittest::Queryable, Harness};
+    use festerm_core::{Dimensions, Terminal};
+
+    #[derive(Default)]
+    struct Sink(Vec<Vec<u8>>);
+
+    impl EncodedInputSink for Sink {
+        fn record_encoded_input(&mut self, bytes: &[u8]) {
+            self.0.push(bytes.to_vec());
+        }
+    }
+
+    fn terminal(columns: usize, rows: usize) -> Terminal {
+        Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
+            .expect("test terminal allocation")
+    }
+
+    struct HeadlessViewState {
+        view: TerminalView,
+        terminal: Terminal,
+        sink: Sink,
+    }
+
+    impl HeadlessViewState {
+        fn new() -> Self {
+            Self {
+                view: TerminalView::default(),
+                terminal: terminal(80, 24),
+                sink: Sink::default(),
+            }
+        }
+
+        fn with_terminal(terminal: Terminal) -> Self {
+            Self {
+                view: TerminalView::default(),
+                terminal,
+                sink: Sink::default(),
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_zoom_is_session_local_bounded_and_resettable() {
+        let mut first = TerminalView::default();
+        let second = TerminalView::default();
+
+        assert!(first.zoom_in());
+        assert_eq!(first.font_size_points(), 15.0);
+        assert_eq!(second.font_size_points(), 14.0);
+        for _ in 0..100 {
+            first.zoom_in();
+        }
+        assert_eq!(first.font_size_points(), 32.0);
+        assert!(!first.zoom_in());
+        for _ in 0..100 {
+            first.zoom_out();
+        }
+        assert_eq!(first.font_size_points(), 8.0);
+        assert!(first.reset_zoom());
+        assert_eq!(first.font_size_points(), 14.0);
+        assert!(!first.reset_zoom());
+    }
+
+    #[test]
+    fn headless_harness_drives_terminal_view_input_resize_and_diagnostics() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("headless frame records grid geometry");
+        assert_eq!(
+            harness.state().view.diagnostics().calculated_dimensions,
+            Some(harness.state().terminal.dimensions())
+        );
+        assert!(grid.is_finite());
+
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![b"Q".to_vec()]);
+
+        harness.key_press(egui::Key::Tab);
+        harness.run();
+        harness.key_press(egui::Key::ArrowUp);
+        harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        harness.key_press(egui::Key::ArrowLeft);
+        harness.run();
+        harness.key_press(egui::Key::ArrowRight);
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(
+            harness.state().sink.0,
+            vec![
+                b"Q".to_vec(),
+                b"\t".to_vec(),
+                b"\x1b[A".to_vec(),
+                b"\x1b[B".to_vec(),
+                b"\x1b[D".to_vec(),
+                b"\x1b[C".to_vec(),
+                b"\x1b".to_vec(),
+            ]
+        );
+
+        harness.set_size(Vec2::new(730.0, 520.0));
+        harness.run();
+        let state = harness.state();
+        assert_eq!(
+            state.view.diagnostics().calculated_dimensions,
+            Some(state.terminal.dimensions())
+        );
+        assert_eq!(
+            state.view.cache.dimensions(),
+            Some(state.terminal.dimensions())
+        );
+        assert!(state
+            .view
+            .diagnostics()
+            .grid_rect
+            .is_some_and(|grid| grid.is_finite()));
+    }
+
+    #[test]
+    fn ordinary_click_stays_clear_of_selection_even_while_output_streams_between_press_and_release()
+    {
+        // #94: heavy/streaming PTY output arriving between a press and its
+        // release must not turn an ordinary click (the on-screen cell never
+        // actually moves) into a stray one-cell selection. A regression
+        // reintroduced this by having the no-drag check compare absolute
+        // scrollback rows instead of the grid-relative cell the pointer
+        // pressed and released at - absolute rows shift as new lines arrive
+        // even though the stationary on-screen cell's row index never does.
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("headless frame records grid geometry");
+
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // Simulate heavy output arriving while the button is held, with no
+        // pointer movement at all: enough newlines to scroll the live
+        // screen and advance every on-screen row's absolute scrollback
+        // index well past what it was at press time.
+        for line in 0..200 {
+            harness
+                .state_mut()
+                .terminal
+                .ingest(format!("line-{line:04}\r\n").as_bytes());
+        }
+        harness.run();
+
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        assert!(
+            harness.state().view.selection().range().is_none(),
+            "a click with no pointer movement must never leave a selection behind, \
+             regardless of output arriving while the button was held"
+        );
+    }
+
+    #[test]
+    fn terminal_view_preserves_selected_text_across_primary_reflow() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 120.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        let columns = harness.state().terminal.dimensions().columns();
+        assert!(columns > 12);
+        let text = (0..columns - 1)
+            .map(|index| char::from(b'a' + u8::try_from(index % 26).unwrap()))
+            .collect::<String>();
+        harness.state_mut().terminal.ingest(text.as_bytes());
+        harness.run();
+
+        let start = CellPosition { column: 3, row: 0 };
+        let end = CellPosition {
+            column: columns - 4,
+            row: 0,
+        };
+        harness.state_mut().view.selection.begin(start);
+        harness.state_mut().view.selection.extend(end);
+        harness.state_mut().view.selection.finish();
+        let before = selection_text(
+            TerminalSnapshot::from_terminal(&harness.state().terminal),
+            &harness.state().view.selection,
+        )
+        .unwrap();
+
+        harness.set_size(Vec2::new(180.0, 120.0));
+        harness.run();
+
+        assert!(harness.state().terminal.dimensions().columns() < columns);
+        assert!(
+            harness.state().terminal.scrollback_stats().physical_rows() > 0,
+            "the narrow viewport should push part of the selected line off-screen"
+        );
+        assert!(harness.state().view.selection.range().is_some());
+        assert_eq!(
+            selection_text(
+                TerminalSnapshot::from_terminal(&harness.state().terminal),
+                &harness.state().view.selection,
+            )
+            .unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn alternate_screen_selection_uses_rectangular_resize_coordinates() {
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"\x1b[?1049hcurrent alternate row");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 240.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::with_terminal(terminal),
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+
+        harness.set_size(Vec2::new(400.0, 180.0));
+        harness.run();
+
+        assert_eq!(
+            harness
+                .state()
+                .view
+                .selected_text(&harness.state().terminal),
+            Some("current".to_owned())
+        );
+    }
+
+    #[test]
+    fn resizing_the_view_rescales_an_anchored_history_offset_instead_of_resetting_it() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(420.0, 240.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        let rows = harness.state().terminal.dimensions().rows();
+        for line in 0..rows + 40 {
+            // A line far longer than any tested viewport width guarantees it
+            // soft-wraps into multiple physical rows at the narrow size and
+            // then reflows into fewer physical rows once widened.
+            harness
+                .state_mut()
+                .terminal
+                .ingest(format!("line {line} {}\r\n", "x".repeat(300)).as_bytes());
+        }
+        harness.run();
+        let center = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .center();
+        harness.event(egui::Event::PointerMoved(center));
+        harness.run();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let history_before = harness.state().terminal.scrollback_stats().physical_rows();
+        let offset_before = harness.state().view.history_offset_rows();
+        assert!(offset_before > 0);
+
+        // Widen the view: retained scrollback reflows into fewer physical
+        // rows, so the anchored offset must shrink proportionally rather
+        // than being clamped to an unrelated raw row count or reset to 0.
+        harness.set_size(Vec2::new(900.0, 240.0));
+        harness.run();
+        let history_after = harness.state().terminal.scrollback_stats().physical_rows();
+        assert!(history_after < history_before);
+        let offset_after = harness.state().view.history_offset_rows();
+        assert!(offset_after > 0, "resize must not reset an anchored view");
+        assert!(offset_after <= history_after);
+        // The rescaled offset preserves roughly the same relative position
+        // in the (now smaller) retained history rather than jumping.
+        let ratio_before = offset_before as f64 / history_before as f64;
+        let ratio_after = offset_after as f64 / history_after as f64;
+        assert!(
+            (ratio_before - ratio_after).abs() < 0.15,
+            "expected proportional offset, before={offset_before}/{history_before} \
+             after={offset_after}/{history_after}"
+        );
+    }
+
+    #[test]
+    fn scroll_speed_multiplier_scales_rows_moved_per_wheel_step() {
+        // Feature request #67: `TerminalViewOptions::scroll_speed_multiplier`
+        // must actually change how far one wheel step moves through
+        // scrollback, not just be threaded through unused.
+        fn offset_after_one_wheel_step(multiplier: f32) -> usize {
+            let mut harness = Harness::builder()
+                .with_size(Vec2::new(420.0, 240.0))
+                .build_ui_state(
+                    |ui, state: &mut HeadlessViewState| {
+                        state.view.show_with_options(
+                            ui,
+                            &mut state.terminal,
+                            &mut state.sink,
+                            TerminalViewOptions {
+                                scroll_speed_multiplier: multiplier,
+                                ..TerminalViewOptions::default()
+                            },
+                        );
+                    },
+                    HeadlessViewState::new(),
+                );
+            let rows = harness.state().terminal.dimensions().rows();
+            for line in 0..rows + 40 {
+                harness
+                    .state_mut()
+                    .terminal
+                    .ingest(format!("line {line}\r\n").as_bytes());
+            }
+            harness.run();
+            let center = harness
+                .state()
+                .view
+                .diagnostics()
+                .grid_rect
+                .unwrap()
+                .center();
+            harness.event(egui::Event::PointerMoved(center));
+            harness.run();
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, 3.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run();
+            harness.state().view.history_offset_rows()
+        }
+
+        let normal = offset_after_one_wheel_step(1.0);
+        let slow = offset_after_one_wheel_step(0.25);
+        let fast = offset_after_one_wheel_step(2.5);
+
+        assert!(
+            slow < normal,
+            "a below-1.0 multiplier must scroll fewer rows: slow={slow} normal={normal}"
+        );
+        assert!(
+            fast > normal,
+            "an above-1.0 multiplier must scroll more rows: fast={fast} normal={normal}"
+        );
+    }
+
+    #[test]
+    fn local_wheel_anchors_history_and_ctrl_end_resumes_following() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(420.0, 240.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        let rows = harness.state().terminal.dimensions().rows();
+        for line in 0..rows + 8 {
+            harness
+                .state_mut()
+                .terminal
+                .ingest(format!("line {line}\r\n").as_bytes());
+        }
+        harness.run();
+        let center = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .center();
+        harness.event(egui::Event::PointerMoved(center));
+        harness.run();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 80.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let anchored = harness.state().view.history_offset_rows();
+        assert!(anchored > 0);
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.state_mut().terminal.ingest(b"new output\r\n");
+        harness.run();
+        assert!(harness.state().view.history_offset_rows() > anchored);
+        assert!(harness.query_by_label("Jump to latest").is_some());
+        harness.get_by_label("Jump to latest").click();
+        harness.run();
+        assert!(harness.state().view.follows_latest_output());
+        assert!(harness.query_by_label("Jump to latest").is_none());
+
+        harness.event(egui::Event::PointerMoved(center));
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 2.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        harness.state_mut().terminal.ingest(b"another output\r\n");
+        harness.run();
+        assert!(harness.query_by_label("Jump to latest").is_some());
+
+        harness.event(egui::Event::Key {
+            key: egui::Key::End,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert!(harness.state().view.follows_latest_output());
+
+        harness.state_mut().terminal.ingest(b"\x1b[?1000h");
+        harness.event(egui::Event::PointerMoved(center));
+        harness.run();
+        let routed_before = harness.state().sink.0.len();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 2.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.state().view.follows_latest_output());
+        assert!(harness.state().sink.0.len() > routed_before);
+
+        let routed_before = harness.state().sink.0.len();
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 2.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert!(harness.state().view.history_offset_rows() > 0);
+        assert_eq!(harness.state().sink.0.len(), routed_before);
+
+        let track_rect = harness.get_by_label("Terminal history scrollbar").rect();
+        let track = egui::pos2(track_rect.center().x, track_rect.top() + 2.0);
+        harness.event(egui::Event::PointerMoved(track));
+        harness.run();
+        let offset_before = harness.state().view.history_offset_rows();
+        let routed_before = harness.state().sink.0.len();
+        harness.event(egui::Event::PointerButton {
+            pos: track,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: track,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.state().view.history_offset_rows() > offset_before);
+        assert_eq!(harness.state().sink.0.len(), routed_before);
+
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0.len(), routed_before);
+    }
+
+    #[test]
+    fn terminal_context_menu_intercepts_local_right_click_without_pty_input() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Paste").is_some());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn shift_right_click_overrides_tui_mouse_reporting_without_leaking_bytes() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1000h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(!harness.state().sink.0.is_empty());
+        let reports_before_override = harness.state().sink.0.len();
+
+        harness
+            .get_by_label("Terminal viewport")
+            .click_button_modifiers(egui::PointerButton::Secondary, egui::Modifiers::SHIFT);
+        harness.run();
+
+        assert!(harness.query_by_label("Paste").is_some());
+        assert_eq!(harness.state().sink.0.len(), reports_before_override);
+    }
+
+    #[test]
+    fn secondary_gesture_ownership_is_latched_across_modifier_changes() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1000h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let center = harness.get_by_label("Terminal viewport").rect().center();
+
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_some());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(!harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn middle_click_pastes_locally_without_leaking_a_mouse_report_when_the_tui_is_not_tracking() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        let center = harness.get_by_label("Terminal viewport").rect().center();
+
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // The paste itself only arrives asynchronously via a later
+        // `Event::Paste` once the OS clipboard responds to the requested
+        // `ViewportCommand::RequestPaste`, so the only thing observable
+        // here is the absence of any mouse-report bytes: both the press
+        // and its matching release must be claimed locally rather than
+        // falling through to `route_pointer_event`.
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn middle_click_passes_through_to_tui_mouse_reporting_unless_shift_overrides() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"\x1b[?1000h");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let center = harness.get_by_label("Terminal viewport").rect().center();
+
+        // A TUI that has turned on mouse tracking (e.g. vim, tmux) owns
+        // ordinary middle-click by default, since many such programs bind
+        // it to their own paste-buffer behavior.
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert!(!harness.state().sink.0.is_empty());
+        let reports_before_override = harness.state().sink.0.len();
+
+        // Shift is the stable local override, mirroring the right-click
+        // convention: it forces the local clipboard-paste handling even
+        // though the TUI is tracking the mouse.
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::SHIFT,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: center,
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0.len(), reports_before_override);
+    }
+
+    #[test]
+    fn escape_closes_terminal_context_menu_and_returns_input_to_terminal() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(harness.state().sink.0.is_empty());
+
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![b"Q".to_vec()]);
+    }
+
+    #[test]
+    fn read_only_terminal_context_menu_omits_paste() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            paste_available: false,
+                            terminal_input_enabled: true,
+                            keyboard_input_enabled: true,
+                            defer_paste_to_application: false,
+                            scroll_speed_multiplier: 1.0,
+                        },
+                    );
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Paste").is_none());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes() {
+        // #51: once a session is exited/failed/stopped/disconnected, the
+        // application sets `keyboard_input_enabled: false` (distinct from
+        // the full-blackout `terminal_input_enabled` used for modal
+        // dialogs). Typed keystrokes must not reach the (dead) transport,
+        // but scrollback selection and Copy remain available so read-only
+        // history stays inspectable, per `docs/gui-action-graph.md`'s
+        // HIST-06/SSH-02 invariant.
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"copy me");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            paste_available: false,
+                            terminal_input_enabled: true,
+                            keyboard_input_enabled: false,
+                            defer_paste_to_application: false,
+                            scroll_speed_multiplier: 1.0,
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+
+        // A keystroke sent to a read-only/dead session must not be encoded.
+        harness.get_by_label("Terminal viewport").click();
+        harness.run();
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+        assert!(
+            harness.state().sink.0.is_empty(),
+            "keyboard_input_enabled: false must drop keystrokes bound for a dead transport"
+        );
+
+        // Selection and Copy must still work over the retained read-only
+        // history.
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+        assert!(harness.state().view.selection().range().is_some());
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        assert!(
+            harness.query_by_label("Copy").is_some(),
+            "Copy must remain available for a disconnected session's selected history"
+        );
+    }
+
+    #[test]
+    fn terminal_context_menu_exposes_copy_for_selection_without_clearing_it() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"copy me");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+
+        assert!(harness.query_by_label("Copy").is_some());
+        assert!(harness.state().view.selection().range().is_some());
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn terminal_context_menu_uses_explicit_link_under_pointer_only() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("rendered grid");
+        let link_cell = grid.left_top() + egui::vec2(2.0, 2.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: link_cell,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+
+        assert!(harness.query_by_label("Open link").is_some());
+        assert!(harness.query_by_label("Copy link").is_some());
+        assert!(harness.state().sink.0.is_empty());
+        harness.get_by_label("Open link").click();
+        harness.run();
+        assert_eq!(
+            harness.state_mut().view.take_link_requests(),
+            vec![Arc::<str>::from("https://example.com/")]
+        );
+
+        let non_link_cell = grid.left_top()
+            + egui::vec2(
+                harness
+                    .state()
+                    .view
+                    .diagnostics()
+                    .grid_rect
+                    .unwrap()
+                    .width()
+                    / 10.0
+                    * 6.0,
+                2.0,
+            );
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: non_link_cell,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+        assert!(harness.query_by_label("Open link").is_none());
+    }
+
+    #[test]
+    fn ordinary_click_never_activates_an_osc8_link() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let position = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(2.0, 2.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
+    }
+
+    #[test]
+    fn command_click_emits_link_intent_without_terminal_input() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        let position = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(2.0, 2.0);
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            });
+        }
+        harness.run();
+
+        assert_eq!(
+            harness.state_mut().view.take_link_requests(),
+            vec![Arc::<str>::from("https://example.com/")]
+        );
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn lost_command_click_release_cannot_arm_a_later_click() {
+        struct State {
+            terminal: Terminal,
+            view: TerminalView,
+            sink: Sink,
+            blocked: bool,
+        }
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
+        let state = State {
+            terminal,
+            view: TerminalView::default(),
+            sink: Sink::default(),
+            blocked: false,
+        };
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            terminal_input_enabled: !state.blocked,
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+        let position = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap()
+            .left_top()
+            + egui::vec2(2.0, 2.0);
+        let command = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        harness.event(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: command,
+        });
+        harness.run();
+
+        harness.state_mut().blocked = true;
+        harness.event(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: command,
+        });
+        harness.run();
+
+        harness.state_mut().blocked = false;
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run();
+
+        assert!(harness.state_mut().view.take_link_requests().is_empty());
+    }
+}

@@ -212,3 +212,92 @@ impl CellRange {
             && (position.row, position.column) <= (self.end.row, self.end.column)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Pos2, Rect, Vec2};
+    use festerm_core::{Dimensions, MAX_CELL_COUNT};
+
+    #[test]
+    fn point_dimensions_are_bounded_and_valid() {
+        let cell = CellMetrics::new(8.0, 16.0).unwrap();
+        assert_eq!(
+            dimensions_from_points(
+                ViewSize {
+                    width: 1.0,
+                    height: 1.0
+                },
+                cell
+            ),
+            Some(Dimensions::new(2, 1).unwrap())
+        );
+        let maximum = dimensions_from_points(
+            ViewSize {
+                width: f32::MAX,
+                height: f32::MAX,
+            },
+            cell,
+        )
+        .unwrap();
+        assert!(maximum.cell_count() <= MAX_CELL_COUNT);
+        assert_eq!(
+            dimensions_from_points(
+                ViewSize {
+                    width: f32::NAN,
+                    height: 5.0
+                },
+                cell
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn p6_cell_geometry_keeps_wide_paint_cursor_and_hit_coordinates_distinct() {
+        let geometry = CellGeometry::new(
+            Pos2::new(5.0, 7.0),
+            Dimensions::new(4, 1).unwrap(),
+            CellMetrics::new(10.0, 20.0).unwrap(),
+        );
+        let wide_paint = geometry
+            .cell_rect(CellPosition { column: 1, row: 0 }, 2)
+            .expect("width-two leading cell fits");
+        let continuation_cursor = geometry
+            .cell_rect(CellPosition { column: 2, row: 0 }, 1)
+            .expect("continuation column remains a physical cursor cell");
+
+        assert_eq!(
+            wide_paint,
+            Rect::from_min_size(Pos2::new(15.0, 7.0), Vec2::new(20.0, 20.0))
+        );
+        assert_eq!(
+            continuation_cursor,
+            Rect::from_min_size(Pos2::new(25.0, 7.0), Vec2::new(10.0, 20.0))
+        );
+        assert_eq!(
+            geometry.hit_test(Pos2::new(26.0, 8.0)),
+            Some(CellPosition { column: 2, row: 0 }),
+            "hit testing reports the physical continuation column; selection normalizes it"
+        );
+        assert_eq!(
+            geometry.cell_rect(CellPosition { column: 3, row: 0 }, 2),
+            None,
+            "a shaped glyph run cannot claim columns outside its terminal allocation"
+        );
+    }
+
+    #[test]
+    fn point_mapping_uses_zero_based_cell_coordinates() {
+        let dimensions = Dimensions::new(4, 2).unwrap();
+        let cell = CellMetrics::new(10.0, 20.0).unwrap();
+        assert_eq!(
+            cell_from_point(Pos2::new(5.0, 7.0), dimensions, cell, Pos2::new(34.9, 46.9)),
+            Some(CellPosition { column: 2, row: 1 })
+        );
+        assert_eq!(
+            cell_from_point(Pos2::new(5.0, 7.0), dimensions, cell, Pos2::new(45.0, 7.0)),
+            None
+        );
+    }
+}

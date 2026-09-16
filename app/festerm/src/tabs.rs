@@ -1903,21 +1903,20 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Starts in the singleton Launcher when there is no workspace to restore.
-    /// This is the ordinary product startup path; native-window smoke may
-    /// still request a deterministic primary session explicitly.
-    pub fn with_launcher(configuration: Configuration) -> Self {
-        let id = TabId::next();
+    /// Builds the `AppState` fields derived purely from `Configuration`'s
+    /// interface settings (chip layout, toggles, keyboard bindings, ...),
+    /// leaving only the tab payload and active selection to the caller.
+    /// Shared by `with_launcher`, `with_primary_session`, and
+    /// `with_restored_workspace`, which otherwise differ only in how their
+    /// initial `tabs`/`active` are produced.
+    fn new_with_tabs(configuration: Configuration, tabs: Vec<Tab>, active: TabId) -> Self {
         let settings = configuration.interface_settings().clone();
         Self {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
-            tabs: vec![Tab {
-                id,
-                content: TabContent::Launcher,
-            }],
-            active: id,
+            tabs,
+            active,
             configuration,
             inspector_open: false,
             input_ownership_epoch: 0,
@@ -1948,6 +1947,21 @@ impl AppState {
         }
     }
 
+    /// Starts in the singleton Launcher when there is no workspace to restore.
+    /// This is the ordinary product startup path; native-window smoke may
+    /// still request a deterministic primary session explicitly.
+    pub fn with_launcher(configuration: Configuration) -> Self {
+        let id = TabId::next();
+        Self::new_with_tabs(
+            configuration,
+            vec![Tab {
+                id,
+                content: TabContent::Launcher,
+            }],
+            id,
+        )
+    }
+
     /// Starts with one primary local shell tab, matching the M5 completion
     /// criterion that fesTerm opens a usable shell without extra steps. An
     /// optional native-window-smoke profile override replaces the default
@@ -1963,43 +1977,14 @@ impl AppState {
         let session =
             SessionTab::start_primary(context, smoke_profile, settings.prefer_powershell());
         let id = TabId::next();
-        let mut state = Self {
-            discovery: Default::default(),
-            resume_error: None,
-            pending_resume: None,
-            tabs: vec![Tab {
+        let mut state = Self::new_with_tabs(
+            configuration,
+            vec![Tab {
                 id,
                 content: TabContent::Session(Box::new(session)),
             }],
-            active: id,
-            configuration,
-            inspector_open: false,
-            input_ownership_epoch: 0,
-            chip_layout: chip_layout_from_preference(settings.chip_layout()),
-            status_bar_visible: settings.status_bar_visible(),
-            show_session_details: settings.show_session_details(),
-            confirm_session_close: settings.confirm_session_close(),
-            prefer_powershell: settings.prefer_powershell(),
-            restore_workspace: settings.restore_workspace(),
-            terminal_font: settings.terminal_font(),
-            terminal_ligatures: settings.terminal_ligatures(),
-            emoji_presentation: settings.emoji_presentation(),
-            scroll_speed: settings.scroll_speed(),
-            scrollback_limit: settings.scrollback_limit(),
-            quick_switch_overlay: settings.quick_switch_overlay(),
-            compact_launcher_grid: settings.compact_launcher_grid(),
-            pulse_new_output_dot: settings.pulse_new_output_dot(),
-            show_resumable_sessions: settings.show_resumable_sessions(),
-            keyboard_bindings: settings.keyboard_bindings().clone(),
-            sftp_pane_order: settings.sftp_pane_order(),
-            default_sftp_local_directory: settings
-                .default_sftp_local_directory()
-                .map(Path::to_path_buf),
-            pending_profile_edit: None,
-            pending_profile_create: None,
-            pending_profile_usage: None,
-            workspace_dirty: false,
-        };
+            id,
+        );
         state.apply_scrollback_limit_to_sessions();
         (state, id)
     }
@@ -2099,41 +2084,7 @@ impl AppState {
         }
 
         let active = focused.unwrap_or_else(|| restored[0].id);
-        let settings = configuration.interface_settings().clone();
-        let mut state = Self {
-            discovery: Default::default(),
-            resume_error: None,
-            pending_resume: None,
-            tabs: restored,
-            active,
-            configuration,
-            inspector_open: false,
-            input_ownership_epoch: 0,
-            chip_layout: chip_layout_from_preference(settings.chip_layout()),
-            status_bar_visible: settings.status_bar_visible(),
-            show_session_details: settings.show_session_details(),
-            confirm_session_close: settings.confirm_session_close(),
-            prefer_powershell: settings.prefer_powershell(),
-            restore_workspace: settings.restore_workspace(),
-            terminal_font: settings.terminal_font(),
-            terminal_ligatures: settings.terminal_ligatures(),
-            emoji_presentation: settings.emoji_presentation(),
-            scroll_speed: settings.scroll_speed(),
-            scrollback_limit: settings.scrollback_limit(),
-            quick_switch_overlay: settings.quick_switch_overlay(),
-            compact_launcher_grid: settings.compact_launcher_grid(),
-            pulse_new_output_dot: settings.pulse_new_output_dot(),
-            show_resumable_sessions: settings.show_resumable_sessions(),
-            keyboard_bindings: settings.keyboard_bindings().clone(),
-            sftp_pane_order: settings.sftp_pane_order(),
-            default_sftp_local_directory: settings
-                .default_sftp_local_directory()
-                .map(Path::to_path_buf),
-            pending_profile_edit: None,
-            pending_profile_create: None,
-            pending_profile_usage: None,
-            workspace_dirty: false,
-        };
+        let mut state = Self::new_with_tabs(configuration, restored, active);
         state.apply_scrollback_limit_to_sessions();
         state
     }

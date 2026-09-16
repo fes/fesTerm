@@ -1353,8 +1353,11 @@ profiles follow the same order.
 
 Settings is a singleton application surface represented by its own chip;
 invoking Settings again focuses it. It currently uses compact cards rather
-than a category sidebar: **Interface**, **Scrolling**, **Terminal
-typography**, **Keyboard**, and **SFTP**. Only implemented controls appear.
+than a category sidebar, uniformly widthed and shown in this order:
+**Interface**, **Scrolling**, **Terminal typography**, **Quick switch**,
+**SFTP**, and **Keyboard bindings**. Keyboard bindings sits last because its
+searchable action table is the tallest card. Only implemented controls
+appear.
 
 The current **Interface** card groups the persistent chrome/session toggles as
 quiet rows with subtle dividers:
@@ -1379,12 +1382,15 @@ quiet rows with subtle dividers:
   "Configuration" below): unlike the four controls above, which always apply
   and save immediately, resurrecting a previous run's open tabs is an
   explicit opt-in.
-- **Compact New Session layout** is an off-by-default switch that shortens the
-  Launcher's top launch cards by dropping their descriptions. The old
-  multi-column saved-profile grid is obsolete because Saved Profiles is now a
-  table; the persisted `compact_launcher_grid` configuration key is retained
-  and repurposed instead of removed so existing configuration files remain
-  valid under strict settings deserialization.
+- **Compact New Session layout** is an off-by-default switch that shrinks the
+  Launcher's top launch cards' mark and padding while keeping their
+  descriptions, since a card that only says "SSH" does not tell a new user
+  what activating it will do; the Saved Profiles and Running Sessions panels
+  start higher as a result. The old multi-column saved-profile grid is
+  obsolete because Saved Profiles is now a table; the persisted
+  `compact_launcher_grid` configuration key is retained and repurposed
+  instead of removed so existing configuration files remain valid under
+  strict settings deserialization.
 - **Pulse status dot on new background output** is an off-by-default switch
   that animates only background-session chip dots when unseen output arrives.
 - **Resume unattached local sessions from New Session** is an off-by-default
@@ -1399,8 +1405,11 @@ existing sessions keep their current budget. Scroll speed scales wheel/trackpad
 history motion relative to the original fixed mapping.
 
 The **Terminal typography** card exposes the bundled terminal-family selector
-plus the default-off ligature toggle. The **Keyboard** card currently exposes
-the off-by-default quick-switch-number overlay preference.
+plus the default-off ligature toggle. The **Quick switch** card currently
+exposes the off-by-default quick-switch-number overlay preference; it no
+longer restates the Command palette/Open Settings chords the **Keyboard
+bindings** card below owns, so a customized binding is never shown twice with
+two different values.
 The **SFTP** card exposes the optional default local starting directory for new
 SFTP tabs. It saves immediately like the other Settings rows, stores any
 non-empty control-character-free path string without parse-time existence

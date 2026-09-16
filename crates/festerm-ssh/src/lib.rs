@@ -1,5 +1,8 @@
 //! Native SSH transport policy and bounded `russh` session lifecycle.
 
+mod decision_gate;
+mod openssh_config;
+mod port_forward;
 mod sftp;
 mod sftp_transfer;
 
@@ -10,7 +13,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -21,17 +24,31 @@ use festerm_session::{
     noop_session_event_notifier, FlowDirection, Session, SessionError, SessionErrorKind,
     SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle, SessionMetrics,
     SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError, ShutdownResult,
-    SshPortForwardDirection, SshPortForwardRuntime, SshPortForwardSource, SshPortForwardState,
-    TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
+    SshPortForwardDirection, SshPortForwardSource, TerminalSize, DEFAULT_COMMAND_QUEUE_CAPACITY,
+    DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use ssh_key::Certificate as OpenSshCertificate;
-use tokio::io::AsyncWriteExt;
 use zeroize::Zeroize;
 
+use decision_gate::{DecisionGate, DecisionResolutionError, DecisionWaiter};
+pub use openssh_config::{
+    import_openssh_config, OpenSshConfigDiagnostic, OpenSshConfigDiagnosticKind,
+    OpenSshConfigDiagnosticSeverity, OpenSshConfigImportReport,
+};
+use port_forward::{
+    apply_port_forward, collect_requested_port_forwards, emit_port_forward_snapshot,
+    handle_forwarded_tcpip_connection, handle_local_forward_connection, remove_port_forward,
+    report_port_forward_error, requested_port_forward, teardown_port_forwards,
+    AcceptedLocalForwardConnection, ActivePortForward, ForwardedTcpIpConnection,
+    PortForwardAttemptLimiter, PortForwardBindingKey, RequestedSshPortForward,
+};
+pub use port_forward::{
+    SshPortForwardConfigurationError, SshPortForwardRequestError, SshPortForwardSpec,
+};
 use sftp::GuiSftpConnectionKeepAlive;
 pub use sftp::{
-    parse_sftp_command, SftpCommand, SftpCommandOutcome, SftpCommandParseError, SftpDirectoryEntry,
-    SftpEntryType, SftpSession, SftpSessionError,
+    parse_sftp_command, read_local_directory_snapshot_sync, SftpCommand, SftpCommandOutcome,
+    SftpCommandParseError, SftpDirectoryEntry, SftpEntryType, SftpSession, SftpSessionError,
 };
 pub use sftp_transfer::{
     SftpCollision, SftpCollisionDecision, SftpCollisionId, SftpCollisionResolution,
@@ -1149,175 +1166,6 @@ impl SshSessionOptions {
     }
 }
 
-/// Secret-free metadata that the SSH backend can consume as a port-forward request.
-///
-/// `festerm-config::SshPortForwardConfiguration` implements this trait so
-/// saved profile metadata can flow directly into `festerm-ssh` without
-/// duplicating the configuration struct.
-pub trait SshPortForwardSpec {
-    fn direction(&self) -> SshPortForwardDirection;
-    fn bind_host(&self) -> &str;
-    fn bind_port(&self) -> u16;
-    fn destination_host(&self) -> &str;
-    fn destination_port(&self) -> u16;
-}
-
-impl<T: SshPortForwardSpec + ?Sized> SshPortForwardSpec for &T {
-    fn direction(&self) -> SshPortForwardDirection {
-        (**self).direction()
-    }
-
-    fn bind_host(&self) -> &str {
-        (**self).bind_host()
-    }
-
-    fn bind_port(&self) -> u16 {
-        (**self).bind_port()
-    }
-
-    fn destination_host(&self) -> &str {
-        (**self).destination_host()
-    }
-
-    fn destination_port(&self) -> u16 {
-        (**self).destination_port()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SshPortForwardConfigurationError {
-    EmptyHost,
-    ControlCharacter,
-    ZeroPort,
-    DuplicateBinding,
-}
-
-impl fmt::Display for SshPortForwardConfigurationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyHost => formatter.write_str("SSH port-forward host must not be empty"),
-            Self::ControlCharacter => {
-                formatter.write_str("SSH port-forward host must not contain control characters")
-            }
-            Self::ZeroPort => formatter.write_str("SSH port-forward port must not be zero"),
-            Self::DuplicateBinding => formatter.write_str(
-                "SSH port-forward bindings must not repeat the same direction and bind address",
-            ),
-        }
-    }
-}
-
-impl std::error::Error for SshPortForwardConfigurationError {}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SshPortForwardRequestError {
-    NotRunning,
-    QueueFull,
-    Closed,
-    InvalidConfiguration(SshPortForwardConfigurationError),
-}
-
-impl fmt::Display for SshPortForwardRequestError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotRunning => {
-                formatter.write_str("SSH port forwarding is only available while connected")
-            }
-            Self::QueueFull => formatter.write_str("SSH port-forward request queue is full"),
-            Self::Closed => {
-                formatter.write_str("SSH port-forward request was rejected: session closed")
-            }
-            Self::InvalidConfiguration(error) => error.fmt(formatter),
-        }
-    }
-}
-
-impl std::error::Error for SshPortForwardRequestError {}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct RequestedSshPortForward {
-    direction: SshPortForwardDirection,
-    bind_host: String,
-    bind_port: u16,
-    destination_host: String,
-    destination_port: u16,
-    source: SshPortForwardSource,
-}
-
-impl RequestedSshPortForward {
-    fn runtime(
-        &self,
-        state: SshPortForwardState,
-        failure_reason: Option<String>,
-    ) -> SshPortForwardRuntime {
-        SshPortForwardRuntime::new(
-            self.direction,
-            self.bind_host.clone(),
-            self.bind_port,
-            self.destination_host.clone(),
-            self.destination_port,
-            self.source,
-            state,
-            failure_reason,
-        )
-    }
-}
-
-fn collect_requested_port_forwards<I>(
-    port_forwards: I,
-    source: SshPortForwardSource,
-) -> Result<Vec<RequestedSshPortForward>, SshPortForwardConfigurationError>
-where
-    I: IntoIterator,
-    I::Item: SshPortForwardSpec,
-{
-    let mut collected = Vec::new();
-    for forward in port_forwards {
-        let requested = requested_port_forward(forward, source)?;
-        if port_forward_bindings_collide(&collected, &requested) {
-            return Err(SshPortForwardConfigurationError::DuplicateBinding);
-        }
-        collected.push(requested);
-    }
-    Ok(collected)
-}
-
-fn requested_port_forward(
-    forward: impl SshPortForwardSpec,
-    source: SshPortForwardSource,
-) -> Result<RequestedSshPortForward, SshPortForwardConfigurationError> {
-    let bind_host = forward.bind_host().trim();
-    let destination_host = forward.destination_host().trim();
-    if bind_host.is_empty() || destination_host.is_empty() {
-        return Err(SshPortForwardConfigurationError::EmptyHost);
-    }
-    if bind_host.chars().any(char::is_control) || destination_host.chars().any(char::is_control) {
-        return Err(SshPortForwardConfigurationError::ControlCharacter);
-    }
-    if forward.bind_port() == 0 || forward.destination_port() == 0 {
-        return Err(SshPortForwardConfigurationError::ZeroPort);
-    }
-    Ok(RequestedSshPortForward {
-        direction: forward.direction(),
-        bind_host: bind_host.to_owned(),
-        bind_port: forward.bind_port(),
-        destination_host: destination_host.to_owned(),
-        destination_port: forward.destination_port(),
-        source,
-    })
-}
-
-fn port_forward_bindings_collide(
-    existing: &[RequestedSshPortForward],
-    candidate: &RequestedSshPortForward,
-) -> bool {
-    existing.iter().any(|forward| {
-        forward.direction == candidate.direction
-            && forward.bind_host == candidate.bind_host
-            && forward.bind_port == candidate.bind_port
-    })
-}
-
 /// A rejected nonblocking request to reconnect a live SSH session.
 ///
 /// This error intentionally contains no destination, credential, terminal,
@@ -1543,15 +1391,6 @@ impl ReconnectPlanner {
     }
 }
 
-const MAX_OPENSSH_CONFIG_BYTES: usize = 128 * 1024;
-const MAX_OPENSSH_CONFIG_LINES: usize = 2_048;
-const MAX_OPENSSH_CONFIG_LINE_BYTES: usize = 4 * 1024;
-const MAX_OPENSSH_CONFIG_TOKENS: usize = 16;
-const MAX_IMPORTED_SSH_PROFILES: usize = 256;
-const MAX_OPENSSH_IMPORT_DIAGNOSTICS: usize = 256;
-const DEFAULT_SSH_PORT: u16 = 22;
-const MAX_IDENTITY_FILE_METADATA_BYTES: usize = 4 * 1024;
-
 /// A secret-free `IdentityFile` path copied literally from OpenSSH metadata.
 ///
 /// The importer neither expands this string nor reads the referenced file.
@@ -1596,595 +1435,6 @@ impl ImportedSshProfile {
     }
 }
 
-/// Severity of a safe OpenSSH-import diagnostic.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OpenSshConfigDiagnosticSeverity {
-    Warning,
-    Error,
-}
-
-/// A structured reason why an OpenSSH setting was not imported.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OpenSshConfigDiagnosticKind {
-    ConfigTooLarge { maximum: usize, actual: usize },
-    TooManyLines { maximum: usize },
-    LineTooLong { maximum: usize },
-    TooManyTokens { maximum: usize },
-    UnterminatedQuote,
-    InvalidDirectiveSyntax,
-    UnsupportedDirective { directive: String },
-    DirectiveOutsideHost { directive: String },
-    DirectiveInUnsupportedMatch { directive: String },
-    MultipleHostPatterns,
-    NegatedHostPattern,
-    WildcardHostPattern,
-    InvalidHostAlias,
-    DuplicateHostAlias { alias: String },
-    DuplicateDirective { directive: String },
-    InvalidValue { directive: String },
-    TooManyProfiles { maximum: usize },
-    DiagnosticLimitReached { maximum: usize },
-}
-
-impl fmt::Display for OpenSshConfigDiagnosticKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ConfigTooLarge { maximum, actual } => {
-                write!(formatter, "config is {actual} bytes; maximum is {maximum}")
-            }
-            Self::TooManyLines { maximum } => {
-                write!(formatter, "config exceeds the maximum of {maximum} lines")
-            }
-            Self::LineTooLong { maximum } => {
-                write!(
-                    formatter,
-                    "config line exceeds the maximum of {maximum} bytes"
-                )
-            }
-            Self::TooManyTokens { maximum } => {
-                write!(
-                    formatter,
-                    "config line exceeds the maximum of {maximum} tokens"
-                )
-            }
-            Self::UnterminatedQuote => formatter.write_str("config line has an unterminated quote"),
-            Self::InvalidDirectiveSyntax => formatter.write_str("config line has invalid syntax"),
-            Self::UnsupportedDirective { directive } => {
-                write!(formatter, "unsupported OpenSSH directive {directive}")
-            }
-            Self::DirectiveOutsideHost { directive } => {
-                write!(
-                    formatter,
-                    "OpenSSH directive {directive} appears outside an exact Host"
-                )
-            }
-            Self::DirectiveInUnsupportedMatch { directive } => {
-                write!(
-                    formatter,
-                    "OpenSSH directive {directive} appears in an unsupported Match section"
-                )
-            }
-            Self::MultipleHostPatterns => {
-                formatter.write_str("Host must contain exactly one exact alias")
-            }
-            Self::NegatedHostPattern => {
-                formatter.write_str("negated Host patterns are not supported")
-            }
-            Self::WildcardHostPattern => {
-                formatter.write_str("wildcard Host patterns are not supported")
-            }
-            Self::InvalidHostAlias => formatter.write_str("Host alias is not a simple exact alias"),
-            Self::DuplicateHostAlias { alias } => {
-                write!(
-                    formatter,
-                    "Host alias {alias} is ambiguous because it is duplicated"
-                )
-            }
-            Self::DuplicateDirective { directive } => {
-                write!(formatter, "OpenSSH directive {directive} is duplicated")
-            }
-            Self::InvalidValue { directive } => {
-                write!(
-                    formatter,
-                    "OpenSSH directive {directive} has an invalid value"
-                )
-            }
-            Self::TooManyProfiles { maximum } => {
-                write!(
-                    formatter,
-                    "config exceeds the maximum of {maximum} imported profiles"
-                )
-            }
-            Self::DiagnosticLimitReached { maximum } => {
-                write!(
-                    formatter,
-                    "config diagnostics reached the maximum of {maximum}"
-                )
-            }
-        }
-    }
-}
-
-/// One source-positioned OpenSSH import diagnostic.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OpenSshConfigDiagnostic {
-    line: usize,
-    severity: OpenSshConfigDiagnosticSeverity,
-    kind: OpenSshConfigDiagnosticKind,
-}
-
-impl OpenSshConfigDiagnostic {
-    pub const fn line(&self) -> usize {
-        self.line
-    }
-
-    pub const fn severity(&self) -> OpenSshConfigDiagnosticSeverity {
-        self.severity
-    }
-
-    pub fn kind(&self) -> &OpenSshConfigDiagnosticKind {
-        &self.kind
-    }
-}
-
-/// Bounded result of [`import_openssh_config`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OpenSshConfigImportReport {
-    profiles: Vec<ImportedSshProfile>,
-    diagnostics: Vec<OpenSshConfigDiagnostic>,
-}
-
-impl OpenSshConfigImportReport {
-    pub fn profiles(&self) -> &[ImportedSshProfile] {
-        &self.profiles
-    }
-
-    pub fn diagnostics(&self) -> &[OpenSshConfigDiagnostic] {
-        &self.diagnostics
-    }
-
-    pub fn has_errors(&self) -> bool {
-        self.diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.severity == OpenSshConfigDiagnosticSeverity::Error)
-    }
-}
-
-#[derive(Default)]
-struct OpenSshHostBlock {
-    alias: String,
-    line: usize,
-    hostname: Option<String>,
-    port: Option<u16>,
-    username: Option<String>,
-    identity_file: Option<IdentityFileMetadata>,
-    valid: bool,
-}
-
-impl OpenSshHostBlock {
-    fn new(alias: String, line: usize) -> Self {
-        Self {
-            alias,
-            line,
-            valid: true,
-            ..Self::default()
-        }
-    }
-}
-
-/// Imports the intentionally small, non-executing OpenSSH-config subset.
-///
-/// Only `Host`, `HostName`, `Port`, `User`, and `IdentityFile` are considered.
-/// The parser does not expand shells, environment variables, or `~`; it does
-/// not process `Include`, run commands, or open identity files. Any ambiguous,
-/// unsupported, or unsafe directive is reported and never applied.
-pub fn import_openssh_config(config: &str) -> OpenSshConfigImportReport {
-    let mut diagnostics = Vec::new();
-    if config.len() > MAX_OPENSSH_CONFIG_BYTES {
-        push_openssh_diagnostic(
-            &mut diagnostics,
-            1,
-            OpenSshConfigDiagnosticKind::ConfigTooLarge {
-                maximum: MAX_OPENSSH_CONFIG_BYTES,
-                actual: config.len(),
-            },
-        );
-        return OpenSshConfigImportReport {
-            profiles: Vec::new(),
-            diagnostics,
-        };
-    }
-
-    let mut blocks = Vec::new();
-    let mut current_block = None;
-    let mut configuration_incomplete = false;
-    let mut in_unsupported_match = false;
-    for (index, line) in config.split('\n').enumerate() {
-        let line_number = index.saturating_add(1);
-        if line_number > MAX_OPENSSH_CONFIG_LINES {
-            push_openssh_diagnostic(
-                &mut diagnostics,
-                line_number,
-                OpenSshConfigDiagnosticKind::TooManyLines {
-                    maximum: MAX_OPENSSH_CONFIG_LINES,
-                },
-            );
-            configuration_incomplete = true;
-            break;
-        }
-        if line.len() > MAX_OPENSSH_CONFIG_LINE_BYTES {
-            push_openssh_diagnostic(
-                &mut diagnostics,
-                line_number,
-                OpenSshConfigDiagnosticKind::LineTooLong {
-                    maximum: MAX_OPENSSH_CONFIG_LINE_BYTES,
-                },
-            );
-            configuration_incomplete = true;
-            continue;
-        }
-        let tokens = match tokenize_openssh_config_line(line) {
-            Ok(tokens) => tokens,
-            Err(kind) => {
-                push_openssh_diagnostic(&mut diagnostics, line_number, kind);
-                configuration_incomplete = true;
-                continue;
-            }
-        };
-        let Some((directive, values)) = split_openssh_directive(tokens) else {
-            continue;
-        };
-
-        if directive == "host" {
-            if let Some(block) = current_block.take() {
-                blocks.push(block);
-            }
-            in_unsupported_match = false;
-            match parse_exact_host_alias(&values) {
-                Ok(alias) => current_block = Some(OpenSshHostBlock::new(alias, line_number)),
-                Err(kind) => push_openssh_diagnostic(&mut diagnostics, line_number, kind),
-            }
-            continue;
-        }
-
-        if directive == "match" {
-            if let Some(block) = current_block.take() {
-                blocks.push(block);
-            }
-            push_openssh_diagnostic(
-                &mut diagnostics,
-                line_number,
-                OpenSshConfigDiagnosticKind::UnsupportedDirective { directive },
-            );
-            configuration_incomplete = true;
-            in_unsupported_match = true;
-            continue;
-        }
-
-        if in_unsupported_match {
-            push_openssh_diagnostic(
-                &mut diagnostics,
-                line_number,
-                OpenSshConfigDiagnosticKind::DirectiveInUnsupportedMatch { directive },
-            );
-            configuration_incomplete = true;
-            continue;
-        }
-
-        if directive == "include" && current_block.is_none() {
-            push_openssh_diagnostic(
-                &mut diagnostics,
-                line_number,
-                OpenSshConfigDiagnosticKind::UnsupportedDirective { directive },
-            );
-            configuration_incomplete = true;
-            continue;
-        }
-
-        let Some(block) = current_block.as_mut() else {
-            push_openssh_diagnostic(
-                &mut diagnostics,
-                line_number,
-                OpenSshConfigDiagnosticKind::DirectiveOutsideHost { directive },
-            );
-            configuration_incomplete = true;
-            continue;
-        };
-        apply_openssh_host_directive(block, line_number, directive, values, &mut diagnostics);
-    }
-    if let Some(block) = current_block {
-        blocks.push(block);
-    }
-
-    if configuration_incomplete {
-        return OpenSshConfigImportReport {
-            profiles: Vec::new(),
-            diagnostics,
-        };
-    }
-    build_imported_profiles(blocks, &mut diagnostics)
-}
-
-fn tokenize_openssh_config_line(line: &str) -> Result<Vec<String>, OpenSshConfigDiagnosticKind> {
-    let mut tokens = Vec::new();
-    let mut value = String::new();
-    let mut quote = None;
-    let mut token_started = false;
-    let mut preceded_by_whitespace = true;
-
-    for character in line.chars() {
-        if let Some(quote_character) = quote {
-            if character == quote_character {
-                quote = None;
-            } else {
-                value.push(character);
-            }
-            token_started = true;
-            preceded_by_whitespace = false;
-            continue;
-        }
-        match character {
-            '"' | '\'' => {
-                quote = Some(character);
-                token_started = true;
-                preceded_by_whitespace = false;
-            }
-            '#' if preceded_by_whitespace => break,
-            character if character.is_whitespace() => {
-                if token_started {
-                    push_openssh_token(&mut tokens, &mut value)?;
-                    token_started = false;
-                }
-                preceded_by_whitespace = true;
-            }
-            _ => {
-                value.push(character);
-                token_started = true;
-                preceded_by_whitespace = false;
-            }
-        }
-    }
-    if quote.is_some() {
-        return Err(OpenSshConfigDiagnosticKind::UnterminatedQuote);
-    }
-    if token_started {
-        push_openssh_token(&mut tokens, &mut value)?;
-    }
-    Ok(tokens)
-}
-
-fn push_openssh_token(
-    tokens: &mut Vec<String>,
-    value: &mut String,
-) -> Result<(), OpenSshConfigDiagnosticKind> {
-    if tokens.len() == MAX_OPENSSH_CONFIG_TOKENS {
-        return Err(OpenSshConfigDiagnosticKind::TooManyTokens {
-            maximum: MAX_OPENSSH_CONFIG_TOKENS,
-        });
-    }
-    tokens.push(std::mem::take(value));
-    Ok(())
-}
-
-fn split_openssh_directive(mut tokens: Vec<String>) -> Option<(String, Vec<String>)> {
-    let first = tokens.first_mut()?;
-    if let Some((directive, inline_value)) = first.split_once('=') {
-        let directive = directive.to_ascii_lowercase();
-        let inline_value = inline_value.to_owned();
-        if inline_value.is_empty() {
-            tokens.remove(0);
-        } else {
-            *first = inline_value;
-        }
-        Some((directive, tokens))
-    } else {
-        let directive = first.to_ascii_lowercase();
-        tokens.remove(0);
-        Some((directive, tokens))
-    }
-}
-
-fn parse_exact_host_alias(values: &[String]) -> Result<String, OpenSshConfigDiagnosticKind> {
-    if values.len() != 1 {
-        return Err(OpenSshConfigDiagnosticKind::MultipleHostPatterns);
-    }
-    let alias = &values[0];
-    if alias.starts_with('!') {
-        return Err(OpenSshConfigDiagnosticKind::NegatedHostPattern);
-    }
-    if alias.contains(['*', '?', '[', ']']) {
-        return Err(OpenSshConfigDiagnosticKind::WildcardHostPattern);
-    }
-    if !is_simple_host_alias(alias) {
-        return Err(OpenSshConfigDiagnosticKind::InvalidHostAlias);
-    }
-    Ok(alias.to_ascii_lowercase())
-}
-
-fn is_simple_host_alias(alias: &str) -> bool {
-    !alias.is_empty()
-        && alias
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-}
-
-fn apply_openssh_host_directive(
-    block: &mut OpenSshHostBlock,
-    line: usize,
-    directive: String,
-    values: Vec<String>,
-    diagnostics: &mut Vec<OpenSshConfigDiagnostic>,
-) {
-    if directive == "include" {
-        block.valid = false;
-        push_openssh_diagnostic(
-            diagnostics,
-            line,
-            OpenSshConfigDiagnosticKind::UnsupportedDirective { directive },
-        );
-        return;
-    }
-    if !matches!(
-        directive.as_str(),
-        "hostname" | "port" | "user" | "identityfile"
-    ) {
-        block.valid = false;
-        push_openssh_diagnostic(
-            diagnostics,
-            line,
-            OpenSshConfigDiagnosticKind::UnsupportedDirective { directive },
-        );
-        return;
-    }
-    if values.len() != 1 {
-        block.valid = false;
-        push_openssh_diagnostic(
-            diagnostics,
-            line,
-            OpenSshConfigDiagnosticKind::InvalidDirectiveSyntax,
-        );
-        return;
-    }
-
-    let value = &values[0];
-    let duplicate = match directive.as_str() {
-        "hostname" => block.hostname.is_some(),
-        "port" => block.port.is_some(),
-        "user" => block.username.is_some(),
-        "identityfile" => block.identity_file.is_some(),
-        _ => unreachable!("supported directive was checked above"),
-    };
-    if duplicate {
-        block.valid = false;
-        push_openssh_diagnostic(
-            diagnostics,
-            line,
-            OpenSshConfigDiagnosticKind::DuplicateDirective { directive },
-        );
-        return;
-    }
-
-    match directive.as_str() {
-        "hostname" if HostIdentity::new(value, DEFAULT_SSH_PORT).is_ok() => {
-            block.hostname = Some(value.clone());
-        }
-        "port" => match value.parse::<u16>() {
-            Ok(port) if port != 0 => block.port = Some(port),
-            Ok(_) | Err(_) => {
-                block.valid = false;
-                push_openssh_diagnostic(
-                    diagnostics,
-                    line,
-                    OpenSshConfigDiagnosticKind::InvalidValue { directive },
-                );
-            }
-        },
-        "user" if validate_username(value).is_ok() => block.username = Some(value.clone()),
-        "identityfile"
-            if !value.is_empty()
-                && value.len() <= MAX_IDENTITY_FILE_METADATA_BYTES
-                && !value.chars().any(char::is_control) =>
-        {
-            block.identity_file = Some(IdentityFileMetadata {
-                path: value.clone(),
-            });
-        }
-        _ => {
-            block.valid = false;
-            push_openssh_diagnostic(
-                diagnostics,
-                line,
-                OpenSshConfigDiagnosticKind::InvalidValue { directive },
-            );
-        }
-    }
-}
-
-fn build_imported_profiles(
-    blocks: Vec<OpenSshHostBlock>,
-    diagnostics: &mut Vec<OpenSshConfigDiagnostic>,
-) -> OpenSshConfigImportReport {
-    let mut duplicate_aliases = std::collections::BTreeSet::new();
-    let mut seen_aliases = std::collections::BTreeSet::new();
-    for block in &blocks {
-        if !seen_aliases.insert(block.alias.clone()) {
-            duplicate_aliases.insert(block.alias.clone());
-        }
-    }
-    for block in &blocks {
-        if duplicate_aliases.contains(&block.alias) {
-            push_openssh_diagnostic(
-                diagnostics,
-                block.line,
-                OpenSshConfigDiagnosticKind::DuplicateHostAlias {
-                    alias: block.alias.clone(),
-                },
-            );
-        }
-    }
-
-    let mut profiles = Vec::new();
-    for block in blocks {
-        if !block.valid || duplicate_aliases.contains(&block.alias) {
-            continue;
-        }
-        if profiles.len() == MAX_IMPORTED_SSH_PROFILES {
-            push_openssh_diagnostic(
-                diagnostics,
-                block.line,
-                OpenSshConfigDiagnosticKind::TooManyProfiles {
-                    maximum: MAX_IMPORTED_SSH_PROFILES,
-                },
-            );
-            break;
-        }
-        let host = block.hostname.unwrap_or_else(|| block.alias.clone());
-        let port = block.port.unwrap_or(DEFAULT_SSH_PORT);
-        let Ok(identity) = HostIdentity::new(host, port) else {
-            push_openssh_diagnostic(
-                diagnostics,
-                block.line,
-                OpenSshConfigDiagnosticKind::InvalidValue {
-                    directive: "hostname".to_owned(),
-                },
-            );
-            continue;
-        };
-        profiles.push(ImportedSshProfile {
-            host_alias: block.alias,
-            identity,
-            username: block.username,
-            identity_file: block.identity_file,
-        });
-    }
-    OpenSshConfigImportReport {
-        profiles,
-        diagnostics: std::mem::take(diagnostics),
-    }
-}
-
-fn push_openssh_diagnostic(
-    diagnostics: &mut Vec<OpenSshConfigDiagnostic>,
-    line: usize,
-    kind: OpenSshConfigDiagnosticKind,
-) {
-    if diagnostics.len() < MAX_OPENSSH_IMPORT_DIAGNOSTICS.saturating_sub(1) {
-        diagnostics.push(OpenSshConfigDiagnostic {
-            line,
-            severity: OpenSshConfigDiagnosticSeverity::Error,
-            kind,
-        });
-    } else if diagnostics.len() == MAX_OPENSSH_IMPORT_DIAGNOSTICS.saturating_sub(1) {
-        diagnostics.push(OpenSshConfigDiagnostic {
-            line,
-            severity: OpenSshConfigDiagnosticSeverity::Error,
-            kind: OpenSshConfigDiagnosticKind::DiagnosticLimitReached {
-                maximum: MAX_OPENSSH_IMPORT_DIAGNOSTICS,
-            },
-        });
-    }
-}
-
 /// Resolves the single pending host-key request for one future SSH session.
 ///
 /// This handle contains no host-key material. The GUI can call it from its
@@ -2226,6 +1476,16 @@ pub enum HostKeyDecisionResolutionError {
     PromptMismatch,
 }
 
+impl From<DecisionResolutionError> for HostKeyDecisionResolutionError {
+    fn from(error: DecisionResolutionError) -> Self {
+        match error {
+            DecisionResolutionError::NoPendingPrompt => Self::NoPendingPrompt,
+            DecisionResolutionError::AlreadyResolved => Self::AlreadyResolved,
+            DecisionResolutionError::PromptMismatch => Self::PromptMismatch,
+        }
+    }
+}
+
 impl fmt::Display for HostKeyDecisionResolutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -2240,27 +1500,21 @@ impl fmt::Display for HostKeyDecisionResolutionError {
 
 impl std::error::Error for HostKeyDecisionResolutionError {}
 
+/// Pauses an SSH worker immediately before host-key verification and resumes
+/// it once the application supplies (or cancels) a trust decision.
+///
+/// This is a thin wrapper around the generic [`DecisionGate`]; see that type
+/// for the shared synchronisation behaviour.
 #[allow(dead_code)]
-enum HostKeyGateState {
-    Idle,
-    Waiting(festerm_session::HostKeyPrompt),
-    Resolved(HostTrustDecision),
-    Cancelled,
-}
-
 struct HostKeyDecisionGate {
-    state: Mutex<HostKeyGateState>,
-    changed: Condvar,
-    notified: tokio::sync::Notify,
+    inner: DecisionGate<festerm_session::HostKeyPrompt, HostTrustDecision>,
 }
 
 #[allow(dead_code)]
 impl HostKeyDecisionGate {
     fn new() -> Self {
         Self {
-            state: Mutex::new(HostKeyGateState::Idle),
-            changed: Condvar::new(),
-            notified: tokio::sync::Notify::new(),
+            inner: DecisionGate::new(),
         }
     }
 
@@ -2268,20 +1522,10 @@ impl HostKeyDecisionGate {
         &self,
         prompt: festerm_session::HostKeyPrompt,
     ) -> Result<HostKeyDecisionWaiter, HostKeyDecisionResolutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("host-key gate lock is not poisoned");
-        match *state {
-            HostKeyGateState::Idle => {
-                *state = HostKeyGateState::Waiting(prompt.clone());
-                Ok(HostKeyDecisionWaiter { prompt })
-            }
-            HostKeyGateState::Resolved(_) => Err(HostKeyDecisionResolutionError::AlreadyResolved),
-            HostKeyGateState::Waiting(_) | HostKeyGateState::Cancelled => {
-                Err(HostKeyDecisionResolutionError::NoPendingPrompt)
-            }
-        }
+        self.inner
+            .begin(prompt)
+            .map(|inner| HostKeyDecisionWaiter { inner })
+            .map_err(Into::into)
     }
 
     fn resolve(
@@ -2289,128 +1533,57 @@ impl HostKeyDecisionGate {
         prompt: &festerm_session::HostKeyPrompt,
         decision: HostTrustDecision,
     ) -> Result<(), HostKeyDecisionResolutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("host-key gate lock is not poisoned");
-        match &*state {
-            HostKeyGateState::Waiting(current) if current == prompt => {
-                *state = HostKeyGateState::Resolved(decision);
-                self.changed.notify_all();
-                self.notified.notify_waiters();
-                Ok(())
-            }
-            HostKeyGateState::Waiting(_) => Err(HostKeyDecisionResolutionError::PromptMismatch),
-            HostKeyGateState::Resolved(_) => Err(HostKeyDecisionResolutionError::AlreadyResolved),
-            HostKeyGateState::Idle | HostKeyGateState::Cancelled => {
-                Err(HostKeyDecisionResolutionError::NoPendingPrompt)
-            }
-        }
+        self.inner.resolve(prompt, decision).map_err(Into::into)
     }
 
     fn cancel(
         &self,
         prompt: &festerm_session::HostKeyPrompt,
     ) -> Result<(), HostKeyDecisionResolutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("host-key gate lock is not poisoned");
-        match &*state {
-            HostKeyGateState::Waiting(current) if current == prompt => {
-                *state = HostKeyGateState::Cancelled;
-                self.changed.notify_all();
-                self.notified.notify_waiters();
-                Ok(())
-            }
-            HostKeyGateState::Waiting(_) => Err(HostKeyDecisionResolutionError::PromptMismatch),
-            HostKeyGateState::Resolved(_) => Err(HostKeyDecisionResolutionError::AlreadyResolved),
-            HostKeyGateState::Idle | HostKeyGateState::Cancelled => {
-                Err(HostKeyDecisionResolutionError::NoPendingPrompt)
-            }
-        }
+        self.inner.cancel(prompt).map_err(Into::into)
     }
 
     fn wait_for_decision(&self, timeout: Duration) -> HostTrustDecision {
-        let state = self
-            .state
-            .lock()
-            .expect("host-key gate lock is not poisoned");
-        let (mut state, _) = self
-            .changed
-            .wait_timeout_while(state, timeout, |state| {
-                matches!(state, HostKeyGateState::Waiting(_))
-            })
-            .expect("host-key gate lock is not poisoned");
-        let decision = match *state {
-            HostKeyGateState::Resolved(decision) => decision,
-            HostKeyGateState::Idle | HostKeyGateState::Waiting(_) | HostKeyGateState::Cancelled => {
-                HostTrustDecision::Reject
-            }
-        };
-        *state = HostKeyGateState::Idle;
-        self.notified.notify_waiters();
-        decision
+        self.inner
+            .wait_for_decision(timeout)
+            .unwrap_or(HostTrustDecision::Reject)
     }
 
     fn reject_pending(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("host-key gate lock is not poisoned");
-        if matches!(*state, HostKeyGateState::Waiting(_)) {
-            *state = HostKeyGateState::Cancelled;
-            self.changed.notify_all();
-            self.notified.notify_waiters();
-        }
+        self.inner.reject_pending();
     }
 
     async fn wait_for_decision_async(&self, timeout: Duration) -> HostTrustDecision {
-        let decision = tokio::time::timeout(timeout, async {
-            loop {
-                let notified = self.notified.notified();
-                {
-                    let state = self
-                        .state
-                        .lock()
-                        .expect("host-key gate lock is not poisoned");
-                    match *state {
-                        HostKeyGateState::Resolved(decision) => return decision,
-                        HostKeyGateState::Idle | HostKeyGateState::Cancelled => {
-                            return HostTrustDecision::Reject;
-                        }
-                        HostKeyGateState::Waiting(_) => {}
-                    }
-                }
-                notified.await;
-            }
-        })
-        .await
-        .unwrap_or(HostTrustDecision::Reject);
-        *self
-            .state
-            .lock()
-            .expect("host-key gate lock is not poisoned") = HostKeyGateState::Idle;
-        self.changed.notify_all();
-        self.notified.notify_waiters();
-        decision
+        self.inner
+            .wait_for_decision_async(timeout)
+            .await
+            .unwrap_or(HostTrustDecision::Reject)
     }
 }
 
 /// Worker-only proof that a prompt has been emitted and may now be awaited.
 #[allow(dead_code)]
 struct HostKeyDecisionWaiter {
-    prompt: festerm_session::HostKeyPrompt,
+    inner: DecisionWaiter<festerm_session::HostKeyPrompt>,
 }
 
 #[allow(dead_code)]
 impl HostKeyDecisionWaiter {
+    fn prompt(&self) -> &festerm_session::HostKeyPrompt {
+        self.inner.prompt()
+    }
+
     fn wait(self, gate: &HostKeyDecisionGate, timeout: Duration) -> HostTrustDecision {
-        gate.wait_for_decision(timeout)
+        self.inner
+            .wait(&gate.inner, timeout)
+            .unwrap_or(HostTrustDecision::Reject)
     }
 
     async fn wait_async(self, gate: &HostKeyDecisionGate, timeout: Duration) -> HostTrustDecision {
-        gate.wait_for_decision_async(timeout).await
+        self.inner
+            .wait_async(&gate.inner, timeout)
+            .await
+            .unwrap_or(HostTrustDecision::Reject)
     }
 }
 
@@ -2456,6 +1629,16 @@ pub enum PasswordDecisionResolutionError {
     PromptMismatch,
 }
 
+impl From<DecisionResolutionError> for PasswordDecisionResolutionError {
+    fn from(error: DecisionResolutionError) -> Self {
+        match error {
+            DecisionResolutionError::NoPendingPrompt => Self::NoPendingPrompt,
+            DecisionResolutionError::AlreadyResolved => Self::AlreadyResolved,
+            DecisionResolutionError::PromptMismatch => Self::PromptMismatch,
+        }
+    }
+}
+
 impl fmt::Display for PasswordDecisionResolutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -2470,30 +1653,22 @@ impl fmt::Display for PasswordDecisionResolutionError {
 
 impl std::error::Error for PasswordDecisionResolutionError {}
 
-#[allow(dead_code)]
-enum PasswordGateState {
-    Idle,
-    Waiting(festerm_session::PasswordPrompt),
-    Resolved(String),
-    Cancelled,
-}
-
 /// Pauses an SSH worker immediately before password authentication and
 /// resumes it once the application supplies (or cancels) one, mirroring
 /// [`HostKeyDecisionGate`]'s pause-and-resolve pattern.
+///
+/// This is a thin wrapper around the generic [`DecisionGate`]; see that type
+/// for the shared synchronisation behaviour.
+#[allow(dead_code)]
 struct PasswordDecisionGate {
-    state: Mutex<PasswordGateState>,
-    changed: Condvar,
-    notified: tokio::sync::Notify,
+    inner: DecisionGate<festerm_session::PasswordPrompt, String>,
 }
 
 #[allow(dead_code)]
 impl PasswordDecisionGate {
     fn new() -> Self {
         Self {
-            state: Mutex::new(PasswordGateState::Idle),
-            changed: Condvar::new(),
-            notified: tokio::sync::Notify::new(),
+            inner: DecisionGate::new(),
         }
     }
 
@@ -2501,20 +1676,10 @@ impl PasswordDecisionGate {
         &self,
         prompt: festerm_session::PasswordPrompt,
     ) -> Result<PasswordDecisionWaiter, PasswordDecisionResolutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("password gate lock is not poisoned");
-        match *state {
-            PasswordGateState::Idle => {
-                *state = PasswordGateState::Waiting(prompt.clone());
-                Ok(PasswordDecisionWaiter { prompt })
-            }
-            PasswordGateState::Resolved(_) => Err(PasswordDecisionResolutionError::AlreadyResolved),
-            PasswordGateState::Waiting(_) | PasswordGateState::Cancelled => {
-                Err(PasswordDecisionResolutionError::NoPendingPrompt)
-            }
-        }
+        self.inner
+            .begin(prompt)
+            .map(|inner| PasswordDecisionWaiter { inner })
+            .map_err(Into::into)
     }
 
     fn resolve(
@@ -2522,136 +1687,48 @@ impl PasswordDecisionGate {
         prompt: &festerm_session::PasswordPrompt,
         password: String,
     ) -> Result<(), PasswordDecisionResolutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("password gate lock is not poisoned");
-        match &*state {
-            PasswordGateState::Waiting(current) if current == prompt => {
-                *state = PasswordGateState::Resolved(password);
-                self.changed.notify_all();
-                self.notified.notify_waiters();
-                Ok(())
-            }
-            PasswordGateState::Waiting(_) => Err(PasswordDecisionResolutionError::PromptMismatch),
-            PasswordGateState::Resolved(_) => Err(PasswordDecisionResolutionError::AlreadyResolved),
-            PasswordGateState::Idle | PasswordGateState::Cancelled => {
-                Err(PasswordDecisionResolutionError::NoPendingPrompt)
-            }
-        }
+        self.inner.resolve(prompt, password).map_err(Into::into)
     }
 
     fn cancel(
         &self,
         prompt: &festerm_session::PasswordPrompt,
     ) -> Result<(), PasswordDecisionResolutionError> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("password gate lock is not poisoned");
-        match &*state {
-            PasswordGateState::Waiting(current) if current == prompt => {
-                *state = PasswordGateState::Cancelled;
-                self.changed.notify_all();
-                self.notified.notify_waiters();
-                Ok(())
-            }
-            PasswordGateState::Waiting(_) => Err(PasswordDecisionResolutionError::PromptMismatch),
-            PasswordGateState::Resolved(_) => Err(PasswordDecisionResolutionError::AlreadyResolved),
-            PasswordGateState::Idle | PasswordGateState::Cancelled => {
-                Err(PasswordDecisionResolutionError::NoPendingPrompt)
-            }
-        }
+        self.inner.cancel(prompt).map_err(Into::into)
     }
 
     fn wait_for_decision(&self, timeout: Duration) -> Option<String> {
-        let state = self
-            .state
-            .lock()
-            .expect("password gate lock is not poisoned");
-        let (mut state, _) = self
-            .changed
-            .wait_timeout_while(state, timeout, |state| {
-                matches!(state, PasswordGateState::Waiting(_))
-            })
-            .expect("password gate lock is not poisoned");
-        let password = match &mut *state {
-            PasswordGateState::Resolved(password) => Some(std::mem::take(password)),
-            PasswordGateState::Idle
-            | PasswordGateState::Waiting(_)
-            | PasswordGateState::Cancelled => None,
-        };
-        *state = PasswordGateState::Idle;
-        self.notified.notify_waiters();
-        password
+        self.inner.wait_for_decision(timeout)
     }
 
     fn reject_pending(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("password gate lock is not poisoned");
-        if matches!(*state, PasswordGateState::Waiting(_)) {
-            *state = PasswordGateState::Cancelled;
-            self.changed.notify_all();
-            self.notified.notify_waiters();
-        }
+        self.inner.reject_pending();
     }
 
     async fn wait_for_decision_async(&self, timeout: Duration) -> Option<String> {
-        let password = tokio::time::timeout(timeout, async {
-            loop {
-                let notified = self.notified.notified();
-                {
-                    let mut state = self
-                        .state
-                        .lock()
-                        .expect("password gate lock is not poisoned");
-                    match &mut *state {
-                        PasswordGateState::Resolved(password) => {
-                            return Some(std::mem::take(password))
-                        }
-                        PasswordGateState::Idle | PasswordGateState::Cancelled => return None,
-                        PasswordGateState::Waiting(_) => {}
-                    }
-                }
-                notified.await;
-            }
-        })
-        .await
-        .unwrap_or(None);
-        *self
-            .state
-            .lock()
-            .expect("password gate lock is not poisoned") = PasswordGateState::Idle;
-        self.changed.notify_all();
-        self.notified.notify_waiters();
-        password
+        self.inner.wait_for_decision_async(timeout).await
     }
 }
 
 /// Worker-only proof that a prompt has been emitted and may now be awaited.
 #[allow(dead_code)]
 struct PasswordDecisionWaiter {
-    prompt: festerm_session::PasswordPrompt,
+    inner: DecisionWaiter<festerm_session::PasswordPrompt>,
 }
 
 #[allow(dead_code)]
 impl PasswordDecisionWaiter {
+    fn prompt(&self) -> &festerm_session::PasswordPrompt {
+        self.inner.prompt()
+    }
+
     fn wait(self, gate: &PasswordDecisionGate, timeout: Duration) -> Option<String> {
-        gate.wait_for_decision(timeout)
+        self.inner.wait(&gate.inner, timeout)
     }
 
     async fn wait_async(self, gate: &PasswordDecisionGate, timeout: Duration) -> Option<String> {
-        gate.wait_for_decision_async(timeout).await
+        self.inner.wait_async(&gate.inner, timeout).await
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PortForwardBindingKey {
-    direction: SshPortForwardDirection,
-    bind_host: String,
-    bind_port: u16,
 }
 
 enum WorkerCommand {
@@ -3776,81 +2853,6 @@ fn reconnect_request_is_available(lifecycle: &SessionLifecycle, request_pending:
         lifecycle,
         SessionLifecycle::Running | SessionLifecycle::Disconnected(_)
     ) && !request_pending
-}
-
-struct AcceptedLocalForwardConnection {
-    key: PortForwardBindingKey,
-    stream: tokio::net::TcpStream,
-    originator_address: String,
-    originator_port: u16,
-}
-
-struct ForwardedTcpIpConnection {
-    key: PortForwardBindingKey,
-    channel: russh::Channel<russh::client::Msg>,
-}
-
-#[derive(Clone)]
-struct PortForwardAttemptLimiter {
-    permits: Arc<tokio::sync::Semaphore>,
-    max_in_flight: usize,
-}
-
-impl PortForwardAttemptLimiter {
-    fn new(max_in_flight: usize) -> Self {
-        assert!(
-            max_in_flight > 0,
-            "port-forward attempt limit must be nonzero"
-        );
-        Self {
-            permits: Arc::new(tokio::sync::Semaphore::new(max_in_flight)),
-            max_in_flight,
-        }
-    }
-
-    fn max_in_flight(&self) -> usize {
-        self.max_in_flight
-    }
-
-    fn try_acquire(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        self.permits.clone().try_acquire_owned().ok()
-    }
-}
-
-enum ActivePortForwardHandle {
-    Inactive,
-    Local {
-        shutdown: tokio::sync::watch::Sender<bool>,
-        listener: tokio::task::JoinHandle<()>,
-    },
-    Remote {
-        shutdown: tokio::sync::watch::Sender<bool>,
-    },
-}
-
-impl ActivePortForwardHandle {
-    fn shutdown_receiver(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
-        match self {
-            Self::Local { shutdown, .. } | Self::Remote { shutdown } => Some(shutdown.subscribe()),
-            Self::Inactive => None,
-        }
-    }
-}
-
-struct ActivePortForward {
-    requested: RequestedSshPortForward,
-    runtime: SshPortForwardRuntime,
-    handle: ActivePortForwardHandle,
-}
-
-impl ActivePortForward {
-    fn key(&self) -> PortForwardBindingKey {
-        PortForwardBindingKey {
-            direction: self.requested.direction,
-            bind_host: self.requested.bind_host.clone(),
-            bind_port: self.requested.bind_port,
-        }
-    }
 }
 
 impl Session for SshSession {
@@ -6464,446 +5466,6 @@ async fn process_authenticated_commands(
     }
 }
 
-fn emit_port_forward_snapshot(shared: &WorkerShared, active_port_forwards: &[ActivePortForward]) {
-    let snapshot = active_port_forwards
-        .iter()
-        .map(|forward| forward.runtime.clone())
-        .collect();
-    let _ = shared.try_emit(SessionEvent::PortForwardsUpdated(snapshot));
-}
-
-fn report_port_forward_error(shared: &WorkerShared, message: impl Into<String>) {
-    let _ = shared.try_emit(SessionEvent::Error(SessionError::new(
-        SessionErrorKind::Internal,
-        message,
-    )));
-}
-
-async fn apply_port_forward(
-    handle: &russh::client::Handle<SshClientHandler>,
-    requested: RequestedSshPortForward,
-    active_port_forwards: &mut Vec<ActivePortForward>,
-    local_forward_sender: &tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
-    shared: &Arc<WorkerShared>,
-) {
-    if active_port_forwards.iter().any(|forward| {
-        forward.key()
-            == PortForwardBindingKey {
-                direction: requested.direction,
-                bind_host: requested.bind_host.clone(),
-                bind_port: requested.bind_port,
-            }
-    }) {
-        report_port_forward_error(
-            shared,
-            format!(
-                "SSH {} port forward on {}:{} already exists",
-                port_forward_direction_label(requested.direction),
-                requested.bind_host,
-                requested.bind_port,
-            ),
-        );
-        emit_port_forward_snapshot(shared, active_port_forwards);
-        return;
-    }
-
-    let runtime_result = match requested.direction {
-        SshPortForwardDirection::Local => {
-            start_local_port_forward(&requested, local_forward_sender.clone(), Arc::clone(shared))
-                .await
-        }
-        SshPortForwardDirection::Remote => start_remote_port_forward(handle, &requested).await,
-    };
-
-    let entry = match runtime_result {
-        Ok(handle) => ActivePortForward {
-            runtime: requested.runtime(SshPortForwardState::Active, None),
-            requested,
-            handle,
-        },
-        Err(reason) => ActivePortForward {
-            runtime: requested.runtime(SshPortForwardState::Failed, Some(reason)),
-            requested,
-            handle: ActivePortForwardHandle::Inactive,
-        },
-    };
-    active_port_forwards.push(entry);
-    emit_port_forward_snapshot(shared, active_port_forwards);
-}
-
-async fn start_local_port_forward(
-    requested: &RequestedSshPortForward,
-    local_forward_sender: tokio::sync::mpsc::Sender<AcceptedLocalForwardConnection>,
-    shared: Arc<WorkerShared>,
-) -> Result<ActivePortForwardHandle, String> {
-    let listener =
-        tokio::net::TcpListener::bind((requested.bind_host.as_str(), requested.bind_port))
-            .await
-            .map_err(|error| format!("could not bind local SSH port forward: {error}"))?;
-    let key = PortForwardBindingKey {
-        direction: requested.direction,
-        bind_host: requested.bind_host.clone(),
-        bind_port: requested.bind_port,
-    };
-    let (shutdown_sender, mut shutdown_receiver) = tokio::sync::watch::channel(false);
-    let listener = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                changed = shutdown_receiver.changed() => {
-                    if changed.is_err() || *shutdown_receiver.borrow() {
-                        break;
-                    }
-                }
-                accepted = listener.accept() => match accepted {
-                    Ok((stream, address)) => {
-                        match local_forward_sender.try_send(AcceptedLocalForwardConnection {
-                            key: key.clone(),
-                            stream,
-                            originator_address: address.ip().to_string(),
-                            originator_port: address.port(),
-                        }) {
-                            Ok(()) => {}
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                report_port_forward_error(
-                                    &shared,
-                                    format!(
-                                        "SSH local port forward on {}:{} rejected an accepted connection because {} connections were already pending",
-                                        key.bind_host,
-                                        key.bind_port,
-                                        PORT_FORWARD_PENDING_CONNECTION_CAPACITY,
-                                    ),
-                                );
-                            }
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => break,
-                        }
-                    }
-                    Err(_) => tokio::time::sleep(COMMAND_POLL_INTERVAL).await,
-                }
-            }
-        }
-    });
-    Ok(ActivePortForwardHandle::Local {
-        shutdown: shutdown_sender,
-        listener,
-    })
-}
-
-async fn start_remote_port_forward(
-    handle: &russh::client::Handle<SshClientHandler>,
-    requested: &RequestedSshPortForward,
-) -> Result<ActivePortForwardHandle, String> {
-    match tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        handle.tcpip_forward(requested.bind_host.clone(), u32::from(requested.bind_port)),
-    )
-    .await
-    {
-        Ok(Ok(_)) => {
-            let (shutdown_sender, _) = tokio::sync::watch::channel(false);
-            Ok(ActivePortForwardHandle::Remote {
-                shutdown: shutdown_sender,
-            })
-        }
-        Ok(Err(error)) => Err(format!(
-            "could not request remote SSH port forward: {error}"
-        )),
-        Err(_) => Err("requesting the remote SSH port forward timed out".to_owned()),
-    }
-}
-
-async fn remove_port_forward(
-    handle: &russh::client::Handle<SshClientHandler>,
-    key: &PortForwardBindingKey,
-    active_port_forwards: &mut Vec<ActivePortForward>,
-    shared: &WorkerShared,
-) {
-    let Some(index) = active_port_forwards
-        .iter()
-        .position(|forward| forward.key() == *key)
-    else {
-        report_port_forward_error(
-            shared,
-            format!(
-                "SSH {} port forward on {}:{} does not exist",
-                port_forward_direction_label(key.direction),
-                key.bind_host,
-                key.bind_port,
-            ),
-        );
-        emit_port_forward_snapshot(shared, active_port_forwards);
-        return;
-    };
-    let forward = active_port_forwards.remove(index);
-    stop_active_port_forward(Some(handle), forward).await;
-    emit_port_forward_snapshot(shared, active_port_forwards);
-}
-
-async fn teardown_port_forwards(
-    handle: Option<&russh::client::Handle<SshClientHandler>>,
-    active_port_forwards: &mut Vec<ActivePortForward>,
-    port_forward_attempts: &mut tokio::task::JoinSet<()>,
-    shared: &WorkerShared,
-) {
-    while let Some(forward) = active_port_forwards.pop() {
-        stop_active_port_forward(handle, forward).await;
-    }
-    port_forward_attempts.abort_all();
-    while port_forward_attempts.join_next().await.is_some() {}
-    emit_port_forward_snapshot(shared, active_port_forwards);
-}
-
-async fn stop_active_port_forward(
-    handle: Option<&russh::client::Handle<SshClientHandler>>,
-    forward: ActivePortForward,
-) {
-    match forward.handle {
-        ActivePortForwardHandle::Inactive => {}
-        ActivePortForwardHandle::Local { shutdown, listener } => {
-            let _ = shutdown.send(true);
-            let _ = listener.await;
-        }
-        ActivePortForwardHandle::Remote { shutdown } => {
-            let _ = shutdown.send(true);
-            if let Some(handle) = handle {
-                let _ = tokio::time::timeout(
-                    CONNECT_TIMEOUT,
-                    handle.cancel_tcpip_forward(
-                        forward.requested.bind_host,
-                        u32::from(forward.requested.bind_port),
-                    ),
-                )
-                .await;
-            }
-        }
-    }
-}
-
-fn handle_local_forward_connection(
-    handle: &Arc<russh::client::Handle<SshClientHandler>>,
-    accepted: AcceptedLocalForwardConnection,
-    active_port_forwards: &mut [ActivePortForward],
-    shared: &Arc<WorkerShared>,
-    attempt_limiter: &PortForwardAttemptLimiter,
-    port_forward_attempts: &mut tokio::task::JoinSet<()>,
-) {
-    let Some(forward) = active_port_forwards.iter_mut().find(|forward| {
-        forward.runtime.state() == SshPortForwardState::Active && forward.key() == accepted.key
-    }) else {
-        return;
-    };
-    let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
-        return;
-    };
-    let Some(_permit) = attempt_limiter.try_acquire() else {
-        report_port_forward_error(
-            shared,
-            format!(
-                "SSH local port forward {}:{} -> {}:{} rejected a connection because {} forwarded connections were already in flight",
-                forward.requested.bind_host,
-                forward.requested.bind_port,
-                forward.requested.destination_host,
-                forward.requested.destination_port,
-                attempt_limiter.max_in_flight(),
-            ),
-        );
-        return;
-    };
-    let requested = forward.requested.clone();
-    let handle = Arc::clone(handle);
-    let shared = Arc::clone(shared);
-    port_forward_attempts.spawn(async move {
-        run_local_forward_connection(
-            handle,
-            accepted,
-            requested,
-            shutdown_receiver,
-            shared,
-            _permit,
-        )
-        .await;
-    });
-}
-
-async fn run_local_forward_connection(
-    handle: Arc<russh::client::Handle<SshClientHandler>>,
-    accepted: AcceptedLocalForwardConnection,
-    requested: RequestedSshPortForward,
-    mut shutdown_receiver: tokio::sync::watch::Receiver<bool>,
-    shared: Arc<WorkerShared>,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-) {
-    let channel = tokio::select! {
-        changed = shutdown_receiver.changed() => {
-            let _ = changed;
-            return;
-        }
-        result = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            handle.channel_open_direct_tcpip(
-                requested.destination_host.clone(),
-                u32::from(requested.destination_port),
-                accepted.originator_address,
-                u32::from(accepted.originator_port),
-            ),
-        ) => match result {
-            Ok(Ok(channel)) => channel,
-            Ok(Err(error)) => {
-                report_port_forward_error(
-                    &shared,
-                    format!(
-                        "SSH local port forward {}:{} -> {}:{} could not open a channel: {error}",
-                        requested.bind_host,
-                        requested.bind_port,
-                        requested.destination_host,
-                        requested.destination_port,
-                    ),
-                );
-                return;
-            }
-            Err(_) => {
-                report_port_forward_error(
-                    &shared,
-                    format!(
-                        "SSH local port forward {}:{} -> {}:{} timed out while opening a channel",
-                        requested.bind_host,
-                        requested.bind_port,
-                        requested.destination_host,
-                        requested.destination_port,
-                    ),
-                );
-                return;
-            }
-        }
-    };
-    bridge_tcp_and_ssh(accepted.stream, channel, shutdown_receiver).await;
-}
-
-fn handle_forwarded_tcpip_connection(
-    forwarded: ForwardedTcpIpConnection,
-    active_port_forwards: &mut [ActivePortForward],
-    shared: &Arc<WorkerShared>,
-    attempt_limiter: &PortForwardAttemptLimiter,
-    port_forward_attempts: &mut tokio::task::JoinSet<()>,
-) {
-    let Some(forward) = active_port_forwards.iter_mut().find(|forward| {
-        forward.runtime.state() == SshPortForwardState::Active && forward.key() == forwarded.key
-    }) else {
-        port_forward_attempts.spawn(async move {
-            let _ = forwarded.channel.close().await;
-        });
-        return;
-    };
-    let Some(shutdown_receiver) = forward.handle.shutdown_receiver() else {
-        port_forward_attempts.spawn(async move {
-            let _ = forwarded.channel.close().await;
-        });
-        return;
-    };
-    let Some(_permit) = attempt_limiter.try_acquire() else {
-        report_port_forward_error(
-            shared,
-            format!(
-                "SSH remote port forward {}:{} -> {}:{} rejected a connection because {} forwarded connections were already in flight",
-                forward.requested.bind_host,
-                forward.requested.bind_port,
-                forward.requested.destination_host,
-                forward.requested.destination_port,
-                attempt_limiter.max_in_flight(),
-            ),
-        );
-        port_forward_attempts.spawn(async move {
-            let _ = forwarded.channel.close().await;
-        });
-        return;
-    };
-    let requested = forward.requested.clone();
-    let shared = Arc::clone(shared);
-    port_forward_attempts.spawn(async move {
-        run_forwarded_tcpip_connection(forwarded, requested, shutdown_receiver, shared, _permit)
-            .await;
-    });
-}
-
-async fn run_forwarded_tcpip_connection(
-    forwarded: ForwardedTcpIpConnection,
-    requested: RequestedSshPortForward,
-    mut shutdown_receiver: tokio::sync::watch::Receiver<bool>,
-    shared: Arc<WorkerShared>,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-) {
-    let stream = tokio::select! {
-        changed = shutdown_receiver.changed() => {
-            let _ = changed;
-            let _ = forwarded.channel.close().await;
-            return;
-        }
-        result = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            tokio::net::TcpStream::connect((
-                requested.destination_host.as_str(),
-                requested.destination_port,
-            )),
-        ) => match result {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(error)) => {
-                report_port_forward_error(
-                    &shared,
-                    format!(
-                        "SSH remote port forward {}:{} -> {}:{} could not connect locally: {error}",
-                        requested.bind_host,
-                        requested.bind_port,
-                        requested.destination_host,
-                        requested.destination_port,
-                    ),
-                );
-                let _ = forwarded.channel.close().await;
-                return;
-            }
-            Err(_) => {
-                report_port_forward_error(
-                    &shared,
-                    format!(
-                        "SSH remote port forward {}:{} -> {}:{} timed out while connecting locally",
-                        requested.bind_host,
-                        requested.bind_port,
-                        requested.destination_host,
-                        requested.destination_port,
-                    ),
-                );
-                let _ = forwarded.channel.close().await;
-                return;
-            }
-        }
-    };
-    bridge_tcp_and_ssh(stream, forwarded.channel, shutdown_receiver).await;
-}
-
-async fn bridge_tcp_and_ssh(
-    stream: tokio::net::TcpStream,
-    channel: russh::Channel<russh::client::Msg>,
-    mut shutdown_receiver: tokio::sync::watch::Receiver<bool>,
-) {
-    let mut stream = stream;
-    let mut channel_stream = channel.into_stream();
-    tokio::select! {
-        result = tokio::io::copy_bidirectional(&mut stream, &mut channel_stream) => {
-            let _ = result;
-        }
-        changed = shutdown_receiver.changed() => {
-            let _ = changed;
-        }
-    }
-    let _ = channel_stream.shutdown().await;
-    let _ = stream.shutdown().await;
-}
-
-fn port_forward_direction_label(direction: SshPortForwardDirection) -> &'static str {
-    match direction {
-        SshPortForwardDirection::Local => "local",
-        SshPortForwardDirection::Remote => "remote",
-    }
-}
-
 /// Outcome of waiting in the `Disconnected` (recovery-eligible) state after
 /// an unintentional transport loss for a session with no automatic recovery
 /// resuming it (ADR 0018).
@@ -7085,6 +5647,7 @@ mod tests {
 
     use super::*;
     use festerm_secret_store::{MemorySecretStore, SecretBytes, SecretStore};
+    use festerm_session::{SshPortForwardRuntime, SshPortForwardState};
     use russh::client::Handler as _;
 
     fn profile() -> SshConnectionProfile {
@@ -8326,136 +6889,6 @@ mod tests {
     }
 
     #[test]
-    fn openssh_import_handles_comments_quotes_and_alias_expansion() {
-        let report = import_openssh_config(
-            r#"
-                # The literal identity path is metadata, not a file read.
-                Host work # trailing comment
-                    HostName "Example.COM"
-                    Port=2200
-                    User 'alice'
-                    IdentityFile "$HOME/.ssh/work key" # no environment expansion
-            "#,
-        );
-
-        assert!(!report.has_errors());
-        assert!(report.diagnostics().is_empty());
-        let profile = report.profiles().first().unwrap();
-        assert_eq!(profile.host_alias(), "work");
-        assert_eq!(profile.identity().host(), "example.com");
-        assert_eq!(profile.identity().port(), 2200);
-        assert_eq!(profile.username(), Some("alice"));
-        assert_eq!(
-            profile.identity_file().map(IdentityFileMetadata::path),
-            Some("$HOME/.ssh/work key")
-        );
-    }
-
-    #[test]
-    fn openssh_import_uses_an_exact_alias_when_hostname_is_omitted() {
-        let report = import_openssh_config(
-            r#"
-                Host build-server
-                    User build
-            "#,
-        );
-
-        assert!(!report.has_errors());
-        let profile = report.profiles().first().unwrap();
-        assert_eq!(profile.host_alias(), "build-server");
-        assert_eq!(profile.identity().host(), "build-server");
-        assert_eq!(profile.identity().port(), DEFAULT_SSH_PORT);
-        assert_eq!(profile.username(), Some("build"));
-    }
-
-    #[test]
-    fn openssh_import_reports_unsafe_directives_without_applying_them() {
-        let report = import_openssh_config(
-            r#"
-                Host safe
-                    HostName safe.example
-                Host proxy
-                    ProxyCommand ssh jump.example -W %h:%p
-                Host multiplexed
-                    ControlPath ~/.ssh/control-%r@%h:%p
-            "#,
-        );
-
-        assert_eq!(report.profiles().len(), 1);
-        assert_eq!(report.profiles()[0].host_alias(), "safe");
-        assert!(report.has_errors());
-        assert!(report.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic.kind(),
-            OpenSshConfigDiagnosticKind::UnsupportedDirective { directive }
-                if directive == "proxycommand"
-        )));
-        assert!(report.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic.kind(),
-            OpenSshConfigDiagnosticKind::UnsupportedDirective { directive }
-                if directive == "controlpath"
-        )));
-    }
-
-    #[test]
-    fn openssh_import_rejects_ambiguous_and_unprocessed_config_sections() {
-        let wildcard = import_openssh_config("Host *.example\n    User alice\n");
-        assert!(wildcard.profiles().is_empty());
-        assert!(wildcard.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic.kind(),
-            OpenSshConfigDiagnosticKind::WildcardHostPattern
-        )));
-
-        let duplicate = import_openssh_config(
-            "Host one\n    HostName first.example\nHost one\n    HostName second.example\n",
-        );
-        assert!(duplicate.profiles().is_empty());
-        assert!(duplicate.diagnostics().iter().all(|diagnostic| matches!(
-            diagnostic.kind(),
-            OpenSshConfigDiagnosticKind::DuplicateHostAlias { .. }
-        )));
-
-        let include = import_openssh_config("Include ~/.ssh/conf.d/*\nHost one\n");
-        assert!(include.profiles().is_empty());
-        assert!(include.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic.kind(),
-            OpenSshConfigDiagnosticKind::UnsupportedDirective { directive }
-                if directive == "include"
-        )));
-
-        let matched = import_openssh_config("Match host one\n    User alice\nHost one\n");
-        assert!(matched.profiles().is_empty());
-        assert!(matched.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic.kind(),
-            OpenSshConfigDiagnosticKind::UnsupportedDirective { directive }
-                if directive == "match"
-        )));
-    }
-
-    #[test]
-    fn openssh_import_rejects_duplicate_directives_and_multiple_host_patterns() {
-        let duplicate_directive = import_openssh_config("Host one\n    Port 22\n    Port 2200\n");
-        assert!(duplicate_directive.profiles().is_empty());
-        assert!(duplicate_directive
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| matches!(
-                diagnostic.kind(),
-                OpenSshConfigDiagnosticKind::DuplicateDirective { directive }
-                    if directive == "port"
-            )));
-
-        let multiple_patterns = import_openssh_config("Host one two\n");
-        assert!(multiple_patterns.profiles().is_empty());
-        assert!(multiple_patterns
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| matches!(
-                diagnostic.kind(),
-                OpenSshConfigDiagnosticKind::MultipleHostPatterns
-            )));
-    }
-
-    #[test]
     fn worker_command_queue_is_bounded_and_rejects_large_input() {
         let (worker, receiver, _, _) = SshWorkerFoundation::new_with_capacities(
             profile(),
@@ -8890,7 +7323,7 @@ mod tests {
         let expired = worker
             .request_host_key_verification("SHA256:expired")
             .unwrap();
-        let expired_prompt = expired.prompt.clone();
+        let expired_prompt = expired.prompt().clone();
         assert_eq!(
             expired.wait(&worker.host_key_gate, Duration::ZERO),
             HostTrustDecision::Reject
@@ -8904,7 +7337,7 @@ mod tests {
             Err(HostKeyDecisionResolutionError::PromptMismatch)
         );
         resolver
-            .resolve(&current.prompt, HostTrustDecision::AcceptOnce)
+            .resolve(current.prompt(), HostTrustDecision::AcceptOnce)
             .unwrap();
         assert_eq!(
             current.wait(&worker.host_key_gate, Duration::ZERO),
@@ -8938,7 +7371,7 @@ mod tests {
         let cancelled = worker
             .request_host_key_verification("SHA256:cancel")
             .unwrap();
-        resolver.cancel(&cancelled.prompt).unwrap();
+        resolver.cancel(cancelled.prompt()).unwrap();
         assert_eq!(
             cancelled.wait(&worker.host_key_gate, Duration::ZERO),
             HostTrustDecision::Reject
@@ -8948,10 +7381,10 @@ mod tests {
             .request_host_key_verification("SHA256:reject")
             .unwrap();
         resolver
-            .resolve(&resolved.prompt, HostTrustDecision::Reject)
+            .resolve(resolved.prompt(), HostTrustDecision::Reject)
             .unwrap();
         assert_eq!(
-            resolver.resolve(&resolved.prompt, HostTrustDecision::AcceptOnce),
+            resolver.resolve(resolved.prompt(), HostTrustDecision::AcceptOnce),
             Err(HostKeyDecisionResolutionError::AlreadyResolved)
         );
         assert_eq!(
@@ -8998,15 +7431,15 @@ mod tests {
         assert_eq!(timed_out.wait(&worker.password_gate, Duration::ZERO), None);
 
         let cancelled = worker.request_password_verification(2, true).unwrap();
-        resolver.cancel(&cancelled.prompt).unwrap();
+        resolver.cancel(cancelled.prompt()).unwrap();
         assert_eq!(cancelled.wait(&worker.password_gate, Duration::ZERO), None);
 
         let resolved = worker.request_password_verification(3, true).unwrap();
         resolver
-            .resolve(&resolved.prompt, "typed-password".to_owned())
+            .resolve(resolved.prompt(), "typed-password".to_owned())
             .unwrap();
         assert_eq!(
-            resolver.resolve(&resolved.prompt, "second-typed-password".to_owned()),
+            resolver.resolve(resolved.prompt(), "second-typed-password".to_owned()),
             Err(PasswordDecisionResolutionError::AlreadyResolved)
         );
         assert_eq!(
@@ -9019,7 +7452,7 @@ mod tests {
     fn stale_password_decision_cannot_resolve_a_later_prompt() {
         let (worker, _receiver, _host_key_resolver, resolver) = SshWorkerFoundation::new(profile());
         let expired = worker.request_password_verification(1, false).unwrap();
-        let expired_prompt = expired.prompt.clone();
+        let expired_prompt = expired.prompt().clone();
         assert_eq!(expired.wait(&worker.password_gate, Duration::ZERO), None);
 
         let current = worker.request_password_verification(2, true).unwrap();
@@ -9028,7 +7461,7 @@ mod tests {
             Err(PasswordDecisionResolutionError::PromptMismatch)
         );
         resolver
-            .resolve(&current.prompt, "current-password".to_owned())
+            .resolve(current.prompt(), "current-password".to_owned())
             .unwrap();
         assert_eq!(
             current.wait(&worker.password_gate, Duration::ZERO),

@@ -169,13 +169,13 @@ pub fn daemon_generation_is_live(
     }
 }
 
-fn lock_is_contended(error: &io::Error) -> bool {
+pub fn lock_is_contended(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::WouldBlock
         || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
 }
 
 #[cfg(unix)]
-fn process_alive(pid: u32) -> bool {
+pub fn process_alive(pid: u32) -> bool {
     use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
     match kill(Pid::from_raw(pid as i32), None) {
         Ok(()) => true,
@@ -185,7 +185,7 @@ fn process_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn process_alive(pid: u32) -> bool {
+pub fn process_alive(pid: u32) -> bool {
     festerm_windows_job::process_is_alive(pid)
 }
 
@@ -1320,7 +1320,7 @@ fn read_registry(path: &PathBuf) -> Result<SessionRegistry, PersistentSessionErr
     }
 }
 
-fn runtime_root() -> Result<PathBuf, PersistentSessionError> {
+pub fn runtime_root() -> Result<PathBuf, PersistentSessionError> {
     #[cfg(unix)]
     {
         if let Some(root) = std::env::var_os("XDG_STATE_HOME") {

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     env,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
@@ -407,7 +407,7 @@ fn run_start(
     rows: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
-    let runtime_root = runtime_root()?;
+    let runtime_root = festerm_sessiond::runtime_root()?;
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
 
@@ -596,7 +596,7 @@ fn run_daemon(
     nix::unistd::setsid()?;
 
     let name = validate_name(name)?;
-    let runtime_root = runtime_root()?;
+    let runtime_root = festerm_sessiond::runtime_root()?;
     fs::create_dir_all(&runtime_root)?;
     set_dir_mode(&runtime_root, 0o700)?;
     let generation = match env::var("FESTERM_SESSIOND_GENERATION") {
@@ -1812,7 +1812,7 @@ fn run_list() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_kill(name: String) -> Result<(), Box<dyn std::error::Error>> {
     let name = validate_name(name)?;
-    let root = runtime_root()?;
+    let root = festerm_sessiond::runtime_root()?;
     with_registry_lock(|registry: &mut SessionRegistry| {
         kill_registered_session(
             &root,
@@ -2056,44 +2056,6 @@ fn validate_name(name: String) -> Result<String, Box<dyn std::error::Error>> {
     Ok(session_name.as_str().to_owned())
 }
 
-fn runtime_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    #[cfg(unix)]
-    {
-        if let Some(root) = env::var_os("XDG_STATE_HOME") {
-            Ok(PathBuf::from(root).join("festerm").join("sessiond"))
-        } else if let Some(home) = env::var_os("HOME") {
-            Ok(PathBuf::from(home)
-                .join(".local")
-                .join("state")
-                .join("festerm")
-                .join("sessiond"))
-        } else {
-            Err(
-                "neither XDG_STATE_HOME nor HOME is set; refusing an unscoped runtime directory"
-                    .into(),
-            )
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        if let Some(root) = env::var_os("LOCALAPPDATA") {
-            Ok(PathBuf::from(root).join("fesTerm").join("sessiond"))
-        } else if let Some(root) = env::var_os("USERPROFILE") {
-            Ok(PathBuf::from(root)
-                .join("AppData")
-                .join("Local")
-                .join("fesTerm")
-                .join("sessiond"))
-        } else {
-            Err(
-                "neither LOCALAPPDATA nor USERPROFILE is set; refusing an unscoped runtime directory"
-                    .into(),
-            )
-        }
-    }
-}
-
 #[cfg(unix)]
 fn session_socket_path(
     runtime_root: &Path,
@@ -2123,11 +2085,11 @@ fn session_pipe_name(name: &str) -> String {
 }
 
 fn registry_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(runtime_root()?.join("registry.json"))
+    Ok(festerm_sessiond::runtime_root()?.join("registry.json"))
 }
 
 fn registry_lock_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(runtime_root()?.join("registry.lock"))
+    Ok(festerm_sessiond::runtime_root()?.join("registry.lock"))
 }
 
 fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
@@ -2141,9 +2103,7 @@ fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn with_registry_lock<T>(
-    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
-) -> Result<T, Box<dyn std::error::Error>> {
+fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
     let path = registry_path()?;
     let lock_path = registry_lock_path()?;
     let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
@@ -2156,6 +2116,13 @@ fn with_registry_lock<T>(
         .write(true)
         .open(&lock_path)?;
     set_file_mode(&lock_path, 0o600)?;
+    Ok((path, lock_file))
+}
+
+fn with_registry_lock<T>(
+    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
+) -> Result<T, Box<dyn std::error::Error>> {
+    let (path, lock_file) = open_registry_lock_file()?;
     lock_file.lock_exclusive()?;
     let mut registry = read_registry_at(&path)?;
     let result = operation(&mut registry);
@@ -2177,18 +2144,7 @@ fn write_registry_at(
 }
 
 fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
-    let path = registry_path()?;
-    let lock_path = registry_lock_path()?;
-    let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    set_dir_mode(parent, 0o700)?;
-    let lock_file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&lock_path)?;
-    set_file_mode(&lock_path, 0o600)?;
+    let (path, lock_file) = open_registry_lock_file()?;
     FileExt::lock_shared(&lock_file)?;
     let result = read_registry_at(&path);
     FileExt::unlock(&lock_file)?;
@@ -2224,7 +2180,7 @@ fn remove_registry_record_if_generation_matches(
 
 fn record_is_live(record: &SessionRecord) -> Result<bool, Box<dyn std::error::Error>> {
     Ok(festerm_sessiond::daemon_generation_is_live(
-        &runtime_root()?,
+        &festerm_sessiond::runtime_root()?,
         record.pid,
         record.created_at_unix_ms,
         &record.socket,
@@ -2232,7 +2188,7 @@ fn record_is_live(record: &SessionRecord) -> Result<bool, Box<dyn std::error::Er
 }
 
 fn prune_dead_records(registry: &mut SessionRegistry) -> Result<(), Box<dyn std::error::Error>> {
-    prune_dead_records_in(&runtime_root()?, registry)
+    prune_dead_records_in(&festerm_sessiond::runtime_root()?, registry)
 }
 
 fn prune_dead_records_in(
@@ -2395,11 +2351,6 @@ fn open_generation_lease(path: &Path) -> io::Result<Option<fs::File>> {
     Ok(Some(lease))
 }
 
-fn lock_is_contended(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::WouldBlock
-        || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
-}
-
 fn generation_has_exited(
     root: &Path,
     record: &SessionRecord,
@@ -2418,7 +2369,7 @@ fn generation_has_exited(
     };
     match lease.try_lock_exclusive() {
         Ok(()) => Ok(true),
-        Err(error) if lock_is_contended(&error) => Ok(false),
+        Err(error) if festerm_sessiond::lock_is_contended(&error) => Ok(false),
         Err(error) => Err(error.into()),
     }
 }
@@ -2590,20 +2541,6 @@ fn spawn_shell(
     })
 }
 
-#[cfg(unix)]
-fn process_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
-
-        match kill(Pid::from_raw(pid as i32), None) {
-            Ok(()) | Err(Errno::EPERM) => true,
-            Err(Errno::ESRCH) => false,
-            Err(_) => false,
-        }
-    }
-}
-
 fn terminate_pid(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     {
@@ -2619,7 +2556,7 @@ fn terminate_pid(pid: u32) -> Result<(), Box<dyn std::error::Error>> {
             Err(error) => return Err(error.into()),
         }
         thread::sleep(Duration::from_millis(250));
-        if process_alive(pid.as_raw() as u32) {
+        if festerm_sessiond::process_alive(pid.as_raw() as u32) {
             match kill(pid, Signal::SIGKILL) {
                 Ok(()) | Err(Errno::ESRCH) => {}
                 Err(error) => return Err(error.into()),
