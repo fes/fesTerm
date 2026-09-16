@@ -952,7 +952,7 @@ mod tests {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     use egui_kittest::SnapshotResults;
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::Harness;
     use festerm_core::{
         Attributes, CellWidth, Color, Dimensions, InputEvent, InputEventOutcome, Key, Terminal,
     };
