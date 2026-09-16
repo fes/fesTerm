@@ -943,10 +943,32 @@ pub(crate) fn measure_input_to_paint_submission<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    use egui_kittest::SnapshotResults;
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    use egui_kittest::{kittest::Queryable, Harness};
+    use festerm_core::{
+        Attributes, CellWidth, Color, Dimensions, InputEvent, InputEventOutcome, Key, Terminal,
+    };
+    use festerm_test_support::load_fixture;
     use icu_properties::{
         props::{Emoji, EmojiPresentation},
         CodePointSetData,
+    };
+
+    use super::*;
+    use crate::{
+        geometry::{dimensions_from_viewport, viewport_layout},
+        input::route_input,
+        CellMetrics, CellPosition, CellRange, EncodedInputSink, RenderedCell, ResizeOutcome,
+        ResizeTracker, TerminalRenderCache, TerminalSnapshot, TerminalView, ViewSize,
+        DEFAULT_BACKGROUND,
     };
 
     #[test]
@@ -1373,6 +1395,922 @@ mod tests {
                     .any(|(_, spans_multiple_cells)| *spans_multiple_cells),
                 "{family:?} exposes no standard programming ligature"
             );
+        }
+    }
+
+    #[derive(Default)]
+    struct Sink(Vec<Vec<u8>>);
+
+    impl EncodedInputSink for Sink {
+        fn record_encoded_input(&mut self, bytes: &[u8]) {
+            self.0.push(bytes.to_vec());
+        }
+    }
+
+    fn terminal(columns: usize, rows: usize) -> Terminal {
+        Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
+            .expect("test terminal allocation")
+    }
+
+    fn grid_layout(columns: usize, rows: usize) -> GridLayout {
+        GridLayout {
+            rect: Rect::from_min_size(
+                Pos2::new(5.0, 7.0),
+                Vec2::new(columns as f32 * 10.0, rows as f32 * 20.0),
+            ),
+            dimensions: Dimensions::new(columns, rows).expect("valid test size"),
+            metrics: CellMetrics::new(10.0, 20.0).expect("valid test cell metrics"),
+        }
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    struct HeadlessViewState {
+        view: TerminalView,
+        terminal: Terminal,
+        sink: Sink,
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    impl HeadlessViewState {
+        fn with_terminal(terminal: Terminal) -> Self {
+            Self {
+                view: TerminalView::default(),
+                terminal,
+                sink: Sink::default(),
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn visual_harness(terminal: Terminal) -> Harness<'static, HeadlessViewState> {
+        Harness::builder()
+            .with_size(Vec2::new(640.0, 360.0))
+            .with_pixels_per_point(1.0)
+            .with_theme(egui::Theme::Dark)
+            .wgpu()
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::with_terminal(terminal),
+            )
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn assert_snapshot_invariants(harness: &Harness<'_, HeadlessViewState>) {
+        let state = harness.state();
+        assert_eq!(
+            state.view.diagnostics().calculated_dimensions,
+            Some(state.terminal.dimensions())
+        );
+        assert_eq!(
+            state.view.cache.dimensions(),
+            Some(state.terminal.dimensions())
+        );
+        assert!(state
+            .view
+            .diagnostics()
+            .grid_rect
+            .is_some_and(|grid| grid.is_finite() && grid.width() > 0.0 && grid.height() > 0.0));
+        for row in 0..state.terminal.dimensions().rows() {
+            assert_eq!(
+                state.view.cache.row(row).map(<[RenderedCell]>::len),
+                Some(state.terminal.dimensions().columns())
+            );
+        }
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn snapshot_after_structural_assertions(
+        harness: &mut Harness<'_, HeadlessViewState>,
+        name: &str,
+        snapshots: &mut SnapshotResults,
+    ) {
+        assert_snapshot_invariants(harness);
+        let platform_name = if cfg!(target_os = "windows") {
+            format!("{name}-windows")
+        } else {
+            name.to_owned()
+        };
+        snapshots.add(harness.try_snapshot(&platform_name));
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn focus_terminal_grid(harness: &mut Harness<'_, HeadlessViewState>) {
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("rendered frame records grid geometry");
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+    }
+
+    #[test]
+    fn p6_glyph_runs_preserve_terminal_cell_boundaries() {
+        let single = |text: &str| RenderedCell {
+            text: text.to_owned(),
+            width: CellWidth::Single,
+            foreground: Color::Default,
+            background: Color::Default,
+            attributes: Attributes::NONE,
+            hyperlink: None,
+        };
+        let wide = RenderedCell {
+            text: "界".to_owned(),
+            width: CellWidth::Double,
+            ..single("")
+        };
+        let continuation = RenderedCell {
+            width: CellWidth::Continuation,
+            ..single("")
+        };
+        let linked = RenderedCell {
+            hyperlink: Some(Arc::<str>::from("https://example.com")),
+            ..single("x")
+        };
+        let fallback = single("\u{1f980}");
+        let styled = RenderedCell {
+            attributes: Attributes::BOLD,
+            ..single("z")
+        };
+        let cells = vec![
+            single("="),
+            single("="),
+            wide,
+            continuation,
+            single("e\u{301}"),
+            fallback,
+            linked,
+            single("y"),
+            styled,
+            single("w"),
+        ];
+        let dimensions = Dimensions::new(cells.len(), 1).unwrap();
+        let runs = glyph_runs(&cells, 0, dimensions, None);
+
+        assert_eq!(runs.len(), 8);
+        assert_eq!(runs[0].position(), CellPosition { column: 0, row: 0 });
+        assert_eq!(runs[0].columns(), 2);
+        assert_eq!(runs[0].text(), "==");
+        assert_eq!(runs[1].position(), CellPosition { column: 2, row: 0 });
+        assert_eq!(runs[1].columns(), 2);
+        assert_eq!(runs[1].text(), "界");
+        assert_eq!(runs[2].position(), CellPosition { column: 4, row: 0 });
+        assert_eq!(runs[2].columns(), 1);
+        assert_eq!(runs[2].text(), "e\u{301}");
+        assert_eq!(runs[3].position(), CellPosition { column: 5, row: 0 });
+        assert_eq!(runs[4].position(), CellPosition { column: 6, row: 0 });
+        assert_eq!(runs[5].position(), CellPosition { column: 7, row: 0 });
+        assert_eq!(runs[6].position(), CellPosition { column: 8, row: 0 });
+        assert_eq!(runs[7].position(), CellPosition { column: 9, row: 0 });
+
+        let selected = glyph_runs(
+            &cells[..2],
+            0,
+            Dimensions::new(2, 1).unwrap(),
+            Some(CellRange::new(
+                CellPosition { column: 1, row: 0 },
+                CellPosition { column: 1, row: 0 },
+            )),
+        );
+        assert_eq!(
+            selected.len(),
+            2,
+            "selection remains a hard shaping boundary for future selected-text styling"
+        );
+
+        let separated = glyph_runs(
+            &[single("="), single(""), single("=")],
+            0,
+            Dimensions::new(3, 1).unwrap(),
+            None,
+        );
+        assert_eq!(separated.len(), 3);
+        assert_eq!(separated[2].position(), CellPosition { column: 2, row: 0 });
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn terminal_view_emoji_policy_switches_color_texture_submission() {
+        let mut emoji_terminal = terminal(20, 2);
+        emoji_terminal.ingest("🤖 aligned".as_bytes());
+        let mut harness = visual_harness(emoji_terminal);
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default().with_color_emoji(false));
+
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().view.diagnostics().color_emoji_paints, 0);
+        assert_eq!(
+            harness.state().view.diagnostics().color_emoji_cache_misses,
+            0
+        );
+        let terminal_text = harness.state().terminal.row_text(0);
+
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default());
+        harness.run();
+        assert_eq!(harness.state().view.diagnostics().color_emoji_paints, 1);
+        assert_eq!(
+            harness.state().view.diagnostics().color_emoji_cache_misses,
+            1
+        );
+        assert_eq!(harness.state().terminal.row_text(0), terminal_text);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn repeated_emoji_frame_rasterizes_once_then_uses_only_cache_hits() {
+        let mut emoji_terminal = terminal(20, 2);
+        emoji_terminal.ingest("🤖 🤖 🤖".as_bytes());
+        let mut harness = visual_harness(emoji_terminal);
+
+        harness.run();
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default().with_color_emoji(false));
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default());
+        harness.run();
+        let cold = harness.state().view.diagnostics();
+        assert_eq!(cold.color_emoji_paints, 3);
+        assert_eq!(cold.color_emoji_cache_misses, 1);
+        assert_eq!(cold.color_emoji_cache_hits, 2);
+        assert_eq!(cold.color_emoji_rasterization_attempts, 1);
+        assert_eq!(cold.color_emoji_rasterization_failures, 0);
+        assert_eq!(cold.color_emoji_negative_cache_hits, 0);
+
+        harness.run();
+        let warm = harness.state().view.diagnostics();
+        assert_eq!(warm.color_emoji_paints, 3);
+        assert_eq!(warm.color_emoji_cache_misses, 0);
+        assert_eq!(warm.color_emoji_cache_hits, 3);
+        assert_eq!(warm.color_emoji_rasterization_attempts, 0);
+        assert_eq!(warm.color_emoji_rasterization_failures, 0);
+        assert_eq!(warm.color_emoji_negative_cache_hits, 0);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn failed_emoji_rasterization_attempts_once_then_uses_negative_cache() {
+        let mut emoji_terminal = terminal(10, 2);
+        let excessive_keycap = format!("1{}", "\u{20e3}".repeat(64));
+        emoji_terminal.ingest(excessive_keycap.as_bytes());
+        let mut harness = visual_harness(emoji_terminal);
+
+        harness.run();
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default().with_color_emoji(false));
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .set_font_set(TerminalFontSet::default());
+        harness.run();
+        let failed = harness.state().view.diagnostics();
+        assert_eq!(failed.color_emoji_paints, 0);
+        assert_eq!(failed.color_emoji_rasterization_attempts, 1);
+        assert_eq!(failed.color_emoji_rasterization_failures, 1);
+        assert_eq!(failed.color_emoji_negative_cache_hits, 0);
+
+        harness.run();
+        let cached = harness.state().view.diagnostics();
+        assert_eq!(cached.color_emoji_paints, 0);
+        assert_eq!(cached.color_emoji_rasterization_attempts, 0);
+        assert_eq!(cached.color_emoji_rasterization_failures, 0);
+        assert_eq!(cached.color_emoji_negative_cache_hits, 1);
+    }
+
+    #[test]
+    fn diagnostics_summary_reports_content_free_emoji_cache_work() {
+        let mut view = TerminalView::default();
+        view.diagnostics.color_emoji_paints = 7;
+        view.diagnostics.color_emoji_cache_hits = 6;
+        view.diagnostics.color_emoji_cache_misses = 1;
+        view.diagnostics.color_emoji_rasterization_attempts = 2;
+        view.diagnostics.color_emoji_rasterization_failures = 1;
+        view.diagnostics.color_emoji_negative_cache_hits = 3;
+
+        let summary = view.diagnostics_summary("session running");
+
+        assert!(summary.contains(
+            "emoji paints 7; cache hits 6; misses 1; raster attempts 2; failures 1; negative hits 3"
+        ));
+        assert!(!summary.contains('🤖'));
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn rendered_terminal_frames_match_reviewed_snapshots() {
+        let mut snapshots = SnapshotResults::new();
+        let mut empty = visual_harness(terminal(80, 24));
+        snapshot_after_structural_assertions(&mut empty, "terminal-empty", &mut snapshots);
+
+        let mut attributes_terminal = terminal(80, 24);
+        attributes_terminal.ingest(
+            b"\x1b[31mred \x1b[38;5;39mindexed \x1b[38;2;70;150;240mrgb \
+              \x1b[7minverse \x1b[4munderline \x1b[9mstrike\x1b[0m",
+        );
+        let mut attributes = visual_harness(attributes_terminal);
+        snapshot_after_structural_assertions(
+            &mut attributes,
+            "terminal-attributes",
+            &mut snapshots,
+        );
+
+        for (name, style) in [
+            ("terminal-cursor-block", b"\x1b[2 q".as_slice()),
+            ("terminal-cursor-underline", b"\x1b[4 q".as_slice()),
+            ("terminal-cursor-bar", b"\x1b[6 q".as_slice()),
+        ] {
+            let mut cursor_terminal = terminal(80, 24);
+            cursor_terminal.ingest(style);
+            cursor_terminal.ingest(b"cursor");
+            let mut cursor = visual_harness(cursor_terminal);
+            focus_terminal_grid(&mut cursor);
+            snapshot_after_structural_assertions(&mut cursor, name, &mut snapshots);
+        }
+
+        let mut unicode_terminal = terminal(80, 24);
+        unicode_terminal.ingest("wide \u{754c} combining e\u{301}".as_bytes());
+        let mut unicode = visual_harness(unicode_terminal);
+        unicode
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 5, row: 0 });
+        unicode
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 10, row: 0 });
+        unicode.state_mut().view.selection.finish();
+        unicode.step();
+        snapshot_after_structural_assertions(
+            &mut unicode,
+            "terminal-unicode-selection",
+            &mut snapshots,
+        );
+
+        let mut emoji_terminal = terminal(80, 24);
+        emoji_terminal.ingest(
+            "🤖 bot  🗑️ clean  ⚠️ warn  ℹ️ info  👩‍🔬 lab  1️⃣ key  🇺🇸 flag  aligned".as_bytes(),
+        );
+        let mut emoji = visual_harness(emoji_terminal);
+        emoji
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        emoji
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 5, row: 0 });
+        emoji.state_mut().view.selection.finish();
+        focus_terminal_grid(&mut emoji);
+        snapshot_after_structural_assertions(&mut emoji, "terminal-agency-emoji", &mut snapshots);
+
+        let mut shaping_terminal = terminal(80, 24);
+        shaping_terminal.ingest("== != -> wide \u{754c} combining e\u{301}".as_bytes());
+        let mut shaping = visual_harness(shaping_terminal);
+        shaping.state_mut().view.enable_cell_run_shaping_for_test();
+        focus_terminal_grid(&mut shaping);
+        snapshot_after_structural_assertions(
+            &mut shaping,
+            "terminal-cell-run-shaping",
+            &mut snapshots,
+        );
+
+        // Regression coverage for a bug where merged ASCII glyph runs
+        // containing digits (dates, byte counts, hex-looking names) were
+        // misrouted to the emoji font and rendered with visible spacing
+        // gaps against the fixed monospace cell width, because digits carry
+        // Unicode's loose `Emoji` property. This mirrors a real `dir /s`
+        // directory listing, the original repro.
+        let mut digits_terminal = terminal(80, 24);
+        digits_terminal.ingest(
+            b"08/13/2026  12:03 PM    <DIR>          fbad1\r\n\
+              08/13/2026  12:03 PM       2,275,096,628 eaa2e0c142ea2bd7\r\n\
+              #1 file*2.txt 0123456789",
+        );
+        let mut digits = visual_harness(digits_terminal);
+        digits.state_mut().view.enable_cell_run_shaping_for_test();
+        focus_terminal_grid(&mut digits);
+        snapshot_after_structural_assertions(
+            &mut digits,
+            "terminal-cell-run-shaping-digits",
+            &mut snapshots,
+        );
+
+        let mut alternate_terminal = terminal(80, 24);
+        alternate_terminal.ingest(b"primary\x1b[?1049h\x1b[6 qalternate screen");
+        let mut alternate = visual_harness(alternate_terminal);
+        snapshot_after_structural_assertions(
+            &mut alternate,
+            "terminal-alternate-screen",
+            &mut snapshots,
+        );
+
+        let mut resize_terminal = terminal(80, 24);
+        resize_terminal.ingest(b"banner\r\nprompt> ");
+        let mut resize = visual_harness(resize_terminal);
+        for (name, size, output) in [
+            (
+                "terminal-resize-narrow",
+                Vec2::new(370.0, 300.0),
+                b"\x1b[2;1Hpartial narrow".as_slice(),
+            ),
+            (
+                "terminal-resize-wide",
+                Vec2::new(730.0, 560.0),
+                b"\x1b[3;1Hpartial wide".as_slice(),
+            ),
+            (
+                "terminal-resize-medium",
+                Vec2::new(500.0, 400.0),
+                b"\x1b[4;1Hpartial medium".as_slice(),
+            ),
+            (
+                "terminal-resize-wide-repeat",
+                Vec2::new(730.0, 560.0),
+                b"\x1b[5;1Hpartial wide repeat".as_slice(),
+            ),
+        ] {
+            resize.set_size(size);
+            resize.state_mut().terminal.ingest(output);
+            resize.step();
+            snapshot_after_structural_assertions(&mut resize, name, &mut snapshots);
+        }
+        snapshots.unwrap();
+    }
+
+    #[test]
+    fn undersized_viewport_does_not_shrink_the_terminal_or_lose_cached_content() {
+        let cell = CellMetrics::new(10.0, 20.0).unwrap();
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"Windows banner\r\nC:\\Users\\fes>");
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+        let mut resize = ResizeTracker::default();
+
+        for viewport in [
+            ViewSize {
+                width: 370.0,
+                height: 260.0,
+            },
+            ViewSize {
+                width: 0.0,
+                height: 0.0,
+            },
+            ViewSize {
+                width: 8.0,
+                height: 19.0,
+            },
+            ViewSize {
+                width: 730.0,
+                height: 520.0,
+            },
+        ] {
+            resize.apply_viewport_with_content_positions(&mut terminal, viewport, cell, &[]);
+            let dirty_rows = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+            assert!(terminal
+                .row_text(0)
+                .is_some_and(|row| row.starts_with("Windows banner")));
+            assert!(cache
+                .row(0)
+                .is_some_and(|row| row.first().is_some_and(|cell| cell.text() == "W")));
+        }
+        assert_eq!(terminal.dimensions(), Dimensions::new(73, 26).unwrap());
+    }
+
+    #[test]
+    fn viewport_replay_preserves_cache_geometry_during_output_resizes() {
+        enum Step {
+            Output(&'static [u8]),
+            Viewport(ViewSize),
+        }
+
+        let cell = CellMetrics::new(10.0, 20.0).unwrap();
+        let mut terminal = terminal(80, 24);
+        let mut cache = TerminalRenderCache::default();
+        let mut resize = ResizeTracker::default();
+        let sink = Sink::default();
+
+        for step in [
+            Step::Output(b"Windows banner\r\nC:\\Users\\fes>"),
+            Step::Viewport(ViewSize {
+                width: 370.0,
+                height: 260.0,
+            }),
+            Step::Output(b"\x1b[2;1Hactive output"),
+            Step::Viewport(ViewSize {
+                width: 0.0,
+                height: 0.0,
+            }),
+            Step::Output(b"\x1b[3;1Hpartial"),
+            Step::Viewport(ViewSize {
+                width: 500.0,
+                height: 360.0,
+            }),
+            Step::Viewport(ViewSize {
+                width: 730.0,
+                height: 520.0,
+            }),
+        ] {
+            match step {
+                Step::Output(bytes) => terminal.ingest(bytes),
+                Step::Viewport(viewport) => {
+                    let (_outcome, positions) = resize.apply_viewport_with_content_positions(
+                        &mut terminal,
+                        viewport,
+                        cell,
+                        &[],
+                    );
+                    assert!(positions.is_empty());
+                    let layout =
+                        viewport_layout(Pos2::new(0.0, 0.0), viewport, cell, terminal.dimensions());
+                    assert_eq!(layout.dimensions, terminal.dimensions());
+                    assert_eq!(layout.viewport.min, layout.grid.min);
+                    if dimensions_from_viewport(viewport, cell).is_some() {
+                        assert!(
+                            layout.viewport.contains_rect(layout.grid),
+                            "accepted terminal dimensions must fit the allocated viewport"
+                        );
+                    }
+                    let cursor = terminal.cursor();
+                    assert!(cursor.column() < terminal.dimensions().columns());
+                    assert!(cursor.row() < terminal.dimensions().rows());
+                    let cursor_rect = grid_cell_rect(
+                        GridLayout {
+                            rect: layout.grid,
+                            dimensions: layout.dimensions,
+                            metrics: cell,
+                        },
+                        CellPosition {
+                            column: cursor.column(),
+                            row: cursor.row(),
+                        },
+                        1,
+                    );
+                    assert!(cursor_rect.is_finite());
+                    if dimensions_from_viewport(viewport, cell).is_some() {
+                        assert!(layout.viewport.contains_rect(cursor_rect));
+                    }
+                }
+            }
+
+            let dirty_rows = terminal.take_dirty_rows();
+            assert!(dirty_rows
+                .iter()
+                .all(|row| *row < terminal.dimensions().rows()));
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+            assert_eq!(cache.dimensions(), Some(terminal.dimensions()));
+            for row in 0..terminal.dimensions().rows() {
+                assert_eq!(
+                    cache.row(row).map(<[RenderedCell]>::len),
+                    Some(terminal.dimensions().columns())
+                );
+            }
+        }
+
+        assert!(terminal
+            .row_text(0)
+            .is_some_and(|row| row.starts_with("Windows banner")));
+        assert!(terminal
+            .row_text(1)
+            .is_some_and(|row| row.starts_with("active output")));
+        assert!(terminal
+            .row_text(2)
+            .is_some_and(|row| row.starts_with("partial")));
+        assert!(sink.0.is_empty());
+    }
+
+    #[test]
+    fn wide_cells_use_one_two_column_paint_and_selection_span() {
+        let mut terminal = terminal(4, 1);
+        terminal.ingest(b"\x1b[4;38;2;1;2;3;48;5;196m\xe7\x95\x8c");
+        let dirty_rows = terminal.take_dirty_rows();
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+        let cells = cache.row(0).expect("cached row");
+        let leading = &cells[0];
+        let continuation = &cells[1];
+
+        assert_eq!(leading.width(), CellWidth::Double);
+        assert_eq!(continuation.width(), CellWidth::Continuation);
+        assert_eq!(leading.attributes(), continuation.attributes());
+        assert_eq!(leading.foreground(), continuation.foreground());
+        assert_eq!(leading.background(), continuation.background());
+
+        let layout = grid_layout(4, 1);
+        let rect = grid_cell_rect(layout, CellPosition { column: 0, row: 0 }, 2);
+        assert_eq!(rect.min, Pos2::new(5.0, 7.0));
+        assert_eq!(rect.size(), Vec2::new(20.0, 20.0));
+        assert!(rendered_cell_is_selected(
+            Some(CellRange::new(
+                CellPosition { column: 1, row: 0 },
+                CellPosition { column: 1, row: 0 },
+            )),
+            CellPosition { column: 0, row: 0 },
+            rendered_cell_columns(leading, layout.dimensions, 0),
+        ));
+    }
+
+    #[test]
+    fn input_latency_finishes_after_paint_submission_work() {
+        let observed = Instant::now();
+        let (_, elapsed) = measure_input_to_paint_submission(Some(observed), || {
+            std::thread::sleep(Duration::from_millis(2));
+        });
+
+        assert!(
+            elapsed.is_some_and(|duration| duration >= Duration::from_millis(2)),
+            "the measurement must include the submitted grid paint work"
+        );
+        assert_eq!(measure_input_to_paint_submission::<()>(None, || ()).1, None);
+    }
+
+    #[test]
+    fn cache_updates_dirty_rows_without_full_grid_copies() {
+        let mut terminal = terminal(4, 2);
+        terminal.take_dirty_rows();
+        let mut cache = TerminalRenderCache::default();
+        terminal.ingest(b"A");
+        let dirty_rows = terminal.take_dirty_rows();
+
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        assert!(update.full_refresh);
+        assert_eq!(update.updated_rows, vec![0, 1]);
+        terminal.ingest(b"B");
+        let dirty_rows = terminal.take_dirty_rows();
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+        assert!(!update.full_refresh);
+        assert_eq!(update.updated_rows, vec![0]);
+        assert_eq!(cache.row(0).unwrap()[1].text(), "B");
+    }
+
+    #[test]
+    fn recorded_fixture_state_preserves_renderer_cell_structure() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/m3/unicode-cells.fixture");
+        let fixture = load_fixture(&path).expect("fixture parses");
+        let mut terminal = Terminal::new(fixture.dimensions).unwrap();
+        terminal.ingest(&fixture.input);
+        let dirty_rows = terminal.take_dirty_rows();
+        let mut cache = TerminalRenderCache::default();
+
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        let row = cache.row(0).unwrap();
+        assert_eq!(row[1].text(), "界");
+        assert_eq!(row[1].width(), CellWidth::Double);
+        assert_eq!(row[2].width(), CellWidth::Continuation);
+        assert_eq!(row[3].text(), "e\u{301}");
+    }
+
+    #[test]
+    fn cache_preserves_passive_hyperlink_metadata() {
+        let mut terminal = terminal(4, 1);
+        terminal.ingest(b"\x1b]8;;https://example.com\x1b\\go\x1b]8;;\x1b\\");
+        let dirty_rows = terminal.take_dirty_rows();
+        let mut cache = TerminalRenderCache::default();
+
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        assert_eq!(
+            cache.row(0).unwrap()[0].hyperlink(),
+            Some("https://example.com/")
+        );
+        assert_eq!(cache.row(0).unwrap()[2].hyperlink(), None);
+    }
+
+    #[test]
+    fn renderer_resolves_terminal_colors_and_basic_attributes() {
+        assert_eq!(
+            resolve_color(Color::Indexed(196), DEFAULT_BACKGROUND),
+            Color32::from_rgb(255, 0, 0)
+        );
+        assert_eq!(
+            resolve_color(
+                Color::Rgb {
+                    red: 1,
+                    green: 2,
+                    blue: 3
+                },
+                DEFAULT_BACKGROUND
+            ),
+            Color32::from_rgb(1, 2, 3)
+        );
+
+        let mut terminal = terminal(4, 1);
+        terminal.ingest(b"\x1b[1;3;4;7;8;9;38;2;1;2;3;48;5;196mX");
+        let dirty_rows = terminal.take_dirty_rows();
+        let mut cache = TerminalRenderCache::default();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+        let cell = &cache.row(0).unwrap()[0];
+
+        assert!(cell.attributes.contains(Attributes::BOLD));
+        assert!(cell.attributes.contains(Attributes::ITALIC));
+        assert!(cell.attributes.contains(Attributes::UNDERLINE));
+        assert!(cell.attributes.contains(Attributes::INVERSE));
+        assert!(cell.attributes.contains(Attributes::CONCEALED));
+        assert!(cell.attributes.contains(Attributes::STRIKETHROUGH));
+        let (foreground, background) = cell_colors(cell);
+        assert_eq!(
+            foreground, background,
+            "conceal uses the effective background"
+        );
+        assert_eq!(background, Color32::from_rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn default_cells_share_the_grid_background_without_individual_paints() {
+        let default = RenderedCell {
+            text: String::new(),
+            width: CellWidth::Single,
+            foreground: Color::Default,
+            background: Color::Default,
+            attributes: Attributes::NONE,
+            hyperlink: None,
+        };
+        let colored = RenderedCell {
+            background: Color::Indexed(4),
+            ..default.clone()
+        };
+        let inverse = RenderedCell {
+            attributes: Attributes::INVERSE,
+            ..default.clone()
+        };
+
+        assert!(!cell_needs_background_paint(&default, false));
+        assert!(cell_needs_background_paint(&default, true));
+        assert!(cell_needs_background_paint(&colored, false));
+        assert!(cell_needs_background_paint(&inverse, false));
+    }
+
+    #[test]
+    fn output_ingested_after_resize_becomes_visible_in_the_cache() {
+        // Regression test: after a live resize reflows the primary screen,
+        // subsequent PTY output must still mark rows dirty normally so the
+        // cache (and therefore the renderer) picks it up.
+        let mut terminal = terminal(80, 24);
+        terminal.ingest(b"$ ");
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+
+        let mut resize = ResizeTracker::default();
+        assert_eq!(
+            resize.apply(&mut terminal, Dimensions::new(100, 30).unwrap()),
+            ResizeOutcome::Resized(Dimensions::new(100, 30).unwrap())
+        );
+        let dirty_rows = terminal.take_dirty_rows();
+        cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        terminal.ingest(b"echo hello\r\nhello\r\n$ ");
+        let dirty_rows = terminal.take_dirty_rows();
+        assert!(
+            !dirty_rows.is_empty(),
+            "new output after resize must mark rows dirty"
+        );
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+        assert!(!update.updated_rows.is_empty());
+        assert_eq!(cache.row(0).unwrap()[0].text(), "$");
+        assert_eq!(cache.row(1).unwrap()[0].text(), "h");
+    }
+
+    #[test]
+    fn sustained_output_keeps_cache_input_and_resize_paths_usable() {
+        let started = Instant::now();
+        let mut terminal = terminal(120, 40);
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+
+        for _ in 0..1_000 {
+            terminal.ingest(
+                b"representative output line exercises terminal scrolling and dirty rows\r\n",
+            );
+            let dirty_rows = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+        }
+
+        let mut sink = Sink::default();
+        assert_eq!(
+            route_input(&mut terminal, InputEvent::Key(Key::ArrowDown), &mut sink).outcome,
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        let mut resize = ResizeTracker::default();
+        assert_eq!(
+            resize.apply(&mut terminal, Dimensions::new(100, 30).unwrap()),
+            ResizeOutcome::Resized(Dimensions::new(100, 30).unwrap())
+        );
+        let dirty_rows = terminal.take_dirty_rows();
+        let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+        assert!(update.full_refresh);
+        assert_eq!(cache.dimensions(), Some(Dimensions::new(100, 30).unwrap()));
+        assert_eq!(sink.0, vec![b"\x1b[B".to_vec()]);
+        // This is a pure-CPU regression watchdog (no I/O or subprocess), so
+        // it normally completes in well under a second; the generous
+        // ceiling exists only to catch a genuine multiple-orders-of-
+        // magnitude algorithmic regression, not to enforce a tight budget.
+        // GitHub's hosted `windows-latest` runners are documented to run
+        // noticeably slower/noisier than `ubuntu-latest`/`macos-latest`
+        // (particularly for unoptimized debug builds under load), so give
+        // it enough headroom to avoid CI-only false positives.
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "representative output path became unexpectedly slow"
+        );
+    }
+
+    #[test]
+    fn repeated_resize_refreshes_cached_banner_and_prompt_cells() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"Windows cmd\r\nCopyright\r\nC:\\Users\\fes>");
+        let mut cache = TerminalRenderCache::default();
+        let initial_dirty_rows = terminal.take_dirty_rows();
+        cache.update(
+            TerminalSnapshot::from_terminal(&terminal),
+            &initial_dirty_rows,
+        );
+        let mut resize = ResizeTracker::default();
+
+        // Under reflow (ADR 0017), shrinking the row count can push older
+        // hard-broken lines into retained history rather than always
+        // keeping them clipped in place at the top; growing back to a
+        // taller size pulls them back onto the visible screen unchanged.
+        // Expected top-of-row text per step, verified against the
+        // equivalent festerm-core reflow test.
+        let expectations = [
+            ["W", "C", "C"],
+            ["C", "C", ">"],
+            ["C", "C", "s"],
+            ["C", "C", ">"],
+            ["W", "C", "C"],
+        ];
+
+        for (dimensions, expected) in [
+            Dimensions::new(11, 4).unwrap(),
+            Dimensions::new(12, 3).unwrap(),
+            Dimensions::new(11, 3).unwrap(),
+            Dimensions::new(12, 3).unwrap(),
+            Dimensions::new(11, 4).unwrap(),
+        ]
+        .into_iter()
+        .zip(expectations)
+        {
+            assert_eq!(
+                resize.apply(&mut terminal, dimensions),
+                ResizeOutcome::Resized(dimensions)
+            );
+            let dirty_rows = terminal.take_dirty_rows();
+            let update = cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty_rows);
+
+            assert!(update.full_refresh);
+            assert_eq!(cache.row(0).unwrap()[0].text(), expected[0]);
+            assert_eq!(cache.row(1).unwrap()[0].text(), expected[1]);
+            assert_eq!(cache.row(2).unwrap()[0].text(), expected[2]);
         }
     }
 }

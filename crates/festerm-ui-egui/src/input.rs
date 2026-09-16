@@ -881,3 +881,487 @@ fn translate_modifiers(modifiers: egui::Modifiers) -> Modifiers {
     }
     translated
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Pos2, Rect, Vec2};
+    use egui_kittest::{kittest::Queryable, Harness};
+    use festerm_core::{
+        Dimensions, FocusEvent, InputEvent, InputEventOutcome, Key, Modifiers, MouseButton,
+        MouseEvent, MouseEventKind, Terminal,
+    };
+
+    use crate::{
+        geometry::{CellMetrics, CellPosition, CellRange},
+        renderer::GridLayout,
+        selection::Selection,
+        TerminalView,
+    };
+
+    #[derive(Default)]
+    struct Sink(Vec<Vec<u8>>);
+
+    impl EncodedInputSink for Sink {
+        fn record_encoded_input(&mut self, bytes: &[u8]) {
+            self.0.push(bytes.to_vec());
+        }
+    }
+
+    fn terminal(columns: usize, rows: usize) -> Terminal {
+        Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
+            .expect("test terminal allocation")
+    }
+
+    fn grid_layout(columns: usize, rows: usize) -> GridLayout {
+        GridLayout {
+            rect: Rect::from_min_size(
+                Pos2::new(5.0, 7.0),
+                Vec2::new(columns as f32 * 10.0, rows as f32 * 20.0),
+            ),
+            dimensions: Dimensions::new(columns, rows).expect("valid test size"),
+            metrics: CellMetrics::new(10.0, 20.0).expect("valid test cell metrics"),
+        }
+    }
+
+    struct HeadlessViewState {
+        view: TerminalView,
+        terminal: Terminal,
+        sink: Sink,
+    }
+
+    impl HeadlessViewState {
+        fn new() -> Self {
+            Self {
+                view: TerminalView::default(),
+                terminal: terminal(80, 24),
+                sink: Sink::default(),
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_letter_chords_reach_the_terminal_as_control_bytes() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        let grid = harness
+            .state()
+            .view
+            .diagnostics()
+            .grid_rect
+            .expect("headless frame records grid geometry");
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        // Ctrl+B: the tmux/GNU Screen default prefix key, and the
+        // motivating regression this test guards against (previously
+        // swallowed instead of reaching the running program).
+        harness.event(egui::Event::Key {
+            key: egui::Key::B,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![vec![0x02]]);
+
+        // A macOS Cmd+<letter> application shortcut sets `mac_cmd`/`command`
+        // rather than `ctrl`, and must never be reinterpreted as a Ctrl
+        // chord and sent to the terminal.
+        harness.event(egui::Event::Key {
+            key: egui::Key::N,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            },
+        });
+        harness.run();
+        assert_eq!(harness.state().sink.0, vec![vec![0x02]]);
+    }
+
+    #[test]
+    fn copy_with_no_selection_never_synthesizes_a_terminal_interrupt() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        harness.get_by_label("Terminal viewport").click();
+        harness.run();
+
+        assert!(harness.state().view.selection().range().is_none());
+        harness.event(egui::Event::Copy);
+        harness.run();
+        assert!(harness.state().sink.0.is_empty());
+    }
+
+    #[test]
+    fn copy_with_an_active_selection_copies_it_and_then_deselects() {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"copy me");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+        harness
+            .state_mut()
+            .view
+            .selection
+            .begin(CellPosition { column: 0, row: 0 });
+        harness
+            .state_mut()
+            .view
+            .selection
+            .extend(CellPosition { column: 6, row: 0 });
+        harness.state_mut().view.selection.finish();
+        assert!(harness.state().view.selection().range().is_some());
+
+        harness.event(egui::Event::Copy);
+        harness.run();
+
+        // A real terminal interrupt must not also be sent for a Copy that
+        // had a selection to act on.
+        assert!(harness.state().sink.0.is_empty());
+        assert!(harness.state().view.selection().range().is_none());
+    }
+
+    #[test]
+    fn terminal_view_claims_keyboard_focus_on_its_first_frame_without_a_click() {
+        // A freshly started session should be immediately typeable: the
+        // user shouldn't have to click into the terminal just to start
+        // sending keystrokes to it.
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+
+        harness.event(egui::Event::Text("Q".to_owned()));
+        harness.run();
+
+        assert_eq!(
+            harness.state().sink.0,
+            vec![b"Q".to_vec()],
+            "typed input should reach the terminal without ever clicking into it first"
+        );
+    }
+
+    #[test]
+    fn application_mouse_claim_prevents_local_selection() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b[?1000h");
+        let mut selection = Selection::default();
+        let mut sink = Sink::default();
+        let route = route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Press(MouseButton::Left),
+                column: 1,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+
+        assert_eq!(route.outcome, InputEventOutcome::Encoded { bytes: 6 });
+        assert_eq!(selection.range(), None);
+        assert_eq!(sink.0, vec![b"\x1b[M \"!".to_vec()]);
+    }
+
+    #[test]
+    fn focus_out_routes_once_after_prior_terminal_keyboard_ownership() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b[?1004h");
+        let mut keyboard = KeyboardOwnership::default();
+        keyboard.focus_in_if_needed(true);
+        let mut sink = Sink::default();
+
+        let first = keyboard
+            .focus_out_if_owned()
+            .map(|focus| route_input(&mut terminal, InputEvent::Focus(focus), &mut sink));
+        let second = keyboard
+            .focus_out_if_owned()
+            .map(|focus| route_input(&mut terminal, InputEvent::Focus(focus), &mut sink));
+
+        assert_eq!(
+            first.map(|route| route.outcome),
+            Some(InputEventOutcome::Encoded { bytes: 3 })
+        );
+        assert_eq!(second, None);
+        assert_eq!(sink.0, vec![b"\x1b[O".to_vec()]);
+    }
+
+    #[test]
+    fn window_refocus_arms_reclaim_unconditionally_and_it_fires_until_it_sticks_or_expires() {
+        // The reclaim window is armed on every regained-focus event
+        // unconditionally (see `KeyboardOwnership::reclaim_until`'s doc
+        // comment for why gating it on prior terminal ownership is
+        // fragile), and keeps re-asserting focus every frame - not just
+        // once - until either egui reports the terminal focused again or
+        // the window fully elapses.
+        let mut keyboard = KeyboardOwnership::default();
+        let start = Instant::now();
+        keyboard.begin_reclaim_on_window_refocus(start);
+
+        // Still within the window and focus hasn't stuck yet: keep firing.
+        assert!(keyboard.reclaim_focus_due(start + Duration::from_millis(1), false));
+        assert!(keyboard.reclaim_focus_due(start + Duration::from_millis(500), false));
+
+        // Once egui reports the terminal has focus again, the reclaim
+        // window closes immediately rather than continuing to fire.
+        assert!(!keyboard.reclaim_focus_due(start + Duration::from_millis(501), true));
+        assert!(!keyboard.reclaim_focus_due(start + Duration::from_millis(502), false));
+
+        // A fresh reclaim window that never sticks gives up once it fully
+        // elapses.
+        keyboard.begin_reclaim_on_window_refocus(start);
+        assert!(!keyboard.reclaim_focus_due(start + RECLAIM_FOCUS_WINDOW, false));
+    }
+
+    #[test]
+    fn ordered_drag_uses_button_state_before_same_frame_release() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"\x1b[?1002h\x1b[?1006h");
+        let mut selection = Selection::default();
+        let mut pointer = TerminalPointerState::default();
+        let mut sink = Sink::default();
+        let layout = grid_layout(4, 2);
+
+        for event in [
+            PointerInputEvent::Button {
+                position: Pos2::new(6.0, 8.0),
+                button: MouseButton::Left,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            PointerInputEvent::Moved {
+                position: Pos2::new(26.0, 8.0),
+            },
+            PointerInputEvent::Button {
+                position: Pos2::new(26.0, 8.0),
+                button: MouseButton::Left,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ] {
+            assert!(route_pointer_event(
+                event,
+                layout,
+                &mut terminal,
+                &mut selection,
+                &mut pointer,
+                &mut sink,
+                0,
+            )
+            .is_some());
+        }
+
+        assert_eq!(
+            sink.0,
+            vec![
+                b"\x1b[<0;1;1M".to_vec(),
+                b"\x1b[<32;3;1M".to_vec(),
+                b"\x1b[<0;3;1m".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn application_mouse_release_outside_grid_is_captured_and_clamped() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"\x1b[?1000h\x1b[?1006h");
+        let mut selection = Selection::default();
+        let mut pointer = TerminalPointerState::default();
+        let mut sink = Sink::default();
+        let layout = grid_layout(4, 2);
+
+        assert!(route_pointer_event(
+            PointerInputEvent::Button {
+                position: Pos2::new(6.0, 8.0),
+                button: MouseButton::Left,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            layout,
+            &mut terminal,
+            &mut selection,
+            &mut pointer,
+            &mut sink,
+            0,
+        )
+        .is_some());
+        assert!(route_pointer_event(
+            PointerInputEvent::Button {
+                position: Pos2::new(-50.0, 300.0),
+                button: MouseButton::Left,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+            layout,
+            &mut terminal,
+            &mut selection,
+            &mut pointer,
+            &mut sink,
+            0,
+        )
+        .is_some());
+
+        assert_eq!(
+            sink.0,
+            vec![b"\x1b[<0;1;1M".to_vec(), b"\x1b[<0;1;2m".to_vec()]
+        );
+        assert_eq!(selection.range(), None);
+    }
+
+    #[test]
+    fn local_selection_capture_clamps_an_outside_release() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"ABCD");
+        let mut selection = Selection::default();
+        let mut pointer = TerminalPointerState::default();
+        let mut sink = Sink::default();
+        let layout = grid_layout(4, 2);
+
+        for event in [
+            PointerInputEvent::Button {
+                position: Pos2::new(16.0, 8.0),
+                button: MouseButton::Left,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+            PointerInputEvent::Button {
+                position: Pos2::new(200.0, 300.0),
+                button: MouseButton::Left,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ] {
+            assert_eq!(
+                route_pointer_event(
+                    event,
+                    layout,
+                    &mut terminal,
+                    &mut selection,
+                    &mut pointer,
+                    &mut sink,
+                    0,
+                )
+                .map(|route| route.outcome),
+                Some(InputEventOutcome::SelectionAllowed)
+            );
+        }
+
+        assert!(!selection.is_active());
+        assert_eq!(
+            selection.range(),
+            Some(CellRange::new(
+                CellPosition { column: 1, row: 0 },
+                CellPosition { column: 3, row: 1 },
+            ))
+        );
+    }
+
+    #[test]
+    fn routing_uses_core_keyboard_modes_and_drains_to_sink() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b[?1h");
+        let mut sink = Sink::default();
+
+        let route = route_input(&mut terminal, InputEvent::Key(Key::ArrowUp), &mut sink);
+
+        assert_eq!(route.outcome, InputEventOutcome::Encoded { bytes: 3 });
+        assert_eq!(route.queue_depth, 3);
+        assert_eq!(sink.0, vec![b"\x1bOA".to_vec()]);
+        assert!(terminal.queued_input().is_empty());
+    }
+
+    #[test]
+    fn accepted_typed_input_clears_local_selection() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"selected");
+        let mut selection = Selection::default();
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition { column: 3, row: 0 });
+        selection.finish();
+        let mut sink = Sink::default();
+        let mut reports = InputRoutingReports::default();
+
+        record_terminal_input(
+            &mut reports,
+            &mut selection,
+            Instant::now(),
+            route_input(
+                &mut terminal,
+                InputEvent::Key(Key::Character('x')),
+                &mut sink,
+            ),
+        );
+
+        assert_eq!(selection.range(), None);
+        assert_eq!(sink.0, vec![b"x".to_vec()]);
+    }
+
+    #[test]
+    fn routing_uses_core_paste_and_focus_modes() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"\x1b[?2004h\x1b[?1004h");
+        let mut sink = Sink::default();
+
+        assert_eq!(
+            route_input(
+                &mut terminal,
+                InputEvent::Paste("paste".to_owned()),
+                &mut sink
+            )
+            .outcome,
+            InputEventOutcome::Encoded { bytes: 17 }
+        );
+        assert_eq!(
+            route_input(&mut terminal, InputEvent::Focus(FocusEvent::In), &mut sink).outcome,
+            InputEventOutcome::Encoded { bytes: 3 }
+        );
+        assert_eq!(
+            sink.0,
+            vec![b"\x1b[200~paste\x1b[201~".to_vec(), b"\x1b[I".to_vec()]
+        );
+    }
+}

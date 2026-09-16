@@ -697,21 +697,41 @@ impl ModeExpectation {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn format_mode_fields(
+    auto_wrap: bool,
+    origin_mode: bool,
+    alternate_screen: bool,
+    cursor_visible: bool,
+    application_cursor: bool,
+    application_keypad: bool,
+    bracketed_paste: bool,
+    focus_reporting: bool,
+    mouse_tracking: MouseTrackingMode,
+    sgr_mouse: bool,
+) -> String {
+    format!(
+        "auto_wrap={auto_wrap}, origin_mode={origin_mode}, alternate_screen={alternate_screen}, cursor_visible={cursor_visible}, application_cursor={application_cursor}, application_keypad={application_keypad}, bracketed_paste={bracketed_paste}, focus_reporting={focus_reporting}, mouse_tracking={mouse_tracking:?}, sgr_mouse={sgr_mouse}"
+    )
+}
+
 impl fmt::Display for ModeExpectation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}, application_cursor={}, application_keypad={}, bracketed_paste={}, focus_reporting={}, mouse_tracking={:?}, sgr_mouse={}",
-            self.auto_wrap,
-            self.origin_mode,
-            self.alternate_screen,
-            self.cursor_visible,
-            self.application_cursor,
-            self.application_keypad,
-            self.bracketed_paste,
-            self.focus_reporting,
-            self.mouse_tracking,
-            self.sgr_mouse
+            "{}",
+            format_mode_fields(
+                self.auto_wrap,
+                self.origin_mode,
+                self.alternate_screen,
+                self.cursor_visible,
+                self.application_cursor,
+                self.application_keypad,
+                self.bracketed_paste,
+                self.focus_reporting,
+                self.mouse_tracking,
+                self.sgr_mouse,
+            )
         )
     }
 }
@@ -754,8 +774,7 @@ fn render_items(items: &[String]) -> String {
 }
 
 fn render_modes(modes: TerminalModes) -> String {
-    format!(
-        "auto_wrap={}, origin_mode={}, alternate_screen={}, cursor_visible={}, application_cursor={}, application_keypad={}, bracketed_paste={}, focus_reporting={}, mouse_tracking={:?}, sgr_mouse={}",
+    format_mode_fields(
         modes.auto_wrap(),
         modes.origin_mode(),
         modes.alternate_screen(),
@@ -765,7 +784,7 @@ fn render_modes(modes: TerminalModes) -> String {
         modes.bracketed_paste(),
         modes.focus_reporting(),
         modes.mouse_tracking(),
-        modes.sgr_mouse()
+        modes.sgr_mouse(),
     )
 }
 

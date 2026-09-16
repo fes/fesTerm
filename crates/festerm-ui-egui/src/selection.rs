@@ -228,3 +228,278 @@ pub fn selection_text(snapshot: TerminalSnapshot<'_>, selection: &Selection) -> 
     }
     Some(copied)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use festerm_core::{
+        ContentPosition, Dimensions, InputEventOutcome, Modifiers, MouseButton, MouseEvent,
+        MouseEventKind, Terminal,
+    };
+
+    use crate::{
+        input::{route_mouse_input, EncodedInputSink},
+        TerminalSnapshot,
+    };
+
+    #[derive(Default)]
+    struct Sink(Vec<Vec<u8>>);
+
+    impl EncodedInputSink for Sink {
+        fn record_encoded_input(&mut self, bytes: &[u8]) {
+            self.0.push(bytes.to_vec());
+        }
+    }
+
+    fn terminal(columns: usize, rows: usize) -> Terminal {
+        Terminal::new(Dimensions::new(columns, rows).expect("valid test size"))
+            .expect("test terminal allocation")
+    }
+
+    #[test]
+    fn selection_expands_continuations_and_copies_leading_text() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest("A界e".as_bytes());
+        terminal.take_dirty_rows();
+        let mut selection = Selection::default();
+        let mut sink = Sink::default();
+
+        let press = route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Press(MouseButton::Left),
+                column: 2,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+        assert_eq!(press.outcome, InputEventOutcome::SelectionAllowed);
+        let release = route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Release(MouseButton::Left),
+                column: 3,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+        assert_eq!(release.outcome, InputEventOutcome::SelectionAllowed);
+        assert_eq!(
+            selection.range(),
+            Some(CellRange::new(
+                CellPosition { column: 1, row: 0 },
+                CellPosition { column: 3, row: 0 }
+            ))
+        );
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            Some("界e".to_owned())
+        );
+        assert!(sink.0.is_empty());
+    }
+
+    #[test]
+    fn selection_copy_does_not_insert_newlines_at_soft_wraps() {
+        let mut terminal = terminal(4, 2);
+        terminal.ingest(b"abcdefgh");
+        let mut selection = Selection::default();
+        selection.begin(CellPosition { column: 0, row: 0 });
+        selection.extend(CellPosition { column: 3, row: 1 });
+        selection.finish();
+
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            Some("abcdefgh".to_owned())
+        );
+    }
+
+    #[test]
+    fn selection_copy_treats_trimmed_history_cells_as_blank_padding() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"abc\r\ndef\r\nghi");
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 0 },
+            ContentPosition {
+                column: 0,
+                absolute_row: 0,
+            },
+        );
+        selection.extend_at(
+            CellPosition { column: 2, row: 1 },
+            ContentPosition {
+                column: 2,
+                absolute_row: 1,
+            },
+        );
+        selection.finish();
+
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&terminal), &selection),
+            Some("abc     \ndef".to_owned())
+        );
+    }
+
+    #[test]
+    fn evicted_selection_positions_never_alias_new_history_content() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 1024).unwrap();
+        for line in 0..12 {
+            terminal.ingest(format!("line-{line:02}\r\n").as_bytes());
+        }
+        let selected_row = terminal.scrollback_stats().content_row_origin();
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 0 },
+            ContentPosition {
+                column: 0,
+                absolute_row: selected_row,
+            },
+        );
+        selection.extend_at(
+            CellPosition { column: 3, row: 0 },
+            ContentPosition {
+                column: 3,
+                absolute_row: selected_row,
+            },
+        );
+        selection.finish();
+
+        for line in 12..40 {
+            terminal.ingest(format!("line-{line:02}\r\n").as_bytes());
+        }
+        let snapshot = TerminalSnapshot::from_terminal_viewport(
+            &terminal,
+            terminal.scrollback_stats().physical_rows(),
+        );
+
+        assert!(terminal.scrollback_stats().content_row_origin() > selected_row);
+        assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection.range_in_snapshot(snapshot), None);
+    }
+
+    #[test]
+    fn discarded_scrollback_rows_never_alias_new_screen_content() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 0).unwrap();
+        terminal.ingest(b"old");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 0 },
+            snapshot
+                .content_position(CellPosition { column: 0, row: 0 })
+                .unwrap(),
+        );
+        selection.extend_at(
+            CellPosition { column: 2, row: 0 },
+            snapshot
+                .content_position(CellPosition { column: 2, row: 0 })
+                .unwrap(),
+        );
+        selection.finish();
+
+        terminal.ingest(b"\r\nnew\r\nnext");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+
+        assert!(terminal.scrollback_stats().screen_row_origin() > 0);
+        assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection.range_in_snapshot(snapshot), None);
+    }
+
+    #[test]
+    fn retention_after_an_oversized_gap_does_not_reuse_discarded_coordinates() {
+        let dimensions = Dimensions::new(8, 2).unwrap();
+        let mut terminal = Terminal::with_scrollback_limit(dimensions, 200_000).unwrap();
+        terminal.ingest(b"kept\r\noversize");
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let mut selection = Selection::default();
+        selection.begin_at(
+            CellPosition { column: 0, row: 1 },
+            snapshot
+                .content_position(CellPosition { column: 0, row: 1 })
+                .unwrap(),
+        );
+        selection.extend_at(
+            CellPosition { column: 3, row: 1 },
+            snapshot
+                .content_position(CellPosition { column: 3, row: 1 })
+                .unwrap(),
+        );
+        selection.finish();
+
+        // A burst large enough to force incremental front-trimming of its
+        // own oldest rows (i.e. large enough that even after this line's
+        // *own* stale capacity is shrunk to its real size, it is still over
+        // budget and must trim), discarding the very rows the selection
+        // above was anchored on.
+        terminal.ingest(&vec![b'x'; 2500]);
+        terminal.ingest(b"\r\nnew-1\r\nnew-2\r\nnew-3\r\nnew-4");
+        let snapshot = TerminalSnapshot::from_terminal_viewport(
+            &terminal,
+            terminal.scrollback_stats().physical_rows(),
+        );
+
+        // The selection anchored on the oversized ("oversize" -> huge burst)
+        // line must not be silently aliased onto unrelated new content once
+        // that line's own oldest rows are discarded for exceeding the byte
+        // budget.
+        assert_eq!(selection_text(snapshot, &selection), None);
+        assert_eq!(selection.range_in_snapshot(snapshot), None);
+
+        // Whatever history remains retained after the oversized gap must
+        // still be addressable through its content coordinates - discarding
+        // an oversized line must never leave dangling, unresolvable
+        // coordinates for content that is still actually present.
+        let history_snapshot = TerminalSnapshot::from_terminal(&terminal);
+        assert!(
+            (0..terminal.scrollback_stats().physical_rows())
+                .filter_map(|row| history_snapshot.content_position(CellPosition { column: 0, row }))
+                .count()
+                > 0,
+            "retained history must still be addressable after the oversized gap"
+        );
+    }
+
+    #[test]
+    fn a_plain_click_without_dragging_leaves_no_selection() {
+        let mut terminal = terminal(8, 1);
+        terminal.ingest(b"hello");
+        let mut selection = Selection::default();
+        let mut sink = Sink::default();
+
+        route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Press(MouseButton::Left),
+                column: 2,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+        route_mouse_input(
+            &mut terminal,
+            MouseEvent {
+                kind: MouseEventKind::Release(MouseButton::Left),
+                column: 2,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            },
+            &mut selection,
+            &mut sink,
+        );
+
+        assert_eq!(
+            selection.range(),
+            None,
+            "a click that never moved must not leave a single-character selection"
+        );
+        assert!(!selection.is_active());
+    }
+}
