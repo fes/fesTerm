@@ -14,6 +14,7 @@ one of these modes:
 - `running-session-stress`
 - `keyboard-routing-check`
 - `keyboard-routing-native`
+- `windows-conpty-prompt-stress` (Windows only)
 
 Each mode invokes the existing repository-owned runner and writes its
 content-free status file beneath the artifact directory supplied by the shared
@@ -42,6 +43,13 @@ desktop clipboard with a fixed fixture without reading or restoring previous
 contents: use a dedicated desktop with guest/host clipboard sharing disabled.
 It is not selected-URL clipboard, AltGr, or IME qualification.
 Both modes require an empty payload and a reviewed adapter pin.
+
+`windows-conpty-prompt-stress` repeats the exact ConPTY prompt-return
+regression 20 times. Each attempt retains the production test's three-second
+readiness deadline and adds an outer 45-second process bound. It stops on the
+first failure instead of retrying it, so an intermediate blank command-echo row
+cannot be hidden by a later pass. The fixed VM mode replaces agent-authored
+Cargo loops and accepts no cycle count or other payload.
 
 `vm-evidence-lab` owns the host controller, Parallels provider, guest relay,
 exact-source bundles, locks, result records, and manifests.
