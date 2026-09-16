@@ -1663,16 +1663,11 @@ pub(crate) async fn read_local_directory_snapshot(
             entry.file_name().to_string_lossy().into_owned(),
             &entry_path,
             &metadata,
+            LocalSizePolicy::AllEntries,
         ));
     }
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
 
-    Ok(SftpDirectorySnapshot {
-        location: SftpLocation::Local,
-        path: SftpPath::local(canonical),
-        loaded_at: SystemTime::now(),
-        entries,
-    })
+    Ok(finish_local_snapshot(canonical, entries))
 }
 
 /// Synchronous counterpart to [`read_local_directory_snapshot`] for callers
@@ -1704,37 +1699,59 @@ pub fn read_local_directory_snapshot_sync(
         let entry_path = entry.path();
         let entry_metadata = std::fs::symlink_metadata(&entry_path)
             .map_err(|error| local_error("inspect path", &entry_path, error))?;
-        entries.push(SftpDirectoryItem {
-            name: entry.file_name().to_string_lossy().into_owned(),
-            path: SftpPath::local(entry_path),
-            file_type: local_entry_type(entry_metadata.file_type()),
-            size: entry_metadata.is_file().then_some(entry_metadata.len()),
-            modified_at: entry_metadata.modified().ok(),
-            permissions: local_permissions(&entry_metadata),
-        });
+        entries.push(local_directory_item(
+            entry.file_name().to_string_lossy().into_owned(),
+            &entry_path,
+            &entry_metadata,
+            LocalSizePolicy::RegularFilesOnly,
+        ));
     }
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
 
-    Ok(SftpDirectorySnapshot {
-        location: SftpLocation::Local,
-        path: SftpPath::local(path.to_path_buf()),
-        loaded_at: SystemTime::now(),
-        entries,
-    })
+    Ok(finish_local_snapshot(path.to_path_buf(), entries))
+}
+
+/// Which local entries report a size.
+///
+/// The transfer/session paths report a size for every entry, while the GUI
+/// browser reports one only for regular files so that directories render an
+/// empty size column rather than their on-disk inode size.
+#[derive(Clone, Copy)]
+enum LocalSizePolicy {
+    AllEntries,
+    RegularFilesOnly,
 }
 
 fn local_directory_item(
     name: String,
     path: &Path,
     metadata: &std::fs::Metadata,
+    size_policy: LocalSizePolicy,
 ) -> SftpDirectoryItem {
     SftpDirectoryItem {
         name,
         path: SftpPath::local(path.to_path_buf()),
         file_type: local_entry_type(metadata.file_type()),
-        size: Some(metadata.len()),
+        size: match size_policy {
+            LocalSizePolicy::AllEntries => Some(metadata.len()),
+            LocalSizePolicy::RegularFilesOnly => metadata.is_file().then_some(metadata.len()),
+        },
         modified_at: metadata.modified().ok(),
         permissions: local_permissions(metadata),
+    }
+}
+
+/// Sorts entries and assembles the snapshot shared by both the async and
+/// synchronous directory readers.
+fn finish_local_snapshot(
+    path: PathBuf,
+    mut entries: Vec<SftpDirectoryItem>,
+) -> SftpDirectorySnapshot {
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    SftpDirectorySnapshot {
+        location: SftpLocation::Local,
+        path: SftpPath::local(path),
+        loaded_at: SystemTime::now(),
+        entries,
     }
 }
 
