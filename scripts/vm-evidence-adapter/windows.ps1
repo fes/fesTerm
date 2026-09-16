@@ -20,7 +20,8 @@ function Test-FesTermJob {
         $Job.adapter_schema_version -eq 1 -and
         $Job.platform -eq 'windows' -and
         @('native-smoke', 'os-input-smoke', 'optional-validation', 'running-session-stress',
-            'keyboard-routing-check', 'keyboard-routing-native') -contains $Job.mode -and
+            'keyboard-routing-check', 'keyboard-routing-native',
+            'windows-conpty-prompt-stress') -contains $Job.mode -and
         @($Job.payload.PSObject.Properties).Count -eq 0
 }
 
@@ -74,7 +75,8 @@ $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\V
 Push-Location $sourcePath
 try {
     switch ($job.mode) {
-        { $_ -in @('running-session-stress', 'keyboard-routing-check') } {
+        { $_ -in @('running-session-stress', 'keyboard-routing-check',
+                'windows-conpty-prompt-stress') } {
             $resultPath = Join-Path $ArtifactDirectory "$($job.mode).txt"
             Set-Content -LiteralPath $resultPath -Value 'status=running'
             if (-not (Test-Path -LiteralPath $vcvarsallPath) -or
@@ -82,10 +84,16 @@ try {
                 throw 'Windows Build Tools and Clang are required for backend evidence builds.'
             }
             $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
-            $runnerCommand = if ($job.mode -eq 'running-session-stress') {
-                'python scripts/check_running_sessions.py --batch 8 --cycles 3'
-            } else {
-                'python scripts/check_keyboard_routing.py'
+            $runnerCommand = switch ($job.mode) {
+                'running-session-stress' {
+                    'python scripts/check_running_sessions.py --batch 8 --cycles 3'
+                }
+                'keyboard-routing-check' {
+                    'python scripts/check_keyboard_routing.py'
+                }
+                'windows-conpty-prompt-stress' {
+                    'python scripts/check_windows_conpty_prompt.py --cycles 20'
+                }
             }
             $evidenceCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && $runnerCommand"
             Invoke-NativeCommand { cmd.exe /d /c $evidenceCommand }

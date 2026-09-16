@@ -361,9 +361,13 @@ unknown; a missing record is not proof a key was never delivered by the OS.
 
 ```sh
 python3 scripts/check_keyboard_routing.py
-python3 scripts/check_keyboard_routing.py --native
+FESTERM_ISOLATED_TEST_DESKTOP=1 python3 scripts/check_keyboard_routing.py --native
 UPDATE_SNAPSHOTS=1 cargo test -p festerm capture_keyboard_settings_normal_and_narrow -- --ignored
 ```
+
+The native mode replaces the controlled test desktop's clipboard and therefore
+requires the explicit isolation acknowledgement above. Disable guest/host
+clipboard sharing first; do not run it on an ordinary developer desktop.
 
 The first command runs synthesized production app/controller, editor, strict
 configuration and recorder regressions. It is aggregated by both optional

@@ -10,8 +10,13 @@ import sys
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--native", action="store_true",
-                        help="also run the existing platform OS-input driver (requires desktop permissions)")
+                        help="also run the platform OS-input driver on an isolated test desktop")
     args = parser.parse_args()
+    if args.native and os.environ.get("FESTERM_ISOLATED_TEST_DESKTOP") != "1":
+        parser.error(
+            "--native replaces the test desktop clipboard; run it only with "
+            "FESTERM_ISOLATED_TEST_DESKTOP=1 after disabling clipboard sharing"
+        )
     root = Path(__file__).resolve().parent.parent
     result = subprocess.run(
         ["cargo", "test", "-p", "festerm", "-p", "festerm-config",
