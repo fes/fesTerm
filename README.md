@@ -76,6 +76,10 @@ native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
 
 ## Documentation
 
+- [Keyboard bindings and routing](docs/keyboard-shortcuts.md) — persistent
+  Settings editor, terminal-tool overlap inventory, clipboard provenance and
+  bounded opt-in redacted input recording.
+
 - [Agent guide](AGENTS.md) — compact project map, invariants, and validation
   commands for coding agents and contributors.
 - [Development handoff](docs/development-handoff.md) — bootstrap, current

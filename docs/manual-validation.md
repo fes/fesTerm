@@ -64,6 +64,7 @@ remain active rolling qualification but do not independently keep M6 open.
 | Native macOS application menu | Logged-in macOS desktop | Menu installation and conventions; shortcuts; dynamic Close and Inspector state; focus-aware Copy/Paste without PTY leakage; native Services/Hide/Quit/window actions | Manual pending; [#44](https://github.com/fes/fesTerm/issues/44) |
 | Launcher and integrated chrome | Windows, macOS, Linux; narrow and scaled viewports | Visual comparison to approved mockups; keyboard-only launch flow; focused-chip-first compaction before overflow; fixed New Session placement; first/middle/last focus reveal; chip overflow/reorder/rename; stable vertical geometry and compactness | Usability pending; deterministic allocation/geometry regressions are automated, while native visual and interaction judgment remains in the umbrella |
 | Session Inspector | Windows, macOS, Linux; narrow and scaled viewports; local and SSH sessions | Overlay geometry without terminal resize; focus restoration; first-click dismissal; selectable facts; failure/diagnostic comprehension; active-session switching | Automated structurally; native visual/usability pass pending in umbrella |
+| Keyboard bindings and input recorder (#154) | Native macOS/Linux/Windows, non-US layouts, AltGr/Option/IME, terminal and widget focus | TI-12/TI-13 below; real selected fake-auth-URL Copy without submission, effective native menu mappings, reset/recovery and bounded redacted keyboard/mouse observations | Deterministic production dispatch/editor/config/mouse/privacy tests automated on all three guest platforms. Linux native controlled keyboard sample passed; full layout/menu/selection and usability matrix remains pending; macOS native driver blocked on Accessibility consent |
 | Terminal and session-chip context menus | Windows, macOS, Linux; ordinary and TUI mouse-reporting modes | Native secondary-click/Shift-override conventions, popup placement at edges and DPI scales, clipboard delivery/focus, menu keyboard traversal, inactive-chip targeting, and destructive-action clarity | Automated structurally; native visual/accessibility/usability pass pending in [#43](https://github.com/fes/fesTerm/issues/43) |
 | Scrollback, reflow, and read-only history | Windows, macOS, Linux; `Disabled`, 16 MiB, 64 MiB, and 256 MiB limits; wheel and trackpad; narrow/wide resize; live, alternate-screen, and disconnected sessions | New sessions use the selected limit while already-open sessions retain theirs; smooth navigation near the 64 MiB default; follow suspension/resume and `Jump to latest`; stable viewed content and selection through output, eviction, chip switches, and resize; scrollbar discoverability; selection/Copy across wraps without synthetic soft-wrap newlines; no alternate-screen leakage; disconnected history remains scrollable/copyable without input | Core bounds, limit configuration and future-session policy, selection and viewport remapping through primary reflow, initial wheel/keyboard follow-anchor routing, conditional Jump control, scrollbar geometry, track paging, and TUI input isolation are automated; native wheel/trackpad and drag feel, high-contrast/accessibility sizing, near-limit performance, and the pending eviction and disconnected-history slices remain in [#43](https://github.com/fes/fesTerm/issues/43) |
 | Icons | Windows, macOS, Linux at supported scale factors | 16/20 px legibility, alignment, state distinction, fallback behavior, and accessibility | Runtime integration is implemented; SVG/runtime geometry convergence and native review remain in [#30](https://github.com/fes/fesTerm/issues/30) |
@@ -128,6 +129,85 @@ possible.
 | TI-09 | On macOS, launch the built-in Local Shell from an app started inside Apple Terminal, then launch saved Local profiles with persistence off and with named `festerm-sessiond`/tmux/screen persistence on. Built-in/plain launches show no inherited “Restored session” transcript; only explicitly persistent saved profiles attach or create durable state. | Native functional + usability | Mostly: child environment and profile command selection automated; native Apple zsh startup plus real-provider behavior remains manual |
 | TI-10 | Emit an explicit HTTP/HTTPS OSC 8 link whose visible text differs from its target. Verify ordinary click retains terminal behavior; Ctrl/Cmd-click and context **Open link** launch the normalized target through the native browser; **Copy link** copies that target; malformed, non-web, and spoofable targets expose no activation. | Native functional + security | Mostly: parser, UI intent, and application policy are automated; one native OS-handler launch per platform remains manual |
 | TI-11 | In a live SSH session with saved and ephemeral local/remote forwards, open Port Forward Manager from both its shortcut and palette entry; verify the list distinguishes saved-profile vs ephemeral state, add/remove loopback forwards, surface per-mapping failures without losing the shell, disconnect to clear the live list, and reconnect to confirm nothing is silently restored. | Native functional + usability | Mostly: repository-owned SSH-fixture backend automation plus headless overlay/shortcut/status coverage now exercise the routed UI path; native end-to-end SSH usability evidence still remains manual |
+| TI-12 | Assign/unbind/reset application shortcuts, restart an isolated configuration, verify native menu/palette/chrome hints and recovery Ctrl+Shift+F12; select a fake authentication URL and Copy repeatedly, then enter a fake token. Test actual Ctrl+C, Ctrl+A/B prefixes through Screen/tmux, AltGr/Option and IME with terminal/search/forms/menus focused. | Native functional + usability | Synthesized production paths automated by `python3 scripts/check_keyboard_routing.py`; `--native` adds the existing OS-input drivers and controlled byte/capture sample, not the entire matrix |
+| TI-13 | In Session Inspector Diagnostics start/stop/clear input recording and explicitly copy its report. Exercise local selection, terminal-owned/unreported mouse motion, reported mouse events, local context/history gestures and subsequent Copy. Inspect a report for absence of fake token/URL/clipboard contents. | Native functional + privacy/usability | Core/queue/selection classification, bounded storage and redaction automated; physical-event attribution and remote-program interpretation remain unknown, not invented |
+
+The #154 review follow-up adds synthesized regressions for chip-rename raw and
+semantic clipboard paths, same-batch switch/capture ordering and recorder
+targets, Inspector Paste exclusion, eventual pending-write settlement after
+stop/clear/eviction/reconnect, effective Markdown toolbar hints, and IME
+cancellation by tab click without Commit. These regressions are included in
+the final three-platform synthesized runs below; the native sample does not
+replace the complete focus/layout matrix. In TI-12, include rename
+Copy/Cut/Paste and Settings preedit → terminal chip click → shortcut/recovery.
+In TI-13, distinguish initial backpressure from eventual acceptance/rejection
+and verify stopped recording can settle retained entries without reviving
+cleared ones.
+
+### Keyboard baseline and candidate evidence
+
+The following-input ordering fix adds ready-callback + Enter/text, unresolved
+request + same-batch input, bounded overflow, transport failure, recovery,
+generation and confirmation regressions. Verify that a deliberately delayed
+read never lets Enter overtake its paste; cancellation must report discarded
+input without sending it to the original or a different session. Protocol
+replies and mouse/focus reports must remain serviceable. The native smoke
+oracle now observes UI bytes accepted by the session, not merely their earlier
+encoding order. The existing native reader sample is not a forced delayed-read
+or failure-injection test; these new cases remain separately qualified by
+deterministic fake-reader/transport tests pending native evidence.
+The final Linux native run below includes the revised accepted-byte oracle.
+
+The delayed-paste follow-up adds identified native reads and fake-callback
+regressions for tab/ownership/generation changes, replacements, duplicates,
+same-batch supplied payloads, context/middle/native-menu/palette surfaces and
+confirmation. The revised keyboard native mode sets the isolated
+test desktop clipboard to `controlled-clipboard` (does not read/restore its
+previous value), invokes palette Paste, and requires that exact prefix in its
+controlled input oracle. The final Linux native run exercises this reader.
+Native cross-session/reconnect cancellation remains an additional TI-12 check;
+the deterministic fake-reader coverage is not OS-delivered proof.
+
+The existing Linux Xorg OS-input baseline passed at `7e93ece` (run
+`20260916T002402Z-linux-festerm-dd35f3ad-7af5-4f55-8291-e687b0213761`).
+This is not the new keyboard-specific candidate qualification.
+The macOS baseline run
+`20260916T002533Z-macos-festerm-c846dd64-86e0-4025-b4a6-b03c1b0ecb2e`
+built successfully but stopped at the evidence driver's Accessibility consent
+dialog: “Accessibility permission is required for macOS OS-input smoke.”
+No native input result was produced. Its original generic failure artifact
+is retained; triage is **blocked prerequisite**, not a routing product failure.
+Do not bypass TCC or count the baseline as passing selected-URL Copy.
+
+Final implementation candidate `eb08168` used the reviewed adapter at
+`3ce45cf`. These reruns include the ownership, identified-read, and input-order
+corrections:
+
+| Guest | Mode | Result | Run ID |
+| --- | --- | --- | --- |
+| Linux | `keyboard-routing-check` | Pass | `20260916T042148Z-linux-festerm-a25f51be-1600-482f-a3ae-113f18f3483f` |
+| Windows ARM64 | `keyboard-routing-check` | Pass | `20260916T042450Z-windows-festerm-83b378fa-5497-4b32-8548-87717b838395` |
+| macOS ARM64 | `keyboard-routing-check` | Pass | `20260916T042835Z-macos-festerm-4b8a1a73-6454-45fc-9e1f-424793b5584f` |
+| Linux Xorg | `keyboard-routing-native` | Pass | `20260916T041844Z-linux-festerm-d217cb4b-7ab7-48c3-9055-47bdf7985071` |
+
+The check mode runs synthesized production app/controller/configuration tests
+on the actual guest platform, without claiming OS event delivery. The native
+Linux run independently injected no-selection Copy, palette open/close, and
+palette Paste. It verified session acceptance of `controlled-clipboard`,
+then `02 02 09 1b 5b 41`, then `os-input-ok` and carriage return, in that order.
+The dedicated Linux guest's shared-clipboard mode was confirmed off before
+running the fixture; no host clipboard content was inspected or changed.
+This is not real selected-URL clipboard,
+Screen gesture, AltGr, IME, or exhaustive native-menu qualification.
+The Windows guest's known graphics limitation and macOS Accessibility
+prerequisite remain distinct from successful synthesized routing checks.
+All dedicated guests were stopped after their runs.
+
+The candidate's Settings captures use the production `show_settings` renderer
+at normal/narrow widths; captures are review artifacts, not new cross-platform
+golden baselines. No native user application or ordinary user configuration is
+used by the keyboard-routing entrypoint. See the
+[canonical inventory and limitations](keyboard-shortcuts.md).
 
 ### Paste safety
 

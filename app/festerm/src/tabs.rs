@@ -1605,6 +1605,13 @@ pub enum AppCommand {
     /// Selects the bundled primary terminal face without changing
     /// application-chrome typography.
     SetTerminalFont(TerminalFontPreference),
+    SetKeyboardBindings(festerm_config::KeyboardBindings),
+    SetInputRecording {
+        tab: TabId,
+        enabled: bool,
+    },
+    ClearInputRecording(TabId),
+    CopyInputRecording(TabId),
     /// Enables or disables eligible multi-cell shaping runs. Cell ownership
     /// remains authoritative regardless of the selected font.
     ToggleTerminalLigatures,
@@ -1833,6 +1840,7 @@ impl Drop for PendingResume {
 }
 
 pub struct AppState {
+    keyboard_bindings: festerm_config::KeyboardBindings,
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
@@ -1840,6 +1848,7 @@ pub struct AppState {
     active: TabId,
     configuration: Configuration,
     inspector_open: bool,
+    input_ownership_epoch: u64,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
     show_session_details: bool,
@@ -1911,6 +1920,7 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
+            input_ownership_epoch: 0,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -1926,6 +1936,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            keyboard_bindings: settings.keyboard_bindings().clone(),
             sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
@@ -1963,6 +1974,7 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
+            input_ownership_epoch: 0,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -1978,6 +1990,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            keyboard_bindings: settings.keyboard_bindings().clone(),
             sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
@@ -2095,6 +2108,7 @@ impl AppState {
             active,
             configuration,
             inspector_open: false,
+            input_ownership_epoch: 0,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -2110,6 +2124,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            keyboard_bindings: settings.keyboard_bindings().clone(),
             sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
                 .default_sftp_local_directory()
@@ -2254,6 +2269,10 @@ impl AppState {
         self.inspector_open
     }
 
+    pub const fn input_ownership_epoch(&self) -> u64 {
+        self.input_ownership_epoch
+    }
+
     pub const fn chip_layout(&self) -> ChipLayout {
         self.chip_layout
     }
@@ -2342,6 +2361,7 @@ impl AppState {
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
         .with_show_resumable_sessions(self.show_resumable_sessions)
+        .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
             self.default_sftp_local_directory
@@ -2490,6 +2510,7 @@ impl AppState {
     /// every invocation surface must converge here rather than implementing
     /// independent tab/session policy.
     pub fn dispatch(&mut self, command: AppCommand, context: &egui::Context) {
+        let previous_owner = (self.active, self.inspector_open);
         if let Some(profile_id) = command.launched_profile_id() {
             self.pending_profile_usage = Some(profile_id.to_owned());
         }
@@ -2623,6 +2644,43 @@ impl AppState {
             AppCommand::SetTerminalFont(font) => {
                 self.terminal_font = font;
             }
+            AppCommand::SetKeyboardBindings(bindings) => {
+                if bindings.validate(cfg!(target_os = "macos")).is_ok() {
+                    self.keyboard_bindings = bindings;
+                }
+            }
+            AppCommand::SetInputRecording { tab, enabled } => {
+                if let Some(session) = self.session_tab_mut(tab) {
+                    session
+                        .controller
+                        .input_recorder
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .set_recording(enabled);
+                }
+            }
+            AppCommand::ClearInputRecording(tab) => {
+                if let Some(session) = self.session_tab_mut(tab) {
+                    session
+                        .controller
+                        .input_recorder
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clear();
+                }
+            }
+            AppCommand::CopyInputRecording(tab) => {
+                if let Some(session) = self.session_tab_mut(tab) {
+                    context.copy_text(
+                        session
+                            .controller
+                            .input_recorder
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .report(),
+                    );
+                }
+            }
             AppCommand::ToggleTerminalLigatures => {
                 self.terminal_ligatures = !self.terminal_ligatures;
             }
@@ -2738,6 +2796,7 @@ impl AppState {
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
                 self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
+                self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
             }
@@ -2754,6 +2813,9 @@ impl AppState {
         // for Launcher, Settings, or authentication forms.
         if !matches!(self.active_tab().content, TabContent::Session(_)) {
             self.inspector_open = false;
+        }
+        if previous_owner != (self.active, self.inspector_open) {
+            self.input_ownership_epoch = self.input_ownership_epoch.saturating_add(1);
         }
     }
 

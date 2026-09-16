@@ -1,6 +1,6 @@
 {
   "adapter_id": "festerm",
   "schema_version": 1,
-  "modes": ["native-smoke", "os-input-smoke", "optional-validation", "running-session-stress"],
+  "modes": ["native-smoke", "os-input-smoke", "optional-validation", "running-session-stress", "keyboard-routing-check", "keyboard-routing-native"],
   "platforms": ["windows", "linux", "macos"]
 }

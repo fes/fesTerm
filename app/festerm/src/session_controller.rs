@@ -189,9 +189,25 @@ impl CursorPositionQueryScanner {
 // ─── Pending Command Buffer ──────────────────────────────────────────────────
 
 pub(crate) struct PendingCommandBuffer {
-    writes: VecDeque<Vec<u8>>,
+    writes: VecDeque<PendingWrite>,
     queued_bytes: usize,
     capacity: usize,
+    clipboard: Option<ClipboardBarrier>,
+    last_flush_accepted: usize,
+    last_flush_dropped: usize,
+}
+
+struct ClipboardBarrier {
+    token: u64,
+    position: usize,
+    filling: bool,
+    failed: bool,
+}
+
+struct PendingWrite {
+    bytes: Vec<u8>,
+    observation: Option<u64>,
+    ui_input: bool,
 }
 
 impl PendingCommandBuffer {
@@ -200,10 +216,23 @@ impl PendingCommandBuffer {
             writes: VecDeque::new(),
             queued_bytes: 0,
             capacity,
+            clipboard: None,
+            last_flush_accepted: 0,
+            last_flush_dropped: 0,
         }
     }
 
+    #[cfg(test)]
     pub fn enqueue(&mut self, bytes: &[u8]) -> Result<(), PendingCommandError> {
+        self.enqueue_from_source(bytes, false, false)
+    }
+
+    fn enqueue_from_source(
+        &mut self,
+        bytes: &[u8],
+        keyboard_input: bool,
+        ui_input: bool,
+    ) -> Result<(), PendingCommandError> {
         if bytes.len() > MAX_IO_CHUNK_BYTES {
             return Err(PendingCommandError::TooLarge {
                 maximum: MAX_IO_CHUNK_BYTES,
@@ -220,27 +249,86 @@ impl PendingCommandBuffer {
                 attempted: bytes.len(),
             })?;
         if !bytes.is_empty() {
-            self.writes.push_back(bytes.to_vec());
+            let write = PendingWrite {
+                bytes: bytes.to_vec(),
+                observation: None,
+                ui_input,
+            };
+            if keyboard_input
+                && self
+                    .clipboard
+                    .as_ref()
+                    .is_some_and(|barrier| barrier.filling)
+            {
+                let barrier = self.clipboard.take().unwrap();
+                self.writes.insert(barrier.position, write);
+            } else if !keyboard_input && self.clipboard.is_some() {
+                // Protocol replies are not keystrokes. Keep terminal queries
+                // serviceable even while user input waits for paste consent.
+                let barrier = self.clipboard.as_mut().unwrap();
+                self.writes.insert(barrier.position, write);
+                barrier.position += 1;
+            } else {
+                self.writes.push_back(write);
+            }
             self.queued_bytes = queued_bytes;
         }
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn flush(&mut self, session: &impl Session) -> PendingFlush {
-        while let Some(bytes) = self.writes.front() {
-            match session.try_send_input(bytes) {
+        self.flush_observed(session, |_, _| {}, |_| {})
+    }
+
+    fn flush_observed(
+        &mut self,
+        session: &impl Session,
+        mut settle: impl FnMut(u64, &'static str),
+        mut accepted_input: impl FnMut(&[u8]),
+    ) -> PendingFlush {
+        self.last_flush_accepted = 0;
+        self.last_flush_dropped = 0;
+        loop {
+            if self
+                .clipboard
+                .as_ref()
+                .is_some_and(|barrier| barrier.position == 0)
+            {
+                return PendingFlush::Clipboard;
+            }
+            let Some(write) = self.writes.front() else {
+                return PendingFlush::Drained;
+            };
+            match session.try_send_input(&write.bytes) {
                 Ok(()) => {
                     let bytes = self
                         .writes
                         .pop_front()
                         .expect("front element remains until a successful send");
-                    self.queued_bytes = self.queued_bytes.saturating_sub(bytes.len());
+                    self.queued_bytes = self.queued_bytes.saturating_sub(bytes.bytes.len());
+                    if bytes.ui_input {
+                        accepted_input(&bytes.bytes);
+                    }
+                    self.last_flush_accepted += 1;
+                    if let Some(barrier) = &mut self.clipboard {
+                        barrier.position -= 1;
+                    }
+                    if let Some(observation) = bytes.observation {
+                        settle(observation, "accepted-by-session");
+                    }
                 }
                 Err(SessionSendError::Full { .. }) => return PendingFlush::Backpressured,
                 Err(error) => {
                     let dropped_bytes = self.queued_bytes;
-                    self.writes.clear();
+                    self.last_flush_dropped = dropped_bytes;
+                    for write in self.writes.drain(..) {
+                        if let Some(observation) = write.observation {
+                            settle(observation, "rejected-by-session");
+                        }
+                    }
                     self.queued_bytes = 0;
+                    self.clipboard = None;
                     return PendingFlush::Unrecoverable {
                         error,
                         dropped_bytes,
@@ -248,7 +336,6 @@ impl PendingCommandBuffer {
                 }
             }
         }
-        PendingFlush::Drained
     }
 
     pub fn queued_bytes(&self) -> usize {
@@ -299,6 +386,7 @@ impl std::fmt::Display for PendingCommandError {
 
 pub(crate) enum PendingFlush {
     Drained,
+    Clipboard,
     Backpressured,
     Unrecoverable {
         error: SessionSendError,
@@ -314,6 +402,12 @@ pub(crate) enum PendingFlush {
 /// The controller preserves the architectural invariant that only one logical
 /// writer mutates a `Terminal` from session output.
 pub struct SessionController<S: Session> {
+    pub input_recorder: festerm_ui_egui::routing_trace::SharedRecorder,
+    last_input_delivery: &'static str,
+    input_event_is_keyboard: bool,
+    last_pending_input_index: Option<usize>,
+    clipboard_discarded_bytes: usize,
+    native_input_expectation: Option<(&'static [u8], usize, bool)>,
     session: Option<S>,
     session_name: &'static str,
     startup_error: Option<String>,
@@ -376,6 +470,12 @@ impl<S: Session> SessionController<S> {
             startup_error: None,
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
+            native_input_expectation: None,
+            input_recorder: Default::default(),
+            last_input_delivery: "no-delivery",
+            input_event_is_keyboard: true,
+            last_pending_input_index: None,
+            clipboard_discarded_bytes: 0,
             pending_resize: None,
             debounced_resize: None,
             last_lifecycle: Some(lifecycle),
@@ -406,6 +506,12 @@ impl<S: Session> SessionController<S> {
             startup_error: Some(error),
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
+            native_input_expectation: None,
+            input_recorder: Default::default(),
+            last_input_delivery: "no-delivery",
+            input_event_is_keyboard: true,
+            last_pending_input_index: None,
+            clipboard_discarded_bytes: 0,
             pending_resize: None,
             debounced_resize: None,
             last_lifecycle: None,
@@ -457,8 +563,26 @@ impl<S: Session> SessionController<S> {
 
     pub fn advance_lifecycle_generation(&mut self) {
         self.lifecycle_generation = self.lifecycle_generation.saturating_add(1);
+        if let Some(token) = self
+            .pending_writes
+            .clipboard
+            .as_ref()
+            .map(|barrier| barrier.token)
+        {
+            self.cancel_clipboard_input(token, "discarded-generation-change");
+        }
         let dropped_bytes = self.pending_writes.queued_bytes();
         if dropped_bytes > 0 {
+            let mut recorder = self
+                .input_recorder
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            for write in &self.pending_writes.writes {
+                if let Some(observation) = write.observation {
+                    recorder.settle(observation, "discarded-generation-change");
+                }
+            }
+            drop(recorder);
             self.pending_writes = PendingCommandBuffer::new(self.pending_writes.capacity());
             tracing::warn!(
                 target: "festerm::session",
@@ -625,19 +749,182 @@ impl<S: Session> SessionController<S> {
         }
     }
 
+    /// A metadata-only position in the existing bounded ordered byte queue.
+    /// Normal input continues to be encoded, but cannot pass this position.
+    pub fn begin_clipboard_input(&mut self, token: u64) -> bool {
+        self.finish_failed_clipboard_input();
+        if self.pending_writes.clipboard.is_some() {
+            return false;
+        }
+        self.pending_writes.clipboard = Some(ClipboardBarrier {
+            token,
+            position: self.pending_writes.writes.len(),
+            filling: false,
+            failed: false,
+        });
+        true
+    }
+
+    pub fn clipboard_input_pending(&self, token: u64) -> bool {
+        self.pending_writes
+            .clipboard
+            .as_ref()
+            .is_some_and(|barrier| barrier.token == token && !barrier.failed)
+    }
+
+    pub fn clipboard_input_failed(&self, token: u64) -> bool {
+        self.pending_writes
+            .clipboard
+            .as_ref()
+            .is_some_and(|barrier| barrier.token == token && barrier.failed)
+    }
+
+    pub fn prepare_clipboard_input(&mut self, token: u64) -> bool {
+        if let Some(barrier) = &mut self.pending_writes.clipboard {
+            if barrier.token == token && !barrier.failed {
+                barrier.filling = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn cancel_clipboard_input(&mut self, token: u64, reason: &'static str) {
+        if self
+            .pending_writes
+            .clipboard
+            .as_ref()
+            .is_some_and(|barrier| barrier.token == token)
+        {
+            self.discard_clipboard_tail(reason, false);
+        }
+    }
+
+    pub fn fail_clipboard_input(&mut self, token: u64, reason: &'static str) {
+        if self.pending_writes.clipboard.is_none() {
+            self.pending_writes.clipboard = Some(ClipboardBarrier {
+                token,
+                position: self.pending_writes.writes.len(),
+                filling: false,
+                failed: true,
+            });
+        } else if self
+            .pending_writes
+            .clipboard
+            .as_ref()
+            .is_some_and(|barrier| barrier.token == token)
+        {
+            self.discard_clipboard_tail(reason, true);
+        }
+    }
+
+    pub fn finish_failed_clipboard_input(&mut self) {
+        if self
+            .pending_writes
+            .clipboard
+            .as_ref()
+            .is_some_and(|barrier| barrier.failed)
+        {
+            self.pending_writes.clipboard = None;
+        }
+    }
+    fn clipboard_tail_bytes(&self) -> usize {
+        self.pending_writes.clipboard.as_ref().map_or(0, |barrier| {
+            self.pending_writes
+                .writes
+                .iter()
+                .skip(barrier.position)
+                .map(|write| write.bytes.len())
+                .sum()
+        })
+    }
+
+    fn discard_clipboard_tail(&mut self, reason: &'static str, keep_failed_barrier: bool) {
+        let Some(mut barrier) = self.pending_writes.clipboard.take() else {
+            return;
+        };
+        let mut recorder = self
+            .input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        for write in self.pending_writes.writes.drain(barrier.position..) {
+            self.pending_writes.queued_bytes = self
+                .pending_writes
+                .queued_bytes
+                .saturating_sub(write.bytes.len());
+            self.clipboard_discarded_bytes = self
+                .clipboard_discarded_bytes
+                .saturating_add(write.bytes.len());
+            if let Some(observation) = write.observation {
+                recorder.settle(observation, reason);
+            }
+        }
+        if keep_failed_barrier {
+            barrier.failed = true;
+            barrier.filling = false;
+            self.pending_writes.clipboard = Some(barrier);
+        }
+    }
+
+    pub fn take_clipboard_discarded_bytes(&mut self) -> usize {
+        std::mem::take(&mut self.clipboard_discarded_bytes)
+    }
+
+    pub fn expect_native_input(&mut self, bytes: &'static [u8]) {
+        self.native_input_expectation = Some((bytes, 0, false));
+    }
+
+    pub fn native_input_matches(&self) -> bool {
+        self.native_input_expectation
+            .is_some_and(|(expected, offset, failed)| !failed && offset == expected.len())
+    }
+
     pub fn flush_pending_writes(&mut self) {
         let Some(session) = &self.session else {
             return;
         };
-        match self.pending_writes.flush(session) {
-            PendingFlush::Drained => {}
+        let recorder = self.input_recorder.clone();
+        let held_bytes = self.clipboard_tail_bytes();
+        let expectation = &mut self.native_input_expectation;
+        match self.pending_writes.flush_observed(
+            session,
+            |observation, outcome| {
+                recorder
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .settle(observation, outcome);
+            },
+            |bytes| {
+                if let Some((expected, offset, failed)) = expectation {
+                    let end = offset.saturating_add(bytes.len());
+                    *failed |= expected.get(*offset..end) != Some(bytes);
+                    *offset = end.min(expected.len().saturating_add(1));
+                }
+            },
+        ) {
+            PendingFlush::Drained => {
+                self.last_input_delivery = "accepted-by-session";
+            }
+            PendingFlush::Clipboard => {
+                self.last_input_delivery = "queued-clipboard";
+            }
             PendingFlush::Backpressured => {
+                self.last_input_delivery = "queued-backpressure";
                 self.last_backpressure = Some(FlowDirection::Input);
+                if self.pending_writes.clipboard.is_none() {
+                    self.input_recorder
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clipboard_wait_became_backpressure();
+                }
             }
             PendingFlush::Unrecoverable {
                 error,
                 dropped_bytes,
             } => {
+                self.clipboard_discarded_bytes =
+                    self.clipboard_discarded_bytes.saturating_add(held_bytes);
+                self.last_input_delivery = "rejected-by-session";
                 self.record_pending_failure(
                     format!(
                         "session pending writes became unrecoverable after {error}; \
@@ -710,12 +997,96 @@ impl<S: Session> SessionController<S> {
     }
 
     fn queue_bytes(&mut self, bytes: &[u8], source: &str) {
+        let ui_input = source == "UI input";
+        self.last_pending_input_index = None;
         if self.session.is_none() {
+            self.last_input_delivery = "rejected-no-session";
             return;
         }
-        match self.pending_writes.enqueue(bytes) {
-            Ok(()) => self.flush_pending_writes(),
+        if ui_input
+            && self
+                .pending_writes
+                .clipboard
+                .as_ref()
+                .is_some_and(|barrier| barrier.failed)
+        {
+            self.last_input_delivery = "rejected-clipboard-buffer";
+            self.clipboard_discarded_bytes =
+                self.clipboard_discarded_bytes.saturating_add(bytes.len());
+            return;
+        }
+        let filling = ui_input
+            && self
+                .pending_writes
+                .clipboard
+                .as_ref()
+                .is_some_and(|barrier| barrier.filling);
+        let filling_token = self
+            .pending_writes
+            .clipboard
+            .as_ref()
+            .map(|barrier| barrier.token);
+        let held_bytes = self.clipboard_tail_bytes();
+        let insertion = self
+            .pending_writes
+            .clipboard
+            .as_ref()
+            .filter(|barrier| barrier.filling || !ui_input)
+            .map_or(self.pending_writes.writes.len(), |barrier| barrier.position);
+        match self
+            .pending_writes
+            .enqueue_from_source(bytes, ui_input, source != "terminal reply")
+        {
+            Ok(()) => {
+                self.flush_pending_writes();
+                let accepted = self.pending_writes.last_flush_accepted;
+                if filling && self.last_input_delivery == "rejected-by-session" {
+                    // The fence was replaced before flushing, so the flush
+                    // itself could no longer count the discarded suffix.
+                    let dropped = if insertion < accepted {
+                        self.pending_writes.last_flush_dropped
+                    } else {
+                        held_bytes
+                    };
+                    self.clipboard_discarded_bytes =
+                        self.clipboard_discarded_bytes.saturating_add(dropped);
+                    self.fail_clipboard_input(
+                        filling_token.unwrap(),
+                        "discarded-clipboard-write-failed",
+                    );
+                }
+                if !bytes.is_empty() {
+                    if insertion < accepted {
+                        self.last_input_delivery = "accepted-by-session";
+                    } else if self.last_input_delivery != "rejected-by-session" {
+                        self.last_pending_input_index = Some(insertion - accepted);
+                        if self
+                            .pending_writes
+                            .clipboard
+                            .as_ref()
+                            .is_some_and(|barrier| insertion - accepted >= barrier.position)
+                        {
+                            self.last_input_delivery = "queued-clipboard";
+                        }
+                    }
+                }
+            }
             Err(error) => {
+                if self.pending_writes.clipboard.is_some() {
+                    self.discard_clipboard_tail("discarded-clipboard-buffer-overflow", true);
+                    if !ui_input
+                        && self
+                            .pending_writes
+                            .enqueue_from_source(bytes, false, source != "terminal reply")
+                            .is_ok()
+                    {
+                        self.flush_pending_writes();
+                    } else if !filling {
+                        self.clipboard_discarded_bytes =
+                            self.clipboard_discarded_bytes.saturating_add(bytes.len());
+                    }
+                }
+                self.last_input_delivery = "rejected-queue-bound";
                 self.record_pending_failure(error.to_string(), None);
             }
         }
@@ -872,19 +1243,77 @@ impl<S: Session> SessionController<S> {
 }
 
 impl<S: Session> EncodedInputSink for SessionController<S> {
+    fn begin_input_event(&mut self, keyboard_input: bool) {
+        self.input_event_is_keyboard = keyboard_input;
+    }
+
     fn record_encoded_input(&mut self, bytes: &[u8]) {
         self.force_flush_pending_resize();
         self.diagnostics.byte_count = self
             .diagnostics
             .byte_count
             .saturating_add(bytes.len() as u64);
-        self.queue_bytes(bytes, "UI input");
+        let source = if self.input_event_is_keyboard {
+            "UI input"
+        } else {
+            "UI report"
+        };
+        self.input_event_is_keyboard = true;
+        self.queue_bytes(bytes, source);
     }
 
     fn observe_input_route(&mut self, route: InputRoute) {
         self.diagnostics.event_count = self.diagnostics.event_count.saturating_add(1);
         self.diagnostics.last_outcome = Some(route.outcome);
         self.diagnostics.last_queue_depth = route.queue_depth;
+    }
+
+    fn observe_local_selection(&mut self, decision: &'static str) {
+        self.input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .annotate_selection(decision);
+    }
+
+    fn observe_local_gesture(
+        &mut self,
+        class: &'static str,
+        decision: &'static str,
+        modifiers: u8,
+    ) {
+        self.input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .record(
+                "terminal-view",
+                festerm_ui_egui::routing_trace::Metadata { class, modifiers },
+                decision,
+                "no-delivery",
+                0,
+            );
+    }
+
+    fn observe_input_event(
+        &mut self,
+        metadata: festerm_ui_egui::routing_trace::Metadata,
+        route: InputRoute,
+    ) {
+        self.input_event_is_keyboard = true;
+        self.observe_input_route(route);
+        let observation = self
+            .input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .record_route(metadata, route, self.last_input_delivery);
+        if route.delivered_bytes > 0 {
+            if let Some(write) = self
+                .last_pending_input_index
+                .take()
+                .and_then(|index| self.pending_writes.writes.get_mut(index))
+            {
+                write.observation = observation;
+            }
+        }
     }
 
     fn record_terminal_resize(&mut self, dimensions: Dimensions) {
@@ -1121,6 +1550,7 @@ pub(crate) mod fake {
     }
 
     struct FakeSshSessionInner {
+        sent: Mutex<Vec<Vec<u8>>>,
         id: festerm_session::SessionId,
         lifecycle: Mutex<SessionLifecycle>,
         events: Mutex<VecDeque<SessionEvent>>,
@@ -1136,6 +1566,7 @@ pub(crate) mod fake {
         pub fn new(events: impl IntoIterator<Item = SessionEvent>) -> Self {
             Self {
                 inner: Arc::new(FakeSshSessionInner {
+                    sent: Mutex::new(Vec::new()),
                     id: festerm_session::SessionId::next(),
                     lifecycle: Mutex::new(SessionLifecycle::Running),
                     events: Mutex::new(events.into_iter().collect()),
@@ -1150,6 +1581,10 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh operations lock")
                 .clone()
+        }
+
+        pub fn sent(&self) -> Vec<Vec<u8>> {
+            self.inner.sent.lock().expect("fake ssh sent lock").clone()
         }
 
         pub fn push_event(&self, event: SessionEvent) {
@@ -1250,7 +1685,12 @@ pub(crate) mod fake {
             SessionMetrics::default()
         }
 
-        fn try_send_input(&self, _bytes: &[u8]) -> Result<(), SessionSendError> {
+        fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+            self.inner
+                .sent
+                .lock()
+                .expect("fake ssh sent lock")
+                .push(bytes.to_vec());
             Ok(())
         }
 
@@ -1299,6 +1739,387 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
+
+    #[test]
+    fn keyboard_clipboard_barrier_preserves_prefix_suffix_and_accepted_byte_oracle() {
+        let session = FakeSession::with_input_results(
+            [],
+            [
+                Err(SessionSendError::Full {
+                    operation: festerm_session::SessionOperation::Input,
+                    capacity: 1,
+                }),
+                Ok(()),
+                Ok(()),
+                Ok(()),
+            ],
+        );
+        let mut controller = SessionController::with_session(session);
+        let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+        controller.expect_native_input(b"beforepaste\r");
+        controller
+            .input_recorder
+            .lock()
+            .unwrap()
+            .set_recording(true);
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("before".into()),
+            &mut controller,
+        );
+        assert!(controller.begin_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+            &mut controller,
+        );
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            b"before"
+        );
+        assert!(!controller.native_input_matches());
+        assert!(controller.prepare_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("paste".into()),
+            &mut controller,
+        );
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            b"beforepaste\r"
+        );
+        assert!(controller.native_input_matches());
+        assert_eq!(controller.pending_writes.queued_bytes(), 0);
+        assert!(!controller
+            .input_recorder
+            .lock()
+            .unwrap()
+            .report()
+            .contains("queue=queued-"));
+        controller.queue_bytes(b"reply", "terminal reply");
+        assert!(
+            controller.native_input_matches(),
+            "protocol replies are not native UI-input observations"
+        );
+    }
+
+    #[test]
+    fn keyboard_clipboard_buffer_overflow_fails_closed_and_counts_discarded_input() {
+        let mut controller = SessionController::with_session(FakeSession::new([]));
+        controller.pending_writes.capacity = 4;
+        let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+        controller
+            .input_recorder
+            .lock()
+            .unwrap()
+            .set_recording(true);
+        assert!(controller.begin_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("held".into()),
+            &mut controller,
+        );
+        assert_eq!(controller.pending_writes.queued_bytes(), 4);
+        assert!(controller.prepare_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("xx".into()),
+            &mut controller,
+        );
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+            &mut controller,
+        );
+        assert!(controller.clipboard_input_failed(31));
+        assert!(controller.session.as_ref().unwrap().sent().is_empty());
+        assert_eq!(controller.pending_writes.queued_bytes(), 0);
+        assert_eq!(controller.take_clipboard_discarded_bytes(), 5);
+        let report = controller.input_recorder.lock().unwrap().report();
+        assert!(report.contains("discarded-clipboard-buffer-overflow"));
+        assert!(!report.contains("held"));
+        controller.finish_failed_clipboard_input();
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("new".into()),
+            &mut controller,
+        );
+        assert_eq!(controller.session.as_ref().unwrap().sent().concat(), b"new");
+    }
+
+    #[test]
+    fn keyboard_clipboard_backend_failure_never_releases_buffered_suffix() {
+        for paste_accepted in [false, true] {
+            let closed = Err(SessionSendError::Closed {
+                operation: festerm_session::SessionOperation::Input,
+            });
+            let results = if paste_accepted {
+                vec![Ok(()), closed]
+            } else {
+                vec![closed]
+            };
+            let mut controller =
+                SessionController::with_session(FakeSession::with_input_results([], results));
+            let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+            controller
+                .input_recorder
+                .lock()
+                .unwrap()
+                .set_recording(true);
+            assert!(controller.begin_clipboard_input(31));
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+                &mut controller,
+            );
+            assert!(controller.prepare_clipboard_input(31));
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Paste("paste".into()),
+                &mut controller,
+            );
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Paste("later".into()),
+                &mut controller,
+            );
+            assert!(controller.clipboard_input_failed(31));
+            assert_eq!(controller.take_clipboard_discarded_bytes(), 6);
+            assert_eq!(
+                controller.session.as_ref().unwrap().sent().concat(),
+                if paste_accepted {
+                    b"paste".as_slice()
+                } else {
+                    b""
+                }
+            );
+            let report = controller.input_recorder.lock().unwrap().report();
+            let paste = report
+                .lines()
+                .find(|line| line.contains("observation=2 "))
+                .unwrap();
+            assert!(paste.contains(if paste_accepted {
+                "queue=accepted-by-session"
+            } else {
+                "queue=rejected-by-session"
+            }));
+        }
+    }
+
+    #[test]
+    fn keyboard_clipboard_barrier_keeps_protocol_replies_serviceable() {
+        for capacity in [4, 64] {
+            let mut controller = SessionController::with_session(FakeSession::new([]));
+            controller.pending_writes.capacity = capacity;
+            let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+            assert!(controller.begin_clipboard_input(31));
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Paste("held".into()),
+                &mut controller,
+            );
+            controller.queue_bytes(b"reply", "terminal reply");
+            if capacity == 4 {
+                // A reply larger than the entire bound remains rejected by
+                // the pre-existing queue limit; a fitting reply can proceed.
+                controller.queue_bytes(b"ok", "terminal reply");
+                assert_eq!(controller.session.as_ref().unwrap().sent().concat(), b"ok");
+                assert!(!controller.clipboard_input_pending(31));
+            } else {
+                assert_eq!(
+                    controller.session.as_ref().unwrap().sent().concat(),
+                    b"reply"
+                );
+                assert!(controller.clipboard_input_pending(31));
+            }
+            controller.cancel_clipboard_input(31, "discarded-clipboard-cancelled");
+            controller.flush_pending_writes();
+            assert!(!controller
+                .session
+                .as_ref()
+                .unwrap()
+                .sent()
+                .concat()
+                .windows(4)
+                .any(|bytes| bytes == b"held"));
+        }
+    }
+
+    #[test]
+    fn keyboard_clipboard_partial_backend_failure_counts_only_unsent_suffix() {
+        let session = FakeSession::with_input_results(
+            [],
+            [
+                Ok(()),
+                Ok(()),
+                Err(SessionSendError::Closed {
+                    operation: festerm_session::SessionOperation::Input,
+                }),
+            ],
+        );
+        let mut controller = SessionController::with_session(session);
+        let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+        assert!(controller.begin_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("one".into()),
+            &mut controller,
+        );
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Key(festerm_core::Key::Enter),
+            &mut controller,
+        );
+        assert!(controller.prepare_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("p".into()),
+            &mut controller,
+        );
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            b"pone"
+        );
+        assert_eq!(controller.take_clipboard_discarded_bytes(), 1);
+        assert!(controller.clipboard_input_failed(31));
+    }
+
+    #[test]
+    fn keyboard_clipboard_wait_does_not_suppress_focus_or_mouse_reports() {
+        let mut controller = SessionController::with_session(FakeSession::new([]));
+        let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?1004h\x1b[?1000h\x1b[?1006h");
+        assert!(controller.begin_clipboard_input(31));
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("held".into()),
+            &mut controller,
+        );
+        controller.expect_native_input(b"\x1b[O");
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Focus(festerm_core::FocusEvent::Out),
+            &mut controller,
+        );
+        assert!(
+            controller.native_input_matches(),
+            "native acceptance observations still include UI reports"
+        );
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Mouse(festerm_core::MouseEvent {
+                kind: festerm_core::MouseEventKind::Release(festerm_core::MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: festerm_core::Modifiers::NONE,
+            }),
+            &mut controller,
+        );
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            b"\x1b[O\x1b[<0;1;1m"
+        );
+        assert!(controller.clipboard_input_pending(31));
+        controller.cancel_clipboard_input(31, "discarded-clipboard-cancelled");
+        assert_eq!(controller.take_clipboard_discarded_bytes(), 4);
+    }
+
+    #[test]
+    fn keyboard_pending_delivery_settles_original_observation_across_stop_clear_and_generation() {
+        for scenario in [
+            "accepted",
+            "rejected",
+            "generation",
+            "stopped",
+            "cleared",
+            "evicted",
+        ] {
+            let session = FakeSession::with_input_results(
+                [],
+                [
+                    Err(SessionSendError::Full {
+                        operation: festerm_session::SessionOperation::Input,
+                        capacity: 1,
+                    }),
+                    if scenario == "rejected" {
+                        Err(SessionSendError::Closed {
+                            operation: festerm_session::SessionOperation::Input,
+                        })
+                    } else {
+                        Ok(())
+                    },
+                ],
+            );
+            let mut controller = SessionController::with_session(session);
+            let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+            {
+                let mut recorder = controller.input_recorder.lock().unwrap();
+                recorder.set_target(71, 1);
+                recorder.set_recording(true);
+            }
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Paste("controlled-secret-token".into()),
+                &mut controller,
+            );
+            assert!(controller
+                .input_recorder
+                .lock()
+                .unwrap()
+                .report()
+                .contains("queue=queued-backpressure"));
+            {
+                let mut recorder = controller.input_recorder.lock().unwrap();
+                recorder.set_target(99, 2);
+                if scenario == "stopped" {
+                    recorder.set_recording(false);
+                }
+                if scenario == "cleared" {
+                    recorder.clear();
+                }
+                if matches!(scenario, "cleared" | "evicted") {
+                    for _ in 0..festerm_ui_egui::routing_trace::CAPACITY {
+                        recorder.record(
+                            "application",
+                            festerm_ui_egui::routing_trace::Metadata {
+                                class: "later-observation",
+                                modifiers: 0,
+                            },
+                            "captured",
+                            "no-delivery",
+                            0,
+                        );
+                    }
+                }
+            }
+            if scenario == "generation" {
+                controller.advance_lifecycle_generation();
+            } else {
+                controller.flush_pending_writes();
+            }
+            let report = controller.input_recorder.lock().unwrap().report();
+            assert!(!report.contains("controlled-secret-token"));
+            assert!(
+                !report.contains("queue=queued-backpressure"),
+                "{scenario}: {report}"
+            );
+            if matches!(scenario, "cleared" | "evicted") {
+                assert!(!report.contains("queue=accepted-by-session"));
+                assert!(!report.contains("target=71"));
+            } else {
+                assert!(report.contains("observation=1 target=71 generation=1"));
+                assert!(
+                    report.contains(match scenario {
+                        "rejected" => "queue=rejected-by-session",
+                        "generation" => "queue=discarded-generation-change",
+                        _ => "queue=accepted-by-session",
+                    }),
+                    "{scenario}: {report}"
+                );
+            }
+            assert_eq!(controller.pending_writes.queued_bytes(), 0);
+        }
+    }
 
     #[test]
     fn application_advances_lifecycle_generation_at_reconnect_boundary() {
@@ -2192,11 +3013,9 @@ mod tests {
             &mut controller,
             &mut terminal,
             |terminal| {
-                (0..terminal.dimensions().rows()).any(|row| {
-                    terminal
-                        .row_text(row)
-                        .is_some_and(|text| text.starts_with("C:\\"))
-                })
+                terminal
+                    .row_text(terminal.cursor().row())
+                    .is_some_and(|text| text.starts_with("C:\\") && text.trim_end().ends_with('>'))
             },
             Duration::from_secs(3),
             "initial default-shell prompt",
@@ -2208,9 +3027,14 @@ mod tests {
         pump_controlled_until(
             &mut controller,
             &mut terminal,
-            |terminal| terminal.cursor().row() > initial_cursor.row(),
+            |terminal| {
+                terminal.cursor().row() > initial_cursor.row()
+                    && terminal
+                        .row_text(terminal.cursor().row())
+                        .is_some_and(|text| text.trim_end().ends_with('>'))
+            },
             Duration::from_secs(3),
-            "default-shell command output",
+            "returned default-shell prompt",
         );
 
         let cursor = terminal.cursor();

@@ -460,6 +460,12 @@ clear and fallback behavior.
 
 ## Milestone 10 — Refinement and Distribution
 
+The persistent [keyboard editor and routing audit](docs/keyboard-shortcuts.md)
+(#154) add configurable application bindings, clipboard provenance regressions,
+and opt-in redacted session input diagnostics. Synthesized routing and Settings
+render tests cover the implementation; native layout/menu and selected-auth-URL
+qualification remain explicitly tracked rather than inferred from those tests.
+
 **Status:** In progress — ADR 0021, native package manifests, package/update
 validation, protected platform-signing configuration, the tag-driven
 draft-first GitHub release workflow, and the explicit signed-update state

@@ -55,10 +55,20 @@ This framework extends, rather than replaces, the current validation layers:
 ## Workflow-automation extension
 
 The current fesTerm adapter accepts `native-smoke`, `os-input-smoke`,
-`optional-validation`, and `running-session-stress` with an empty payload. The
-last mode runs bounded, isolated backend churn without a GUI, including native
+`optional-validation`, `running-session-stress`, `keyboard-routing-check`, and
+`keyboard-routing-native` with an empty payload. The session-stress mode runs
+bounded, isolated backend churn without a GUI, including native
 Windows ConPTY on guests that cannot qualify for GPU/window evidence. It does
 not establish Launcher usability or native input qualification.
+The keyboard-check mode runs synthesized production routing tests on the guest
+platform. The separate keyboard-native mode uses the existing independent
+OS-input driver for no-selection Copy, palette capture, an identified Paste
+request, and controlled terminal bytes. The keyboard-native fixture replaces
+the test desktop clipboard without reading its previous content; run it only
+on a dedicated desktop with guest/host clipboard sharing disabled.
+It requires a qualifying desktop and input permissions; a synthesized
+pass cannot substitute for native evidence. Selected-URL clipboard gestures,
+non-US layouts, AltGr, and IME retain their explicit manual/native boundaries.
 Do not overload these modes with long interaction scripts. Add a
 `ui-workflow-smoke` adapter mode only
 after the guest drivers and result schema below are implemented and reviewed on

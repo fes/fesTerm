@@ -973,28 +973,6 @@ impl MarkdownViewerTab {
     }
 
     fn consume_shortcuts(&mut self, context: &egui::Context, tab_id: TabId) -> Option<AppCommand> {
-        if context.input_mut(|input| {
-            input.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::V,
-            )
-        }) {
-            return Some(AppCommand::ToggleMarkdownPreviewSource);
-        }
-        if context.input_mut(|input| {
-            input.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::O,
-            )
-        }) {
-            return Some(AppCommand::ToggleMarkdownOutline);
-        }
-        if context.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
-            return Some(AppCommand::ReloadMarkdown);
-        }
-        if context.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
-            return Some(AppCommand::OpenMarkdownFind);
-        }
         if self.outline_keyboard_focus {
             if context
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))
@@ -1031,6 +1009,19 @@ impl MarkdownViewerTab {
 
     fn show_toolbar(&mut self, ui: &mut egui::Ui, tab_id: TabId) -> Option<AppCommand> {
         let mut command = None;
+        let bindings = ui
+            .ctx()
+            .data(|data| {
+                data.get_temp::<festerm_config::KeyboardBindings>(egui::Id::new(
+                    "effective-keyboard-bindings",
+                ))
+            })
+            .unwrap_or_default();
+        let hint = |title: &str, action| {
+            crate::keyboard::label(&bindings, action)
+                .map_or_else(|| title.to_owned(), |chord| format!("{title} ({chord})"))
+        };
+        use festerm_config::KeyboardAction as A;
         // Origin and path claim the left edge; every control is right
         // aligned, matching the mockup's `.fmd-toolbar` flex row rather than
         // trailing the path in reading order.
@@ -1064,11 +1055,14 @@ impl MarkdownViewerTab {
                     ui,
                     Some(Icon::Outline),
                     "",
-                    if self.outline_open {
-                        "Hide outline (Ctrl/Cmd+Shift+O)"
-                    } else {
-                        "Show outline (Ctrl/Cmd+Shift+O)"
-                    },
+                    &hint(
+                        if self.outline_open {
+                            "Hide outline"
+                        } else {
+                            "Show outline"
+                        },
+                        A::MarkdownOutline,
+                    ),
                     self.outline_open,
                 ) {
                     command = Some(AppCommand::ToggleMarkdownOutline);
@@ -1077,7 +1071,7 @@ impl MarkdownViewerTab {
                     ui,
                     Some(Icon::Search),
                     "",
-                    "Find (Ctrl/Cmd+F)",
+                    &hint("Find", A::MarkdownFind),
                     self.find.is_open(),
                 ) {
                     command = Some(AppCommand::OpenMarkdownFind);
@@ -1091,7 +1085,7 @@ impl MarkdownViewerTab {
                     ui,
                     Some(Icon::SourceView),
                     "Source",
-                    "Show the Markdown source (Ctrl/Cmd+Shift+V)",
+                    &hint("Show the Markdown source", A::MarkdownPreviewSource),
                     source_mode,
                 ) && !source_mode
                 {
@@ -1101,13 +1095,19 @@ impl MarkdownViewerTab {
                     ui,
                     Some(Icon::RenderedView),
                     "Preview",
-                    "Show the rendered document (Ctrl/Cmd+Shift+V)",
+                    &hint("Show the rendered document", A::MarkdownPreviewSource),
                     !source_mode,
                 ) && source_mode
                 {
                     command = Some(AppCommand::ToggleMarkdownPreviewSource);
                 }
-                if toolbar_button(ui, Some(Icon::Refresh), "", "Reload (Ctrl/Cmd+R)", false) {
+                if toolbar_button(
+                    ui,
+                    Some(Icon::Refresh),
+                    "",
+                    &hint("Reload", A::MarkdownReload),
+                    false,
+                ) {
                     command = Some(AppCommand::ReloadMarkdown);
                 }
                 ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
@@ -3429,6 +3429,52 @@ mod tests {
     /// Renders a document through the real block renderer inside a headless
     /// harness, so layout assertions measure the geometry the viewer actually
     /// draws rather than a reimplementation of it.
+    #[test]
+    fn keyboard_markdown_toolbar_uses_custom_and_unbound_effective_hints() {
+        use festerm_config::KeyboardAction as A;
+        for unbound in [false, true] {
+            let mut bindings = festerm_config::KeyboardBindings::default();
+            for (action, chord) in [
+                (A::MarkdownOutline, "Ctrl+Shift+F1"),
+                (A::MarkdownFind, "Ctrl+Shift+F2"),
+                (A::MarkdownPreviewSource, "Ctrl+Shift+F3"),
+                (A::MarkdownReload, "Ctrl+Shift+F4"),
+            ] {
+                bindings.set(action, Some(if unbound { "" } else { chord }.into()));
+            }
+            let mut viewer =
+                MarkdownViewerTab::open_local(PathBuf::from("controlled-toolbar-only.md"));
+            let tab = crate::tabs::AppState::for_test().active();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(900.0, 100.0))
+                .build_ui(move |ui| {
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(
+                            egui::Id::new("effective-keyboard-bindings"),
+                            bindings.clone(),
+                        )
+                    });
+                    viewer.show_toolbar(ui, tab);
+                });
+            harness.run();
+            for (title, chord) in [
+                ("Hide outline", "Ctrl+Shift+F1"),
+                ("Find", "Ctrl+Shift+F2"),
+                ("Show the Markdown source", "Ctrl+Shift+F3"),
+                ("Show the rendered document", "Ctrl+Shift+F3"),
+                ("Reload", "Ctrl+Shift+F4"),
+            ] {
+                let label = if unbound {
+                    title.into()
+                } else {
+                    format!("{title} ({chord})")
+                };
+                harness.get_by_label(&label);
+            }
+            harness.get_by_label("Viewer menu");
+        }
+    }
+
     fn render_markdown(markdown: &str) -> Harness<'static, ()> {
         let parsed = document(markdown);
         let find = MarkdownFindState::default();

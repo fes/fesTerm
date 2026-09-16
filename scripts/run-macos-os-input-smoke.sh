@@ -32,15 +32,19 @@ fi
 rm -f "$result_path"
 driver_result_path="$result_path.driver"
 rm -f "$driver_result_path"
+isolation="$result_path.isolation"
+mkdir "$isolation"
 
 case "$mode" in
     os-input)
         FESTERM_NATIVE_OS_INPUT_SMOKE=1 \
+        FESTERM_CONFIG_PATH="$isolation/config.toml" \
         FESTERM_NATIVE_SMOKE_RESULT_PATH="$result_path" \
         ./target/debug/festerm &
         ;;
     rapid-live-resize)
         FESTERM_NATIVE_LIVE_RESIZE_SMOKE=1 \
+        FESTERM_CONFIG_PATH="$isolation/config.toml" \
         FESTERM_NATIVE_LIVE_RESIZE_DRIVER_RESULT_PATH="$driver_result_path" \
         FESTERM_NATIVE_SMOKE_RESULT_PATH="$result_path" \
         ./target/debug/festerm &
@@ -54,6 +58,7 @@ app_pid=$!
 cleanup() {
     kill "$app_pid" 2>/dev/null || true
     wait "$app_pid" 2>/dev/null || true
+    rm -rf "$isolation"
 }
 trap cleanup EXIT HUP INT TERM
 

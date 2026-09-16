@@ -22,6 +22,12 @@ status=pass
 
 printf 'status=running\n' >"$result_path"
 cargo build --workspace
+if python3 scripts/check_keyboard_routing.py; then
+    printf 'suite=keyboard-routing-synthesized status=pass\n' >>"$result_path"
+else
+    printf 'suite=keyboard-routing-synthesized status=fail\n' >>"$result_path"
+    status=fail
+fi
 
 if cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture; then
     printf 'suite=sessiond-native status=pass\n' >>"$result_path"

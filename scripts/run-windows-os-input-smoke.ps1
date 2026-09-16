@@ -43,11 +43,23 @@ cargo build --workspace
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Remove-Item $nativeResultPath -ErrorAction Ignore
+$isolation = "$nativeResultPath.isolation"
+if (Test-Path -LiteralPath $isolation) { throw 'OS-input isolation directory already exists.' }
+New-Item -ItemType Directory -Path $isolation | Out-Null
+$previousConfigPath = $env:FESTERM_CONFIG_PATH
+$env:FESTERM_CONFIG_PATH = Join-Path $isolation 'config.toml'
 $env:FESTERM_NATIVE_OS_INPUT_SMOKE = '1'
 $env:FESTERM_NATIVE_SMOKE_RESULT_PATH = $nativeResultPath
-$process = Start-Process -FilePath '.\target\debug\festerm.exe' -WorkingDirectory (Get-Location) -PassThru
-Remove-Item Env:FESTERM_NATIVE_OS_INPUT_SMOKE -ErrorAction Ignore
-Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
+try {
+    $process = Start-Process -FilePath '.\target\debug\festerm.exe' -WorkingDirectory (Get-Location) -PassThru
+} catch {
+    Remove-Item -LiteralPath $isolation -Recurse -Force
+    throw
+} finally {
+    $env:FESTERM_CONFIG_PATH = $previousConfigPath
+    Remove-Item Env:FESTERM_NATIVE_OS_INPUT_SMOKE -ErrorAction Ignore
+    Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
+}
 
 try {
     $deadline = (Get-Date).AddSeconds(10)
@@ -70,6 +82,18 @@ try {
     Start-Sleep -Milliseconds 100
 
     $shell = New-Object -ComObject WScript.Shell
+    if ($env:FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE -eq '1') {
+        $shell.SendKeys('^+c')
+        $shell.SendKeys('^+p')
+        Start-Sleep -Seconds 1
+        $shell.SendKeys('{ESC}')
+        Start-Sleep -Seconds 1
+        $shell.SendKeys('^+p')
+        Start-Sleep -Seconds 1
+        $shell.SendKeys('paste{ENTER}')
+        Start-Sleep -Seconds 1
+        $shell.SendKeys('^b^+b')
+    }
     $shell.SendKeys('{TAB}{UP}os-input-ok{ENTER}')
 
     $deadline = (Get-Date).AddSeconds(20)
@@ -92,4 +116,5 @@ try {
     if (-not $process.HasExited) {
         Stop-Process -Id $process.Id
     }
+    Remove-Item -LiteralPath $isolation -Recurse -Force
 }

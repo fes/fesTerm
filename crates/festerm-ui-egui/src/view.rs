@@ -52,7 +52,9 @@ pub struct TerminalViewOptions {
     pub keyboard_input_enabled: bool,
     /// Clipboard text is returned to the application policy layer instead of
     /// being encoded immediately. This lets the composition root apply paste
-    /// confirmation without exposing session identity to this crate.
+    /// confirmation without exposing session identity to this crate. Local
+    /// context/middle-click read intents are returned separately so the app
+    /// can identify their asynchronous clipboard replies.
     pub defer_paste_to_application: bool,
     /// Scales how many scrollback rows one trackpad/wheel scroll step
     /// moves, on top of the fixed pixel-to-row mapping this view otherwise
@@ -139,6 +141,7 @@ pub struct TerminalView {
     history: HistoryViewport,
     scrollbar_dragging: bool,
     pending_paste_requests: VecDeque<String>,
+    pending_clipboard_read: bool,
     pending_link_requests: VecDeque<Arc<str>>,
     /// Fractional scroll rows left over from the last wheel event after
     /// applying `scroll_speed_multiplier`, carried into the next event so a
@@ -369,6 +372,10 @@ impl TerminalView {
         &self.selection
     }
 
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
     pub const fn history_offset_rows(&self) -> usize {
         self.history.offset_rows
     }
@@ -394,6 +401,10 @@ impl TerminalView {
     /// events are significant to paste safety and must not be collapsed.
     pub fn take_paste_requests(&mut self) -> Vec<String> {
         self.pending_paste_requests.drain(..).collect()
+    }
+
+    pub fn take_clipboard_read_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_clipboard_read)
     }
 
     /// Takes explicit OSC 8 activation intents for application-owned
@@ -662,6 +673,11 @@ impl TerminalView {
                     } if terminal_hovered
                         && (!mouse_reporting || modifiers.shift || over_scrollbar) =>
                     {
+                        sink.observe_local_gesture(
+                            "mouse-wheel",
+                            "local-history-scroll",
+                            u8::from(modifiers.shift),
+                        );
                         let raw_rows = wheel_delta_rows(*unit, delta.y, metrics.height, page_rows);
                         // Accumulate the fractional row this event didn't
                         // quite earn (e.g. a 0.1x "Very slow" clickstop)
@@ -928,6 +944,11 @@ impl TerminalView {
                     }
                     if !mouse_reporting || modifiers.shift {
                         self.secondary_gesture = SecondaryGestureOwnership::Local(*pos);
+                        sink.observe_local_gesture(
+                            "mouse-right-press",
+                            "local-context-gesture",
+                            u8::from(modifiers.shift),
+                        );
                         return false;
                     }
                     self.secondary_gesture = SecondaryGestureOwnership::Terminal;
@@ -936,6 +957,11 @@ impl TerminalView {
                 match std::mem::take(&mut self.secondary_gesture) {
                     SecondaryGestureOwnership::Local(press_position) => {
                         local_context_release = Some(press_position);
+                        sink.observe_local_gesture(
+                            "mouse-right-release",
+                            "local-context-menu",
+                            u8::from(modifiers.shift),
+                        );
                         false
                     }
                     SecondaryGestureOwnership::Terminal | SecondaryGestureOwnership::None => true,
@@ -971,6 +997,11 @@ impl TerminalView {
                     }
                     self.middle_click_paste_gesture = true;
                     request_local_paste = true;
+                    sink.observe_local_gesture(
+                        "mouse-middle-press",
+                        "local-paste-request",
+                        u8::from(modifiers.shift),
+                    );
                     return false;
                 }
                 !std::mem::take(&mut self.middle_click_paste_gesture)
@@ -978,8 +1009,12 @@ impl TerminalView {
         });
         if request_local_paste && options.paste_available {
             response.request_focus();
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+            if options.defer_paste_to_application {
+                self.pending_clipboard_read = true;
+            } else {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+            }
         }
 
         if let Some(position) = local_context_release {
@@ -1011,8 +1046,12 @@ impl TerminalView {
                 }
                 if options.paste_available && ui.button("Paste").clicked() {
                     response.request_focus();
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    if options.defer_paste_to_application {
+                        self.pending_clipboard_read = true;
+                    } else {
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    }
                     ui.close();
                 }
                 // Find in terminal belongs immediately above this separator

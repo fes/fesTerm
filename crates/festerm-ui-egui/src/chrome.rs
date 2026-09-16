@@ -880,11 +880,14 @@ fn paint_close_icon(ui: &mut Ui) {
 /// rather than going through `AppCommand`). Returns whether it was clicked
 /// this frame.
 fn paint_search_icon(ui: &mut Ui) -> bool {
-    let shortcut = if cfg!(target_os = "macos") {
+    let default_shortcut = if cfg!(target_os = "macos") {
         "\u{2318}+Shift+P"
     } else {
         "Ctrl+Shift+P"
     };
+    let shortcut = ui
+        .data(|data| data.get_temp::<String>(egui::Id::new("command-palette-shortcut-label")))
+        .unwrap_or_else(|| default_shortcut.to_owned());
     let accessible_label = format!("Command palette ({shortcut})");
     let size = 22.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());

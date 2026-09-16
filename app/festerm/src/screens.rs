@@ -4134,6 +4134,7 @@ pub fn show_ssh_live_password_prompt(
 /// configuration I/O and applies successful replacements to `AppState`.
 #[derive(Clone)]
 pub struct SettingsViewModel {
+    pub keyboard_bindings: festerm_config::KeyboardBindings,
     pub chip_layout: ChipLayout,
     pub status_bar_visible: bool,
     pub show_session_details: bool,
@@ -4172,6 +4173,7 @@ pub fn show_settings(
     settings_shortcut: &str,
 ) -> Option<AppCommand> {
     let SettingsViewModel {
+        keyboard_bindings,
         chip_layout,
         status_bar_visible,
         show_session_details,
@@ -4262,6 +4264,13 @@ pub fn show_settings(
                         ui.add_space(24.0);
                         ui.heading("Settings");
                         ui.add_space(2.0);
+
+                        settings_card(ui, "Keyboard bindings", |ui| {
+                            if let Some(action) = crate::keyboard::show_editor(ui, &keyboard_bindings) {
+                                command = Some(action);
+                            }
+                        });
+                        ui.add_space(12.0);
 
                         settings_card(ui, "Interface", |ui| {
                             if settings_segmented_row(
@@ -6571,6 +6580,49 @@ mod tests {
         settings_harness_with_width(520.0)
     }
 
+    #[test]
+    #[ignore = "production Settings keyboard editor visual review capture"]
+    fn capture_keyboard_settings_normal_and_narrow() {
+        let output = std::env::current_dir().unwrap().join(".keyboard-captures");
+        let mut snapshots = egui_kittest::SnapshotResults::new();
+        for width in [752.0, 360.0] {
+            let mut harness = settings_harness_with_width(width);
+            harness.run();
+            assert!(harness.query_by_label("Search keyboard actions").is_some());
+            assert!(harness
+                .query_by_label("Reset all keyboard bindings")
+                .is_some());
+            let title = format!(
+                "New Session — {}",
+                crate::keyboard::label(
+                    &Default::default(),
+                    festerm_config::KeyboardAction::NewSession
+                )
+                .unwrap()
+            );
+            harness.get_by_label(&title).click();
+            harness.run();
+            for label in [
+                "Assign binding",
+                "Unbind action",
+                "Reset action",
+                "Reset all keyboard bindings",
+            ] {
+                let rect = harness.get_by_label(label).rect();
+                assert!(
+                    rect.left() >= 0.0 && rect.right() <= width,
+                    "{label} must fit the narrow editor"
+                );
+            }
+            harness.snapshot_options(
+                format!("keyboard-settings-{width}-{}", std::env::consts::OS),
+                &egui_kittest::SnapshotOptions::default().output_path(&output),
+            );
+            snapshots.extend(harness.take_snapshot_results());
+        }
+        snapshots.unwrap();
+    }
+
     /// A wider settings harness, matching a typical desktop window rather
     /// than the other settings tests' narrow fixed harness width. Needed to
     /// reproduce the "Scroll speed" slider mispositioning regression (see
@@ -6583,12 +6635,13 @@ mod tests {
 
     fn settings_harness_with_width(width: f32) -> Harness<'static, SettingsHarnessState> {
         Harness::builder()
-            .with_size(egui::vec2(width, 2000.0))
+            .with_size(egui::vec2(width, 2800.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
                         ui,
                         SettingsViewModel {
+                            keyboard_bindings: Default::default(),
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,
                             show_session_details: true,
@@ -7078,7 +7131,7 @@ mod tests {
         // buttons' real width the descriptions beside them wrap one line
         // further at that width, making the whole surface taller.
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(520.0, 1700.0))
+            .with_size(egui::vec2(520.0, 2600.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     egui::Panel::bottom("status_bar")
@@ -7091,6 +7144,7 @@ mod tests {
                     if let Some(command) = show_settings(
                         ui,
                         SettingsViewModel {
+                            keyboard_bindings: Default::default(),
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,
                             show_session_details: true,

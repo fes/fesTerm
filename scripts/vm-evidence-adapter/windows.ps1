@@ -19,7 +19,8 @@ function Test-FesTermJob {
     $Job.adapter_id -eq 'festerm' -and
         $Job.adapter_schema_version -eq 1 -and
         $Job.platform -eq 'windows' -and
-        @('native-smoke', 'os-input-smoke', 'optional-validation', 'running-session-stress') -contains $Job.mode -and
+        @('native-smoke', 'os-input-smoke', 'optional-validation', 'running-session-stress',
+            'keyboard-routing-check', 'keyboard-routing-native') -contains $Job.mode -and
         @($Job.payload.PSObject.Properties).Count -eq 0
 }
 
@@ -73,19 +74,24 @@ $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\V
 Push-Location $sourcePath
 try {
     switch ($job.mode) {
-        'running-session-stress' {
-            $resultPath = Join-Path $ArtifactDirectory 'running-session-stress.txt'
+        { $_ -in @('running-session-stress', 'keyboard-routing-check') } {
+            $resultPath = Join-Path $ArtifactDirectory "$($job.mode).txt"
             Set-Content -LiteralPath $resultPath -Value 'status=running'
             if (-not (Test-Path -LiteralPath $vcvarsallPath) -or
                 -not (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
-                throw 'Windows Build Tools and Clang are required for session stress builds.'
+                throw 'Windows Build Tools and Clang are required for backend evidence builds.'
             }
             $architecture = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
-            $stressCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && python scripts/check_running_sessions.py --batch 8 --cycles 3"
-            Invoke-NativeCommand { cmd.exe /d /c $stressCommand }
+            $runnerCommand = if ($job.mode -eq 'running-session-stress') {
+                'python scripts/check_running_sessions.py --batch 8 --cycles 3'
+            } else {
+                'python scripts/check_keyboard_routing.py'
+            }
+            $evidenceCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && $runnerCommand"
+            Invoke-NativeCommand { cmd.exe /d /c $evidenceCommand }
             if ($LASTEXITCODE -ne 0) {
                 Set-Content -LiteralPath $resultPath -Value 'status=fail'
-                throw 'Running-session stress failed.'
+                throw 'Backend evidence failed.'
             }
             Set-Content -LiteralPath $resultPath -Value 'status=pass'
             Require-PassStatus $resultPath
@@ -109,8 +115,11 @@ try {
             }
             Require-PassStatus $nativePath
         }
-        'os-input-smoke' {
-            $resultPath = Join-Path $ArtifactDirectory 'os-input-smoke.txt'
+        { $_ -in @('os-input-smoke', 'keyboard-routing-native') } {
+            $resultPath = Join-Path $ArtifactDirectory "$($job.mode).txt"
+            if ($job.mode -eq 'keyboard-routing-native') {
+                $env:FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE = '1'
+            }
             Invoke-NativeCommand { & (Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1') $resultPath }
             if ($LASTEXITCODE -ne 0) {
                 throw 'OS-input validation failed.'
@@ -132,6 +141,7 @@ try {
     Pop-Location
     Remove-Item Env:FESTERM_NATIVE_WINDOW_SMOKE -ErrorAction Ignore
     Remove-Item Env:FESTERM_NATIVE_SMOKE_RESULT_PATH -ErrorAction Ignore
+    Remove-Item Env:FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE -ErrorAction Ignore
     Remove-Item Env:FESTERM_RUN_OPTIONAL_VALIDATION -ErrorAction Ignore
     Remove-Item Env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH -ErrorAction Ignore
 }

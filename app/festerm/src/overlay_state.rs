@@ -50,11 +50,14 @@ pub(crate) struct PendingCloseConfirmation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingPasteConfirmation {
+    pub(crate) clipboard_token: Option<u64>,
+    pub(crate) opened_frame: u64,
     pub(crate) tab: TabId,
     pub(crate) identity: String,
     pub(crate) text: String,
     pub(crate) transport_state: &'static str,
     pub(crate) lifecycle_generation: u64,
+    pub(crate) input_ownership_epoch: u64,
     pub(crate) bracketed_paste: bool,
     pub(crate) cancel_focus_requested: bool,
 }
@@ -221,8 +224,11 @@ impl OverlayState {
     /// background without a modal backdrop, and the transient notice is a
     /// passive banner, so neither blocks terminal input.
     pub(crate) fn blocks_terminal_input(&self) -> bool {
+        self.pending_paste.is_some() || self.blocks_terminal_input_except_paste()
+    }
+
+    pub(crate) fn blocks_terminal_input_except_paste(&self) -> bool {
         self.pending_close.is_some()
-            || self.pending_paste.is_some()
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
             || self.port_forward_manager.is_some()

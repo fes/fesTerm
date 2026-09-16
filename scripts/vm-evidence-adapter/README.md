@@ -12,6 +12,8 @@ one of these modes:
 - `os-input-smoke`
 - `optional-validation`
 - `running-session-stress`
+- `keyboard-routing-check`
+- `keyboard-routing-native`
 
 Each mode invokes the existing repository-owned runner and writes its
 content-free status file beneath the artifact directory supplied by the shared
@@ -26,6 +28,20 @@ guest log; a backend pass is not native-window or OS-input qualification. The
 private host configuration must explicitly allow this mode and pin a reviewed
 adapter commit that supports it. Use a short guest checkout path for Unix
 domain socket limits.
+
+`keyboard-routing-check` invokes `scripts/check_keyboard_routing.py` without
+arguments. It runs synthesized production routing/configuration/controller
+checks on the guest platform; it does not open a window or establish native
+input delivery. `keyboard-routing-native` enables the repository-owned
+keyboard scenario in the existing OS-input driver and keeps its content-free
+result in the job artifact directory. These are separate modes so a working
+backend cannot mask missing desktop, graphics, or Accessibility prerequisites.
+The native scenario checks no-selection Copy, palette capture, an identified
+palette Paste request, and controlled terminal bytes. It overwrites the test
+desktop clipboard with a fixed fixture without reading or restoring previous
+contents: use a dedicated desktop with guest/host clipboard sharing disabled.
+It is not selected-URL clipboard, AltGr, or IME qualification.
+Both modes require an empty payload and a reviewed adapter pin.
 
 `vm-evidence-lab` owns the host controller, Parallels provider, guest relay,
 exact-source bundles, locks, result records, and manifests.

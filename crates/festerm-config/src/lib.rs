@@ -28,6 +28,9 @@ use festerm_ssh::{
 };
 use serde::{Deserialize, Serialize};
 
+mod keyboard;
+pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
+
 /// The only document schema accepted by this initial configuration slice.
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -569,6 +572,8 @@ const fn is_true(value: &bool) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceSettings {
+    #[serde(default, skip_serializing_if = "KeyboardBindings::is_empty")]
+    keyboard_bindings: KeyboardBindings,
     #[serde(default)]
     chip_layout: ChipLayoutPreference,
     #[serde(default = "default_status_bar_visible")]
@@ -656,6 +661,7 @@ impl InterfaceSettings {
     /// The same defaults fesTerm has always started with; also the target of
     /// an explicit Settings reset.
     pub const DEFAULT: Self = Self {
+        keyboard_bindings: KeyboardBindings(Vec::new()),
         chip_layout: ChipLayoutPreference::SingleRowScroll,
         status_bar_visible: true,
         show_session_details: true,
@@ -684,6 +690,7 @@ impl InterfaceSettings {
     ) -> Self {
         Self {
             chip_layout,
+            keyboard_bindings: KeyboardBindings(Vec::new()),
             status_bar_visible,
             show_session_details,
             confirm_session_close,
@@ -858,10 +865,22 @@ impl InterfaceSettings {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        self.keyboard_bindings
+            .validate(cfg!(target_os = "macos"))
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidInterfaceSettings))?;
         if let Some(directory) = &self.default_sftp_local_directory {
             validate_stored_path_setting(directory)?;
         }
         Ok(())
+    }
+
+    pub fn keyboard_bindings(&self) -> &KeyboardBindings {
+        &self.keyboard_bindings
+    }
+
+    pub fn with_keyboard_bindings(mut self, bindings: KeyboardBindings) -> Self {
+        self.keyboard_bindings = bindings;
+        self
     }
 }
 

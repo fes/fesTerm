@@ -1624,3 +1624,60 @@ The visual pass also favored assigning a little more of a narrow table to
 Name instead of Last Used. Headers and rows use the same responsive origins,
 so long profile names remain distinguishable without changing desktop
 column proportions or introducing horizontal scrolling.
+
+### Keyboard ownership and persistent bindings
+
+Shortcut dispatch, ordering deferral and paste cancellation use one runtime
+applicability policy. Inactive Markdown/Document chords remain terminal input
+behind the clipboard barrier rather than cancelling confirmation; unavailable
+actions and suppressed repeats cannot authorize cancellation either. Applicable
+global/recovery actions retain cancellation, and the opening-frame exception
+does not bypass another modal. Rendered regressions cover Ctrl+F plus Enter,
+platform-specific Ctrl+O, unbinding, absent targets and deliberate confirmation.
+
+The final ordering follow-up reserves asynchronous paste's position in the
+existing bounded session byte queue. Ready completion precedes later keyboard
+dispatch; unresolved following input cannot overtake paste or escape after
+cancellation, failure or generation change. Confirmation retains waiting
+keyboard input until deliberate approval and reports discarded input without
+contents. Protocol replies and mouse/focus reporting keep their existing
+behavior. The native oracle observes accepted session bytes; delayed-read and
+failure scenarios have deterministic, separately classified coverage.
+
+The subsequent delayed-paste review fix replaces unowned terminal clipboard
+callbacks with bounded identified reads tied to tab, transport generation and
+ownership epoch. Paired native payloads bypass rereading; late/cancelled
+responses cannot fulfil a newer request. Deterministic fake readers cover all
+terminal paste surfaces and cancellation/confirmation, and the opt-in native
+keyboard sample now checks palette Paste using only a controlled clipboard.
+That revised native path requires new platform evidence.
+
+The #154 review follow-up covers focused chip rename and Inspector paste,
+ordered same-batch switching with per-session recorder attribution, deferred
+queue settlement across stop/clear/eviction/reconnect, effective Markdown
+toolbar hints, and silent IME cancellation on owner change. Deterministic
+regressions accompany all six fixes; revised native evidence is tracked
+separately from the earlier candidate's platform runs.
+
+Issue #154 connected a searchable Settings action editor to strict versioned
+configuration and the existing application command paths. Defaults, overrides,
+scope validation and native/palette/chrome hints now share effective bindings;
+unbinding yields to the existing terminal encoder rather than inventing macros
+or new protocols. Ctrl+Shift+F12 remains a fixed recovery route.
+
+The audit found that egui-winit discarded clipboard-key provenance and that
+the terminal's empty-selection Copy fallback generated an interrupt, even for
+macOS Command+C. A small pinned adapter patch preserves the original key, and
+Copy no longer substitutes terminal input. The controlled fake-auth-URL
+regression exercises rendered drag selection, raw/semantic Copy ordering,
+subsequent token entry and real Control+C semantics without using user secrets.
+IME commit, exact modifiers and captured-repeat handling have deterministic
+coverage. The actual Firebase OS event sequence is not claimed from this model.
+
+Session Diagnostics also gained a default-off 256-observation RAM-only input
+recorder. It separates local selection, terminal-owned/unreported mouse events,
+encoded input and queue outcomes without storing payloads or equating focus
+bookkeeping with double handling. Native event identity and remote application
+consumption remain unknown. Native driver samples, selected-URL/platform-layout
+checks and usability evidence remain distinct from headless regression passes;
+the macOS baseline's Accessibility consent blocker is explicitly recorded.

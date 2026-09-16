@@ -1433,10 +1433,20 @@ reload/save language; ADR 0015 owns the startup contract that this automatic
 behavior relies on. No file watching, configuration editor, or
 credential-storage control is implied.
 
-There is still no sidebar, settings search, theme selector, empty category,
-or general Reset-all control. Keyboard shortcuts remain mostly fixed; the
-single quick-switch overlay preference earns a small dedicated card without
-pretending the whole keyboard model is fully user-configurable.
+There is still no category sidebar or general settings search. The leading
+**Keyboard bindings** card provides searchable application actions, effective
+and default bindings, scope, assignment/unbinding and individual/all-binding
+reset. Ctrl+Shift+F12 is the fixed keyboard recovery route. Widget navigation
+and terminal protocols are not arbitrary remapping targets. The ordinary
+Keyboard card retains quick-switch-number presentation and effective hints.
+See [the canonical keyboard inventory](keyboard-shortcuts.md).
+
+Chip rename and other focused editing surfaces retain native clipboard intent;
+terminal shortcuts and paste delivery cannot also act behind them. Input
+ownership is reevaluated after ordered tab-switch actions, and IME suppression
+ends when its originating widget/surface loses ownership. Diagnostics settle
+retained queued-input observations on eventual delivery, rejection or reconnect
+discard, including after recording stops, without recreating cleared records.
 
 Category icons support scanning but never replace labels. Reset appears only
 for a non-default value and at appropriate setting/category scope. Terminal
@@ -2134,16 +2144,11 @@ alternate-screen mode, mouse reporting, or extended keyboard protocols cannot
 disable them.
 
 - Windows/Linux reserve `Ctrl+Shift+C` and `Ctrl+Shift+V`; macOS reserves
-  `Cmd+C` and `Cmd+V`. The pinned windowing backend (`egui-winit`) cannot
-  distinguish plain `Ctrl+C` from `Ctrl+Shift+C` before either reaches the
-  app - both convert to the same Copy command upstream, with no Shift bit
-  surviving the conversion. fesTerm resolves this the way other terminal
-  emulators resolve the same ambiguity: a Copy command with an active
-  selection copies it (and clears the selection, matching other terminal
-  programs); a Copy command with no selection is instead forwarded to a live
-  terminal as the interrupt character, so plain `Ctrl+C` still works as
-  expected in the common case where nothing is selected.
-- Shift+drag always forces local selection. Shift+right-click always opens the
+  `Cmd+C` and `Cmd+V` by default, with configurable application bindings.
+  The pinned adapter preserves per-event clipboard-key provenance. Copy only
+  copies/clears a selection; without a selection it does nothing. It never
+  synthesizes a terminal interrupt. Actual Ctrl+C remains terminal input.
+- Shift+drag does not override core mouse ownership. Shift+right-click opens the
   local context menu. Without terminal mouse reporting, ordinary drag selects
   and ordinary right-click opens the menu; with reporting, unmodified mouse
   events go to the terminal application. Middle-click follows the same
@@ -2212,6 +2217,26 @@ and lifecycle generation. A clipboard change, session switch, reconnect,
 disconnect, close, or any transition that stops input invalidates and cancels
 the operation rather than sending different content or targeting another
 session. It never follows activation to a different chip.
+
+This ownership rule starts before asynchronous clipboard delivery, not only
+when a confirmation opens. Explicit terminal reads carry a unique request ID,
+originating tab, transport generation and ownership epoch. A newer request
+supersedes the old one; late or duplicate replies cannot fulfil another
+request. Returning to the original tab after switching away does not revive
+it. Native keyboard payloads already available with their key go straight to
+this policy without a second clipboard read. Unowned widget Paste callbacks
+never authorize terminal input; native menu, palette and local terminal
+gestures converge through the same identified-read path.
+
+Following keyboard input waits in the existing bounded session queue until
+that read resolves. Successful paste precedes waiting keys; cancellation,
+failure or overflow discards them with a content-free notification rather
+than executing Enter without its paste. A newly opened asynchronous-paste
+confirmation captures its opening frame's keyboard input and has inert
+controls for that rendering; Cancel is focused on the next frame. Its hint
+explains that deliberate Paste releases waiting keyboard input afterward,
+whereas Cancel discards it. Mouse/focus reports and terminal replies retain
+their existing independent behavior.
 
 Normalize line endings for the session input representation without trimming
 whitespace, rewriting shell syntax, or claiming content is safe. A confirmed

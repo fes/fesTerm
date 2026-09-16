@@ -107,6 +107,20 @@ func runOsInputSmoke() {
         }
     }
 
+    if ProcessInfo.processInfo.environment["FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE"] == "1" {
+        postKey(8, flags: .maskCommand) // Copy, no terminal interrupt
+        postKey(35, flags: [.maskCommand, .maskShift]) // Command palette
+        Thread.sleep(forTimeInterval: 1)
+        postKey(53) // Escape closes palette, not terminal input
+        Thread.sleep(forTimeInterval: 1)
+        postKey(35, flags: [.maskCommand, .maskShift])
+        Thread.sleep(forTimeInterval: 1)
+        for key: CGKeyCode in [35, 0, 1, 17, 14] { postKey(key) } // paste
+        postKey(36) // Palette Paste requests the identified clipboard read
+        Thread.sleep(forTimeInterval: 1)
+        postKey(11, flags: .maskControl)
+        postKey(11, flags: [.maskControl, .maskShift])
+    }
     postKey(48) // Tab
     postKey(126) // Up Arrow
     for scalar in "os-input-ok".unicodeScalars {
@@ -176,9 +190,12 @@ func runRapidLiveResizeSmoke() {
     writeDriverResult("pass")
 }
 
-func postKey(_ keyCode: CGKeyCode) {
-    CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)?.post(tap: .cghidEventTap)
-    CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)?.post(tap: .cghidEventTap)
+func postKey(_ keyCode: CGKeyCode, flags: CGEventFlags = []) {
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down)
+        event?.flags = flags
+        event?.post(tap: .cghidEventTap)
+    }
 }
 
 switch mode {

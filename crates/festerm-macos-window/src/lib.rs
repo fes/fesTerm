@@ -5,6 +5,7 @@
 /// and the command palette.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeMenuCommand {
+    Paste,
     NewSession,
     StartLocalShell,
     OpenSettings,
@@ -16,9 +17,20 @@ pub enum NativeMenuCommand {
     ToggleFocusMode,
 }
 
+/// Accelerator metadata only; application policy remains in the composition root.
+pub struct NativeShortcut {
+    pub command: NativeMenuCommand,
+    pub key: String,
+    pub control: bool,
+    pub command_modifier: bool,
+    pub option: bool,
+    pub shift: bool,
+}
+
 #[cfg(any(target_os = "macos", test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeMenuAction {
+    Paste,
     NewSession,
     StartLocalShell,
     OpenSettings,
@@ -34,6 +46,7 @@ enum NativeMenuAction {
 impl NativeMenuAction {
     const fn command(self) -> NativeMenuCommand {
         match self {
+            Self::Paste => NativeMenuCommand::Paste,
             Self::NewSession => NativeMenuCommand::NewSession,
             Self::StartLocalShell => NativeMenuCommand::StartLocalShell,
             Self::OpenSettings => NativeMenuCommand::OpenSettings,
@@ -205,6 +218,10 @@ mod menu {
         unsafe impl NSObjectProtocol for MenuTarget {}
 
         impl MenuTarget {
+            #[unsafe(method(pasteFromClipboard:))]
+            fn paste_from_clipboard(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuAction::Paste);
+            }
             #[unsafe(method(newSession:))]
             fn new_session(&self, _sender: Option<&AnyObject>) {
                 self.emit(NativeMenuAction::NewSession);
@@ -264,12 +281,22 @@ mod menu {
         }
 
         fn emit(&self, action: NativeMenuAction) {
+            let mtm = MainThreadMarker::new().expect("native menu callback is main-thread-only");
+            if NSApplication::sharedApplication(mtm)
+                .currentEvent()
+                .is_some_and(|event| {
+                    event.r#type() == objc2_app_kit::NSEventType::KeyDown && event.isARepeat()
+                })
+            {
+                return;
+            }
             let _ = self.ivars().sender.send(action.command());
             (self.ivars().wake)();
         }
     }
 
     pub struct NativeMenu {
+        main: Option<Retained<NSMenu>>,
         receiver: Option<mpsc::Receiver<NativeMenuCommand>>,
         // NSMenuItem targets are weak; retain the target for the menu lifetime.
         _target: Option<Retained<MenuTarget>>,
@@ -280,6 +307,7 @@ mod menu {
     impl NativeMenu {
         pub fn unavailable() -> Self {
             Self {
+                main: None,
                 receiver: None,
                 _target: None,
                 close_item: None,
@@ -301,6 +329,64 @@ mod menu {
             if let Some(inspector_item) = &self.inspector_item {
                 inspector_item.setEnabled(state.inspector_enabled);
                 inspector_item.setTitle(&NSString::from_str(state.inspector_label));
+            }
+        }
+
+        pub fn update_shortcuts(&self, shortcuts: &[super::NativeShortcut]) {
+            let Some(main) = &self.main else { return };
+            for root in main.itemArray() {
+                let Some(menu) = root.submenu() else { continue };
+                for item in menu.itemArray() {
+                    let Some(selector) = item.action() else {
+                        continue;
+                    };
+                    let command = if selector == sel!(newSession:) {
+                        Some(NativeMenuCommand::NewSession)
+                    } else if selector == sel!(startLocalShell:) {
+                        Some(NativeMenuCommand::StartLocalShell)
+                    } else if selector == sel!(openSettings:) {
+                        Some(NativeMenuCommand::OpenSettings)
+                    } else if selector == sel!(closeActiveSurface:) {
+                        Some(NativeMenuCommand::CloseActiveSurface)
+                    } else if selector == sel!(toggleCommandPalette:) {
+                        Some(NativeMenuCommand::ToggleCommandPalette)
+                    } else if selector == sel!(clearTerminal:) {
+                        Some(NativeMenuCommand::ClearTerminal)
+                    } else if selector == sel!(resetTerminal:) {
+                        Some(NativeMenuCommand::ResetTerminal)
+                    } else if selector == sel!(toggleFocusMode:) {
+                        Some(NativeMenuCommand::ToggleFocusMode)
+                    } else {
+                        None
+                    };
+                    if let Some(command) = command {
+                        let binding = shortcuts.iter().find(|binding| binding.command == command);
+                        item.setKeyEquivalent(&NSString::from_str(
+                            binding.map_or("", |binding| binding.key.as_str()),
+                        ));
+                        let mut flags = NSEventModifierFlags::empty();
+                        if let Some(binding) = binding {
+                            if binding.control {
+                                flags |= NSEventModifierFlags::Control;
+                            }
+                            if binding.command_modifier {
+                                flags |= NSEventModifierFlags::Command;
+                            }
+                            if binding.option {
+                                flags |= NSEventModifierFlags::Option;
+                            }
+                            if binding.shift {
+                                flags |= NSEventModifierFlags::Shift;
+                            }
+                        }
+                        item.setKeyEquivalentModifierMask(flags);
+                    }
+                    // Keyboard clipboard is routed by the application with
+                    // native-event provenance. Menu clicks retain responder intent.
+                    if selector == sel!(copy:) || selector == sel!(paste:) {
+                        item.setKeyEquivalent(&NSString::from_str(""));
+                    }
+                }
             }
         }
     }
@@ -381,7 +467,14 @@ mod menu {
         let edit = menu(mtm, "Edit");
         main.addItem(&submenu_root(mtm, "Edit", &edit));
         edit.addItem(&responder_item(mtm, "Copy", "c", sel!(copy:)));
-        edit.addItem(&responder_item(mtm, "Paste", "v", sel!(paste:)));
+        edit.addItem(&custom_item(
+            mtm,
+            "Paste",
+            "",
+            NSEventModifierFlags::empty(),
+            sel!(pasteFromClipboard:),
+            &target,
+        ));
         edit.addItem(&NSMenuItem::separatorItem(mtm));
         edit.addItem(&custom_item(
             mtm,
@@ -445,6 +538,7 @@ mod menu {
 
         app.setMainMenu(Some(&main));
         NativeMenu {
+            main: Some(main),
             receiver: Some(receiver),
             _target: Some(target),
             close_item: Some(close_item),
@@ -518,6 +612,7 @@ impl NativeMenu {
     }
 
     pub fn update(&self, _: &str, _: bool, _: bool) {}
+    pub fn update_shortcuts(&self, _: &[NativeShortcut]) {}
 }
 
 #[cfg(target_os = "macos")]
@@ -671,6 +766,7 @@ mod tests {
     #[test]
     fn native_menu_actions_map_to_shared_commands() {
         let cases = [
+            (NativeMenuAction::Paste, NativeMenuCommand::Paste),
             (NativeMenuAction::NewSession, NativeMenuCommand::NewSession),
             (
                 NativeMenuAction::StartLocalShell,

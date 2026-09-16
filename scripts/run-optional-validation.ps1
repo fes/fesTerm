@@ -120,6 +120,24 @@ if ($env:OS -eq 'Windows_NT' -and
     (Test-Path -LiteralPath $vcvarsallPath) -and
     (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
     Invoke-VisualStudioCommand `
+        -Command 'python scripts/check_keyboard_routing.py' `
+        -VcVarsAllPath $vcvarsallPath `
+        -Architecture $architecture `
+        -LlvmBinPath $llvmBinPath
+} else {
+    Invoke-NativeCommand { python scripts/check_keyboard_routing.py }
+}
+if ($LASTEXITCODE -eq 0) {
+    Add-Content -Path $ResultPath -Value "`nsuite=keyboard-routing-synthesized status=pass"
+} else {
+    Add-Content -Path $ResultPath -Value "`nsuite=keyboard-routing-synthesized status=fail"
+    $status = 'fail'
+}
+
+if ($env:OS -eq 'Windows_NT' -and
+    (Test-Path -LiteralPath $vcvarsallPath) -and
+    (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+    Invoke-VisualStudioCommand `
         -Command 'python scripts/check_running_sessions.py' `
         -VcVarsAllPath $vcvarsallPath `
         -Architecture $architecture `
