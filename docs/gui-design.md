@@ -1433,12 +1433,22 @@ reload/save language; ADR 0015 owns the startup contract that this automatic
 behavior relies on. No file watching, configuration editor, or
 credential-storage control is implied.
 
-There is still no category sidebar or general settings search. The leading
-**Keyboard bindings** card provides searchable application actions, effective
-and default bindings, scope, assignment/unbinding and individual/all-binding
-reset. Ctrl+Shift+F12 is the fixed keyboard recovery route. Widget navigation
-and terminal protocols are not arbitrary remapping targets. The ordinary
-Keyboard card retains quick-switch-number presentation and effective hints.
+There is still no category sidebar or general settings search. The
+**Keyboard bindings** card provides searchable application actions grouped
+under the scope each one applies in, per-action descriptions, effective and
+default bindings drawn as keycaps, a filter that narrows the catalogue to a
+single scope or to only the customized or unbound actions, assignment and
+unbinding, and individual/all-binding reset. Scope is presentation only: an
+action's context follows from the action itself and is reported with its
+meaning rather than offered as an editable field. Ctrl+Shift+F12 is the fixed
+keyboard recovery route. Widget navigation and terminal protocols are not
+arbitrary remapping targets. Each action's effective chord appears exactly
+once, in this card; the **Quick switch** card keeps only quick-switch-number
+presentation instead of restating chords the editor already owns, so a
+customized binding can never be shown twice with two different values.
+Modifier keycaps use the Command glyph on macOS and spell the remaining
+modifiers out, matching how the palette and chip hints already render chords
+and staying inside the bundled interface face's glyph coverage.
 See [the canonical keyboard inventory](keyboard-shortcuts.md).
 
 Chip rename and other focused editing surfaces retain native clipboard intent;

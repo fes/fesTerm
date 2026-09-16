@@ -49,6 +49,30 @@ pub enum KeyboardScope {
     Document,
 }
 
+impl KeyboardScope {
+    pub const ALL: [Self; 4] = [Self::Global, Self::Terminal, Self::Markdown, Self::Document];
+
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Global => "Global",
+            Self::Terminal => "Terminal",
+            Self::Markdown => "Markdown",
+            Self::Document => "Document",
+        }
+    }
+
+    /// Scope follows from what the action does, so it is presented rather
+    /// than offered as a choice.
+    pub const fn help(self) -> &'static str {
+        match self {
+            Self::Global => "Applies anywhere in fesTerm.",
+            Self::Terminal => "Applies only while a terminal surface has input.",
+            Self::Markdown => "Applies only in the Markdown viewer.",
+            Self::Document => "Applies only while a document can be opened.",
+        }
+    }
+}
+
 impl KeyboardAction {
     pub const ALL: [Self; 35] = [
         Self::CommandPalette,
@@ -125,6 +149,48 @@ impl KeyboardAction {
             Self::Quick7 => "Switch to tab 7",
             Self::Quick8 => "Switch to tab 8",
             Self::Quick9 => "Switch to tab 9",
+        }
+    }
+
+    /// One-line intent, shown beside the binding so a user can tell
+    /// similarly named actions apart without triggering them.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::CommandPalette => "Open the command palette to find and run commands.",
+            Self::NewSession => "Open the New Session launcher.",
+            Self::StartLocalShell => "Start a local shell session immediately.",
+            Self::CloseActiveSurface => "Close the active tab or surface.",
+            Self::NextSession => "Switch to the next session tab.",
+            Self::PreviousSession => "Switch to the previous session tab.",
+            Self::Settings => "Open Settings using the macOS comma convention.",
+            Self::SettingsHotkey => "Open Settings on any platform.",
+            Self::ZoomIn => "Increase the terminal font size.",
+            Self::ZoomInAlternate => "Increase the terminal font size using the equals key.",
+            Self::ZoomOut => "Decrease the terminal font size.",
+            Self::ZoomReset => "Restore the default terminal font size.",
+            Self::ClearTerminal => "Clear the visible terminal grid.",
+            Self::ResetTerminal => "Reset the terminal parser and attributes.",
+            Self::ToggleFocusMode => "Hide surrounding chrome to focus on the terminal.",
+            Self::PortForwardManager => "Open the SSH port forward manager.",
+            Self::MarkdownFind => "Find text in the Markdown viewer.",
+            Self::MarkdownReload => "Reload the Markdown document from disk.",
+            Self::MarkdownPreviewSource => "Switch between rendered preview and source.",
+            Self::MarkdownOutline => "Toggle the Markdown outline panel.",
+            Self::OpenMarkdownFile => "Open a Markdown file in a new tab.",
+            Self::Find => "Find text in the terminal.",
+            Self::Copy => "Copy the terminal selection to the clipboard.",
+            Self::Paste => "Paste clipboard contents into the terminal.",
+            Self::CopyAlternate => "Copy using the Windows Ctrl+Insert convention.",
+            Self::PasteAlternate => "Paste using the Windows Shift+Insert convention.",
+            Self::Quick1 => "Switch directly to tab 1.",
+            Self::Quick2 => "Switch directly to tab 2.",
+            Self::Quick3 => "Switch directly to tab 3.",
+            Self::Quick4 => "Switch directly to tab 4.",
+            Self::Quick5 => "Switch directly to tab 5.",
+            Self::Quick6 => "Switch directly to tab 6.",
+            Self::Quick7 => "Switch directly to tab 7.",
+            Self::Quick8 => "Switch directly to tab 8.",
+            Self::Quick9 => "Switch directly to tab 9.",
         }
     }
 
@@ -478,5 +544,45 @@ mod tests {
         });
         bindings.0.push(bindings.0[0].clone());
         assert!(bindings.validate(false).is_err());
+    }
+
+    #[test]
+    fn every_action_documents_what_it_does() {
+        let mut descriptions = std::collections::BTreeSet::new();
+        for action in KeyboardAction::ALL {
+            let description = action.description();
+            assert!(
+                !description.is_empty(),
+                "{} must describe its behaviour",
+                action.title()
+            );
+            assert!(
+                description.ends_with('.'),
+                "{} description must be a sentence, got {description:?}",
+                action.title()
+            );
+            assert!(
+                descriptions.insert(description),
+                "{} reuses the description {description:?}",
+                action.title()
+            );
+        }
+    }
+
+    #[test]
+    fn every_scope_explains_where_its_actions_apply() {
+        let mut titles = std::collections::BTreeSet::new();
+        for scope in KeyboardScope::ALL {
+            assert!(titles.insert(scope.title()), "duplicate scope title");
+            assert!(!scope.help().is_empty(), "scope must explain its context");
+        }
+        // Every action must be reachable from the scope list the editor groups by.
+        for action in KeyboardAction::ALL {
+            assert!(
+                KeyboardScope::ALL.contains(&action.scope()),
+                "{} has a scope missing from KeyboardScope::ALL",
+                action.title()
+            );
+        }
     }
 }

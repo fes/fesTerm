@@ -693,7 +693,16 @@
         "keyboard_copy_of_fake_auth_url_never_submits_or_cancels_waiting_prompt",
         "keyboard_recovery_and_widget_focus_block_terminal_delivery",
         "keyboard_routing_recorder_is_opt_in_bounded_and_redacts_payloads",
-        "keyboard_mouse_trace_distinguishes_local_claimed_and_reported_without_shift_override"
+        "keyboard_mouse_trace_distinguishes_local_claimed_and_reported_without_shift_override",
+        "keyboard_filters_select_by_scope_binding_state_and_customization",
+        "keyboard_chords_render_as_discrete_platform_keycaps",
+        "keyboard_every_default_chord_renders_one_keycap_per_token",
+        "keyboard_editor_groups_actions_by_scope_and_narrows_by_search",
+        "keyboard_editor_presents_scope_and_default_as_read_only_context",
+        "keyboard_editor_marks_customized_actions_and_shows_their_keycaps",
+        "every_action_documents_what_it_does",
+        "every_scope_explains_where_its_actions_apply",
+        "settings_presents_each_shortcut_exactly_once"
       ],
       "manual_scenarios": [
         "AS-04",

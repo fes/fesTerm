@@ -5044,15 +5044,6 @@ impl FesTermApp {
         let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
         let terminal_font_set = self.terminal_font_set();
         let sftp_pane_order = self.state.sftp_pane_order();
-        let keyboard_bindings = self.state.interface_settings().keyboard_bindings().clone();
-        let palette_hint = crate::keyboard::label(
-            &keyboard_bindings,
-            festerm_config::KeyboardAction::CommandPalette,
-        );
-        let settings_hint = crate::keyboard::label(
-            &keyboard_bindings,
-            festerm_config::KeyboardAction::SettingsHotkey,
-        );
         // Matches the guard used above when the bar is actually drawn.
         let status_bar_visible = self.state.status_bar_visible() && !self.focus_mode;
         self.state.update_running_sessions(ui.ctx());
@@ -5108,8 +5099,6 @@ impl FesTermApp {
                                 .map(|path| path.to_string_lossy().into_owned()),
                             sftp_pane_order: self.state.sftp_pane_order(),
                         },
-                        palette_hint.as_deref().unwrap_or("(unbound)"),
-                        settings_hint.as_deref().unwrap_or("(unbound)"),
                     );
                 }
                 TabContent::Profiles => {
@@ -6527,7 +6516,7 @@ mod tests {
             .state
             .dispatch(AppCommand::OpenSettings, &context);
         harness.run();
-        harness.get_by_label("Search keyboard actions").click();
+        harness.get_by_label("Search").click();
         harness.run();
         harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
             text: "controlled-preedit".into(),
@@ -6912,15 +6901,9 @@ mod tests {
             .with_size(egui::vec2(752.0, 2400.0))
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
-        let title = format!(
-            "New Session — {}",
-            crate::keyboard::label(
-                &Default::default(),
-                festerm_config::KeyboardAction::NewSession
-            )
-            .unwrap()
-        );
-        harness.get_by_label(&title).click();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
         harness.run();
         harness.get_by_label("Unbind action").click();
         harness.run();
@@ -6938,7 +6921,7 @@ mod tests {
             ),
             ""
         );
-        harness.get_by_label("Reset action").click();
+        harness.get_by_label("Restore default").click();
         harness.run();
         assert!(Configuration::parse(&fs::read_to_string(&path).unwrap())
             .unwrap()
