@@ -39,6 +39,7 @@ jobs:
       - run: python scripts/generate_windows_icon.py --check
       - run: python scripts/check_packaging.py
       - run: python scripts/check_validation_traceability.py
+      - run: python scripts/build_ui_state_doc.py --check
       - if: github.event_name == 'pull_request'
         run: python scripts/check_validation_traceability.py --base ${{ github.event.pull_request.base.sha }}
 
