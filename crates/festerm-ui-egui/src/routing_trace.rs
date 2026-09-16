@@ -109,11 +109,11 @@ impl Recorder {
         outcome: &'static str,
         queue: &'static str,
         bytes: usize,
-    ) {
+    ) -> Option<u64> {
         if !self.recording {
-            return;
+            return None;
         }
-        self.next = self.next.saturating_add(1);
+        self.next = self.next.checked_add(1)?;
         if self.records.len() == CAPACITY {
             self.records.pop_front();
             self.dropped = self.dropped.saturating_add(1);
@@ -131,13 +131,14 @@ impl Recorder {
             selection: "unchanged",
             focus: self.focus,
         });
+        Some(self.next)
     }
     pub fn record_route(
         &mut self,
         metadata: Metadata,
         route: crate::InputRoute,
         queue: &'static str,
-    ) {
+    ) -> Option<u64> {
         let outcome = match route.outcome {
             InputEventOutcome::SelectionAllowed => "local-selection-allowed",
             InputEventOutcome::SelectionClaimed => "terminal-owned-unreported-selection-cleared",
@@ -155,7 +156,19 @@ impl Recorder {
                 queue
             },
             route.delivered_bytes,
-        );
+        )
+    }
+
+    /// Complete a retained observation without creating a new event. Stopping
+    /// recording does not hide settlement; clearing/eviction removes the ID.
+    pub fn settle(&mut self, observation: u64, queue: &'static str) {
+        if let Some(record) = self
+            .records
+            .iter_mut()
+            .find(|record| record.observation == observation)
+        {
+            record.queue = queue;
+        }
     }
     pub fn report(&self) -> String {
         let mut report = format!("fesTerm redacted input routing\nrecording={} retained={} capacity={} dropped={}\nphysical-event-id=unknown; observation IDs correlate core/queue outcomes only\nmodifiers: Shift=1 Alt=2 Ctrl=4 Command=8; text modifiers redacted\nqueue acceptance is not evidence of which remote program handled input\n", self.recording, self.records.len(), CAPACITY, self.dropped);

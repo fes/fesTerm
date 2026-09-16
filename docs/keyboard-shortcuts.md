@@ -37,12 +37,27 @@ Global actions overlap every application context. Terminal and Markdown
 actions are disjoint; a repeated chord in those two contexts is intentional.
 The document picker excludes terminal sessions on Linux/Windows (preserving
 Ctrl+O), and is available there through the UI/palette instead. Terminal actions
-yield to search, authentication, Inspector and blocking overlays. Native menu
+yield to chip rename, search, authentication, Inspector and blocking overlays. Native menu
 accelerators and palette/chrome/Settings hints follow the effective map.
 Quick-switch numbers are not displayed for slots whose default mapping changed.
 Focused widget editing is not itself remapped by this editor, but a deliberately
 assigned global binding takes precedence over its local shortcut. The recovery route is
 fixed, not another configurable action.
+
+Native raw-key/clipboard pairs are dispatched in event order, recalculating
+surface ownership and recorder target after each application action. When
+earlier input must first reach a widget or terminal, the later shortcut suffix
+waits for the next UI pass rather than redirecting that input to a newly
+selected session. Clipboard delivery behind Inspector/search/rename is not
+authorization to paste into a terminal; it can only invalidate an older
+pending paste confirmation. Explicit terminal paste still uses the shared
+safety policy. Markdown toolbar hints also use the effective bindings and
+omit unbound chords.
+
+IME suppression belongs to its originating surface and focused widget.
+Losing that owner clears suppression even when an input method cancels
+composition without emitting Commit or an empty Preedit. A live composition
+continues to own its keys; switching away cannot permanently disable recovery.
 
 Example, within the existing schema-version-1 document:
 
@@ -247,6 +262,14 @@ IDs correlate a core result with its controller queue outcome and mouse
 selection decision. **Physical OS event IDs are unknown**; the recorder does
 not infer “both” from unrelated records in one frame. It does not record global
 OS keys or prove which remote program processed a report.
+
+Pending writes carry only an observation ID alongside the existing bounded
+delivery buffer. Later acceptance, rejection, or reconnect-generation discard
+settles that original retained observation, never the newest event or session.
+Stopping recording prevents new observations but permits settlement of retained
+ones. Clear/eviction removes their IDs permanently; a late settlement cannot
+recreate a record or modify an unrelated observation. The recorder never keeps
+the write payload or arbitrary transport error text.
 
 For mouse events, **SelectionAllowed** may begin/extend/finish local selection.
 **SelectionClaimed** means terminal-owned but unreported: no bytes **and no

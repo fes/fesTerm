@@ -189,9 +189,14 @@ impl CursorPositionQueryScanner {
 // ─── Pending Command Buffer ──────────────────────────────────────────────────
 
 pub(crate) struct PendingCommandBuffer {
-    writes: VecDeque<Vec<u8>>,
+    writes: VecDeque<PendingWrite>,
     queued_bytes: usize,
     capacity: usize,
+}
+
+struct PendingWrite {
+    bytes: Vec<u8>,
+    observation: Option<u64>,
 }
 
 impl PendingCommandBuffer {
@@ -220,26 +225,45 @@ impl PendingCommandBuffer {
                 attempted: bytes.len(),
             })?;
         if !bytes.is_empty() {
-            self.writes.push_back(bytes.to_vec());
+            self.writes.push_back(PendingWrite {
+                bytes: bytes.to_vec(),
+                observation: None,
+            });
             self.queued_bytes = queued_bytes;
         }
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn flush(&mut self, session: &impl Session) -> PendingFlush {
-        while let Some(bytes) = self.writes.front() {
-            match session.try_send_input(bytes) {
+        self.flush_observed(session, |_, _| {})
+    }
+
+    fn flush_observed(
+        &mut self,
+        session: &impl Session,
+        mut settle: impl FnMut(u64, &'static str),
+    ) -> PendingFlush {
+        while let Some(write) = self.writes.front() {
+            match session.try_send_input(&write.bytes) {
                 Ok(()) => {
                     let bytes = self
                         .writes
                         .pop_front()
                         .expect("front element remains until a successful send");
-                    self.queued_bytes = self.queued_bytes.saturating_sub(bytes.len());
+                    self.queued_bytes = self.queued_bytes.saturating_sub(bytes.bytes.len());
+                    if let Some(observation) = bytes.observation {
+                        settle(observation, "accepted-by-session");
+                    }
                 }
                 Err(SessionSendError::Full { .. }) => return PendingFlush::Backpressured,
                 Err(error) => {
                     let dropped_bytes = self.queued_bytes;
-                    self.writes.clear();
+                    for write in self.writes.drain(..) {
+                        if let Some(observation) = write.observation {
+                            settle(observation, "rejected-by-session");
+                        }
+                    }
                     self.queued_bytes = 0;
                     return PendingFlush::Unrecoverable {
                         error,
@@ -468,6 +492,16 @@ impl<S: Session> SessionController<S> {
         self.lifecycle_generation = self.lifecycle_generation.saturating_add(1);
         let dropped_bytes = self.pending_writes.queued_bytes();
         if dropped_bytes > 0 {
+            let mut recorder = self
+                .input_recorder
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            for write in &self.pending_writes.writes {
+                if let Some(observation) = write.observation {
+                    recorder.settle(observation, "discarded-generation-change");
+                }
+            }
+            drop(recorder);
             self.pending_writes = PendingCommandBuffer::new(self.pending_writes.capacity());
             tracing::warn!(
                 target: "festerm::session",
@@ -647,7 +681,15 @@ impl<S: Session> SessionController<S> {
         let Some(session) = &self.session else {
             return;
         };
-        match self.pending_writes.flush(session) {
+        let recorder = self.input_recorder.clone();
+        match self
+            .pending_writes
+            .flush_observed(session, |observation, outcome| {
+                recorder
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .settle(observation, outcome);
+            }) {
             PendingFlush::Drained => {
                 self.last_input_delivery = "accepted-by-session";
             }
@@ -947,10 +989,16 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
         route: InputRoute,
     ) {
         self.observe_input_route(route);
-        self.input_recorder
+        let observation = self
+            .input_recorder
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .record_route(metadata, route, self.last_input_delivery);
+        if route.delivered_bytes > 0 && self.last_input_delivery == "queued-backpressure" {
+            if let Some(write) = self.pending_writes.writes.back_mut() {
+                write.observation = observation;
+            }
+        }
     }
 
     fn record_terminal_resize(&mut self, dimensions: Dimensions) {
@@ -1376,6 +1424,103 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
+
+    #[test]
+    fn keyboard_pending_delivery_settles_original_observation_across_stop_clear_and_generation() {
+        for scenario in [
+            "accepted",
+            "rejected",
+            "generation",
+            "stopped",
+            "cleared",
+            "evicted",
+        ] {
+            let session = FakeSession::with_input_results(
+                [],
+                [
+                    Err(SessionSendError::Full {
+                        operation: festerm_session::SessionOperation::Input,
+                        capacity: 1,
+                    }),
+                    if scenario == "rejected" {
+                        Err(SessionSendError::Closed {
+                            operation: festerm_session::SessionOperation::Input,
+                        })
+                    } else {
+                        Ok(())
+                    },
+                ],
+            );
+            let mut controller = SessionController::with_session(session);
+            let mut terminal = Terminal::new(Dimensions::new(20, 5).unwrap()).unwrap();
+            {
+                let mut recorder = controller.input_recorder.lock().unwrap();
+                recorder.set_target(71, 1);
+                recorder.set_recording(true);
+            }
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Paste("controlled-secret-token".into()),
+                &mut controller,
+            );
+            assert!(controller
+                .input_recorder
+                .lock()
+                .unwrap()
+                .report()
+                .contains("queue=queued-backpressure"));
+            {
+                let mut recorder = controller.input_recorder.lock().unwrap();
+                recorder.set_target(99, 2);
+                if scenario == "stopped" {
+                    recorder.set_recording(false);
+                }
+                if scenario == "cleared" {
+                    recorder.clear();
+                }
+                if matches!(scenario, "cleared" | "evicted") {
+                    for _ in 0..festerm_ui_egui::routing_trace::CAPACITY {
+                        recorder.record(
+                            "application",
+                            festerm_ui_egui::routing_trace::Metadata {
+                                class: "later-observation",
+                                modifiers: 0,
+                            },
+                            "captured",
+                            "no-delivery",
+                            0,
+                        );
+                    }
+                }
+            }
+            if scenario == "generation" {
+                controller.advance_lifecycle_generation();
+            } else {
+                controller.flush_pending_writes();
+            }
+            let report = controller.input_recorder.lock().unwrap().report();
+            assert!(!report.contains("controlled-secret-token"));
+            assert!(
+                !report.contains("queue=queued-backpressure"),
+                "{scenario}: {report}"
+            );
+            if matches!(scenario, "cleared" | "evicted") {
+                assert!(!report.contains("queue=accepted-by-session"));
+                assert!(!report.contains("target=71"));
+            } else {
+                assert!(report.contains("observation=1 target=71 generation=1"));
+                assert!(
+                    report.contains(match scenario {
+                        "rejected" => "queue=rejected-by-session",
+                        "generation" => "queue=discarded-generation-change",
+                        _ => "queue=accepted-by-session",
+                    }),
+                    "{scenario}: {report}"
+                );
+            }
+            assert_eq!(controller.pending_writes.queued_bytes(), 0);
+        }
+    }
 
     #[test]
     fn application_advances_lifecycle_generation_at_reconnect_boundary() {

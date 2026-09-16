@@ -66,6 +66,7 @@ pub fn consume_exact(context: &egui::Context, expected: Modifiers, key: Key) -> 
                 captured_clipboard = 0;
                 return false;
             }
+
             captured_clipboard = 0;
             if let egui::Event::Key {
                 key: actual,
@@ -92,6 +93,32 @@ pub fn consume_exact(context: &egui::Context, expected: Modifiers, key: Key) -> 
         });
     });
     activate
+}
+
+pub fn is_bound_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
+    let egui::Event::Key {
+        key,
+        modifiers,
+        pressed: true,
+        ..
+    } = event
+    else {
+        return false;
+    };
+    let matches = |expected: Modifiers, expected_key: Key| {
+        *key == expected_key
+            && (modifiers.ctrl || (!cfg!(target_os = "macos") && modifiers.command))
+                == expected.ctrl
+            && (modifiers.mac_cmd || (cfg!(target_os = "macos") && modifiers.command))
+                == expected.mac_cmd
+            && modifiers.alt == expected.alt
+            && (modifiers.shift == expected.shift || *key == Key::Plus)
+    };
+    matches(Modifiers::CTRL | Modifiers::SHIFT, Key::F12)
+        || Action::ALL.into_iter().any(|action| {
+            chord(bindings.effective(action, cfg!(target_os = "macos")))
+                .is_some_and(|(modifiers, key)| matches(modifiers, key))
+        })
 }
 
 /// Remove only clipboard events derived from an adjacent native key.
@@ -146,9 +173,11 @@ fn clipboard_key_kind(event: &egui::Event) -> u8 {
     }
 }
 
-pub fn composition_owns_keys(context: &egui::Context) -> bool {
+pub fn composition_owns_keys(context: &egui::Context, surface: u64) -> bool {
     let id = egui::Id::new("keyboard-ime-composition");
-    let mut composing = context.data(|data| data.get_temp::<bool>(id).unwrap_or(false));
+    let owner = (surface, context.memory(|memory| memory.focused()));
+    let mut composing =
+        context.data(|data| data.get_temp::<(u64, Option<egui::Id>)>(id) == Some(owner));
     let mut owned = composing;
     context.input(|input| {
         for event in &input.events {
@@ -160,11 +189,22 @@ pub fn composition_owns_keys(context: &egui::Context) -> bool {
                 egui::Event::Ime(egui::ImeEvent::Commit(_)) | egui::Event::WindowFocused(false) => {
                     composing = false
                 }
+                egui::Event::Key {
+                    key: Key::Escape,
+                    pressed: true,
+                    ..
+                } => composing = false,
                 _ => {}
             }
         }
     });
-    context.data_mut(|data| data.insert_temp(id, composing));
+    context.data_mut(|data| {
+        if composing {
+            data.insert_temp(id, owner);
+        } else {
+            data.remove::<(u64, Option<egui::Id>)>(id);
+        }
+    });
     owned
 }
 

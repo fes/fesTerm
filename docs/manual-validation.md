@@ -132,6 +132,18 @@ possible.
 | TI-12 | Assign/unbind/reset application shortcuts, restart an isolated configuration, verify native menu/palette/chrome hints and recovery Ctrl+Shift+F12; select a fake authentication URL and Copy repeatedly, then enter a fake token. Test actual Ctrl+C, Ctrl+A/B prefixes through Screen/tmux, AltGr/Option and IME with terminal/search/forms/menus focused. | Native functional + usability | Synthesized production paths automated by `python3 scripts/check_keyboard_routing.py`; `--native` adds the existing OS-input drivers and controlled byte/capture sample, not the entire matrix |
 | TI-13 | In Session Inspector Diagnostics start/stop/clear input recording and explicitly copy its report. Exercise local selection, terminal-owned/unreported mouse motion, reported mouse events, local context/history gestures and subsequent Copy. Inspect a report for absence of fake token/URL/clipboard contents. | Native functional + privacy/usability | Core/queue/selection classification, bounded storage and redaction automated; physical-event attribution and remote-program interpretation remain unknown, not invented |
 
+The #154 review follow-up adds synthesized regressions for chip-rename raw and
+semantic clipboard paths, same-batch switch/capture ordering and recorder
+targets, Inspector Paste exclusion, eventual pending-write settlement after
+stop/clear/eviction/reconnect, effective Markdown toolbar hints, and IME
+cancellation by tab click without Commit. The earlier three-platform
+synthesized and Linux OS-input evidence predates these fixes; rerun impacted
+native routing for the revised candidate. In TI-12, include rename
+Copy/Cut/Paste and Settings preedit → terminal chip click → shortcut/recovery.
+In TI-13, distinguish initial backpressure from eventual acceptance/rejection
+and verify stopped recording can settle retained entries without reviving
+cleared ones.
+
 ### Keyboard baseline and candidate evidence
 
 The existing Linux Xorg OS-input baseline passed at `7e93ece` (run

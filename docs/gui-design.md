@@ -1441,6 +1441,13 @@ and terminal protocols are not arbitrary remapping targets. The ordinary
 Keyboard card retains quick-switch-number presentation and effective hints.
 See [the canonical keyboard inventory](keyboard-shortcuts.md).
 
+Chip rename and other focused editing surfaces retain native clipboard intent;
+terminal shortcuts and paste delivery cannot also act behind them. Input
+ownership is reevaluated after ordered tab-switch actions, and IME suppression
+ends when its originating widget/surface loses ownership. Diagnostics settle
+retained queued-input observations on eventual delivery, rejection or reconnect
+discard, including after recording stops, without recreating cleared records.
+
 Category icons support scanning but never replace labels. Reset appears only
 for a non-default value and at appropriate setting/category scope. Terminal
 font changes may alter cell geometry and resize active PTYs, so unusually

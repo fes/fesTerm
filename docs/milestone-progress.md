@@ -1627,6 +1627,13 @@ column proportions or introducing horizontal scrolling.
 
 ### Keyboard ownership and persistent bindings
 
+The #154 review follow-up covers focused chip rename and Inspector paste,
+ordered same-batch switching with per-session recorder attribution, deferred
+queue settlement across stop/clear/eviction/reconnect, effective Markdown
+toolbar hints, and silent IME cancellation on owner change. Deterministic
+regressions accompany all six fixes; revised native evidence is tracked
+separately from the earlier candidate's platform runs.
+
 Issue #154 connected a searchable Settings action editor to strict versioned
 configuration and the existing application command paths. Defaults, overrides,
 scope validation and native/palette/chrome hints now share effective bindings;

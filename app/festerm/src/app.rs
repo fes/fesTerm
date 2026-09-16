@@ -816,13 +816,12 @@ impl FesTermApp {
         .into_iter()
         .filter_map(|(command, action)| {
             if self.overlays.blocks_terminal_input()
-                || (self.palette.is_open() && action != A::CommandPalette) {
+                || (self.palette.is_open() && action != A::CommandPalette)
+            {
                 return None;
             }
             if action.scope() == festerm_config::KeyboardScope::Terminal
-                && (self.state.inspector_open() || !matches!(&self.state.active_tab().content,
-                    TabContent::Session(session) if !session.search.is_open()
-                        && session.host_key_prompt().is_none() && session.password_prompt().is_none()))
+                && !self.terminal_owns_input()
             {
                 return None;
             }
@@ -2637,7 +2636,73 @@ impl FesTermApp {
     /// available to terminal applications such as Vim and Emacs. All bindings
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
+    fn terminal_owns_input(&self) -> bool {
+        matches!(&self.state.active_tab().content,
+            TabContent::Session(session) if !session.search.is_open()
+                && session.host_key_prompt().is_none() && session.password_prompt().is_none())
+            && !self.palette.is_open()
+            && !self.state.inspector_open()
+            && self.rename_restore_tab.is_none()
+            && !self.overlays.blocks_terminal_input()
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let deferred_id = egui::Id::new("ordered-keyboard-events");
+        let mut events = ctx
+            .data_mut(|data| data.remove_temp::<Vec<egui::Event>>(deferred_id))
+            .unwrap_or_default();
+        events.extend(ctx.input_mut(|input| std::mem::take(&mut input.events)));
+        let mut pending = std::collections::VecDeque::from(events);
+        let mut remaining = Vec::new();
+        if pending.is_empty() {
+            self.handle_shortcut_packet(ctx);
+        }
+        while let Some(event) = pending.pop_front() {
+            // Deliver earlier widget/terminal input before a later shortcut
+            // can change its owner. Retain only the unprocessed suffix.
+            if remaining.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::Copy
+                        | egui::Event::Cut
+                        | egui::Event::Ime(_)
+                        | egui::Event::Key { pressed: true, .. }
+                )
+            }) && crate::keyboard::is_bound_key(
+                &event,
+                self.state.interface_settings().keyboard_bindings(),
+            ) {
+                pending.push_front(event);
+                ctx.data_mut(|data| {
+                    data.insert_temp(deferred_id, pending.into_iter().collect::<Vec<_>>())
+                });
+                ctx.request_repaint();
+                break;
+            }
+            let mut packet = vec![event];
+            // The native adapter's adjacent semantic clipboard event belongs
+            // to this key, not to the next frame or newly selected surface.
+            if matches!(packet[0], egui::Event::Key { .. })
+                && pending.front().is_some_and(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)
+                    )
+                })
+            {
+                packet.push(pending.pop_front().unwrap());
+            }
+            ctx.input_mut(|input| input.events = packet);
+            self.handle_shortcut_packet(ctx);
+            remaining.extend(ctx.input_mut(|input| std::mem::take(&mut input.events)));
+        }
+        ctx.input_mut(|input| input.events = remaining);
+        self.associate_input_recorder(ctx);
+    }
+
+    fn associate_input_recorder(&self, ctx: &egui::Context) {
         let recorder_id = egui::Id::new(festerm_ui_egui::routing_trace::CONTEXT_ID);
         if let TabContent::Session(session) = &self.state.active_tab().content {
             let recorder = session.controller.input_recorder.clone();
@@ -2653,6 +2718,8 @@ impl FesTermApp {
                 .unwrap_or_else(|error| error.into_inner())
                 .set_focus(if self.overlays.blocks_terminal_input() {
                     "modal"
+                } else if self.rename_restore_tab.is_some() {
+                    "chip-rename"
                 } else if self.palette.is_open() {
                     "palette"
                 } else if self.state.inspector_open() {
@@ -2671,6 +2738,10 @@ impl FesTermApp {
                 data.remove::<festerm_ui_egui::routing_trace::SharedRecorder>(recorder_id)
             });
         }
+    }
+
+    fn handle_shortcut_packet(&mut self, ctx: &egui::Context) {
+        self.associate_input_recorder(ctx);
         let bindings = self.state.interface_settings().keyboard_bindings().clone();
         ctx.data_mut(|data| {
             data.insert_temp(
@@ -2685,14 +2756,12 @@ impl FesTermApp {
                     .unwrap_or_else(|| "Unbound".into()),
             )
         });
-        if crate::keyboard::composition_owns_keys(ctx) || self.overlays.blocks_terminal_input() {
+        if crate::keyboard::composition_owns_keys(ctx, self.state.active().chip_id())
+            || self.overlays.blocks_terminal_input()
+        {
             return;
         }
-        let terminal_owns_input = matches!(&self.state.active_tab().content,
-            TabContent::Session(session) if !session.search.is_open()
-                && session.host_key_prompt().is_none() && session.password_prompt().is_none())
-            && !self.palette.is_open()
-            && !self.state.inspector_open();
+        let terminal_owns_input = self.terminal_owns_input();
         if terminal_owns_input {
             crate::keyboard::prepare_terminal_events(ctx);
         }
@@ -4512,6 +4581,7 @@ impl FesTermApp {
         }
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
+        let terminal_input_target = self.terminal_owns_input().then_some(self.state.active());
         if let Some(smoke) = &mut self.native_smoke {
             smoke.observe_palette(self.palette.is_open());
         }
@@ -4778,9 +4848,11 @@ impl FesTermApp {
                     } else {
                         let options = festerm_ui_egui::TerminalViewOptions {
                             paste_available: session.accepts_input(),
-                            terminal_input_enabled: !self.overlays.blocks_terminal_input()
+                            terminal_input_enabled: terminal_input_target == Some(active_tab_id)
+                                && !self.overlays.blocks_terminal_input()
                                 && !self.palette.is_open()
                                 && !inspector_open
+                                && self.rename_restore_tab.is_none()
                                 && !session.search.is_open(),
                             keyboard_input_enabled: session.accepts_typed_input(),
                             defer_paste_to_application: true,
@@ -4826,7 +4898,10 @@ impl FesTermApp {
             // A later clipboard-delivery event invalidates the captured
             // operation. Never replace an open dialog or route a second paste.
             self.cancel_paste_confirmation();
-        } else if !self.overlays.blocks_terminal_input() && deferred_pastes.len() == 1 {
+        } else if terminal_input_target == Some(active_tab_id)
+            && self.terminal_owns_input()
+            && deferred_pastes.len() == 1
+        {
             self.handle_paste_request(active_tab_id, deferred_pastes.remove(0));
         }
         for link in deferred_links {
@@ -5179,6 +5254,245 @@ mod tests {
         (harness, transport)
     }
 
+    fn keyboard_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            modifiers,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+        }
+    }
+
+    fn bound_event(action: festerm_config::KeyboardAction) -> egui::Event {
+        let (modifiers, key) =
+            crate::keyboard::chord(action.default_chord(cfg!(target_os = "macos"))).unwrap();
+        keyboard_event(key, modifiers)
+    }
+
+    #[test]
+    fn keyboard_rename_owns_raw_and_semantic_clipboard_without_terminal_delivery() {
+        let (mut harness, transport) = keyboard_harness();
+        let chip = format!("{} chip", harness.state().chip_view_models().0[0].primary);
+        harness.get_by_label(&chip).click_secondary();
+        harness.run();
+        harness.get_by_label("Rename session").click();
+        harness.run();
+        assert!(harness.state().rename_restore_tab.is_some());
+        for native in [true, false] {
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.run();
+            if native {
+                harness
+                    .input_mut()
+                    .events
+                    .push(keyboard_event(egui::Key::V, egui::Modifiers::COMMAND));
+            }
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Paste("controlled-rename".into()));
+            harness.step();
+            assert_eq!(
+                harness
+                    .get_by_role(accesskit::Role::TextInput)
+                    .value()
+                    .as_deref(),
+                Some("controlled-rename")
+            );
+            harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+            harness.run();
+            for (key, semantic) in [
+                (egui::Key::C, egui::Event::Copy),
+                (egui::Key::X, egui::Event::Cut),
+            ] {
+                if native {
+                    harness
+                        .input_mut()
+                        .events
+                        .push(keyboard_event(key, egui::Modifiers::COMMAND));
+                }
+                harness.input_mut().events.push(semantic);
+                harness.step();
+                assert!(harness
+                    .output()
+                    .platform_output
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command,
+                    egui::OutputCommand::CopyText(text) if text == "controlled-rename")));
+            }
+            assert_eq!(
+                harness
+                    .get_by_role(accesskit::Role::TextInput)
+                    .value()
+                    .as_deref(),
+                Some("")
+            );
+            assert!(transport.sent().is_empty());
+        }
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(festerm_config::KeyboardAction::SettingsHotkey));
+        harness.step();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+        assert!(transport.sent().is_empty());
+    }
+
+    #[test]
+    fn keyboard_same_batch_switch_recomputes_terminal_scope_and_recording_target() {
+        use festerm_config::KeyboardAction as A;
+        let (mut harness, first_transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let first = harness.state().state.active();
+        let mut bindings = festerm_config::KeyboardBindings::default();
+        bindings.set(A::ClearTerminal, Some("Ctrl+Shift+K".into()));
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenSettings, &context);
+        harness.run();
+        harness.input_mut().events.extend([
+            bound_event(A::Quick1),
+            keyboard_event(egui::Key::K, egui::Modifiers::CTRL | egui::Modifiers::SHIFT),
+        ]);
+        harness.step();
+        assert_eq!(harness.state().state.active(), first);
+        assert!(harness.state().overlays.transient_notice.is_some());
+        assert!(first_transport.sent().is_empty());
+        harness.state_mut().overlays.transient_notice = None;
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenLauncher, &context);
+        let second_transport = crate::session_controller::fake::FakeSshSession::new([]);
+        let second = harness
+            .state_mut()
+            .state
+            .replace_active_with_test_ssh_session(
+                second_transport.clone(),
+                "controlled",
+                "second.example.test",
+                22,
+            );
+        for tab in [first, second] {
+            harness.state_mut().state.dispatch(
+                AppCommand::SetInputRecording { tab, enabled: true },
+                &context,
+            );
+        }
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ActivateTab(first), &context);
+        harness.run();
+        let second_index = harness
+            .state()
+            .state
+            .tabs()
+            .iter()
+            .position(|tab| tab.id == second)
+            .unwrap();
+        harness.input_mut().events.extend([
+            bound_event(crate::keyboard::QUICK_ACTIONS[second_index]),
+            bound_event(A::Copy),
+        ]);
+        harness.step();
+        assert_eq!(harness.state().state.active(), second);
+        let report = |tab| {
+            harness
+                .state()
+                .state
+                .session_tab(tab)
+                .unwrap()
+                .controller
+                .input_recorder
+                .lock()
+                .unwrap()
+                .report()
+        };
+        assert!(!report(first).contains("class=Copy terminal selection"));
+        assert!(report(second).contains("class=Copy terminal selection"));
+        assert!(report(second).contains(&format!("target={} generation=1", second.chip_id())));
+        assert!(first_transport.sent().is_empty() && second_transport.sent().is_empty());
+    }
+
+    #[test]
+    fn keyboard_input_before_a_same_batch_switch_stays_with_original_session() {
+        use festerm_config::KeyboardAction as A;
+        let (mut harness, transport) = keyboard_harness();
+        harness.input_mut().events.extend([
+            egui::Event::Text("controlled-before-switch".into()),
+            bound_event(A::SettingsHotkey),
+        ]);
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"controlled-before-switch");
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+    }
+
+    #[test]
+    fn keyboard_ime_cancellation_by_tab_click_releases_shortcuts_and_recovery() {
+        use festerm_config::KeyboardAction as A;
+        let (mut harness, transport) = keyboard_harness();
+        let chip = format!("{} chip", harness.state().chip_view_models().0[0].primary);
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenSettings, &context);
+        harness.run();
+        harness.get_by_label("Search keyboard actions").click();
+        harness.run();
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "controlled-preedit".into(),
+            active_range_chars: None,
+        }));
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(A::CommandPalette));
+        harness.step();
+        assert!(
+            !harness.state().palette.is_open(),
+            "live composition owns shortcuts"
+        );
+        harness.get_by_label(&chip).click();
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(A::SettingsHotkey));
+        harness.step();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+        harness.get_by_label(&chip).click();
+        harness.run();
+        harness.key_press_modifiers(
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            egui::Key::F12,
+        );
+        harness.run();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+        assert!(transport.sent().is_empty());
+    }
+
     #[test]
     fn keyboard_capture_unbind_and_repeat_use_actual_application_dispatch() {
         use festerm_config::KeyboardAction as A;
@@ -5381,6 +5695,7 @@ mod tests {
         harness.get_by_label("Record input routing").click();
         harness.run();
         harness.event(egui::Event::Text("fake-inspector-token".into()));
+        harness.event(egui::Event::Paste("fake-inspector-paste".into()));
         harness.key_press(egui::Key::Enter);
         harness.run();
         assert!(
