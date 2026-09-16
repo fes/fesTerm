@@ -1368,8 +1368,8 @@ fn ssh_labeled_text_edit(
     tab_id: TabId,
     field: &'static str,
     label: &str,
+    hint: &str,
     value: &mut String,
-    request_focus: bool,
     desired_width: f32,
 ) -> egui::Response {
     ui.vertical(|ui| {
@@ -1380,11 +1380,9 @@ fn ssh_labeled_text_edit(
         let field = ui.add(
             TextEdit::singleline(value)
                 .id_salt(("launcher_ssh", tab_id, field))
+                .hint_text(hint)
                 .desired_width(desired_width),
         );
-        if request_focus {
-            field.request_focus();
-        }
         field.labelled_by(label.id)
     })
     .inner
@@ -1612,8 +1610,8 @@ fn show_durable_session_controls(
             tab_id,
             "durable_session_name",
             "Session name",
+            "",
             &mut draft.session_name,
-            false,
             f32::INFINITY,
         )
         .changed(),
@@ -1739,11 +1737,13 @@ fn show_ssh_form(
 ) -> Option<AppCommand> {
     ui.add_space(16.0);
     let mut result = None;
-    let focus_username = form.focus_username;
+    // The Quick connect field leads the form, so it takes the opening focus;
+    // the SFTP surface already routes its own quick field the same way.
+    let focus_quick_connect = form.focus_username;
     form.focus_username = false;
     // Username wins if both are somehow armed: it is the earlier field, so
     // focusing the password would strand the user mid-form.
-    let focus_password = std::mem::take(&mut form.focus_password) && !focus_username;
+    let focus_password = std::mem::take(&mut form.focus_password) && !focus_quick_connect;
     egui::Frame::new()
         .fill(theme::SURFACE_TAB_INACTIVE)
         .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
@@ -1755,61 +1755,87 @@ fn show_ssh_form(
             ui.set_max_width(card_width);
 
             ssh_section_heading(ui, "Connection");
+            let quick = ssh_labeled_text_edit(
+                ui,
+                tab_id,
+                "quick_connect",
+                "Quick connect",
+                "user@host:port",
+                &mut form.quick_connect,
+                f32::INFINITY,
+            );
+            if focus_quick_connect {
+                quick.request_focus();
+            }
+            if quick.changed() {
+                form.sync_advanced_from_quick_connect();
+            }
+            ui.add_space(8.0);
+            // Username leads because it matches the `user@host:port` reading
+            // order of the Quick connect field directly above it.
+            let mut destination_changed = ssh_labeled_text_edit(
+                ui,
+                tab_id,
+                "username",
+                "Username",
+                "",
+                &mut form.username,
+                f32::INFINITY,
+            )
+            .changed();
+            ui.add_space(8.0);
             let host_port_width = ui.available_width();
             if host_port_width >= 460.0 {
                 ui.horizontal(|ui| {
                     let port_width = 110.0;
                     let host_width =
                         (ui.available_width() - port_width - ui.spacing().item_spacing.x).max(180.0);
-                    ssh_labeled_text_edit(
+                    destination_changed |= ssh_labeled_text_edit(
                         ui,
                         tab_id,
                         "host",
                         "Host",
+                        "",
                         &mut form.host,
-                        false,
                         host_width,
-                    );
-                    ssh_labeled_text_edit(
+                    )
+                    .changed();
+                    destination_changed |= ssh_labeled_text_edit(
                         ui,
                         tab_id,
                         "port",
                         "Port",
+                        "",
                         &mut form.port,
-                        false,
                         port_width,
-                    );
+                    )
+                    .changed();
                 });
             } else {
-                ssh_labeled_text_edit(
+                destination_changed |= ssh_labeled_text_edit(
                     ui,
                     tab_id,
                     "host",
                     "Host",
+                    "",
                     &mut form.host,
-                    false,
                     f32::INFINITY,
-                );
-                ssh_labeled_text_edit(
+                )
+                .changed();
+                destination_changed |= ssh_labeled_text_edit(
                     ui,
                     tab_id,
                     "port",
                     "Port",
+                    "",
                     &mut form.port,
-                    false,
                     110.0,
-                );
+                )
+                .changed();
             }
-            ui.add_space(8.0);
-            ssh_labeled_text_edit(
-                ui,
-                tab_id,
-                "username",
-                "Username",
-                &mut form.username,
-                focus_username,
-                f32::INFINITY,
-            );
+            if destination_changed {
+                form.sync_quick_connect_from_advanced();
+            }
 
             ui.add_space(14.0);
             ui.separator();
@@ -4748,26 +4774,29 @@ mod tests {
     }
 
     #[test]
-    fn opening_the_ssh_form_focuses_the_username_field() {
+    fn opening_the_ssh_form_focuses_the_quick_connect_field() {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
 
         assert!(
-            harness.get_by_label("Username").is_focused(),
-            "Username must have initial keyboard focus when the SSH form opens"
+            harness.get_by_label("Quick connect").is_focused(),
+            "Quick connect leads the form, so it must take the initial keyboard focus \
+             rather than stranding it on a field further down"
         );
     }
 
     #[test]
-    fn ssh_form_orders_fields_host_port_then_username_and_prefills_port_with_22() {
-        // Regression test pinning the mockup field order (Host/Port first,
-        // Username below) and that Port is prefilled with the actual default
-        // value (not left empty with "(default: 22)"-style wording).
+    fn ssh_form_orders_fields_username_host_then_port_and_prefills_port_with_22() {
+        // Pins the field order and that Port is prefilled with the actual
+        // default value (not left empty with "(default: 22)"-style wording).
+        // Username leads so the fields read in the same order as the
+        // `user@host:port` Quick connect field above them.
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
 
+        let quick_top = harness.get_by_label("Quick connect").rect().top();
         let host_top = harness.get_by_label("Host").rect().top();
         let port_top = harness.get_by_label("Port").rect().top();
         let username_top = harness.get_by_label("Username").rect().top();
@@ -4777,8 +4806,12 @@ mod tests {
             "Host and Port must share a row on wide launchers"
         );
         assert!(
-            host_top < username_top,
-            "Username must be positioned below Host/Port"
+            quick_top < username_top,
+            "Quick connect must lead the Connection section"
+        );
+        assert!(
+            username_top < host_top,
+            "Username must be positioned above Host/Port"
         );
 
         assert!(
@@ -4850,13 +4883,49 @@ mod tests {
             "a freshly opened SSH launcher must show the full connection form"
         );
         assert!(
-            harness.query_by_label("user@host").is_none(),
-            "the SSH launcher no longer uses the old one-line Quick Connect field"
+            harness.query_by_label("Quick connect").is_some(),
+            "the SSH launcher keeps the one-line user@host:port field alongside the \
+             individual connection fields"
         );
     }
 
     #[test]
-    fn ssh_launcher_focuses_username_when_it_opens() {
+    fn ssh_quick_connect_and_the_individual_fields_stay_in_step_in_both_directions() {
+        let mut harness = harness();
+        harness.run();
+        open_ssh_form(&mut harness);
+
+        enter_text(
+            &mut harness,
+            "Quick connect",
+            "devuser@web-1.example.com:2222",
+        );
+        assert_eq!(
+            harness.get_by_label("Username").value().as_deref(),
+            Some("devuser"),
+            "typing a squashed destination must fill Username"
+        );
+        assert_eq!(
+            harness.get_by_label("Host").value().as_deref(),
+            Some("web-1.example.com"),
+            "typing a squashed destination must fill Host"
+        );
+        assert_eq!(
+            harness.get_by_label("Port").value().as_deref(),
+            Some("2222"),
+            "typing a squashed destination must fill Port"
+        );
+
+        enter_text(&mut harness, "Host", ".internal");
+        assert_eq!(
+            harness.get_by_label("Quick connect").value().as_deref(),
+            Some("devuser@web-1.example.com.internal:2222"),
+            "editing an individual field must recompose the Quick connect field"
+        );
+    }
+
+    #[test]
+    fn ssh_launcher_focuses_quick_connect_when_it_opens() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4865,8 +4934,8 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.get_by_label("Username").is_focused(),
-            "the preserved focus_username affordance must focus Username"
+            harness.get_by_label("Quick connect").is_focused(),
+            "the preserved opening-focus affordance must land on the leading field"
         );
     }
 

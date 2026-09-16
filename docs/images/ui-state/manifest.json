@@ -52,20 +52,20 @@
       "caption": "Expanding 'Advanced settings' reveals the port-forwarding controls beneath the always-visible connection, authentication and durable-session sections.",
       "image": "ssh-connect-advanced.png",
       "width": 804,
-      "height": 650,
+      "height": 698,
       "tier": "headless",
-      "sha256": "4495b91843547f63d84f17fa7251855c4230cccb323c3f560ddf24099734ff9b"
+      "sha256": "f83c946b12cabd79290e2cbf89ed23ed0928fe63bd650be74d696c11d824b10d"
     },
     {
       "id": "ssh-connect-collapsed",
       "section": "connection-forms",
       "title": "SSH connect form",
-      "caption": "The default SSH launch surface: a Connection section for host, port and username, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.",
+      "caption": "The default SSH launch surface: a Connection section led by the squashed user@host:port field and repeating it as Username, Host and Port, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.",
       "image": "ssh-connect-collapsed.png",
       "width": 804,
-      "height": 607,
+      "height": 655,
       "tier": "headless",
-      "sha256": "ab107118ce1e9de4bb08ad23656915921553ca226eee84f3e09f1c1030eca914"
+      "sha256": "2c628124ddee7ea69c4566f6a25555331a813ebee285e3cff6d84c573a30d8c7"
     },
     {
       "id": "diagnostics-durable-session",
@@ -120,7 +120,7 @@
       "width": 960,
       "height": 1300,
       "tier": "headless",
-      "sha256": "3fbcf8fe42a2a16a3a4f7f8a4fd07169e29f2b75664da38f41836545d52172de"
+      "sha256": "15b0197001edfd5479a3fcf4b8045a07cb8aff4b8b72f71d76b2009b51e14dfe"
     },
     {
       "id": "keyboard-editor-selected",
@@ -131,7 +131,7 @@
       "width": 960,
       "height": 1300,
       "tier": "headless",
-      "sha256": "1d878056b7f9df76c446c71c40c4da8584698f988e3c92aaccb177f56931e051"
+      "sha256": "97a45e519fd1c201d100c802f520a6071d156d5358fedc620786550d79ceb087"
     },
     {
       "id": "markdown-outline",
@@ -216,10 +216,10 @@
       "title": "Profiles list",
       "caption": "Every saved local, SSH, SFTP, and serial profile in a single searchable table, each row carrying an overflow menu for connecting, editing, duplicating, and deleting.",
       "image": "profiles-list.png",
-      "width": 760,
+      "width": 736,
       "height": 721,
       "tier": "headless",
-      "sha256": "2d7fce720ea7dc80643a81a62fcc9164bcb94796609ddb01715c4a4763b120e8"
+      "sha256": "016670bf5258f3a1c62f9091e63eb40a6c60f249fc01e3848b5d280fdfebc368"
     },
     {
       "id": "profiles-serial-editor",

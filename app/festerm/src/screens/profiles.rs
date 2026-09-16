@@ -812,8 +812,13 @@ pub(crate) fn show_profiles(
 
     let mut next_mode = None;
     ui.horizontal(|ui| {
-        ui.add_space(26.0);
+        const SIDE_MARGIN: f32 = 26.0;
+        ui.add_space(SIDE_MARGIN);
+        // Match the leading space on the trailing edge so the table and the
+        // search row stop short of the window edge instead of running into it.
+        let content_width = (ui.available_width() - SIDE_MARGIN).max(0.0);
         ui.vertical(|ui| {
+            ui.set_max_width(content_width);
     match &mut state.mode {
         ProfilesScreenMode::List => {
             let now_unix_seconds = unix_now_seconds();
@@ -838,23 +843,29 @@ pub(crate) fn show_profiles(
                 ui.heading("Profiles");
                 ui.label("Reusable local, SSH, SFTP, and serial launch definitions.");
                 ui.add_space(42.0);
-                let content_width = ui.available_width().max(0.0);
                 ui.horizontal(|ui| {
-                    let button_width = 172.0;
-                    let gap = 16.0;
-                    show_profile_search_field(
-                        ui,
-                        (content_width - button_width - gap).max(120.0),
-                        &mut state.profile_search,
-                    );
-                    ui.add_space(gap);
-                    let new_profile = launcher_dropdown_button(
-                        ui,
-                        Icon::NewProfile,
-                        "New Profile",
-                        Some("New Profile"),
-                        true,
-                    );
+                    // Lay the button out from the trailing edge so the search
+                    // field absorbs the remainder exactly and the row ends
+                    // flush with the table below it, whatever the button
+                    // measures.
+                    let new_profile = ui
+                        .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let new_profile = launcher_dropdown_button(
+                                ui,
+                                Icon::NewProfile,
+                                "New Profile",
+                                Some("New Profile"),
+                                true,
+                            );
+                            ui.add_space(16.0);
+                            show_profile_search_field(
+                                ui,
+                                ui.available_width().max(120.0),
+                                &mut state.profile_search,
+                            );
+                            new_profile
+                        })
+                        .inner;
                     egui::Popup::menu(&new_profile).show(|ui| {
                         for (label, mode) in [
                             (
@@ -1540,6 +1551,40 @@ mod tests {
                     command: None,
                 },
             )
+    }
+
+    #[test]
+    fn profiles_list_keeps_a_trailing_margin_and_aligns_its_search_row_with_the_table() {
+        const PANEL_WIDTH: f32 = 560.0;
+        let configuration = festerm_config::Configuration::new(vec![Profile::local(
+            "dev-shell",
+            "/bin/zsh",
+            Vec::new(),
+            None,
+        )
+        .unwrap()])
+        .unwrap();
+        let mut harness = profiles_harness(configuration);
+        harness.run();
+
+        let search_right = harness.get_by_label("Search profiles…").rect().right();
+        let new_profile_right = harness.get_by_label("New Profile").rect().right();
+        let search_left = harness.get_by_label("Search profiles…").rect().left();
+
+        assert!(
+            new_profile_right < PANEL_WIDTH - 8.0,
+            "the profiles list must keep a trailing margin instead of running into the \
+             window edge, but the New Profile button reached {new_profile_right} of \
+             {PANEL_WIDTH}"
+        );
+        assert!(
+            search_right < new_profile_right,
+            "the search field must sit to the left of the New Profile button"
+        );
+        assert!(
+            search_left > 8.0,
+            "the list must keep its leading margin too"
+        );
     }
 
     fn open_new_profile(harness: &mut Harness<'static, ProfilesHarnessState>, kind: &str) {
