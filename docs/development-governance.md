@@ -79,6 +79,15 @@ When an agent discovers adjacent work:
 
 Agents should not opportunistically implement future roadmap items merely because the current code makes them convenient.
 
+### Model Economy
+
+Agent time is billed, so model selection is a project cost, not a preference. Measured session data is recorded in `docs/milestone-progress.md` ("What the base model cost"). The rules that follow from it:
+
+- **Name a model when delegating.** Sub-agents inherit the base model unless told otherwise, and that inheritance was the single largest cost multiplier observed — 60% of one expensive model's spend went to delegated work. Mechanical, verbose tasks (test runs, builds, log collection, repository sweeps, doc lookups) should be routed to a cheap model explicitly.
+- **Prefer a script to a conversation.** Validation an agent performs through many tool calls is paid for on every repeat. Anything run more than once belongs in `validation/`, grouped by functional need. See `validation/README.md`.
+- **Escalate by phase, not by session.** Reserve premium models for genuinely ambiguous work: novel design, reading mockups, diagnosing behavior no test reproduces. Return to a cheaper model for the mechanical stretches around it, which are most of a session.
+- **Judge cost per turn, not per API call.** A model that makes fewer, larger calls looks expensive per call and often is not. The same correction applies to speed: per-call latency is what is felt, per-turn latency is what is actually spent.
+
 ## Validation Before Status Changes
 
 A capability should not move from `Implemented` or `Validation pending` to `Accepted` based on code existence alone. Use the validation evidence defined by the roadmap and test plans, including platform evidence where required.
