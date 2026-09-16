@@ -27,7 +27,7 @@ exclude = ["vendor/egui-winit"]
 egui-winit = { path = "vendor/egui-winit" }
 
 [workspace.package]
-version = "0.1.13"
+version = "0.1.14"
 edition = "2021"
 license = "MIT"
 authors = ["fes"]
