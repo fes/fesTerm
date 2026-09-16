@@ -62,8 +62,11 @@ Windows ConPTY on guests that cannot qualify for GPU/window evidence. It does
 not establish Launcher usability or native input qualification.
 The keyboard-check mode runs synthesized production routing tests on the guest
 platform. The separate keyboard-native mode uses the existing independent
-OS-input driver for no-selection Copy, palette capture, and controlled terminal
-bytes. It requires a qualifying desktop and input permissions; a synthesized
+OS-input driver for no-selection Copy, palette capture, an identified Paste
+request, and controlled terminal bytes. The keyboard-native fixture replaces
+the test desktop clipboard without reading its previous content; run it only
+on a dedicated desktop with guest/host clipboard sharing disabled.
+It requires a qualifying desktop and input permissions; a synthesized
 pass cannot substitute for native evidence. Selected-URL clipboard gestures,
 non-US layouts, AltGr, and IME retain their explicit manual/native boundaries.
 Do not overload these modes with long interaction scripts. Add a

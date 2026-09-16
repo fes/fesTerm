@@ -356,16 +356,19 @@ macOS CGEvent/Accessibility or Windows SendKeys driver, isolated configuration
 and controlled PTY child. The opt-in keyboard mode **replaces the test desktop's
 clipboard with `controlled-clipboard`**, without reading or saving its previous
 contents. It checks Copy with no selection and palette capture, invokes palette
-Paste to exercise the identified native reader, then checks exact encoded
+Paste to exercise the identified native reader, then checks exact accepted
 Ctrl+B/Shift+Ctrl+B, Tab, Up and a fixed token. It is a
 targeted native sample, not exhaustive layout/tool certification or an
 OS-delivered selected-auth-URL regression.
 
 The original Linux OS-input baseline passed at 7e93ece. The macOS baseline
 driver was blocked by Accessibility consent, **not** a keyboard product
-failure; no TCC bypass is appropriate. Candidate native evidence, non-US
-layouts/AltGr/dead keys/IME, selected-URL native copying and platform menu
-interaction remain separately recorded in `docs/manual-validation.md`.
+failure; no TCC bypass is appropriate. The final `eb08168` candidate passed
+synthesized routing checks on all three guest platforms and the revised Linux
+native reader/accepted-byte sample. Non-US layouts/AltGr/dead keys/IME,
+selected-URL native copying, forced native read delays/cancellation, and the
+full platform menu matrix retain their separate qualification boundaries in
+`docs/manual-validation.md`.
 
 ## Primary references
 

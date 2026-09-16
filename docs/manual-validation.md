@@ -136,9 +136,9 @@ The #154 review follow-up adds synthesized regressions for chip-rename raw and
 semantic clipboard paths, same-batch switch/capture ordering and recorder
 targets, Inspector Paste exclusion, eventual pending-write settlement after
 stop/clear/eviction/reconnect, effective Markdown toolbar hints, and IME
-cancellation by tab click without Commit. The earlier three-platform
-synthesized and Linux OS-input evidence predates these fixes; rerun impacted
-native routing for the revised candidate. In TI-12, include rename
+cancellation by tab click without Commit. These regressions are included in
+the final three-platform synthesized runs below; the native sample does not
+replace the complete focus/layout matrix. In TI-12, include rename
 Copy/Cut/Paste and Settings preedit → terminal chip click → shortcut/recovery.
 In TI-13, distinguish initial backpressure from eventual acceptance/rejection
 and verify stopped recording can settle retained entries without reviving
@@ -156,16 +156,15 @@ oracle now observes UI bytes accepted by the session, not merely their earlier
 encoding order. The existing native reader sample is not a forced delayed-read
 or failure-injection test; these new cases remain separately qualified by
 deterministic fake-reader/transport tests pending native evidence.
-The parent reported the Linux native identified-read sample passing on
-`9adce6c`; that evidence predates this ordering follow-up.
+The final Linux native run below includes the revised accepted-byte oracle.
 
 The delayed-paste follow-up adds identified native reads and fake-callback
 regressions for tab/ownership/generation changes, replacements, duplicates,
 same-batch supplied payloads, context/middle/native-menu/palette surfaces and
-confirmation. Rerun the revised keyboard native mode: it now sets the isolated
+confirmation. The revised keyboard native mode sets the isolated
 test desktop clipboard to `controlled-clipboard` (does not read/restore its
 previous value), invokes palette Paste, and requires that exact prefix in its
-controlled input oracle. Earlier native passes do not qualify this new reader.
+controlled input oracle. The final Linux native run exercises this reader.
 Native cross-session/reconnect cancellation remains an additional TI-12 check;
 the deterministic fake-reader coverage is not OS-delivered proof.
 
@@ -180,20 +179,25 @@ No native input result was produced. Its original generic failure artifact
 is retained; triage is **blocked prerequisite**, not a routing product failure.
 Do not bypass TCC or count the baseline as passing selected-URL Copy.
 
-Candidate `3ce45cf` used the reviewed adapter at the same commit:
+Final implementation candidate `eb08168` used the reviewed adapter at
+`3ce45cf`. These reruns include the ownership, identified-read, and input-order
+corrections:
 
 | Guest | Mode | Result | Run ID |
 | --- | --- | --- | --- |
-| Linux | `keyboard-routing-check` | Pass | `20260916T015413Z-linux-festerm-45d4d50c-fcba-443e-b41b-681914011e2b` |
-| Windows ARM64 | `keyboard-routing-check` | Pass | `20260916T015628Z-windows-festerm-0800b4a0-f74f-484f-8755-25fd9a5bed2b` |
-| macOS ARM64 | `keyboard-routing-check` | Pass | `20260916T020031Z-macos-festerm-f504f73e-d526-4586-a2e4-4e89faf07003` |
-| Linux Xorg | `keyboard-routing-native` | Pass | `20260916T020151Z-linux-festerm-6de89f54-0c3f-4bfa-b70e-04ac29231862` |
+| Linux | `keyboard-routing-check` | Pass | `20260916T042148Z-linux-festerm-a25f51be-1600-482f-a3ae-113f18f3483f` |
+| Windows ARM64 | `keyboard-routing-check` | Pass | `20260916T042450Z-windows-festerm-83b378fa-5497-4b32-8548-87717b838395` |
+| macOS ARM64 | `keyboard-routing-check` | Pass | `20260916T042835Z-macos-festerm-4b8a1a73-6454-45fc-9e1f-424793b5584f` |
+| Linux Xorg | `keyboard-routing-native` | Pass | `20260916T041844Z-linux-festerm-d217cb4b-7ab7-48c3-9055-47bdf7985071` |
 
 The check mode runs synthesized production app/controller/configuration tests
 on the actual guest platform, without claiming OS event delivery. The native
-Linux run independently injected no-selection Copy and palette open/close,
-then verified the controlled `02 02 09 1b 5b 41` bytes followed by
-`os-input-ok` and carriage return. This is not real selected-URL clipboard,
+Linux run independently injected no-selection Copy, palette open/close, and
+palette Paste. It verified session acceptance of `controlled-clipboard`,
+then `02 02 09 1b 5b 41`, then `os-input-ok` and carriage return, in that order.
+The dedicated Linux guest's shared-clipboard mode was confirmed off before
+running the fixture; no host clipboard content was inspected or changed.
+This is not real selected-URL clipboard,
 Screen gesture, AltGr, IME, or exhaustive native-menu qualification.
 The Windows guest's known graphics limitation and macOS Accessibility
 prerequisite remain distinct from successful synthesized routing checks.

@@ -36,8 +36,11 @@ input delivery. `keyboard-routing-native` enables the repository-owned
 keyboard scenario in the existing OS-input driver and keeps its content-free
 result in the job artifact directory. These are separate modes so a working
 backend cannot mask missing desktop, graphics, or Accessibility prerequisites.
-The native scenario checks no-selection Copy, palette capture, and controlled
-terminal bytes; it is not selected-URL clipboard, AltGr, or IME qualification.
+The native scenario checks no-selection Copy, palette capture, an identified
+palette Paste request, and controlled terminal bytes. It overwrites the test
+desktop clipboard with a fixed fixture without reading or restoring previous
+contents: use a dedicated desktop with guest/host clipboard sharing disabled.
+It is not selected-URL clipboard, AltGr, or IME qualification.
 Both modes require an empty payload and a reviewed adapter pin.
 
 `vm-evidence-lab` owns the host controller, Parallels provider, guest relay,
