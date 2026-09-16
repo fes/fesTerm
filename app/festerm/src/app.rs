@@ -292,14 +292,14 @@ impl ApplicationShortcut {
         }
     }
 
-    fn consume(self, context: &egui::Context) -> bool {
+    fn consume(self, context: &egui::Context, scope: crate::keyboard::ShortcutContext) -> bool {
         let bindings = context.data(|data| {
             data.get_temp::<festerm_config::KeyboardBindings>(egui::Id::new(
                 "effective-keyboard-bindings",
             ))
             .unwrap_or_default()
         });
-        crate::keyboard::consume(context, &bindings, self.action())
+        scope.consume(context, &bindings, self.action())
     }
 }
 
@@ -2686,13 +2686,44 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn terminal_owns_input(&self) -> bool {
+        self.terminal_surface_owns_input() && !self.overlays.blocks_terminal_input()
+    }
+
+    fn terminal_surface_owns_input(&self) -> bool {
         matches!(&self.state.active_tab().content,
             TabContent::Session(session) if !session.search.is_open()
                 && session.host_key_prompt().is_none() && session.password_prompt().is_none())
             && !self.palette.is_open()
             && !self.state.inspector_open()
             && self.rename_restore_tab.is_none()
-            && !self.overlays.blocks_terminal_input()
+    }
+
+    fn shortcut_context(
+        &self,
+        context: &egui::Context,
+        before_opening_confirmation: bool,
+    ) -> crate::keyboard::ShortcutContext {
+        let blocked = if before_opening_confirmation && self.clipboard_confirmation_opening(context)
+        {
+            self.overlays.blocks_terminal_input_except_paste()
+        } else {
+            self.overlays.blocks_terminal_input()
+        };
+        crate::keyboard::ShortcutContext {
+            blocked: blocked
+                || crate::keyboard::composition_active(context, self.state.active().chip_id()),
+            palette_open: self.palette.is_open(),
+            terminal_input: self.terminal_surface_owns_input(),
+            markdown_viewer: matches!(
+                self.state.active_tab().content,
+                TabContent::MarkdownViewer(_)
+            ),
+            open_markdown: cfg!(target_os = "macos")
+                || !matches!(self.state.active_tab().content, TabContent::Session(_)),
+            port_forward_available: matches!(&self.state.active_tab().content,
+                TabContent::Session(session) if session.live_port_forwarding_available()),
+            tab_count: self.state.tabs().len(),
+        }
     }
 
     fn clipboard_confirmation_opening(&self, context: &egui::Context) -> bool {
@@ -2717,9 +2748,10 @@ impl FesTermApp {
             self.cancel_clipboard_paste(ctx);
             if cancelling {
                 let bindings = self.state.interface_settings().keyboard_bindings().clone();
+                let scope = self.shortcut_context(ctx, false);
                 let before = events.len();
                 events.retain(|event| {
-                    crate::keyboard::is_global_key(event, &bindings)
+                    scope.activates(event, &bindings, true)
                         || !matches!(
                             event,
                             egui::Event::Key { .. }
@@ -2754,15 +2786,17 @@ impl FesTermApp {
                 self.cancel_clipboard_paste(ctx);
             }
             let new_confirmation_action = self.clipboard_confirmation_opening(ctx)
-                && crate::keyboard::is_bound_key(
+                && self.shortcut_context(ctx, true).activates(
                     &event,
                     self.state.interface_settings().keyboard_bindings(),
+                    false,
                 );
             if new_confirmation_action
                 || (self.clipboard_paste.is_some()
-                    && crate::keyboard::is_global_key(
+                    && self.shortcut_context(ctx, false).activates(
                         &event,
                         self.state.interface_settings().keyboard_bindings(),
+                        true,
                     ))
             {
                 let before = remaining.len();
@@ -2800,9 +2834,10 @@ impl FesTermApp {
                         | egui::Event::Ime(_)
                         | egui::Event::Key { pressed: true, .. }
                 )
-            }) && crate::keyboard::is_bound_key(
+            }) && self.shortcut_context(ctx, false).activates(
                 &event,
                 self.state.interface_settings().keyboard_bindings(),
+                false,
             ) {
                 pending.push_front(event);
                 ctx.data_mut(|data| {
@@ -2887,22 +2922,43 @@ impl FesTermApp {
                     .unwrap_or_else(|| "Unbound".into()),
             )
         });
-        if crate::keyboard::composition_owns_keys(ctx, self.state.active().chip_id())
-            || self.overlays.blocks_terminal_input()
-        {
+        if crate::keyboard::composition_owns_keys(ctx, self.state.active().chip_id()) {
             return;
         }
+        let scope = self.shortcut_context(ctx, false);
+        if scope.blocked {
+            // Opening-frame input waits behind the confirmation. Suppressed
+            // app-key repeats/releases are neither actions nor terminal input.
+            let opening_scope = self.shortcut_context(ctx, true);
+            if !opening_scope.blocked
+                && ctx.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::Key { pressed: false, .. }
+                                | egui::Event::Key { repeat: true, .. }
+                        )
+                    })
+                })
+            {
+                for action in festerm_config::KeyboardAction::ALL {
+                    opening_scope.consume(ctx, &bindings, action);
+                }
+                crate::keyboard::consume_exact(
+                    ctx,
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                    egui::Key::F12,
+                );
+            }
+            return;
+        }
+        let consume = |action| scope.consume(ctx, &bindings, action);
         let terminal_owns_input = self.terminal_owns_input();
         let paired_paste = terminal_owns_input
             .then(|| crate::keyboard::paired_paste(ctx))
             .flatten();
-        let paste = terminal_owns_input
-            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::Paste)
-                | crate::keyboard::consume(
-                    ctx,
-                    &bindings,
-                    festerm_config::KeyboardAction::PasteAlternate,
-                ));
+        let paste = consume(festerm_config::KeyboardAction::Paste)
+            | consume(festerm_config::KeyboardAction::PasteAlternate);
         if terminal_owns_input {
             crate::keyboard::prepare_terminal_events(ctx);
         }
@@ -2917,7 +2973,7 @@ impl FesTermApp {
                 data.insert_temp(egui::Id::new("keyboard-settings-recovery"), true)
             });
         }
-        let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
+        let open_palette = ApplicationShortcut::CommandPalette.consume(ctx, scope);
         if open_palette {
             self.palette.toggle();
         }
@@ -2928,7 +2984,7 @@ impl FesTermApp {
         // below so the same keystroke works whether or not the palette
         // happens to be open.
         for index in 0..MAX_QUICK_SWITCH_TABS {
-            if crate::keyboard::consume(ctx, &bindings, crate::keyboard::QUICK_ACTIONS[index]) {
+            if consume(crate::keyboard::QUICK_ACTIONS[index]) {
                 if let Some(tab) = self.state.tabs().get(index) {
                     let target = tab.id;
                     self.state.dispatch(AppCommand::ActivateTab(target), ctx);
@@ -2942,70 +2998,35 @@ impl FesTermApp {
         if self.palette.is_open() {
             return;
         }
-        let new_tab = ApplicationShortcut::NewSession.consume(ctx);
-        let start_local_shell = ApplicationShortcut::StartLocalShell.consume(ctx);
-        let close_tab = ApplicationShortcut::CloseActiveSurface.consume(ctx);
-        let next_tab = ApplicationShortcut::NextSession.consume(ctx);
-        let previous_tab = ApplicationShortcut::PreviousSession.consume(ctx);
+        let new_tab = ApplicationShortcut::NewSession.consume(ctx, scope);
+        let start_local_shell = ApplicationShortcut::StartLocalShell.consume(ctx, scope);
+        let close_tab = ApplicationShortcut::CloseActiveSurface.consume(ctx, scope);
+        let next_tab = ApplicationShortcut::NextSession.consume(ctx, scope);
+        let previous_tab = ApplicationShortcut::PreviousSession.consume(ctx, scope);
         // Both bindings open Settings: the legacy macOS-only `Cmd+,`
         // convention (also present as a native app-menu accelerator) and the
         // cross-platform `SettingsHotkey` shown in Settings' own Keyboard
         // card. Both `consume` calls run unconditionally so neither chord is
         // ever left un-consumed by short-circuiting.
-        let settings_legacy = ApplicationShortcut::Settings.consume(ctx);
-        let settings_hotkey = ApplicationShortcut::SettingsHotkey.consume(ctx);
+        let settings_legacy = ApplicationShortcut::Settings.consume(ctx, scope);
+        let settings_hotkey = ApplicationShortcut::SettingsHotkey.consume(ctx, scope);
         let settings = settings_legacy || settings_hotkey;
-        let zoom_in = terminal_owns_input
-            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::ZoomIn)
-                | crate::keyboard::consume(
-                    ctx,
-                    &bindings,
-                    festerm_config::KeyboardAction::ZoomInAlternate,
-                ));
-        let zoom_out = terminal_owns_input && ApplicationShortcut::ZoomOut.consume(ctx);
-        let reset_zoom = terminal_owns_input && ApplicationShortcut::ZoomReset.consume(ctx);
-        let clear_terminal = terminal_owns_input && ApplicationShortcut::ClearTerminal.consume(ctx);
-        let reset_terminal = terminal_owns_input && ApplicationShortcut::ResetTerminal.consume(ctx);
-        let toggle_focus_mode =
-            terminal_owns_input && ApplicationShortcut::ToggleFocusMode.consume(ctx);
-        let open_port_forward_manager = terminal_owns_input
-            && matches!(&self.state.active_tab().content, TabContent::Session(session) if session.live_port_forwarding_available())
-            && ApplicationShortcut::PortForwardManager.consume(ctx);
-        let open_find = terminal_owns_input && ApplicationShortcut::Find.consume(ctx);
-        let markdown_find = matches!(
-            self.state.active_tab().content,
-            TabContent::MarkdownViewer(_)
-        ) && ApplicationShortcut::MarkdownFind.consume(ctx);
-        let markdown_reload = matches!(
-            self.state.active_tab().content,
-            TabContent::MarkdownViewer(_)
-        ) && ApplicationShortcut::MarkdownReload.consume(ctx);
-        let markdown_toggle_mode = matches!(
-            self.state.active_tab().content,
-            TabContent::MarkdownViewer(_)
-        ) && ApplicationShortcut::MarkdownPreviewSource.consume(ctx);
-        let markdown_toggle_outline = matches!(
-            self.state.active_tab().content,
-            TabContent::MarkdownViewer(_)
-        ) && ApplicationShortcut::MarkdownOutline.consume(ctx);
-        // Available from every surface except a focused terminal on
-        // Windows/Linux, where this chord is `^O` and belongs to the program
-        // running inside the terminal (see `ApplicationShortcut::
-        // OpenMarkdownFile` and `open_markdown_file_picker`). Short-circuits
-        // before `consume` so the keystroke is left in the input queue for
-        // `festerm_ui_egui::input` to encode as a control byte.
-        let terminal_owns_plain_ctrl_chords = !cfg!(target_os = "macos")
-            && matches!(self.state.active_tab().content, TabContent::Session(_));
-        let open_markdown_file =
-            !terminal_owns_plain_ctrl_chords && ApplicationShortcut::OpenMarkdownFile.consume(ctx);
-        let terminal_input = terminal_owns_input;
-        let copy = terminal_input
-            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::Copy)
-                | crate::keyboard::consume(
-                    ctx,
-                    &bindings,
-                    festerm_config::KeyboardAction::CopyAlternate,
-                ));
+        let zoom_in = consume(festerm_config::KeyboardAction::ZoomIn)
+            | consume(festerm_config::KeyboardAction::ZoomInAlternate);
+        let zoom_out = ApplicationShortcut::ZoomOut.consume(ctx, scope);
+        let reset_zoom = ApplicationShortcut::ZoomReset.consume(ctx, scope);
+        let clear_terminal = ApplicationShortcut::ClearTerminal.consume(ctx, scope);
+        let reset_terminal = ApplicationShortcut::ResetTerminal.consume(ctx, scope);
+        let toggle_focus_mode = ApplicationShortcut::ToggleFocusMode.consume(ctx, scope);
+        let open_port_forward_manager = ApplicationShortcut::PortForwardManager.consume(ctx, scope);
+        let open_find = ApplicationShortcut::Find.consume(ctx, scope);
+        let markdown_find = ApplicationShortcut::MarkdownFind.consume(ctx, scope);
+        let markdown_reload = ApplicationShortcut::MarkdownReload.consume(ctx, scope);
+        let markdown_toggle_mode = ApplicationShortcut::MarkdownPreviewSource.consume(ctx, scope);
+        let markdown_toggle_outline = ApplicationShortcut::MarkdownOutline.consume(ctx, scope);
+        let open_markdown_file = ApplicationShortcut::OpenMarkdownFile.consume(ctx, scope);
+        let copy = consume(festerm_config::KeyboardAction::Copy)
+            | consume(festerm_config::KeyboardAction::CopyAlternate);
         if copy {
             self.copy_active_selection(ctx);
         }
@@ -3224,10 +3245,11 @@ impl FesTermApp {
             }
             self.show_clipboard_discard_notice(origin.tab);
             let bindings = self.state.interface_settings().keyboard_bindings().clone();
+            let scope = self.shortcut_context(context, false);
             let discarded = context.input_mut(|input| {
                 let before = input.events.len();
                 input.events.retain(|event| {
-                    crate::keyboard::is_global_key(event, &bindings)
+                    scope.activates(event, &bindings, true)
                         || !matches!(
                             event,
                             egui::Event::Key { .. }
@@ -5824,6 +5846,230 @@ mod tests {
             transport.sent().concat(),
             b"controlled-one\ncontrolled-twofollowing\r"
         );
+    }
+
+    #[test]
+    fn keyboard_inactive_markdown_chord_cannot_cancel_paste_confirmation() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let mut bindings = festerm_config::KeyboardBindings::default();
+        // Exercise the non-macOS default collision on every host.
+        bindings.set(
+            festerm_config::KeyboardAction::MarkdownFind,
+            Some("Ctrl+F".into()),
+        );
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        let token = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+        harness.input_mut().events.extend([
+            keyboard_event(egui::Key::F, egui::Modifiers::CTRL),
+            keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+        ]);
+        harness.step();
+        assert!(transport.sent().is_empty());
+        assert!(harness.state().overlays.pending_paste.is_some());
+        harness.run();
+        harness.get_by_label("Paste").click();
+        harness.run();
+        assert_eq!(
+            transport.sent().concat(),
+            b"controlled-one\ncontrolled-two\x06\r"
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn keyboard_inactive_document_default_waits_behind_unresolved_paste() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let token = keyboard_clipboard_request(&mut harness);
+        harness.input_mut().events.push(bound_event(
+            festerm_config::KeyboardAction::OpenMarkdownFile,
+        ));
+        harness.step();
+        assert!(transport.sent().is_empty());
+        assert_eq!(harness.state().clipboard_paste.unwrap().token, token);
+        assert!(harness.state().overlays.markdown_file_picker.is_none());
+        keyboard_clipboard_reply(&context, token, "controlled-marker");
+        harness.step();
+        assert_eq!(transport.sent().concat(), b"controlled-marker\x0f");
+    }
+
+    #[test]
+    fn keyboard_unbound_global_and_missing_tab_cannot_cancel_paste_confirmation() {
+        for action in [
+            festerm_config::KeyboardAction::SettingsHotkey,
+            festerm_config::KeyboardAction::Quick9,
+        ] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let mut bindings = festerm_config::KeyboardBindings::default();
+            let event = if action == festerm_config::KeyboardAction::SettingsHotkey {
+                bindings.set(action, Some(String::new()));
+                bound_event(action)
+            } else {
+                bindings.set(action, Some("Ctrl+G".into()));
+                keyboard_event(egui::Key::G, egui::Modifiers::CTRL)
+            };
+            harness
+                .state_mut()
+                .state
+                .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+            let token = keyboard_clipboard_request(&mut harness);
+            keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+            harness.input_mut().events.extend([
+                event,
+                keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+            ]);
+            harness.step();
+            assert!(transport.sent().is_empty(), "{action:?}");
+            assert!(
+                harness.state().overlays.pending_paste.is_some(),
+                "{action:?}"
+            );
+            harness.run();
+            harness.get_by_label("Paste").click();
+            harness.run();
+            let suffix: &[u8] = if action == festerm_config::KeyboardAction::Quick9 {
+                b"\x07\r"
+            } else if cfg!(target_os = "macos") {
+                b"\r"
+            } else {
+                b"\x13\r"
+            };
+            assert_eq!(
+                transport.sent().concat(),
+                [b"controlled-one\ncontrolled-two".as_slice(), suffix].concat()
+            );
+        }
+    }
+
+    #[test]
+    fn keyboard_applicable_globals_and_recovery_cancel_clipboard_barriers() {
+        for ready in [false, true] {
+            for action in ["settings", "switch", "palette", "recovery"] {
+                let (mut harness, first) = keyboard_harness();
+                let context = harness.ctx.clone();
+                let first_tab = harness.state().state.active();
+                let (second_tab, second) = keyboard_second_session(&mut harness);
+                harness
+                    .state_mut()
+                    .state
+                    .dispatch(AppCommand::ActivateTab(first_tab), &context);
+                let token = keyboard_clipboard_request(&mut harness);
+                if ready {
+                    keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+                }
+                let event = match action {
+                    "settings" => bound_event(festerm_config::KeyboardAction::SettingsHotkey),
+                    "switch" => bound_event(festerm_config::KeyboardAction::Quick2),
+                    "palette" => bound_event(festerm_config::KeyboardAction::CommandPalette),
+                    _ => keyboard_event(
+                        egui::Key::F12,
+                        egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                    ),
+                };
+                harness
+                    .input_mut()
+                    .events
+                    .extend([egui::Event::Text("discard-with-old-read".into()), event]);
+                harness.step();
+                assert!(
+                    harness.state().clipboard_paste.is_none(),
+                    "{ready} {action}"
+                );
+                assert!(
+                    harness.state().overlays.pending_paste.is_none(),
+                    "{ready} {action}"
+                );
+                assert!(
+                    first.sent().is_empty() && second.sent().is_empty(),
+                    "{ready} {action}"
+                );
+                match action {
+                    "settings" | "recovery" => assert!(matches!(
+                        harness.state().state.active_tab().content,
+                        TabContent::Settings
+                    )),
+                    "switch" => assert_eq!(harness.state().state.active(), second_tab),
+                    _ => assert!(harness.state().palette.is_open()),
+                }
+                keyboard_clipboard_reply(&context, token, "stale-response");
+                harness.step();
+                assert!(
+                    first.sent().is_empty() && second.sent().is_empty(),
+                    "{ready} {action}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_app_repeats_and_releases_do_not_cancel_or_enter_confirmation_buffer() {
+        for release in [false, true] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            // egui derives repeat from its held-key state, not the supplied flag.
+            harness
+                .input_mut()
+                .events
+                .push(keyboard_event(egui::Key::J, egui::Modifiers::NONE));
+            harness.step();
+            assert!(transport.sent().is_empty());
+            let mut bindings = festerm_config::KeyboardBindings::default();
+            bindings.set(
+                festerm_config::KeyboardAction::SettingsHotkey,
+                Some("Ctrl+Shift+J".into()),
+            );
+            harness
+                .state_mut()
+                .state
+                .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+            let token = keyboard_clipboard_request(&mut harness);
+            keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+            let mut event =
+                keyboard_event(egui::Key::J, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+            if let egui::Event::Key {
+                pressed, repeat, ..
+            } = &mut event
+            {
+                *pressed = !release;
+                *repeat = !release;
+            }
+            harness.input_mut().events.extend([
+                event,
+                keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+            ]);
+            harness.step();
+            assert!(transport.sent().is_empty());
+            assert!(harness.state().overlays.pending_paste.is_some());
+            harness.run();
+            harness.get_by_label("Paste").click();
+            harness.run();
+            assert_eq!(
+                transport.sent().concat(),
+                b"controlled-one\ncontrolled-two\r"
+            );
+        }
+    }
+
+    #[test]
+    fn keyboard_opening_confirmation_bypass_does_not_bypass_another_modal() {
+        let (mut harness, _) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let token = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+        harness.step();
+        let app = harness.state_mut();
+        app.overlays.pending_paste.as_mut().unwrap().opened_frame = context.cumulative_frame_nr();
+        assert!(!app.shortcut_context(&context, true).blocked);
+        app.overlays.about_open = true;
+        assert!(app.shortcut_context(&context, true).blocked);
+        app.overlays.about_open = false;
+        assert!(app.shortcut_context(&context, false).blocked);
     }
 
     #[test]

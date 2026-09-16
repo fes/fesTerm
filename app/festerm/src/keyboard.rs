@@ -68,70 +68,115 @@ pub fn consume_exact(context: &egui::Context, expected: Modifiers, key: Key) -> 
             }
 
             captured_clipboard = 0;
-            if let egui::Event::Key {
-                key: actual,
-                modifiers,
-                pressed,
-                repeat,
-                ..
-            } = event
-            {
-                let ctrl = modifiers.ctrl || (!cfg!(target_os = "macos") && modifiers.command);
-                let mac_cmd = modifiers.mac_cmd || (cfg!(target_os = "macos") && modifiers.command);
-                if *actual == key
-                    && ctrl == expected.ctrl
-                    && mac_cmd == expected.mac_cmd
-                    && modifiers.alt == expected.alt
-                    && (modifiers.shift == expected.shift || key == Key::Plus)
-                {
+            match event {
+                egui::Event::Key {
+                    pressed, repeat, ..
+                } if key_matches(event, expected, key) => {
                     activate |= *pressed && !*repeat;
                     captured_clipboard = clipboard_key_kind(event);
-                    return false;
+                    false
                 }
+                _ => true,
             }
-            true
         });
     });
     activate
 }
 
-pub fn is_bound_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
-    is_bound_key_in_scope(event, bindings, false)
+#[derive(Clone, Copy)]
+pub struct ShortcutContext {
+    pub blocked: bool,
+    pub palette_open: bool,
+    pub terminal_input: bool,
+    pub markdown_viewer: bool,
+    pub open_markdown: bool,
+    pub port_forward_available: bool,
+    pub tab_count: usize,
 }
 
-pub fn is_global_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
-    is_bound_key_in_scope(event, bindings, true)
+impl ShortcutContext {
+    pub fn consume(
+        self,
+        context: &egui::Context,
+        bindings: &KeyboardBindings,
+        action: Action,
+    ) -> bool {
+        self.allows(action) && consume(context, bindings, action)
+    }
+
+    /// Shared by dispatch and paste-barrier cancellation, not just catalogue lookup.
+    pub fn allows(self, action: Action) -> bool {
+        if self.blocked {
+            return false;
+        }
+        if action == Action::CommandPalette {
+            return true;
+        }
+        if let Some(index) = QUICK_ACTIONS
+            .iter()
+            .position(|candidate| *candidate == action)
+        {
+            return index < self.tab_count;
+        }
+        if self.palette_open {
+            return false;
+        }
+        match action.scope() {
+            festerm_config::KeyboardScope::Global => true,
+            festerm_config::KeyboardScope::Terminal => {
+                self.terminal_input
+                    && (action != Action::PortForwardManager || self.port_forward_available)
+            }
+            festerm_config::KeyboardScope::Markdown => self.markdown_viewer,
+            festerm_config::KeyboardScope::Document => self.open_markdown,
+        }
+    }
+
+    pub fn activates(
+        self,
+        event: &egui::Event,
+        bindings: &KeyboardBindings,
+        global_only: bool,
+    ) -> bool {
+        if self.blocked
+            || !matches!(
+                event,
+                egui::Event::Key {
+                    pressed: true,
+                    repeat: false,
+                    ..
+                }
+            )
+        {
+            return false;
+        }
+        if key_matches(event, Modifiers::CTRL | Modifiers::SHIFT, Key::F12) {
+            return true;
+        }
+        Action::ALL.into_iter().any(|action| {
+            self.allows(action)
+                && (!global_only
+                    || matches!(
+                        action.scope(),
+                        festerm_config::KeyboardScope::Global
+                            | festerm_config::KeyboardScope::Document
+                    ))
+                && chord(bindings.effective(action, cfg!(target_os = "macos")))
+                    .is_some_and(|(expected, key)| key_matches(event, expected, key))
+        })
+    }
 }
 
-fn is_bound_key_in_scope(event: &egui::Event, bindings: &KeyboardBindings, global: bool) -> bool {
-    let egui::Event::Key {
-        key,
-        modifiers,
-        pressed: true,
-        ..
-    } = event
-    else {
+fn key_matches(event: &egui::Event, expected: Modifiers, wanted: Key) -> bool {
+    let egui::Event::Key { key, modifiers, .. } = event else {
         return false;
     };
-    let matches = |expected: Modifiers, expected_key: Key| {
-        *key == expected_key
-            && (modifiers.ctrl || (!cfg!(target_os = "macos") && modifiers.command))
-                == expected.ctrl
-            && (modifiers.mac_cmd || (cfg!(target_os = "macos") && modifiers.command))
-                == expected.mac_cmd
-            && modifiers.alt == expected.alt
-            && (modifiers.shift == expected.shift || *key == Key::Plus)
-    };
-    matches(Modifiers::CTRL | Modifiers::SHIFT, Key::F12)
-        || Action::ALL.into_iter().any(|action| {
-            (!global
-                || matches!(
-                    action.scope(),
-                    festerm_config::KeyboardScope::Global | festerm_config::KeyboardScope::Document
-                ))
-                && chord(bindings.effective(action, cfg!(target_os = "macos")))
-                    .is_some_and(|(modifiers, key)| matches(modifiers, key))
-        })
+    *key == wanted
+        && (modifiers.ctrl || (!cfg!(target_os = "macos") && modifiers.command)) == expected.ctrl
+        && (modifiers.mac_cmd || (cfg!(target_os = "macos") && modifiers.command))
+            == expected.mac_cmd
+        && modifiers.alt == expected.alt
+        && (modifiers.shift == expected.shift || *key == Key::Plus)
 }
 
 /// Remove only clipboard events derived from an adjacent native key.
@@ -199,11 +244,16 @@ fn clipboard_key_kind(event: &egui::Event) -> u8 {
     }
 }
 
+pub fn composition_active(context: &egui::Context, surface: u64) -> bool {
+    let id = egui::Id::new("keyboard-ime-composition");
+    let owner = (surface, context.memory(|memory| memory.focused()));
+    context.data(|data| data.get_temp::<(u64, Option<egui::Id>)>(id) == Some(owner))
+}
+
 pub fn composition_owns_keys(context: &egui::Context, surface: u64) -> bool {
     let id = egui::Id::new("keyboard-ime-composition");
     let owner = (surface, context.memory(|memory| memory.focused()));
-    let mut composing =
-        context.data(|data| data.get_temp::<(u64, Option<egui::Id>)>(id) == Some(owner));
+    let mut composing = composition_active(context, surface);
     let mut owned = composing;
     context.input(|input| {
         for event in &input.events {
@@ -354,6 +404,179 @@ pub fn show_editor(
 mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
+
+    #[test]
+    fn keyboard_cancellation_and_consumption_share_contextual_eligibility() {
+        let terminal = ShortcutContext {
+            blocked: false,
+            palette_open: false,
+            terminal_input: true,
+            markdown_viewer: false,
+            open_markdown: false,
+            port_forward_available: false,
+            tab_count: 1,
+        };
+        let cases = [
+            (Action::MarkdownFind, terminal, false),
+            (
+                Action::MarkdownFind,
+                ShortcutContext {
+                    markdown_viewer: true,
+                    terminal_input: false,
+                    ..terminal
+                },
+                true,
+            ),
+            (Action::OpenMarkdownFile, terminal, false),
+            (
+                Action::OpenMarkdownFile,
+                ShortcutContext {
+                    open_markdown: true,
+                    ..terminal
+                },
+                true,
+            ),
+            (Action::PortForwardManager, terminal, false),
+            (
+                Action::PortForwardManager,
+                ShortcutContext {
+                    port_forward_available: true,
+                    ..terminal
+                },
+                true,
+            ),
+            (
+                Action::Find,
+                ShortcutContext {
+                    terminal_input: false,
+                    ..terminal
+                },
+                false,
+            ),
+            (
+                Action::Paste,
+                ShortcutContext {
+                    terminal_input: false,
+                    ..terminal
+                },
+                false,
+            ),
+            (
+                Action::Copy,
+                ShortcutContext {
+                    terminal_input: false,
+                    ..terminal
+                },
+                false,
+            ),
+            (
+                Action::NewSession,
+                ShortcutContext {
+                    palette_open: true,
+                    ..terminal
+                },
+                false,
+            ),
+            (
+                Action::CommandPalette,
+                ShortcutContext {
+                    palette_open: true,
+                    ..terminal
+                },
+                true,
+            ),
+            (
+                Action::Quick1,
+                ShortcutContext {
+                    palette_open: true,
+                    ..terminal
+                },
+                true,
+            ),
+            (Action::Quick9, terminal, false),
+            (
+                Action::Quick9,
+                ShortcutContext {
+                    tab_count: 9,
+                    ..terminal
+                },
+                true,
+            ),
+            (
+                Action::SettingsHotkey,
+                ShortcutContext {
+                    blocked: true,
+                    ..terminal
+                },
+                false,
+            ),
+            (
+                Action::CommandPalette,
+                ShortcutContext {
+                    blocked: true,
+                    ..terminal
+                },
+                false,
+            ),
+            (
+                Action::Quick1,
+                ShortcutContext {
+                    blocked: true,
+                    ..terminal
+                },
+                false,
+            ),
+        ];
+        for (action, scope, expected) in cases {
+            let mut bindings = KeyboardBindings::default();
+            for candidate in Action::ALL {
+                bindings.set(candidate, Some(String::new()));
+            }
+            bindings.set(action, Some("Ctrl+F".into()));
+            bindings.validate(cfg!(target_os = "macos")).unwrap();
+            let event = egui::Event::Key {
+                key: Key::F,
+                physical_key: Some(Key::F),
+                modifiers: Modifiers::CTRL,
+                pressed: true,
+                repeat: false,
+            };
+            assert_eq!(
+                scope.activates(&event, &bindings, false),
+                expected,
+                "{action:?}"
+            );
+            let global = matches!(
+                action.scope(),
+                festerm_config::KeyboardScope::Global | festerm_config::KeyboardScope::Document
+            );
+            assert_eq!(
+                scope.activates(&event, &bindings, true),
+                expected && global,
+                "{action:?}"
+            );
+            let context = egui::Context::default();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    events: vec![event],
+                    ..Default::default()
+                },
+                |ui| {
+                    assert_eq!(
+                        scope.consume(ui.ctx(), &bindings, action),
+                        expected,
+                        "{action:?}"
+                    );
+                    assert_eq!(
+                        ui.input(|input| input.events.is_empty()),
+                        expected,
+                        "{action:?}"
+                    );
+                },
+            );
+            output.textures_delta.clear();
+        }
+    }
 
     #[test]
     fn keyboard_clipboard_pairing_preserves_unrelated_explicit_paste() {

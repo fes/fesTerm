@@ -224,8 +224,11 @@ impl OverlayState {
     /// background without a modal backdrop, and the transient notice is a
     /// passive banner, so neither blocks terminal input.
     pub(crate) fn blocks_terminal_input(&self) -> bool {
+        self.pending_paste.is_some() || self.blocks_terminal_input_except_paste()
+    }
+
+    pub(crate) fn blocks_terminal_input_except_paste(&self) -> bool {
         self.pending_close.is_some()
-            || self.pending_paste.is_some()
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
             || self.port_forward_manager.is_some()

@@ -1627,6 +1627,14 @@ column proportions or introducing horizontal scrolling.
 
 ### Keyboard ownership and persistent bindings
 
+Shortcut dispatch, ordering deferral and paste cancellation use one runtime
+applicability policy. Inactive Markdown/Document chords remain terminal input
+behind the clipboard barrier rather than cancelling confirmation; unavailable
+actions and suppressed repeats cannot authorize cancellation either. Applicable
+global/recovery actions retain cancellation, and the opening-frame exception
+does not bypass another modal. Rendered regressions cover Ctrl+F plus Enter,
+platform-specific Ctrl+O, unbinding, absent targets and deliberate confirmation.
+
 The final ordering follow-up reserves asynchronous paste's position in the
 existing bounded session byte queue. Ready completion precedes later keyboard
 dispatch; unresolved following input cannot overtake paste or escape after

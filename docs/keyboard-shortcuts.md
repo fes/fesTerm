@@ -289,6 +289,22 @@ regressions, not a claim that the user's gesture generated a measured byte:
   Tests require `controlled-marker` followed by `0d`, including an Enter
   already waiting from the initiating batch. Failed reads and cancelled
   confirmations emit neither the clipboard text nor the waiting Enter.
+* **Inactive shortcuts cancelling safety:** a reviewed candidate treated
+  catalogue membership as dispatch eligibility. On Windows/Linux,
+  `ready("controlled-one\ncontrolled-two"), Ctrl+F, Enter` cancelled the new
+  confirmation even though Markdown Find is inactive in a terminal, then sent
+  `06 0d`. An unresolved read followed by Ctrl+O was likewise cancelled despite
+  the terminal's documented ownership of `0f`. Cancellation, deferral and
+  consumption now share the current-context dispatch policy. The first trace
+  sends **zero bytes** until deliberate Paste, then the marker followed by
+  `06 0d`; the second sends the marker followed by `0f` after completion.
+  Inactive Markdown/Document actions, unavailable SSH forwards, missing quick
+  switch targets and unbound actions are not cancellation commands. Applicable
+  global actions and fixed recovery still cancel pending input without
+  forwarding it. Suppressed app-key repeats/releases neither cancel nor enter
+  the waiting buffer. Only the opening confirmation is disregarded when
+  evaluating its preceding input context—not an established or additional
+  modal, widget ownership, or live IME composition.
 * **Hidden Markdown binding:** removing an app binding previously would not
   remove the viewer's second hard-coded handler. Those four application
   shortcuts now have one configurable dispatch source.
