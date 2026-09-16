@@ -3013,11 +3013,9 @@ mod tests {
             &mut controller,
             &mut terminal,
             |terminal| {
-                (0..terminal.dimensions().rows()).any(|row| {
-                    terminal
-                        .row_text(row)
-                        .is_some_and(|text| text.starts_with("C:\\"))
-                })
+                terminal
+                    .row_text(terminal.cursor().row())
+                    .is_some_and(|text| text.starts_with("C:\\") && text.trim_end().ends_with('>'))
             },
             Duration::from_secs(3),
             "initial default-shell prompt",
@@ -3029,9 +3027,14 @@ mod tests {
         pump_controlled_until(
             &mut controller,
             &mut terminal,
-            |terminal| terminal.cursor().row() > initial_cursor.row(),
+            |terminal| {
+                terminal.cursor().row() > initial_cursor.row()
+                    && terminal
+                        .row_text(terminal.cursor().row())
+                        .is_some_and(|text| text.trim_end().ends_with('>'))
+            },
             Duration::from_secs(3),
-            "default-shell command output",
+            "returned default-shell prompt",
         );
 
         let cursor = terminal.cursor();
