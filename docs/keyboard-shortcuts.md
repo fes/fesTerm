@@ -16,11 +16,11 @@ or only unbound ones). Each row carries the action's effective chord as
 keycaps and a **Customized** badge once it has been overridden. Selecting a
 row expands its editor in place, directly under that row; selecting another
 action closes it, and selecting the same row again closes it too. Select a row,
-then either type a chord or press **Press keys** and press the combination
+then either type a chord or press **Record shortcut** and press the combination
 itself — while capturing, the keys are taken by the editor rather than
 dispatched, so binding a shortcut cannot also fire it, and Escape cancels a
 capture. A captured chord is applied immediately; a typed one is applied by
-**Assign binding**. **Unbind action** explicitly disables application
+**Assign binding**. **Clear binding** explicitly disables application
 handling; **Restore default** removes that one override; **Reset all keyboard
 bindings** clears every override and leaves other preferences/profiles
 unchanged. Both resets stay visible and are disabled while they would be a

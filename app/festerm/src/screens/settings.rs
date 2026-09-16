@@ -831,11 +831,9 @@ mod tests {
         for width in [752.0, 360.0] {
             let mut harness = settings_harness_with_width(width);
             harness.run();
-            assert!(harness.query_by_label("Search").is_some());
+            assert!(harness.query_by_label("Search actions…").is_some());
             assert!(
-                harness
-                    .query_by_label("Reset all keyboard bindings")
-                    .is_some(),
+                harness.query_by_label("Reset all…").is_some(),
                 "the all-bindings reset stays visible so users can see a reset exists"
             );
 
@@ -853,13 +851,13 @@ mod tests {
                 .get_by_role_and_label(accesskit::Role::Button, "New Session")
                 .click();
             harness.run();
-            harness.get_by_label("Unbind action").click();
+            harness.get_by_label("Clear binding").click();
             harness.run();
             for label in [
                 "Assign binding",
-                "Unbind action",
+                "Clear binding",
                 "Restore default",
-                "Reset all keyboard bindings",
+                "Reset all…",
             ] {
                 let rect = harness
                     .query_by_label(label)

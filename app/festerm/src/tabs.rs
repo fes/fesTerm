@@ -22,7 +22,8 @@ use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, EmojiPresentationPreference,
     InterfaceSettings, PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
-    ScrollbackLimitPreference, SftpPaneOrderPreference, SshProfileConfiguration,
+    ScrollbackLimitPreference, SftpPaneOrderPreference,
+    SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
     TerminalFontPreference, WorkspaceConfiguration, WorkspaceTab,
 };
 use festerm_core::{Dimensions, Terminal};
@@ -1339,12 +1340,34 @@ pub struct Tab {
 /// The Launcher's New Profile control has to say *what* it is creating, so
 /// the kind travels with the command rather than being chosen again once
 /// the Profiles surface is on screen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NewProfileKind {
     Local,
     Ssh,
     Sftp,
     Serial,
+    SshFromDraft(SshProfileDraftSeed),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SshPortForwardDraftSeed {
+    pub direction: ConfigSshPortForwardDirection,
+    pub bind_host: String,
+    pub bind_port: String,
+    pub destination_host: String,
+    pub destination_port: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SshProfileDraftSeed {
+    pub name: String,
+    pub host: String,
+    pub port: String,
+    pub username: String,
+    pub port_forwards: Vec<SshPortForwardDraftSeed>,
+    pub durable_session_enabled: bool,
+    pub durable_session_provider: PersistenceProviderKind,
+    pub durable_session_name: String,
 }
 
 /// Product-level application actions dispatched from any invocation surface
@@ -1365,6 +1388,12 @@ pub enum AppCommand {
     /// open. Distinct from `OpenProfiles`, which lands on the list.
     CreateProfile {
         kind: NewProfileKind,
+    },
+    /// Opens the Profiles surface in a new SSH profile editor pre-populated
+    /// from a one-off SSH launch draft. This carries only connection metadata;
+    /// transient passwords and keys never leave the launch form.
+    CreateSshProfileFromDraft {
+        draft: SshProfileDraftSeed,
     },
     /// Opens the Markdown file picker and, once a file is chosen, a viewer
     /// tab for it. Handled by the composition root because choosing the
@@ -1880,12 +1909,12 @@ pub struct AppState {
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
-    /// via `take_pending_profile_edit`, since the Profiles surface's own
+    /// via `take_pending_profile_edit`, since per-tab UI state lives in
+    /// `egui`'s `ui.data`, not here.
+    pending_profile_edit: Option<String>,
     /// Set by `AppCommand::CreateProfile` so the Profiles surface opens
     /// straight into a blank editor of the requested kind.
     pending_profile_create: Option<NewProfileKind>,
-    /// per-tab UI state lives in `egui`'s `ui.data`, not here.
-    pending_profile_edit: Option<String>,
     /// Set whenever a dispatched command launches a saved profile, so the
     /// composition root can stamp that profile's last-used time and persist
     /// it once per frame. Recorded here rather than at each launch surface
@@ -2472,6 +2501,10 @@ impl AppState {
             AppCommand::CreateProfile { kind } => {
                 self.open_profiles();
                 self.pending_profile_create = Some(kind);
+            }
+            AppCommand::CreateSshProfileFromDraft { draft } => {
+                self.open_profiles();
+                self.pending_profile_create = Some(NewProfileKind::SshFromDraft(draft));
             }
             // Choosing the file is host I/O the composition root owns; if
             // this command ever reaches here the picker was unavailable, so

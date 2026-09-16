@@ -5991,7 +5991,7 @@ mod tests {
             .state
             .dispatch(AppCommand::OpenSettings, &context);
         harness.run();
-        harness.get_by_label("Search").click();
+        harness.get_by_label("Search actions…").click();
         harness.run();
         harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
             text: "controlled-preedit".into(),
@@ -6380,7 +6380,7 @@ mod tests {
             .get_by_role_and_label(accesskit::Role::Button, "New Session")
             .click();
         harness.run();
-        harness.get_by_label("Unbind action").click();
+        harness.get_by_label("Clear binding").click();
         harness.run();
         let loaded = Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(loaded.profiles(), configuration.profiles());

@@ -2,34 +2,6 @@
 
 use super::*;
 
-/// One row's stable identifying summary in the Profiles list, without
-/// exposing credential material.
-fn profile_summary(profile: &Profile) -> (&'static str, String, String) {
-    match profile {
-        Profile::Local(local) => {
-            let mut description = local.executable().to_owned();
-            if !local.arguments().is_empty() {
-                description.push(' ');
-                description.push_str(&local.arguments().join(" "));
-            }
-            ("Local", local.identifier().to_owned(), description)
-        }
-        Profile::Ssh(ssh) => (
-            match ssh.profile_kind() {
-                RemoteProfileKind::Ssh => "SSH",
-                RemoteProfileKind::Sftp => "SFTP",
-            },
-            ssh.identifier().to_owned(),
-            format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
-        ),
-        Profile::Serial(serial) => (
-            "Serial",
-            serial.identifier().to_owned(),
-            format!("{} · {} baud", serial.device(), serial.baud_rate()),
-        ),
-    }
-}
-
 /// Which staged view the Profiles surface is currently showing. Multi-field
 /// edits are staged behind Save; Cancel discards them
 /// (`docs/gui-design.md` "Profile editing").
@@ -49,10 +21,65 @@ enum ProfilesScreenMode {
 #[derive(Clone, Default)]
 struct ProfilesScreenState {
     mode: ProfilesScreenMode,
+    profile_search: String,
 }
 
 fn profiles_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("profiles_state", tab_id))
+}
+
+fn profile_table_item(profile: &Profile, configuration: &Configuration) -> ProfileTableItem {
+    let (kind, location, subtitle) = match profile {
+        Profile::Local(local) => (
+            ProfileTableKind::Local,
+            local.executable().to_owned(),
+            local
+                .working_directory()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "Default working directory".to_owned()),
+        ),
+        Profile::Ssh(ssh) => (
+            match ssh.profile_kind() {
+                RemoteProfileKind::Ssh => ProfileTableKind::Ssh,
+                RemoteProfileKind::Sftp => ProfileTableKind::Sftp,
+            },
+            ssh.host().to_owned(),
+            ssh.username().to_owned(),
+        ),
+        Profile::Serial(serial) => {
+            let data_bits = match serial.data_bits() {
+                festerm_config::SerialDataBits::Five => "5",
+                festerm_config::SerialDataBits::Six => "6",
+                festerm_config::SerialDataBits::Seven => "7",
+                festerm_config::SerialDataBits::Eight => "8",
+            };
+            let parity = match serial.parity() {
+                festerm_config::SerialParity::None => "N",
+                festerm_config::SerialParity::Odd => "O",
+                festerm_config::SerialParity::Even => "E",
+            };
+            let stop_bits = match serial.stop_bits() {
+                festerm_config::SerialStopBits::One => "1",
+                festerm_config::SerialStopBits::Two => "2",
+            };
+            (
+                ProfileTableKind::Serial,
+                serial.device().to_owned(),
+                format!(
+                    "{} baud · {data_bits}{parity}{stop_bits}",
+                    serial.baud_rate()
+                ),
+            )
+        }
+    };
+    ProfileTableItem {
+        identifier: profile.identifier().to_owned(),
+        label: profile.identifier().to_owned(),
+        subtitle: Some(subtitle),
+        kind,
+        location,
+        last_used_unix_seconds: configuration.profile_last_used(profile.identifier()),
+    }
 }
 
 #[derive(Clone)]
@@ -212,6 +239,35 @@ impl SshProfileDraft {
     fn new_sftp() -> Self {
         Self {
             profile_kind: RemoteProfileKind::Sftp,
+            ..Self::default()
+        }
+    }
+
+    fn from_seed(seed: SshProfileDraftSeed) -> Self {
+        Self {
+            name: seed.name,
+            host: seed.host,
+            port: seed.port,
+            username: seed.username,
+            port_forwards: seed
+                .port_forwards
+                .into_iter()
+                .map(|forward| SshPortForwardDraft {
+                    direction: forward.direction,
+                    bind_host: forward.bind_host,
+                    bind_port: forward.bind_port,
+                    destination_host: forward.destination_host,
+                    destination_port: forward.destination_port,
+                })
+                .collect(),
+            durable_session: DurableSessionDraft {
+                enabled: seed.durable_session_enabled,
+                provider: seed.durable_session_provider,
+                provider_touched: true,
+                session_name: seed.durable_session_name,
+                session_name_touched: true,
+                ..Default::default()
+            },
             ..Self::default()
         }
     }
@@ -748,6 +804,9 @@ pub(crate) fn show_profiles(
             NewProfileKind::Ssh => ProfilesScreenMode::EditSsh(SshProfileDraft::default()),
             NewProfileKind::Sftp => ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp()),
             NewProfileKind::Serial => ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
+            NewProfileKind::SshFromDraft(draft) => {
+                ProfilesScreenMode::EditSsh(SshProfileDraft::from_seed(draft))
+            }
         };
     }
 
@@ -757,187 +816,204 @@ pub(crate) fn show_profiles(
         ui.vertical(|ui| {
     match &mut state.mode {
         ProfilesScreenMode::List => {
+            let now_unix_seconds = unix_now_seconds();
+            let query = state.profile_search.trim().to_lowercase();
+            let visible_profiles: Vec<&Profile> = configuration
+                .profiles()
+                .iter()
+                .filter(|profile| {
+                    let item = profile_table_item(profile, configuration);
+                    query.is_empty()
+                        || item.label.to_lowercase().contains(&query)
+                        || item.location.to_lowercase().contains(&query)
+                        || item.kind.type_label().to_lowercase().contains(&query)
+                        || item
+                            .subtitle
+                            .as_deref()
+                            .is_some_and(|subtitle| subtitle.to_lowercase().contains(&query))
+                })
+                .collect();
             ui.vertical(|ui| {
                 ui.add_space(24.0);
                 ui.heading("Profiles");
-                ui.label("Reusable local shell, SSH, SFTP, and serial launch definitions.");
-                ui.add_space(12.0);
+                ui.label("Reusable local, SSH, SFTP, and serial launch definitions.");
+                ui.add_space(42.0);
+                let content_width = ui.available_width().max(0.0);
                 ui.horizontal(|ui| {
-                    if ui.button("New Local Profile").clicked() {
-                        next_mode = Some(ProfilesScreenMode::EditLocal(LocalProfileDraft::new(
-                            local_default_provider,
-                        )));
-                    }
-                    if ui.button("New SSH Profile").clicked() {
-                        next_mode = Some(ProfilesScreenMode::EditSsh(SshProfileDraft::default()));
-                    }
-                    if ui.button("New SFTP Profile").clicked() {
-                        next_mode =
-                            Some(ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp()));
-                    }
-                    if ui.button("New Serial Profile").clicked() {
-                        next_mode =
-                            Some(ProfilesScreenMode::EditSerial(SerialProfileDraft::default()));
-                    }
+                    let button_width = 172.0;
+                    let gap = 16.0;
+                    show_profile_search_field(
+                        ui,
+                        (content_width - button_width - gap).max(120.0),
+                        &mut state.profile_search,
+                    );
+                    ui.add_space(gap);
+                    let new_profile = launcher_dropdown_button(
+                        ui,
+                        Icon::NewProfile,
+                        "New Profile",
+                        Some("New Profile"),
+                        true,
+                    );
+                    egui::Popup::menu(&new_profile).show(|ui| {
+                        for (label, mode) in [
+                            (
+                                "Local",
+                                ProfilesScreenMode::EditLocal(LocalProfileDraft::new(
+                                    local_default_provider,
+                                )),
+                            ),
+                            ("SSH", ProfilesScreenMode::EditSsh(SshProfileDraft::default())),
+                            ("SFTP", ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp())),
+                            (
+                                "Serial",
+                                ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
+                            ),
+                        ] {
+                            if ui.button(label).clicked() {
+                                next_mode = Some(mode.clone());
+                                ui.close();
+                            }
+                        }
+                    });
                 });
-                ui.add_space(12.0);
-                ui.separator();
+                ui.add_space(28.0);
+
                 if configuration.profiles().is_empty() {
                     ui.add_space(12.0);
                     ui.label("No profiles saved yet.");
+                    return;
                 }
-                for profile in configuration.profiles() {
-                    let (kind, name, description) = profile_summary(profile);
-                    ui.add_space(8.0);
-                    // Drag-and-drop reorder (`Configuration::with_reordered_profiles`),
-                    // reflected in the Launcher's own profile ordering too.
-                    // Only the chip frame itself is a drag source, matching
-                    // the chrome chip row's press-and-hold-anywhere-on-the-
-                    // card convention; the Connect/Edit/Duplicate/Delete
-                    // buttons sit outside it and are unaffected.
-                    let drag_id = egui::Id::new("profile_reorder_source").with(&name);
-                    let mut row_rect = None;
-                    ui.horizontal(|ui| {
-                        let drag_response = ui.dnd_drag_source(drag_id, name.clone(), |ui| {
-                            egui::Frame::new()
-                                .fill(theme::SURFACE_TAB_INACTIVE)
-                                .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
-                                .corner_radius(8.0)
-                                .inner_margin(egui::Margin::symmetric(14, 10))
-                                .show(ui, |ui| {
-                                    ui.set_width(220.0);
-                                    ui.vertical(|ui| {
-                                        ui.label(egui::RichText::new(&name).strong());
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{kind} · {description}"
-                                            ))
-                                            .size(11.0)
-                                            .color(theme::TEXT_SECONDARY),
+
+                let table_width = ui.available_width().max(0.0);
+                egui::Frame::new()
+                    .fill(theme::SURFACE_PANEL)
+                    .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .corner_radius(LAUNCHER_PANEL_CORNER)
+                    .inner_margin(egui::Margin::symmetric(0, 12))
+                    .show(ui, |ui| {
+                        ui.set_width(table_width);
+                        let options = ProfileTableOptions::profiles(table_width);
+                        show_profile_column_headers(ui, table_width, table_width, options);
+                        if visible_profiles.is_empty() {
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(table_width * options.column_origins[0]);
+                                ui.label(
+                                    egui::RichText::new("No profiles match this search.")
+                                        .size(LAUNCHER_BODY_TEXT_SIZE)
+                                        .color(theme::TEXT_MUTED),
+                                );
+                            });
+                            return;
+                        }
+                        for profile in visible_profiles {
+                            let item = profile_table_item(profile, configuration);
+                            let row = show_profile_row(
+                                ui,
+                                table_width,
+                                &item,
+                                false,
+                                now_unix_seconds,
+                                options,
+                                ProfileTableMenu::Profiles,
+                            );
+                            row.response.dnd_set_drag_payload(item.identifier.clone());
+                            if let Some(action) = row.action {
+                                match action {
+                                    ProfileTableAction::Connect => {
+                                        command = Some(item.connect_command());
+                                    }
+                                    ProfileTableAction::OpenSftpFileManager => {
+                                        command = Some(
+                                            AppCommand::OpenConfiguredSftpFileManagerProfile {
+                                                profile_id: item.identifier.clone(),
+                                            },
                                         );
-                                    });
-                                });
-                        });
-                        row_rect = Some(drag_response.response.rect);
-                        ui.add_space(8.0);
-                        if ui.button("Connect").clicked() {
-                            command = Some(match profile {
-                                Profile::Local(_) => AppCommand::StartConfiguredLocalProfile {
-                                    profile_id: name.clone(),
-                                },
-                                Profile::Ssh(ssh)
-                                    if ssh.profile_kind() == RemoteProfileKind::Sftp =>
-                                {
-                                    AppCommand::StartConfiguredSftpProfile {
-                                        profile_id: name.clone(),
+                                    }
+                                    ProfileTableAction::Edit => {
+                                        next_mode = Some(match profile {
+                                            Profile::Local(local) => ProfilesScreenMode::EditLocal(
+                                                LocalProfileDraft::from_profile(local),
+                                            ),
+                                            Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
+                                                SshProfileDraft::from_profile(ssh),
+                                            ),
+                                            Profile::Serial(serial) => ProfilesScreenMode::EditSerial(
+                                                SerialProfileDraft::from_profile(serial),
+                                            ),
+                                        });
+                                    }
+                                    ProfileTableAction::Duplicate => {
+                                        let duplicate_name = format!("{}-copy", item.identifier);
+                                        next_mode = Some(match profile {
+                                            Profile::Local(local) => {
+                                                let mut draft = LocalProfileDraft::from_profile(local);
+                                                draft.original_id = None;
+                                                draft.name = duplicate_name;
+                                                ProfilesScreenMode::EditLocal(draft)
+                                            }
+                                            Profile::Ssh(ssh) => {
+                                                let mut draft = SshProfileDraft::from_profile(ssh);
+                                                draft.original_id = None;
+                                                draft.name = duplicate_name;
+                                                ProfilesScreenMode::EditSsh(draft)
+                                            }
+                                            Profile::Serial(serial) => {
+                                                let mut draft = SerialProfileDraft::from_profile(serial);
+                                                draft.original_id = None;
+                                                draft.name = duplicate_name;
+                                                ProfilesScreenMode::EditSerial(draft)
+                                            }
+                                        });
+                                    }
+                                    ProfileTableAction::Delete => {
+                                        next_mode = Some(ProfilesScreenMode::ConfirmDelete {
+                                            identifier: item.identifier.clone(),
+                                            references: configuration
+                                                .workspace_tab_references(&item.identifier),
+                                        });
+                                    }
+                                    ProfileTableAction::LauncherCrossover(_) => unreachable!(
+                                        "profiles table does not expose launcher crossover actions"
+                                    ),
+                                }
+                            }
+                            let row_rect = row.response.rect;
+                            if let Some(dragged) = egui::DragAndDrop::payload::<String>(ui.ctx()) {
+                                let released = ui.input(|i| i.pointer.any_released());
+                                if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+                                    if *dragged != item.identifier
+                                        && released
+                                        && row_rect.contains(pointer_pos)
+                                    {
+                                        command = Some(AppCommand::ReorderProfiles {
+                                            moved: (*dragged).clone(),
+                                            before: Some(item.identifier.clone()),
+                                        });
                                     }
                                 }
-                                Profile::Ssh(_) => AppCommand::StartConfiguredSshProfile {
-                                    profile_id: name.clone(),
-                                },
-                                Profile::Serial(_) => AppCommand::StartConfiguredSerialProfile {
-                                    profile_id: name.clone(),
-                                },
-                            });
+                            }
                         }
-                        if matches!(
-                            profile,
-                            Profile::Ssh(ssh)
-                                if ssh.profile_kind() == RemoteProfileKind::Ssh
-                        )
-                            && ui.button("Open SFTP").clicked()
-                        {
-                            command = Some(AppCommand::OpenConfiguredSftpFileManagerProfile {
-                                profile_id: name.clone(),
-                            });
-                        }
-                        if ui.button("Edit").clicked() {
-                            next_mode = Some(match profile {
-                                Profile::Local(local) => ProfilesScreenMode::EditLocal(
-                                    LocalProfileDraft::from_profile(local),
-                                ),
-                                Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
-                                    SshProfileDraft::from_profile(ssh),
-                                ),
-                                Profile::Serial(serial) => ProfilesScreenMode::EditSerial(
-                                    SerialProfileDraft::from_profile(serial),
-                                ),
-                            });
-                        }
-                        if ui.button("Duplicate").clicked() {
-                            let duplicate_name = format!("{name}-copy");
-                            next_mode = Some(match profile {
-                                Profile::Local(local) => {
-                                    let mut draft = LocalProfileDraft::from_profile(local);
-                                    draft.original_id = None;
-                                    draft.name = duplicate_name;
-                                    ProfilesScreenMode::EditLocal(draft)
-                                }
-                                Profile::Ssh(ssh) => {
-                                    let mut draft = SshProfileDraft::from_profile(ssh);
-                                    draft.original_id = None;
-                                    draft.name = duplicate_name;
-                                    ProfilesScreenMode::EditSsh(draft)
-                                }
-                                Profile::Serial(serial) => {
-                                    let mut draft = SerialProfileDraft::from_profile(serial);
-                                    draft.original_id = None;
-                                    draft.name = duplicate_name;
-                                    ProfilesScreenMode::EditSerial(draft)
-                                }
-                            });
-                        }
-                        if ui.button("Delete").clicked() {
-                            next_mode = Some(ProfilesScreenMode::ConfirmDelete {
-                                identifier: name.clone(),
-                                references: configuration.workspace_tab_references(&name),
-                            });
-                        }
-                    });
-                    // Only commit the reorder when the drag is released over
-                    // this row (not continuously while hovering): each
-                    // reorder is persisted to disk immediately
-                    // (`ConfigurationReloader::reorder_profiles`), so
-                    // dispatching on every hovered frame during a drag would
-                    // write the configuration file dozens of times per
-                    // second.
-                    if let Some(rect) = row_rect {
+                        let (end_rect, _) =
+                            ui.allocate_exact_size(vec2(table_width, 12.0), Sense::hover());
                         if let Some(dragged) = egui::DragAndDrop::payload::<String>(ui.ctx()) {
                             let released = ui.input(|i| i.pointer.any_released());
                             if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-                                if *dragged != name && released && rect.contains(pointer_pos) {
+                                if released
+                                    && configuration.profiles().last().is_some_and(|last| {
+                                        last.identifier() != dragged.as_str()
+                                    })
+                                    && end_rect.contains(pointer_pos)
+                                {
                                     command = Some(AppCommand::ReorderProfiles {
                                         moved: (*dragged).clone(),
-                                        before: Some(name.clone()),
+                                        before: None,
                                     });
                                 }
                             }
                         }
-                    }
-                }
-                // A trailing drop target lets a drag be released past the
-                // last profile row to move it to the end of the list.
-                if !configuration.profiles().is_empty() {
-                    let (end_rect, _) =
-                        ui.allocate_exact_size(vec2(220.0, 12.0), Sense::hover());
-                    if let Some(dragged) = egui::DragAndDrop::payload::<String>(ui.ctx()) {
-                        let released = ui.input(|i| i.pointer.any_released());
-                        if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-                            if released
-                                && configuration
-                                    .profiles()
-                                    .last()
-                                    .is_some_and(|last| last.identifier() != dragged.as_str())
-                                && end_rect.contains(pointer_pos)
-                            {
-                                command = Some(AppCommand::ReorderProfiles {
-                                    moved: (*dragged).clone(),
-                                    before: None,
-                                });
-                            }
-                        }
-                    }
-                }
+                    });
             });
         }
         ProfilesScreenMode::EditLocal(draft) => {
@@ -990,6 +1066,7 @@ pub(crate) fn show_profiles(
                             tab_id,
                             &mut draft.durable_session,
                             DurableSessionTarget::Local,
+                            DurableSessionLayout::Inline,
                             false,
                         );
                         ssh_paragraph(
@@ -1142,6 +1219,7 @@ pub(crate) fn show_profiles(
                                         tab_id,
                                         &mut draft.durable_session,
                                         DurableSessionTarget::Remote,
+                                        DurableSessionLayout::Inline,
                                         false,
                                     );
                                     ui.add_space(10.0);
@@ -1464,6 +1542,80 @@ mod tests {
             )
     }
 
+    fn open_new_profile(harness: &mut Harness<'static, ProfilesHarnessState>, kind: &str) {
+        harness.get_by_label("New Profile").click();
+        harness.run();
+        harness.get_by_label(kind).click();
+        harness.run();
+    }
+
+    fn click_profile_action(
+        harness: &mut Harness<'static, ProfilesHarnessState>,
+        profile: &str,
+        action: &str,
+    ) {
+        harness
+            .get_by_label(&format!("More actions for {profile}"))
+            .click();
+        harness.run();
+        harness.get_by_label(action).click();
+        harness.run();
+    }
+
+    #[test]
+    fn ssh_profile_editor_accepts_a_launcher_seed_without_secrets() {
+        let seed = SshProfileDraftSeed {
+            name: "staging".to_owned(),
+            host: "ssh.example.test".to_owned(),
+            port: "2222".to_owned(),
+            username: "deploy".to_owned(),
+            port_forwards: Vec::new(),
+            durable_session_enabled: false,
+            durable_session_provider: PersistenceProviderKind::Tmux,
+            durable_session_name: "main".to_owned(),
+        };
+        let configuration =
+            festerm_config::Configuration::new(Vec::new()).expect("empty configuration is valid");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(560.0, 640.0))
+            .build_ui_state(
+                move |ui, state: &mut ProfilesHarnessState| {
+                    if let Some(command) = show_profiles(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        None,
+                        Some(NewProfileKind::SshFromDraft(seed.clone())),
+                        PersistenceProviderKind::FestermSessiond,
+                    ) {
+                        state.command = Some(command);
+                    }
+                },
+                ProfilesHarnessState {
+                    tab_id: AppState::for_test().active(),
+                    configuration,
+                    command: None,
+                },
+            );
+
+        harness.run();
+        assert!(harness.query_by_label("New SSH Profile").is_some());
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        let Some(AppCommand::SaveProfile {
+            profile: Profile::Ssh(profile),
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("seeded SSH profile editor must save a populated profile");
+        };
+        assert_eq!(profile.identifier(), "staging");
+        assert_eq!(profile.host(), "ssh.example.test");
+        assert_eq!(profile.port(), 2222);
+        assert_eq!(profile.username(), "deploy");
+        assert!(profile.credential_reference().is_none());
+    }
+
     #[test]
     fn dragging_a_profile_card_onto_another_reorders_it() {
         let profiles = vec![
@@ -1475,8 +1627,8 @@ mod tests {
         let mut harness = profiles_harness(configuration);
         harness.run();
 
-        let from = harness.get_by_label("alpha").rect().center();
-        let to = harness.get_by_label("gamma").rect().center();
+        let from = harness.get_by_label("alpha — Local · sh").rect().center();
+        let to = harness.get_by_label("gamma — Local · sh").rect().center();
 
         harness.drag_at(from);
         harness.run();
@@ -1512,9 +1664,9 @@ mod tests {
         let mut harness = profiles_harness(configuration);
         harness.run();
 
-        let from = harness.get_by_label("alpha").rect().center();
-        let beta_rect = harness.get_by_label("beta").rect();
-        let to = beta_rect.center() + egui::vec2(0.0, beta_rect.height() * 3.0);
+        let from = harness.get_by_label("alpha — Local · sh").rect().center();
+        let beta_rect = harness.get_by_label("beta — Local · sh").rect();
+        let to = egui::pos2(beta_rect.center().x, beta_rect.bottom() + 6.0);
 
         harness.drag_at(from);
         harness.run();
@@ -1549,12 +1701,115 @@ mod tests {
     }
 
     #[test]
+    fn profiles_list_filters_by_search_text() {
+        let configuration = festerm_config::Configuration::new(vec![
+            Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap(),
+            Profile::ssh(
+                "build-host",
+                "build.example.test",
+                22,
+                "builder",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let mut harness = profiles_harness(configuration);
+        harness.run();
+
+        harness.get_by_label("Search profiles…").focus();
+        harness
+            .get_by_label("Search profiles…")
+            .type_text("builder");
+        harness.run();
+
+        assert!(harness
+            .query_by_label("build-host — SSH · build.example.test")
+            .is_some());
+        assert!(harness
+            .query_by_label("dev-shell — Local · /bin/zsh")
+            .is_none());
+    }
+
+    #[test]
+    fn profiles_new_profile_dropdown_offers_every_kind() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        harness.run();
+
+        harness.get_by_label("New Profile").click();
+        harness.run();
+        for label in ["Local", "SSH", "SFTP", "Serial"] {
+            assert!(
+                harness.query_by_label(label).is_some(),
+                "{label} must be offered by the New Profile menu"
+            );
+        }
+    }
+
+    #[test]
+    fn profiles_row_menu_dispatches_profile_actions() {
+        let local = Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap();
+        let ssh = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+
+        let mut connect =
+            profiles_harness(festerm_config::Configuration::new(vec![local.clone()]).unwrap());
+        connect.run();
+        click_profile_action(&mut connect, "dev-shell", "Connect");
+        assert!(matches!(
+            connect.state().command,
+            Some(AppCommand::StartConfiguredLocalProfile { ref profile_id })
+                if profile_id == "dev-shell"
+        ));
+
+        let mut edit =
+            profiles_harness(festerm_config::Configuration::new(vec![local.clone()]).unwrap());
+        edit.run();
+        click_profile_action(&mut edit, "dev-shell", "Edit");
+        assert!(edit.query_by_label("Edit Local Profile").is_some());
+
+        let mut duplicate =
+            profiles_harness(festerm_config::Configuration::new(vec![local.clone()]).unwrap());
+        duplicate.run();
+        click_profile_action(&mut duplicate, "dev-shell", "Duplicate");
+        assert!(duplicate.query_by_label("New Local Profile").is_some());
+        assert_eq!(
+            duplicate.get_by_label("Name").value().as_deref(),
+            Some("dev-shell-copy")
+        );
+
+        let mut delete = profiles_harness(festerm_config::Configuration::new(vec![local]).unwrap());
+        delete.run();
+        click_profile_action(&mut delete, "dev-shell", "Delete");
+        assert!(delete.query_by_label("Delete profile?").is_some());
+
+        let mut open_sftp =
+            profiles_harness(festerm_config::Configuration::new(vec![ssh]).unwrap());
+        open_sftp.run();
+        click_profile_action(&mut open_sftp, "prod", "Open SFTP");
+        assert!(matches!(
+            open_sftp.state().command,
+            Some(AppCommand::OpenConfiguredSftpFileManagerProfile { ref profile_id })
+                if profile_id == "prod"
+        ));
+    }
+
+    #[test]
     fn profiles_new_local_profile_flow_returns_a_save_profile_command() {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
 
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("dev-shell");
@@ -1580,8 +1835,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("durable-local");
         harness.run();
@@ -1633,8 +1887,7 @@ mod tests {
             );
         harness.run();
 
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
         harness.get_by_label("Name").focus();
         harness.get_by_label("Name").type_text("detected-tmux");
         harness.run();
@@ -1712,8 +1965,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
         harness.get_by_label("Use a durable local session").click();
         harness.run();
         harness.get_by_label("Name").focus();
@@ -1745,8 +1997,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
 
         harness.get_by_label("Save").click();
         harness.run();
@@ -1773,8 +2024,7 @@ mod tests {
 
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
         harness.run();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
@@ -1808,8 +2058,7 @@ mod tests {
 
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
-        harness.get_by_label("New Local Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
         harness.run();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
@@ -1843,8 +2092,7 @@ mod tests {
             profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
         harness.run();
 
-        harness.get_by_label("Delete").click();
-        harness.run();
+        click_profile_action(&mut harness, "dev-shell", "Delete");
         assert!(harness.query_by_label("Delete profile?").is_some());
 
         harness.get_by_label("Delete").click();
@@ -1896,8 +2144,7 @@ mod tests {
             );
         harness.run();
 
-        harness.get_by_label("Edit").click();
-        harness.run();
+        click_profile_action(&mut harness, "prod", "Edit");
 
         // A short connection-details-only form (password auth by default)
         // should keep "Save" well above a 900px-tall window rather than
@@ -1961,8 +2208,7 @@ mod tests {
             );
         harness.run();
 
-        harness.get_by_label("Edit").click();
-        harness.run();
+        click_profile_action(&mut harness, "prod", "Edit");
 
         let status_bar_top =
             egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("status_bar"))
@@ -1991,8 +2237,7 @@ mod tests {
             profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
         harness.run();
 
-        harness.get_by_label("Edit").click();
-        harness.run();
+        click_profile_action(&mut harness, "prod", "Edit");
         assert!(harness.query_by_label("Edit SSH Profile").is_some());
 
         // No stored credential yet, so the field starts empty and "Save
@@ -2041,8 +2286,7 @@ mod tests {
             profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
         harness.run();
 
-        harness.get_by_label("Edit").click();
-        harness.run();
+        click_profile_action(&mut harness, "prod", "Edit");
         assert!(harness.query_by_label("Edit SSH Profile").is_some());
 
         harness
@@ -2084,8 +2328,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New SSH Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "SSH");
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2133,8 +2376,7 @@ mod tests {
             profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
         harness.run();
 
-        harness.get_by_label("Edit").click();
-        harness.run();
+        click_profile_action(&mut harness, "prod", "Edit");
         harness.get_by_label("Use a durable remote session").click();
         harness.run();
         harness.get_by_label("Save").scroll_to_me();
@@ -2166,8 +2408,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New SSH Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "SSH");
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2218,8 +2459,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::empty());
         harness.run();
 
-        harness.get_by_label("New SFTP Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "SFTP");
         for (label, value) in [
             ("Name", "files"),
             ("Username", "deploy"),
@@ -2274,8 +2514,7 @@ mod tests {
             profiles_harness(festerm_config::Configuration::new(vec![existing]).unwrap());
         harness.run();
 
-        harness.get_by_label("New SSH Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "SSH");
         for (label, value) in [
             ("Name", "production"),
             ("Username", "other-user"),
@@ -2424,8 +2663,7 @@ mod tests {
             profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
         harness.run();
 
-        harness.get_by_label("Edit").click();
-        harness.run();
+        click_profile_action(&mut harness, "prod", "Edit");
         assert!(harness.query_by_label("Remove forward 1").is_some());
 
         harness.get_by_label("Remove forward 1").click();
@@ -2450,8 +2688,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
         harness.run();
 
-        harness.get_by_label("New SSH Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "SSH");
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2523,8 +2760,7 @@ mod tests {
         let mut harness = profiles_harness(festerm_config::Configuration::empty());
         harness.run();
 
-        harness.get_by_label("New SFTP Profile").click();
-        harness.run();
+        open_new_profile(&mut harness, "SFTP");
         assert!(harness.query_by_label("New SFTP Profile").is_some());
         assert!(harness
             .query_by_label("Use graphical file manager")
