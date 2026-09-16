@@ -8,15 +8,22 @@ things. The tables describe the current encoder, including its limitations.
 
 ## Settings editor and recovery
 
-Open **Settings → Keyboard → Application shortcuts**, or press the fixed
+Open **Settings → Keyboard bindings**, or press the fixed
 **Ctrl+Shift+F12** recovery chord to open Settings and focus the searchable
-editor. Search by action name, select a row, enter a chord, then **Assign
-binding**. **Unbind action** explicitly disables application handling;
-**Reset action** removes that override; **Reset all keyboard bindings** leaves
-other preferences/profiles unchanged. The selected row shows its default and
-context scope. Changes apply immediately and use ordinary transactional
-configuration autosave. Settings displays save/startup failures; an invalid
-source file is not overwritten. External file edits take effect after restart.
+editor. Actions are grouped under the scope they apply in and can be narrowed
+by search or by the **Show** filter (a single scope, only customized actions,
+or only unbound ones). Each row carries the action's effective chord as
+keycaps and a **Customized** badge once it has been overridden. Select a row,
+enter a chord, then **Assign binding**. **Unbind action** explicitly disables
+application handling; **Restore default** removes that one override and
+appears only while the action is customized; **Reset all keyboard bindings**
+appears only while at least one override exists and leaves other
+preferences/profiles unchanged. The selected row shows its description, its
+default, and its context scope. Scope is reported, not editable: it follows
+from the action itself. Changes apply immediately and use ordinary
+transactional configuration autosave. Settings displays save/startup failures;
+an invalid source file is not overwritten. External file edits take effect
+after restart.
 
 An empty binding means *permit the existing next input owner*, **not** “send a
 particular string” or “implement a new keyboard protocol.” For example unbinding

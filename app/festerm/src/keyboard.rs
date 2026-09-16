@@ -1,6 +1,7 @@
 //! Application-key matching and Settings presentation; protocol bytes stay in core.
 use eframe::egui::{self, Key, Modifiers};
-use festerm_config::{Chord, KeyboardAction as Action, KeyboardBindings};
+use festerm_config::{Chord, KeyboardAction as Action, KeyboardBindings, KeyboardScope as Scope};
+use festerm_ui_egui::theme;
 
 pub fn chord(text: &str) -> Option<(Modifiers, Key)> {
     let parsed = Chord::parse(text, cfg!(target_os = "macos")).ok()??;
@@ -296,12 +297,199 @@ pub const QUICK_ACTIONS: [Action; 9] = [
     Action::Quick9,
 ];
 
+/// Narrows the catalogue by the two questions users actually ask: "what can
+/// I press here?" and "what have I changed?".
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum Filter {
+    #[default]
+    All,
+    Global,
+    Terminal,
+    Markdown,
+    Document,
+    Customized,
+    Unbound,
+}
+
+impl Filter {
+    const ALL: [Self; 7] = [
+        Self::All,
+        Self::Global,
+        Self::Terminal,
+        Self::Markdown,
+        Self::Document,
+        Self::Customized,
+        Self::Unbound,
+    ];
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::All => "All actions",
+            Self::Global => "Global",
+            Self::Terminal => "Terminal",
+            Self::Markdown => "Markdown",
+            Self::Document => "Document",
+            Self::Customized => "Customized",
+            Self::Unbound => "Unbound",
+        }
+    }
+
+    fn matches(self, action: Action, bindings: &KeyboardBindings) -> bool {
+        match self {
+            Self::All => true,
+            Self::Global => action.scope() == Scope::Global,
+            Self::Terminal => action.scope() == Scope::Terminal,
+            Self::Markdown => action.scope() == Scope::Markdown,
+            Self::Document => action.scope() == Scope::Document,
+            Self::Customized => customized(bindings, action),
+            Self::Unbound => label(bindings, action).is_none(),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct Editor {
     search: String,
+    filter: Filter,
     selected: Option<Action>,
     draft: String,
     feedback: Option<String>,
+}
+
+fn customized(bindings: &KeyboardBindings, action: Action) -> bool {
+    bindings.0.iter().any(|entry| entry.action == action)
+}
+
+/// Splitting on '+' is safe because the schema spells keys by name
+/// ("Plus", "Equals"), so a bare '+' is never a key token.
+fn keycaps(chord: &str) -> Vec<String> {
+    if chord.is_empty() {
+        return Vec::new();
+    }
+    chord.split('+').map(keycap_token).collect()
+}
+
+fn keycap_token(part: &str) -> String {
+    let mac = cfg!(target_os = "macos");
+    // Only U+2318 is guaranteed by the bundled UI face; the other Apple
+    // modifier glyphs render as tofu, so the rest are spelled out exactly as
+    // the command palette and chip hints already spell them.
+    match part {
+        "Primary" if mac => "⌘",
+        "Primary" => "Ctrl",
+        "Command" => "⌘",
+        "Ctrl" if mac => "Control",
+        "Alt" if mac => "Option",
+        "Comma" => ",",
+        "Period" => ".",
+        "Plus" => "+",
+        "Equals" => "=",
+        "Minus" => "-",
+        other => other,
+    }
+    .to_owned()
+}
+
+fn show_keycap(ui: &mut egui::Ui, text: &str) {
+    egui::Frame::new()
+        .fill(theme::SURFACE_FIELD)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(text)
+                    .size(12.0)
+                    .color(theme::TEXT_PRIMARY),
+            );
+        });
+}
+
+/// Renders a chord as discrete keycaps, or an explicit "Unbound" marker so
+/// an empty binding is never mistaken for a rendering gap. Right-to-left
+/// layouts consume children in reverse, so the caller says which it is.
+fn show_chord(ui: &mut egui::Ui, chord: &str, right_to_left: bool) {
+    let caps = keycaps(chord);
+    if caps.is_empty() {
+        ui.label(
+            egui::RichText::new("Unbound")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        return;
+    }
+    if right_to_left {
+        for cap in caps.iter().rev() {
+            show_keycap(ui, cap);
+            ui.add_space(3.0);
+        }
+    } else {
+        for cap in &caps {
+            show_keycap(ui, cap);
+            ui.add_space(3.0);
+        }
+    }
+}
+
+fn show_row(
+    ui: &mut egui::Ui,
+    bindings: &KeyboardBindings,
+    action: Action,
+    selected: bool,
+) -> bool {
+    // Reserved up front so the selected row's background can be painted
+    // behind the widgets laid out below it, giving a full-width table row
+    // rather than a lone highlighted word.
+    let background = ui.painter().add(egui::Shape::Noop);
+    let mut clicked = false;
+    let row = ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        let title = egui::RichText::new(action.title())
+            .size(13.0)
+            .color(if selected {
+                theme::ACCENT_PRIMARY
+            } else {
+                theme::TEXT_PRIMARY
+            });
+        clicked = ui
+            .scope(|ui| {
+                // Scoped so it cannot reach the keycaps or any later widget:
+                // the row background already carries selection, so the title
+                // keeps a plain word shape instead of becoming a chip.
+                ui.visuals_mut().selection.bg_fill = egui::Color32::TRANSPARENT;
+                ui.selectable_label(selected, title)
+                    .on_hover_text(action.description())
+                    .clicked()
+            })
+            .inner;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(4.0);
+            show_chord(
+                ui,
+                bindings.effective(action, cfg!(target_os = "macos")),
+                true,
+            );
+            if customized(bindings, action) {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("Customized")
+                        .size(10.0)
+                        .color(theme::ACCENT_PRIMARY),
+                );
+            }
+        });
+    });
+    if selected {
+        ui.painter().set(
+            background,
+            egui::epaint::RectShape::filled(
+                row.response.rect.expand2(egui::vec2(0.0, 2.0)),
+                4.0,
+                theme::ACCENT_PRIMARY.gamma_multiply(0.16),
+            ),
+        );
+    }
+    clicked
 }
 
 pub fn show_editor(
@@ -310,62 +498,253 @@ pub fn show_editor(
 ) -> Option<crate::tabs::AppCommand> {
     let id = ui.make_persistent_id("keyboard-editor");
     let mut editor = ui.data(|data| data.get_temp::<Editor>(id).unwrap_or_default());
+    let mac = cfg!(target_os = "macos");
     let mut replacement = None;
-    ui.label("Application shortcuts");
-    ui.label("Unbind to allow existing terminal encoding. This does not remap terminal bytes.");
-    ui.label("Recovery: Ctrl+Shift+F12 opens Settings even after customization.");
-    ui.label("Primary means Command on macOS, Ctrl elsewhere. Global bindings precede widget shortcuts; modal dialogs take precedence.");
-    let search_label = ui.label("Search keyboard actions");
-    let search = ui
-        .add(egui::TextEdit::singleline(&mut editor.search).hint_text("Action name"))
-        .labelled_by(search_label.id);
+    let mut reset_all = false;
+
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(
+                "Assign, unbind or restore fesTerm's own shortcuts. Unbinding an action hands \
+                 that key back to the terminal; fesTerm never remaps terminal bytes.",
+            )
+            .size(12.0)
+            .color(theme::TEXT_SECONDARY),
+        )
+        .wrap(),
+    );
+    ui.add_space(2.0);
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(
+                "Ctrl+Shift+F12 always reopens Settings, even after customization.",
+            )
+            .size(11.0)
+            .color(theme::TEXT_MUTED),
+        )
+        .wrap(),
+    );
+    ui.add_space(8.0);
+
+    let mut search = None;
+    // The editor is shown in a Settings card that can be as narrow as a
+    // phone-width window, so the search field takes whatever the label and
+    // filter dropdown leave rather than a fixed width that would push the
+    // controls outside the card.
+    let search_width = (ui.available_width() - 330.0).clamp(90.0, 220.0);
+    // Wrapping keeps every control inside the card on narrow windows instead
+    // of letting the row run past its right edge.
+    ui.horizontal_wrapped(|ui| {
+        let search_label = ui.label(
+            egui::RichText::new("Search")
+                .size(12.0)
+                .color(theme::TEXT_SECONDARY),
+        );
+        search = Some(
+            ui.add(
+                egui::TextEdit::singleline(&mut editor.search)
+                    .hint_text("Search actions")
+                    .desired_width(search_width),
+            )
+            .labelled_by(search_label.id),
+        );
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new("Show")
+                .size(12.0)
+                .color(theme::TEXT_SECONDARY),
+        );
+        egui::ComboBox::from_id_salt("keyboard-filter")
+            .width(110.0)
+            .selected_text(editor.filter.title())
+            .show_ui(ui, |ui| {
+                for filter in Filter::ALL {
+                    ui.selectable_value(&mut editor.filter, filter, filter.title());
+                }
+            });
+    });
+    // `docs/gui-design.md`: a reset appears only for a non-default value, so
+    // the all-bindings reset stays out of the way until something is actually
+    // customized.
+    if !bindings.is_empty() {
+        ui.add_space(6.0);
+        reset_all = ui
+            .button("Reset all keyboard bindings")
+            .on_hover_text("Restore every action to its platform default chord.")
+            .clicked();
+    }
+
     if ui
         .ctx()
         .data_mut(|data| data.remove_temp::<bool>(egui::Id::new("keyboard-settings-recovery")))
         .unwrap_or(false)
     {
-        search.request_focus();
-        search.scroll_to_me(Some(egui::Align::Center));
+        if let Some(search) = &search {
+            search.request_focus();
+            search.scroll_to_me(Some(egui::Align::Center));
+        }
     }
-    if ui.button("Reset all keyboard bindings").clicked() {
+
+    if reset_all {
         replacement = Some(KeyboardBindings::default());
         editor.selected = None;
         editor.feedback = None;
     }
+
+    ui.add_space(8.0);
     let query = editor.search.to_lowercase();
+    let mut matched = 0usize;
+    let mut chosen = None;
     egui::ScrollArea::vertical()
         .id_salt("keyboard-action-list")
-        .max_height(220.0)
+        .max_height(280.0)
         .show(ui, |ui| {
-            for action in Action::ALL {
-                if !action.title().to_lowercase().contains(&query) {
+            ui.set_min_width(ui.available_width());
+            // Grouping by scope keeps all 35 actions navigable; a flat list
+            // makes the terminal-only entries indistinguishable from global ones.
+            for scope in Scope::ALL {
+                let actions: Vec<Action> = Action::ALL
+                    .into_iter()
+                    .filter(|action| {
+                        action.scope() == scope
+                            && editor.filter.matches(*action, bindings)
+                            && (query.is_empty()
+                                || action.title().to_lowercase().contains(&query)
+                                || action.description().to_lowercase().contains(&query))
+                    })
+                    .collect();
+                if actions.is_empty() {
                     continue;
                 }
-                ui.push_id(action as usize, |ui| {
-                    let current = label(bindings, action).unwrap_or_else(|| "Unbound".into());
-                    let title = format!("{} — {}", action.title(), current);
-                    if ui
-                        .selectable_label(editor.selected == Some(action), title)
-                        .clicked()
-                    {
-                        editor.selected = Some(action);
-                        editor.draft = bindings.effective(action, cfg!(target_os = "macos")).into();
-                        editor.feedback = None;
-                    }
-                });
+                matched += actions.len();
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(scope.title().to_uppercase())
+                        .size(10.0)
+                        .color(theme::TEXT_MUTED),
+                );
+                for action in actions {
+                    ui.push_id(action as usize, |ui| {
+                        if show_row(ui, bindings, action, editor.selected == Some(action)) {
+                            chosen = Some(action);
+                        }
+                    });
+                }
+            }
+            if matched == 0 {
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("No actions match this search and filter.")
+                        .size(12.0)
+                        .color(theme::TEXT_MUTED),
+                );
             }
         });
+
+    if let Some(action) = chosen {
+        editor.selected = Some(action);
+        editor.draft = bindings.effective(action, mac).into();
+        editor.feedback = None;
+    }
+
     if let Some(action) = editor.selected {
+        ui.add_space(10.0);
         ui.separator();
-        ui.strong(action.title());
-        ui.label(format!(
-            "Scope: {:?} · Default: {}",
-            action.scope(),
-            label(&KeyboardBindings::default(), action).unwrap_or_else(|| "Unbound".into())
-        ));
-        let chord_label = ui.label("Binding chord");
-        ui.add(egui::TextEdit::singleline(&mut editor.draft).hint_text("Primary+Shift+P"))
-            .labelled_by(chord_label.id);
+        ui.add_space(8.0);
+        // Same muted heading idiom as the scope groups above, so the pane
+        // reads as a continuation of the row the user just picked.
+        ui.label(
+            egui::RichText::new("SELECTED ACTION")
+                .size(10.0)
+                .color(theme::TEXT_MUTED),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(action.title())
+                .size(14.0)
+                .strong()
+                .color(theme::TEXT_PRIMARY),
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(action.description())
+                    .size(12.0)
+                    .color(theme::TEXT_SECONDARY),
+            )
+            .wrap(),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Scope")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(action.scope().title())
+                    .size(12.0)
+                    .color(theme::TEXT_PRIMARY),
+            );
+        });
+        // Kept out of the row above: a sentence inside `horizontal` cannot
+        // wrap, so it would force the whole Settings card wider than the
+        // window on narrow layouts.
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(action.scope().help())
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            )
+            .wrap(),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Current")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.add_space(6.0);
+            show_chord(ui, bindings.effective(action, mac), false);
+        });
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Default")
+                    .size(11.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.add_space(6.0);
+            show_chord(ui, action.default_chord(mac), false);
+        });
+        ui.add_space(8.0);
+        let chord_label = ui.label(
+            egui::RichText::new("Binding chord")
+                .size(12.0)
+                .color(theme::TEXT_SECONDARY),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut editor.draft)
+                .hint_text("Primary+Shift+P")
+                .desired_width(200.0),
+        )
+        .labelled_by(chord_label.id)
+        .on_hover_text(
+            "Combine Primary, Ctrl, Alt or Shift with A-Z, 0-9, F1-F12, Tab, Insert, Comma, \
+             Period, Plus, Equals or Minus.",
+        );
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "Primary is Command on macOS and Ctrl elsewhere. Every binding needs \
+                     Primary or Ctrl, except Shift+Insert.",
+                )
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             let mut update = None;
             if ui.button("Assign binding").clicked() {
@@ -374,17 +753,17 @@ pub fn show_editor(
             if ui.button("Unbind action").clicked() {
                 update = Some(Some(String::new()));
             }
-            if ui.button("Reset action").clicked() {
+            // A per-action reset is only meaningful once that action has
+            // been overridden (`docs/gui-design.md`).
+            if customized(bindings, action) && ui.button("Restore default").clicked() {
                 update = Some(None);
             }
             if let Some(update) = update {
                 let mut candidate = bindings.clone();
                 candidate.set(action, update);
-                match candidate.validate(cfg!(target_os = "macos")) {
+                match candidate.validate(mac) {
                     Ok(()) => {
-                        editor.draft = candidate
-                            .effective(action, cfg!(target_os = "macos"))
-                            .into();
+                        editor.draft = candidate.effective(action, mac).into();
                         editor.feedback = None;
                         replacement = Some(candidate);
                     }
@@ -394,7 +773,8 @@ pub fn show_editor(
         });
     }
     if let Some(feedback) = &editor.feedback {
-        ui.colored_label(festerm_ui_egui::theme::STATUS_ERROR, feedback);
+        ui.add_space(6.0);
+        ui.colored_label(theme::STATUS_ERROR, feedback);
     }
     ui.data_mut(|data| data.insert_temp(id, editor));
     replacement.map(crate::tabs::AppCommand::SetKeyboardBindings)
@@ -611,9 +991,8 @@ mod tests {
         output.textures_delta.clear();
     }
 
-    #[test]
-    fn keyboard_editor_assigns_unbinds_resets_and_rejects_conflicts() {
-        let mut harness = Harness::builder()
+    fn editor_harness() -> Harness<'static, KeyboardBindings> {
+        Harness::builder()
             .with_size(egui::vec2(600.0, 850.0))
             .build_ui_state(
                 |ui, bindings: &mut KeyboardBindings| {
@@ -624,13 +1003,155 @@ mod tests {
                     }
                 },
                 KeyboardBindings::default(),
-            );
-        harness.run();
-        let title = format!(
-            "New Session — {}",
-            label(harness.state(), Action::NewSession).unwrap()
+            )
+    }
+
+    #[test]
+    fn keyboard_filters_select_by_scope_binding_state_and_customization() {
+        let mut customized_bindings = KeyboardBindings::default();
+        customized_bindings.set(Action::NewSession, Some("Ctrl+Shift+F8".into()));
+
+        assert!(Filter::All.matches(Action::Copy, &customized_bindings));
+        assert!(Filter::Terminal.matches(Action::Copy, &customized_bindings));
+        assert!(!Filter::Global.matches(Action::Copy, &customized_bindings));
+        assert!(Filter::Global.matches(Action::NewSession, &customized_bindings));
+        assert!(Filter::Markdown.matches(Action::MarkdownFind, &customized_bindings));
+        assert!(Filter::Document.matches(Action::OpenMarkdownFile, &customized_bindings));
+        assert!(Filter::Customized.matches(Action::NewSession, &customized_bindings));
+        assert!(!Filter::Customized.matches(Action::Copy, &customized_bindings));
+
+        let mut unbound = KeyboardBindings::default();
+        unbound.set(Action::Copy, Some(String::new()));
+        assert!(Filter::Unbound.matches(Action::Copy, &unbound));
+        assert!(!Filter::Unbound.matches(Action::Copy, &customized_bindings));
+    }
+
+    #[test]
+    fn keyboard_chords_render_as_discrete_platform_keycaps() {
+        let mac = cfg!(target_os = "macos");
+        assert!(keycaps("").is_empty());
+        assert_eq!(
+            keycaps("Primary+Shift+P"),
+            vec![
+                if mac { "⌘" } else { "Ctrl" }.to_owned(),
+                "Shift".to_owned(),
+                "P".to_owned(),
+            ]
         );
-        harness.get_by_label(&title).click();
+        // Named keys keep '+' splitting unambiguous.
+        assert_eq!(keycaps("Primary+Plus").last().unwrap(), "+");
+        assert_eq!(keycaps("Primary+Comma").last().unwrap(), ",");
+        assert_eq!(keycaps("Primary+Equals").last().unwrap(), "=");
+        assert_eq!(keycaps("Ctrl+Tab").last().unwrap(), "Tab");
+        // Only U+2318 is present in the bundled UI face; every other Apple
+        // modifier glyph would render as tofu, so they stay spelled out.
+        for token in keycaps("Ctrl+Alt+Shift+F1") {
+            assert!(
+                token.is_ascii(),
+                "{token:?} is not guaranteed to have a glyph"
+            );
+        }
+    }
+
+    #[test]
+    fn keyboard_every_default_chord_renders_one_keycap_per_token() {
+        for action in Action::ALL {
+            for mac in [true, false] {
+                let chord = action.default_chord(mac);
+                if chord.is_empty() {
+                    continue;
+                }
+                assert_eq!(
+                    keycaps(chord).len(),
+                    chord.split('+').count(),
+                    "{} must render one keycap per chord token",
+                    action.title()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_editor_groups_actions_by_scope_and_narrows_by_search() {
+        let mut harness = editor_harness();
+        harness.run();
+
+        for heading in ["GLOBAL", "TERMINAL", "MARKDOWN", "DOCUMENT"] {
+            assert!(
+                harness.query_by_label(heading).is_some(),
+                "{heading} scope group must be listed"
+            );
+        }
+
+        harness.get_by_label("Search").click();
+        harness.event(egui::Event::Text("markdown".into()));
+        harness.run();
+
+        assert!(harness.query_by_label("MARKDOWN").is_some());
+        assert!(
+            harness.query_by_label("GLOBAL").is_none(),
+            "search must hide scope groups with no matching action"
+        );
+    }
+
+    #[test]
+    fn keyboard_editor_presents_scope_and_default_as_read_only_context() {
+        let mut harness = editor_harness();
+        harness.run();
+        // Narrow first so the row is reachable without scrolling the list.
+        harness.get_by_label("Search").click();
+        harness.event(egui::Event::Text("Copy terminal selection".into()));
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "Copy terminal selection")
+            .click();
+        harness.run();
+
+        // Scope follows from the action, so it is reported with its meaning
+        // rather than offered as an editable field.
+        assert!(harness.query_by_label("Terminal").is_some());
+        assert!(harness
+            .query_by_label("Applies only while a terminal surface has input.")
+            .is_some());
+        assert!(harness.query_by_label("Current").is_some());
+        assert!(harness.query_by_label("Default").is_some());
+    }
+
+    #[test]
+    fn keyboard_editor_marks_customized_actions_and_shows_their_keycaps() {
+        let mut harness = editor_harness();
+        harness.run();
+        assert!(harness.query_by_label("Customized").is_none());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+        harness.get_by_label("Binding chord").click();
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
+        harness.event(egui::Event::Text("Ctrl+Shift+F9".into()));
+        harness.run();
+        harness.get_by_label("Assign binding").click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Customized").is_some(),
+            "an overridden action must be distinguishable from a default one"
+        );
+        assert_eq!(
+            harness.query_all_by_label("F9").count(),
+            2,
+            "the assigned chord must render as keycaps in both the row and the detail pane"
+        );
+    }
+
+    #[test]
+    fn keyboard_editor_assigns_unbinds_resets_and_rejects_conflicts() {
+        let mut harness = editor_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
         harness.run();
         harness.get_by_label("Binding chord").click();
         harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
@@ -647,9 +1168,19 @@ mod tests {
         harness.get_by_label("Unbind action").click();
         harness.run();
         assert_eq!(harness.state().effective(Action::NewSession, false), "");
-        harness.get_by_label("Reset action").click();
+        harness.get_by_label("Restore default").click();
         harness.run();
         assert!(harness.state().is_empty());
+        assert!(
+            harness.query_by_label("Restore default").is_none(),
+            "a per-action reset is meaningless once the action is back to its default"
+        );
+        assert!(
+            harness
+                .query_by_label("Reset all keyboard bindings")
+                .is_none(),
+            "the all-bindings reset must stay hidden while nothing is customized"
+        );
         harness.get_by_label("Binding chord").click();
         harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
         harness.event(egui::Event::Text("Primary+Shift+S".into()));
@@ -661,6 +1192,13 @@ mod tests {
             "invalid draft must not change the effective map"
         );
         assert!(harness.query_by_label("Binding overlaps another action in the same context. Clear or change that action first.").is_some());
+        harness.get_by_label("Binding chord").click();
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
+        harness.event(egui::Event::Text("Ctrl+Shift+F8".into()));
+        harness.run();
+        harness.get_by_label("Assign binding").click();
+        harness.run();
+        assert!(!harness.state().is_empty());
         harness.get_by_label("Reset all keyboard bindings").click();
         harness.run();
         assert!(harness.state().is_empty());

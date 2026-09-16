@@ -4166,12 +4166,7 @@ fn settings_sftp_directory_field_id(ui: &Ui) -> egui::Id {
     ui.make_persistent_id("settings_default_sftp_local_directory")
 }
 
-pub fn show_settings(
-    ui: &mut Ui,
-    settings: SettingsViewModel,
-    command_palette_shortcut: &str,
-    settings_shortcut: &str,
-) -> Option<AppCommand> {
+pub fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<AppCommand> {
     let SettingsViewModel {
         keyboard_bindings,
         chip_layout,
@@ -4513,29 +4508,7 @@ pub fn show_settings(
 
                         ui.add_space(12.0);
 
-                        settings_card(ui, "Keyboard", |ui| {
-                            ui.horizontal(|ui| {
-                                ssh_paragraph(ui, "Command palette");
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new(command_palette_shortcut)
-                                        .size(12.0)
-                                        .color(theme::TEXT_MUTED),
-                                );
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ssh_paragraph(ui, "Open Settings");
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new(settings_shortcut)
-                                        .size(12.0)
-                                        .color(theme::TEXT_MUTED),
-                                );
-                            });
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
+                        settings_card(ui, "Quick switch", |ui| {
                             if settings_toggle_row(
                                 ui,
                                 "Show quick-switch numbers",
@@ -6466,6 +6439,7 @@ mod tests {
 
     struct SettingsHarnessState {
         command: Option<AppCommand>,
+        keyboard_bindings: festerm_config::KeyboardBindings,
     }
 
     fn populated_launcher_harness(
@@ -6600,30 +6574,43 @@ mod tests {
         for width in [752.0, 360.0] {
             let mut harness = settings_harness_with_width(width);
             harness.run();
-            assert!(harness.query_by_label("Search keyboard actions").is_some());
-            assert!(harness
-                .query_by_label("Reset all keyboard bindings")
-                .is_some());
-            let title = format!(
-                "New Session — {}",
-                crate::keyboard::label(
-                    &Default::default(),
-                    festerm_config::KeyboardAction::NewSession
-                )
-                .unwrap()
+            assert!(harness.query_by_label("Search").is_some());
+            assert!(
+                harness
+                    .query_by_label("Reset all keyboard bindings")
+                    .is_none(),
+                "the all-bindings reset stays hidden until something is customized"
             );
-            harness.get_by_label(&title).click();
+
+            // Capture a realistic working state rather than a pristine one:
+            // one action customized, so the "Customized" badge and both reset
+            // routes are actually visible in the review image.
+            let mut customized = festerm_config::KeyboardBindings::default();
+            customized.set(
+                festerm_config::KeyboardAction::ClearTerminal,
+                Some("Ctrl+Shift+F9".into()),
+            );
+            let mut harness = settings_harness_with_bindings(width, customized);
+            harness.run();
+            harness
+                .get_by_role_and_label(accesskit::Role::Button, "New Session")
+                .click();
+            harness.run();
+            harness.get_by_label("Unbind action").click();
             harness.run();
             for label in [
                 "Assign binding",
                 "Unbind action",
-                "Reset action",
+                "Restore default",
                 "Reset all keyboard bindings",
             ] {
-                let rect = harness.get_by_label(label).rect();
+                let rect = harness
+                    .query_by_label(label)
+                    .unwrap_or_else(|| panic!("{label} must be rendered at width {width}"))
+                    .rect();
                 assert!(
                     rect.left() >= 0.0 && rect.right() <= width,
-                    "{label} must fit the narrow editor"
+                    "{label} at {rect:?} must fit the {width} editor"
                 );
             }
             harness.snapshot_options(
@@ -6646,14 +6633,23 @@ mod tests {
     }
 
     fn settings_harness_with_width(width: f32) -> Harness<'static, SettingsHarnessState> {
+        settings_harness_with_bindings(width, Default::default())
+    }
+
+    fn settings_harness_with_bindings(
+        width: f32,
+        bindings: festerm_config::KeyboardBindings,
+    ) -> Harness<'static, SettingsHarnessState> {
+        // Tall enough that every card, including the keyboard editor at the
+        // bottom, is laid out inside the viewport and therefore interactive.
         Harness::builder()
-            .with_size(egui::vec2(width, 2800.0))
+            .with_size(egui::vec2(width, 3600.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
                         ui,
                         SettingsViewModel {
-                            keyboard_bindings: Default::default(),
+                            keyboard_bindings: state.keyboard_bindings.clone(),
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,
                             show_session_details: true,
@@ -6672,13 +6668,20 @@ mod tests {
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
-                        "Cmd+Shift+P",
-                        "Cmd+Shift+S",
                     ) {
+                        // Applied here so the keyboard editor behaves like it
+                        // does in the app instead of snapping back to the
+                        // defaults on the next frame.
+                        if let AppCommand::SetKeyboardBindings(next) = &command {
+                            state.keyboard_bindings = next.clone();
+                        }
                         state.command = Some(command);
                     }
                 },
-                SettingsHarnessState { command: None },
+                SettingsHarnessState {
+                    command: None,
+                    keyboard_bindings: bindings,
+                },
             )
     }
 
@@ -6715,12 +6718,21 @@ mod tests {
     }
 
     #[test]
-    fn settings_keyboard_card_shows_the_settings_hotkey() {
-        let mut harness = settings_harness();
+    fn settings_presents_each_shortcut_exactly_once() {
+        // Regression test: a read-only "Keyboard" card used to restate the
+        // command palette and Settings shortcuts that the bindings editor
+        // already lists, so a customized chord could be shown twice with two
+        // different values.
+        let mut harness = wide_settings_harness();
         harness.run();
 
-        assert!(harness.query_by_label("Open Settings").is_some());
-        assert!(harness.query_by_label("Cmd+Shift+S").is_some());
+        assert!(harness.query_by_label("QUICK SWITCH").is_some());
+        assert_eq!(
+            harness.query_all_by_label("Open Settings").count(),
+            1,
+            "each action must appear once, in the bindings editor"
+        );
+        assert_eq!(harness.query_all_by_label("Command palette").count(), 1);
     }
 
     #[test]
@@ -6733,7 +6745,7 @@ mod tests {
             "INTERFACE",
             "SCROLLING",
             "TERMINAL TYPOGRAPHY",
-            "KEYBOARD",
+            "QUICK SWITCH",
             "SFTP",
         ] {
             assert!(
@@ -6950,23 +6962,31 @@ mod tests {
             .rect()
             .right();
 
-        for (what, right) in [
+        let mut controls = vec![
             (
-                "the scrollback-limit segmented control",
+                "the scrollback-limit segmented control".to_owned(),
                 harness.get_by_label("Disabled").rect().right(),
             ),
             (
-                "the scroll-speed slider",
+                "the scroll-speed slider".to_owned(),
                 harness.get_by_role(accesskit::Role::Slider).rect().right(),
             ),
-            (
-                "the terminal-font dropdown",
-                harness
-                    .get_by_role(accesskit::Role::ComboBox)
-                    .rect()
-                    .right(),
-            ),
-        ] {
+        ];
+        // Every dropdown, including the keyboard-binding filter, has to stay
+        // inside the same card edge as the toggle rows.
+        controls.extend(
+            harness
+                .query_all_by_role(accesskit::Role::ComboBox)
+                .enumerate()
+                .map(|(index, node)| (format!("dropdown {index}"), node.rect().right()))
+                .collect::<Vec<_>>(),
+        );
+        assert!(
+            controls.len() >= 4,
+            "expected the font and keyboard-filter dropdowns to be present"
+        );
+
+        for (what, right) in controls {
             assert!(
                 right <= card_right + 1.0,
                 "{what} reaches {right}, past the {card_right} right edge the \
@@ -7227,13 +7247,14 @@ mod tests {
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
-                        "Cmd+Shift+P",
-                        "Cmd+Shift+S",
                     ) {
                         state.command = Some(command);
                     }
                 },
-                SettingsHarnessState { command: None },
+                SettingsHarnessState {
+                    command: None,
+                    keyboard_bindings: Default::default(),
+                },
             );
         harness.run();
         harness.run();
@@ -8180,7 +8201,10 @@ mod tests {
                     "More actions for Production server 1",
                     "Collapse fesTerm Native (sessiond)",
                 ] {
-                    let rect = harness.get_by_label(label).rect();
+                    let rect = harness
+                        .query_by_label(label)
+                        .unwrap_or_else(|| panic!("{label} must be rendered at width {width}"))
+                        .rect();
                     assert!(
                         rect.width() >= 24.0 && rect.height() >= 24.0,
                         "{label}: {rect:?}"
