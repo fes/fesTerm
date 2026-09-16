@@ -498,6 +498,85 @@ fn keycap_token(part: &str) -> String {
     .to_owned()
 }
 
+/// Keycap slots, in display order: portable modifier, macOS Control,
+/// Alt/Option, Shift, then the key itself. Every row reserves the same slot
+/// for the same modifier, so the key column runs straight down the table
+/// instead of floating wherever a row's modifier count leaves it.
+const CHORD_SLOTS: usize = 5;
+/// Gap between two occupied keycap columns.
+const CHORD_COLUMN_GAP: f32 = 6.0;
+
+fn keycap_slots(chord: &str) -> [Option<String>; CHORD_SLOTS] {
+    let mut slots: [Option<String>; CHORD_SLOTS] = Default::default();
+    if chord.is_empty() {
+        return slots;
+    }
+    let parts: Vec<&str> = chord.split('+').collect();
+    let (modifiers, key) = parts.split_at(parts.len() - 1);
+    for part in modifiers {
+        let slot = match *part {
+            "Primary" | "Command" => 0,
+            // Off macOS, Primary *is* Ctrl, so both spellings render the same
+            // token and must share one column rather than sit in two.
+            "Ctrl" if cfg!(target_os = "macos") => 1,
+            "Ctrl" => 0,
+            "Alt" => 2,
+            _ => 3,
+        };
+        slots[slot] = Some(keycap_token(part));
+    }
+    slots[CHORD_SLOTS - 1] = Some(keycap_token(key[0]));
+    slots
+}
+
+/// Width `show_keycap` will occupy: the label plus the frame's margins and
+/// stroke. Column placement only needs this to be consistent, not exact —
+/// each cell's padding is the difference between two of these measurements.
+fn keycap_width(ui: &egui::Ui, text: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(12.0),
+        theme::TEXT_PRIMARY,
+    );
+    galley.size().x + 14.0
+}
+
+/// The width each keycap column needs across every row that will be drawn,
+/// so alignment holds across scope groups and not just within one. Columns no
+/// row uses stay at zero and are skipped entirely.
+fn chord_columns(
+    ui: &egui::Ui,
+    bindings: &KeyboardBindings,
+    actions: &[Action],
+) -> [f32; CHORD_SLOTS] {
+    let mac = cfg!(target_os = "macos");
+    let mut widths = [0.0f32; CHORD_SLOTS];
+    for action in actions {
+        for (slot, cap) in keycap_slots(bindings.effective(*action, mac))
+            .iter()
+            .enumerate()
+        {
+            if let Some(cap) = cap {
+                widths[slot] = widths[slot].max(keycap_width(ui, cap));
+            }
+        }
+    }
+    widths
+}
+
+/// One column of a row's chord: the keycap centred in the column's width, or
+/// blank space holding the column open for the rows that do use it.
+fn show_keycap_cell(ui: &mut egui::Ui, cap: Option<&str>, width: f32) {
+    let Some(cap) = cap else {
+        ui.add_space(width);
+        return;
+    };
+    let padding = (width - keycap_width(ui, cap)).max(0.0) / 2.0;
+    ui.add_space(padding);
+    show_keycap(ui, cap);
+    ui.add_space(padding);
+}
+
 fn show_keycap(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
         .fill(theme::SURFACE_FIELD)
@@ -544,14 +623,24 @@ fn show_row(
     bindings: &KeyboardBindings,
     action: Action,
     selected: bool,
+    columns: &[f32; CHORD_SLOTS],
 ) -> bool {
     // Reserved up front so the selected row's background can be painted
     // behind the widgets laid out below it, giving a full-width table row
     // rather than a lone highlighted word.
     let background = ui.painter().add(egui::Shape::Noop);
     let mut clicked = false;
+    let changed = customized(bindings, action);
     let row = ui.horizontal(|ui| {
         ui.add_space(4.0);
+        // A gutter dot, always reserved so titles stay on one left edge. It
+        // makes "what have I changed?" answerable by scanning the list, not
+        // only by opening each action.
+        let (marker, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+        if changed {
+            ui.painter()
+                .circle_filled(marker.center(), 3.0, theme::ACCENT_PRIMARY);
+        }
         let title = egui::RichText::new(action.title())
             .size(13.0)
             .color(if selected {
@@ -572,18 +661,40 @@ fn show_row(
             .inner;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(4.0);
-            show_chord(
-                ui,
-                bindings.effective(action, cfg!(target_os = "macos")),
-                true,
-            );
-            if customized(bindings, action) {
+            let chord = bindings.effective(action, cfg!(target_os = "macos"));
+            if chord.is_empty() {
+                ui.label(
+                    egui::RichText::new("Unbound")
+                        .size(11.0)
+                        .color(theme::TEXT_MUTED),
+                );
+            } else {
+                // Column pitch is managed here, so the layout's own spacing
+                // would double-count between cells.
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let slots = keycap_slots(chord);
+                // Reversed: a right-to-left layout consumes children from the
+                // right edge inwards, so the key column is added first.
+                let mut gap = false;
+                for slot in (0..CHORD_SLOTS).rev() {
+                    if columns[slot] <= 0.0 {
+                        continue;
+                    }
+                    if gap {
+                        ui.add_space(CHORD_COLUMN_GAP);
+                    }
+                    show_keycap_cell(ui, slots[slot].as_deref(), columns[slot]);
+                    gap = true;
+                }
+            }
+            if changed {
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new("Customized")
                         .size(10.0)
                         .color(theme::ACCENT_PRIMARY),
-                );
+                )
+                .on_hover_text("Changed from the default chord.");
             }
         });
     });
@@ -701,8 +812,19 @@ pub fn show_editor(
 
     ui.add_space(8.0);
     let query = editor.search.to_lowercase();
-    let mut matched = 0usize;
     let mut chosen = None;
+    let visible: Vec<Action> = Action::ALL
+        .into_iter()
+        .filter(|action| {
+            editor.filter.matches(*action, bindings)
+                && (query.is_empty()
+                    || action.title().to_lowercase().contains(&query)
+                    || action.description().to_lowercase().contains(&query))
+        })
+        .collect();
+    // Measured across every visible row, so the key column stays straight
+    // across scope groups rather than restarting at each heading.
+    let columns = chord_columns(ui, bindings, &visible);
     // No inner scroll area: the whole Settings page already scrolls, and a
     // short nested viewport made 35 actions painful to page through.
     ui.vertical(|ui| {
@@ -710,20 +832,14 @@ pub fn show_editor(
         // Grouping by scope keeps all 35 actions navigable; a flat list
         // makes the terminal-only entries indistinguishable from global ones.
         for scope in Scope::ALL {
-            let actions: Vec<Action> = Action::ALL
-                .into_iter()
-                .filter(|action| {
-                    action.scope() == scope
-                        && editor.filter.matches(*action, bindings)
-                        && (query.is_empty()
-                            || action.title().to_lowercase().contains(&query)
-                            || action.description().to_lowercase().contains(&query))
-                })
+            let actions: Vec<Action> = visible
+                .iter()
+                .copied()
+                .filter(|action| action.scope() == scope)
                 .collect();
             if actions.is_empty() {
                 continue;
             }
-            matched += actions.len();
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(scope.title().to_uppercase())
@@ -732,13 +848,47 @@ pub fn show_editor(
             );
             for action in actions {
                 ui.push_id(action as usize, |ui| {
-                    if show_row(ui, bindings, action, editor.selected == Some(action)) {
+                    if show_row(
+                        ui,
+                        bindings,
+                        action,
+                        editor.selected == Some(action),
+                        &columns,
+                    ) {
                         chosen = Some(action);
+                    }
+                    // Expanded in place: pushing the editor to the bottom of
+                    // a 35-row table meant scrolling away from the row being
+                    // changed and back again to see the result.
+                    if editor.selected == Some(action) {
+                        // The indent ties the editor to its row, but on a
+                        // phone-width window that space is needed by the
+                        // controls themselves.
+                        let indent = if ui.available_width() < 420.0 { 6 } else { 16 };
+                        egui::Frame::new()
+                            .fill(theme::SURFACE_PANEL)
+                            .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                            .corner_radius(4.0)
+                            .inner_margin(egui::Margin {
+                                left: indent,
+                                right: 8,
+                                top: 8,
+                                bottom: 10,
+                            })
+                            .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                if let Some(next) =
+                                    show_detail(ui, bindings, action, &mut editor, mac)
+                                {
+                                    replacement = Some(next);
+                                }
+                            });
+                        ui.add_space(4.0);
                     }
                 });
             }
         }
-        if matched == 0 {
+        if visible.is_empty() {
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new("No actions match this search and filter.")
@@ -755,213 +905,6 @@ pub fn show_editor(
         editor.recording = false;
     }
 
-    if let Some(action) = editor.selected {
-        ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(8.0);
-        // Same muted heading idiom as the scope groups above, so the pane
-        // reads as a continuation of the row the user just picked.
-        ui.label(
-            egui::RichText::new("SELECTED ACTION")
-                .size(10.0)
-                .color(theme::TEXT_MUTED),
-        );
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(action.title())
-                .size(14.0)
-                .strong()
-                .color(theme::TEXT_PRIMARY),
-        );
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(action.description())
-                    .size(12.0)
-                    .color(theme::TEXT_SECONDARY),
-            )
-            .wrap(),
-        );
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Scope")
-                    .size(11.0)
-                    .color(theme::TEXT_MUTED),
-            );
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new(action.scope().title())
-                    .size(12.0)
-                    .color(theme::TEXT_PRIMARY),
-            );
-        });
-        // Kept out of the row above: a sentence inside `horizontal` cannot
-        // wrap, so it would force the whole Settings card wider than the
-        // window on narrow layouts.
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(action.scope().help())
-                    .size(11.0)
-                    .color(theme::TEXT_MUTED),
-            )
-            .wrap(),
-        );
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Current")
-                    .size(11.0)
-                    .color(theme::TEXT_MUTED),
-            );
-            ui.add_space(6.0);
-            show_chord(ui, bindings.effective(action, mac), false);
-        });
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Default")
-                    .size(11.0)
-                    .color(theme::TEXT_MUTED),
-            );
-            ui.add_space(6.0);
-            show_chord(ui, action.default_chord(mac), false);
-        });
-        ui.add_space(8.0);
-        // Recording is resolved before the field is drawn so a chord captured
-        // this frame is already in the box the user is looking at.
-        let mut assign_recorded = false;
-        if editor.recording {
-            let events = ui
-                .ctx()
-                .data_mut(|data| {
-                    data.remove_temp::<Vec<egui::Event>>(egui::Id::new(RECORDED_EVENTS_ID))
-                })
-                .unwrap_or_default();
-            for event in events {
-                let egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } = event
-                else {
-                    continue;
-                };
-                if key == egui::Key::Escape {
-                    editor.recording = false;
-                    break;
-                }
-                match recorded_chord(key, modifiers, mac) {
-                    Some(chord) => {
-                        editor.draft = chord;
-                        editor.recording = false;
-                        editor.feedback = None;
-                        assign_recorded = true;
-                    }
-                    None => {
-                        editor.feedback = Some(
-                            "That key cannot be bound; use A-Z, 0-9, F1-F12, Tab, Insert, Comma, \
-                         Period, Plus, Equals or Minus."
-                                .into(),
-                        )
-                    }
-                }
-                break;
-            }
-        }
-        let chord_label = ui.label(
-            egui::RichText::new("Binding chord")
-                .size(12.0)
-                .color(theme::TEXT_SECONDARY),
-        );
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut editor.draft)
-                    .hint_text("Primary+Shift+P")
-                    .desired_width(200.0),
-            )
-            .labelled_by(chord_label.id)
-            .on_hover_text(
-                "Type a chord, or use Press keys to capture one. Combine Primary, Ctrl, Alt or \
-                 Shift with A-Z, 0-9, F1-F12, Tab, Insert, Comma, Period, Plus, Equals or Minus.",
-            );
-            ui.add_space(6.0);
-            let capture = ui
-                .selectable_label(
-                    editor.recording,
-                    if editor.recording {
-                        "Press a shortcut…"
-                    } else {
-                        "Press keys"
-                    },
-                )
-                .on_hover_text("Capture the next key combination you press.");
-            if capture.clicked() {
-                editor.recording = !editor.recording;
-                editor.feedback = None;
-            }
-        });
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(if editor.recording {
-                    "Listening — press the combination you want, or Escape to cancel. The keys \
-                     are captured, not acted on."
-                } else {
-                    "Primary is Command on macOS and Ctrl elsewhere. Every binding needs \
-                     Primary or Ctrl, except Shift+Insert."
-                })
-                .size(11.0)
-                .color(if editor.recording {
-                    theme::ACCENT_PRIMARY
-                } else {
-                    theme::TEXT_MUTED
-                }),
-            )
-            .wrap(),
-        );
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            let mut update = None;
-            // A recorded chord is applied straight away: having just pressed
-            // the combination, a second confirmation step reads as the capture
-            // having failed.
-            if ui.button("Assign binding").clicked() || assign_recorded {
-                update = Some(Some(editor.draft.clone()));
-            }
-            if ui.button("Unbind action").clicked() {
-                update = Some(Some(String::new()));
-            }
-            // Always present, so the per-action reset is discoverable before
-            // anything has been changed, and disabled while it would be a
-            // no-op.
-            if ui
-                .add_enabled(
-                    customized(bindings, action),
-                    egui::Button::new("Restore default"),
-                )
-                .on_hover_text("Put this action back on its default chord.")
-                .on_disabled_hover_text("This action already uses its default chord.")
-                .clicked()
-            {
-                update = Some(None);
-            }
-            if let Some(update) = update {
-                let mut candidate = bindings.clone();
-                candidate.set(action, update);
-                match candidate.validate(mac) {
-                    Ok(()) => {
-                        editor.draft = candidate.effective(action, mac).into();
-                        editor.feedback = None;
-                        replacement = Some(candidate);
-                    }
-                    Err(error) => editor.feedback = Some(error.into()),
-                }
-            }
-        });
-    }
-    if let Some(feedback) = &editor.feedback {
-        ui.add_space(6.0);
-        ui.colored_label(theme::STATUS_ERROR, feedback);
-    }
     editor.recording = editor.recording && editor.selected.is_some();
     // Re-armed on every frame the editor is visible, and cleared by
     // `handle_shortcuts` as it stashes. Closing Settings mid-capture therefore
@@ -975,6 +918,208 @@ pub fn show_editor(
     });
     ui.data_mut(|data| data.insert_temp(id, editor));
     replacement.map(crate::tabs::AppCommand::SetKeyboardBindings)
+}
+
+/// The expanded editor for one action, drawn immediately under its row so
+/// assigning a binding does not mean scrolling away from the list. Returns a
+/// replacement map when the action's binding changed.
+fn show_detail(
+    ui: &mut egui::Ui,
+    bindings: &KeyboardBindings,
+    action: Action,
+    editor: &mut Editor,
+    mac: bool,
+) -> Option<KeyboardBindings> {
+    let mut replacement = None;
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(action.description())
+                .size(12.0)
+                .color(theme::TEXT_SECONDARY),
+        )
+        .wrap(),
+    );
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Scope")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(action.scope().title())
+                .size(12.0)
+                .color(theme::TEXT_PRIMARY),
+        );
+    });
+    // Kept out of the row above: a sentence inside `horizontal` cannot
+    // wrap, so it would force the whole Settings card wider than the
+    // window on narrow layouts.
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(action.scope().help())
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        )
+        .wrap(),
+    );
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Current")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        ui.add_space(6.0);
+        show_chord(ui, bindings.effective(action, mac), false);
+    });
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Default")
+                .size(11.0)
+                .color(theme::TEXT_MUTED),
+        );
+        ui.add_space(6.0);
+        show_chord(ui, action.default_chord(mac), false);
+    });
+    ui.add_space(8.0);
+    // Recording is resolved before the field is drawn so a chord captured
+    // this frame is already in the box the user is looking at.
+    let mut assign_recorded = false;
+    if editor.recording {
+        let events = ui
+            .ctx()
+            .data_mut(|data| {
+                data.remove_temp::<Vec<egui::Event>>(egui::Id::new(RECORDED_EVENTS_ID))
+            })
+            .unwrap_or_default();
+        for event in events {
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if key == egui::Key::Escape {
+                editor.recording = false;
+                break;
+            }
+            match recorded_chord(key, modifiers, mac) {
+                Some(chord) => {
+                    editor.draft = chord;
+                    editor.recording = false;
+                    editor.feedback = None;
+                    assign_recorded = true;
+                }
+                None => {
+                    editor.feedback = Some(
+                        "That key cannot be bound; use A-Z, 0-9, F1-F12, Tab, Insert, Comma, \
+                         Period, Plus, Equals or Minus."
+                            .into(),
+                    )
+                }
+            }
+            break;
+        }
+    }
+    let chord_label = ui.label(
+        egui::RichText::new("Binding chord")
+            .size(12.0)
+            .color(theme::TEXT_SECONDARY),
+    );
+    ui.horizontal_wrapped(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut editor.draft)
+                .hint_text("Primary+Shift+P")
+                .desired_width(200.0),
+        )
+        .labelled_by(chord_label.id)
+        .on_hover_text(
+            "Type a chord, or use Press keys to capture one. Combine Primary, Ctrl, Alt or \
+                 Shift with A-Z, 0-9, F1-F12, Tab, Insert, Comma, Period, Plus, Equals or Minus.",
+        );
+        ui.add_space(6.0);
+        let capture = ui
+            .selectable_label(
+                editor.recording,
+                if editor.recording {
+                    "Press a shortcut…"
+                } else {
+                    "Press keys"
+                },
+            )
+            .on_hover_text("Capture the next key combination you press.");
+        if capture.clicked() {
+            editor.recording = !editor.recording;
+            editor.feedback = None;
+        }
+    });
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(if editor.recording {
+                "Listening — press the combination you want, or Escape to cancel. The keys \
+                     are captured, not acted on."
+            } else {
+                "Primary is Command on macOS and Ctrl elsewhere. Every binding needs \
+                     Primary or Ctrl, except Shift+Insert."
+            })
+            .size(11.0)
+            .color(if editor.recording {
+                theme::ACCENT_PRIMARY
+            } else {
+                theme::TEXT_MUTED
+            }),
+        )
+        .wrap(),
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        let mut update = None;
+        // A recorded chord is applied straight away: having just pressed
+        // the combination, a second confirmation step reads as the capture
+        // having failed.
+        if ui.button("Assign binding").clicked() || assign_recorded {
+            update = Some(Some(editor.draft.clone()));
+        }
+        if ui.button("Unbind action").clicked() {
+            update = Some(Some(String::new()));
+        }
+        // Always present, so the per-action reset is discoverable before
+        // anything has been changed, and disabled while it would be a
+        // no-op.
+        if ui
+            .add_enabled(
+                customized(bindings, action),
+                egui::Button::new("Restore default"),
+            )
+            .on_hover_text("Put this action back on its default chord.")
+            .on_disabled_hover_text("This action already uses its default chord.")
+            .clicked()
+        {
+            update = Some(None);
+        }
+        if let Some(update) = update {
+            let mut candidate = bindings.clone();
+            candidate.set(action, update);
+            match candidate.validate(mac) {
+                Ok(()) => {
+                    editor.draft = candidate.effective(action, mac).into();
+                    editor.feedback = None;
+                    replacement = Some(candidate);
+                }
+                Err(error) => editor.feedback = Some(error.into()),
+            }
+        }
+    });
+    if let Some(feedback) = &editor.feedback {
+        ui.add_space(6.0);
+        ui.colored_label(theme::STATUS_ERROR, feedback);
+    }
+    replacement
 }
 
 #[cfg(test)]
@@ -1217,6 +1362,112 @@ mod tests {
                 },
                 KeyboardBindings::default(),
             )
+    }
+
+    #[test]
+    fn selecting_an_action_expands_the_editor_under_its_own_row() {
+        let mut harness = editor_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+
+        let row = harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .rect();
+        let next_row = harness
+            .get_by_role_and_label(accesskit::Role::Button, "Start Local Shell")
+            .rect();
+        let field = harness.get_by_label("Binding chord").rect();
+        assert!(
+            field.top() > row.bottom(),
+            "the editor must open under the row it belongs to, not at the end of the table"
+        );
+        assert!(
+            field.bottom() < next_row.top(),
+            "the editor must push the following rows down rather than overlap them"
+        );
+
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "Start Local Shell")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.query_all_by_label("Binding chord").count(),
+            1,
+            "choosing another action must close the editor that was already open"
+        );
+        let moved = harness.get_by_label("Binding chord").rect();
+        let row = harness
+            .get_by_role_and_label(accesskit::Role::Button, "Start Local Shell")
+            .rect();
+        assert!(
+            moved.top() > row.bottom(),
+            "the editor must follow the selection to its new row"
+        );
+    }
+
+    #[test]
+    fn chord_keycaps_occupy_one_column_per_modifier_slot() {
+        let mac = cfg!(target_os = "macos");
+        let key = CHORD_SLOTS - 1;
+        let palette = keycap_slots("Primary+Shift+P");
+        assert_eq!(palette[0].as_deref(), Some(if mac { "⌘" } else { "Ctrl" }));
+        assert_eq!(palette[3].as_deref(), Some("Shift"));
+        assert_eq!(palette[key].as_deref(), Some("P"));
+        assert!(
+            palette[1].is_none() && palette[2].is_none(),
+            "unused modifier columns stay empty so occupied ones line up"
+        );
+        assert_eq!(
+            keycap_slots("Primary+T")[key].as_deref(),
+            Some("T"),
+            "a shorter chord must still put its key in the key column"
+        );
+
+        let control = keycap_slots("Ctrl+Shift+Tab");
+        assert_eq!(control[3].as_deref(), Some("Shift"));
+        assert_eq!(control[key].as_deref(), Some("Tab"));
+        if mac {
+            assert_eq!(
+                control[1].as_deref(),
+                Some("Control"),
+                "macOS Control is its own key and needs its own column"
+            );
+            assert!(control[0].is_none());
+        } else {
+            assert_eq!(
+                control[0].as_deref(),
+                Some("Ctrl"),
+                "off macOS Primary is Ctrl, so both spellings share one column"
+            );
+            assert!(control[1].is_none());
+        }
+        assert_eq!(
+            keycap_slots("Primary+Alt+R")[2].as_deref(),
+            Some(if mac { "Option" } else { "Alt" })
+        );
+        assert!(
+            keycap_slots("").iter().all(Option::is_none),
+            "an unbound action occupies no column"
+        );
+
+        // Every slot a default chord uses must be one the renderer knows, or
+        // a keycap would silently land in the wrong column.
+        for action in Action::ALL {
+            let chord = action.default_chord(mac);
+            let slots = keycap_slots(chord);
+            assert_eq!(
+                slots.iter().filter(|slot| slot.is_some()).count(),
+                if chord.is_empty() {
+                    0
+                } else {
+                    chord.split('+').count()
+                },
+                "every part of {chord} needs a distinct column"
+            );
+        }
     }
 
     #[test]

@@ -13,7 +13,9 @@ Open **Settings → Keyboard bindings**, or press the fixed
 editor. Actions are grouped under the scope they apply in and can be narrowed
 by search or by the **Show** filter (a single scope, only customized actions,
 or only unbound ones). Each row carries the action's effective chord as
-keycaps and a **Customized** badge once it has been overridden. Select a row,
+keycaps and a **Customized** badge once it has been overridden. Selecting a
+row expands its editor in place, directly under that row; selecting another
+action closes it again. Select a row,
 then either type a chord or press **Press keys** and press the combination
 itself — while capturing, the keys are taken by the editor rather than
 dispatched, so binding a shortcut cannot also fire it, and Escape cancels a

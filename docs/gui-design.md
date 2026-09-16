@@ -1451,7 +1451,15 @@ modifiers out, matching how the palette and chip hints already render chords
 and staying inside the bundled interface face's glyph coverage.
 The action table is not separately scrollable: the Settings page already
 scrolls, and a short nested viewport made the catalogue painful to page
-through. A chord is set either by typing it or by **Press keys**, which
+through. Selecting a row expands its editor in place, directly beneath that
+row, so assigning a binding never means scrolling away from the action being
+changed; choosing another action closes the one already open. Each row carries
+a gutter dot and a **Customized** badge when its chord differs from the
+default, so "what have I changed?" is answerable by scanning the list rather
+than by opening each action. Keycaps sit in fixed columns — one per modifier
+slot, then the key — measured across every visible row, so the key column runs
+straight down the table instead of floating with each row's modifier count.
+A chord is set either by typing it or by **Press keys**, which
 captures the next combination pressed; while capturing, those keys are taken
 by the editor instead of being dispatched, so binding a shortcut cannot also
 fire it, and Escape cancels. Capture is re-armed on every frame the editor

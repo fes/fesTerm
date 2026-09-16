@@ -704,6 +704,8 @@
         "keyboard_editor_captures_a_pressed_chord_instead_of_firing_it",
         "keyboard_capture_is_cancelled_by_escape_and_leaves_the_binding_alone",
         "stashing_recorded_events_releases_the_keyboard_for_the_next_frame",
+        "chord_keycaps_occupy_one_column_per_modifier_slot",
+        "selecting_an_action_expands_the_editor_under_its_own_row",
         "every_action_documents_what_it_does",
         "every_scope_explains_where_its_actions_apply",
         "settings_presents_each_shortcut_exactly_once"
