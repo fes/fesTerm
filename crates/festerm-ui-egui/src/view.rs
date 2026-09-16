@@ -369,6 +369,10 @@ impl TerminalView {
         &self.selection
     }
 
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
     pub const fn history_offset_rows(&self) -> usize {
         self.history.offset_rows
     }
@@ -662,6 +666,11 @@ impl TerminalView {
                     } if terminal_hovered
                         && (!mouse_reporting || modifiers.shift || over_scrollbar) =>
                     {
+                        sink.observe_local_gesture(
+                            "mouse-wheel",
+                            "local-history-scroll",
+                            u8::from(modifiers.shift),
+                        );
                         let raw_rows = wheel_delta_rows(*unit, delta.y, metrics.height, page_rows);
                         // Accumulate the fractional row this event didn't
                         // quite earn (e.g. a 0.1x "Very slow" clickstop)
@@ -928,6 +937,11 @@ impl TerminalView {
                     }
                     if !mouse_reporting || modifiers.shift {
                         self.secondary_gesture = SecondaryGestureOwnership::Local(*pos);
+                        sink.observe_local_gesture(
+                            "mouse-right-press",
+                            "local-context-gesture",
+                            u8::from(modifiers.shift),
+                        );
                         return false;
                     }
                     self.secondary_gesture = SecondaryGestureOwnership::Terminal;
@@ -936,6 +950,11 @@ impl TerminalView {
                 match std::mem::take(&mut self.secondary_gesture) {
                     SecondaryGestureOwnership::Local(press_position) => {
                         local_context_release = Some(press_position);
+                        sink.observe_local_gesture(
+                            "mouse-right-release",
+                            "local-context-menu",
+                            u8::from(modifiers.shift),
+                        );
                         false
                     }
                     SecondaryGestureOwnership::Terminal | SecondaryGestureOwnership::None => true,
@@ -971,6 +990,11 @@ impl TerminalView {
                     }
                     self.middle_click_paste_gesture = true;
                     request_local_paste = true;
+                    sink.observe_local_gesture(
+                        "mouse-middle-press",
+                        "local-paste-request",
+                        u8::from(modifiers.shift),
+                    );
                     return false;
                 }
                 !std::mem::take(&mut self.middle_click_paste_gesture)

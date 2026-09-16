@@ -117,6 +117,32 @@ enum ZoomCommand {
 }
 
 impl ApplicationShortcut {
+    fn action(self) -> festerm_config::KeyboardAction {
+        use festerm_config::KeyboardAction as A;
+        match self {
+            Self::CommandPalette => A::CommandPalette,
+            Self::NewSession => A::NewSession,
+            Self::StartLocalShell => A::StartLocalShell,
+            Self::CloseActiveSurface => A::CloseActiveSurface,
+            Self::NextSession => A::NextSession,
+            Self::PreviousSession => A::PreviousSession,
+            Self::Settings => A::Settings,
+            Self::SettingsHotkey => A::SettingsHotkey,
+            Self::ZoomOut => A::ZoomOut,
+            Self::ZoomReset => A::ZoomReset,
+            Self::ClearTerminal => A::ClearTerminal,
+            Self::ResetTerminal => A::ResetTerminal,
+            Self::ToggleFocusMode => A::ToggleFocusMode,
+            Self::PortForwardManager => A::PortForwardManager,
+            Self::MarkdownFind => A::MarkdownFind,
+            Self::MarkdownReload => A::MarkdownReload,
+            Self::MarkdownPreviewSource => A::MarkdownPreviewSource,
+            Self::MarkdownOutline => A::MarkdownOutline,
+            Self::OpenMarkdownFile => A::OpenMarkdownFile,
+            Self::Find => A::Find,
+        }
+    }
+    #[cfg(test)]
     fn chord(self) -> Option<(egui::Modifiers, egui::Key)> {
         match self {
             Self::CommandPalette => Some((
@@ -222,6 +248,7 @@ impl ApplicationShortcut {
         }
     }
 
+    #[cfg(test)]
     const fn label(self) -> Option<&'static str> {
         match self {
             Self::CommandPalette if cfg!(target_os = "macos") => Some("\u{2318}+Shift+P"),
@@ -266,9 +293,13 @@ impl ApplicationShortcut {
     }
 
     fn consume(self, context: &egui::Context) -> bool {
-        self.chord().is_some_and(|(modifiers, key)| {
-            context.input_mut(|input| input.consume_key(modifiers, key))
-        })
+        let bindings = context.data(|data| {
+            data.get_temp::<festerm_config::KeyboardBindings>(egui::Id::new(
+                "effective-keyboard-bindings",
+            ))
+            .unwrap_or_default()
+        });
+        crate::keyboard::consume(context, &bindings, self.action())
     }
 }
 
@@ -280,37 +311,13 @@ impl ApplicationShortcut {
 /// never drift out of sync.
 const MAX_QUICK_SWITCH_TABS: usize = 9;
 
-/// The physical key for the Nth (0-based) quick-switch slot, or `None` past
-/// `MAX_QUICK_SWITCH_TABS`.
-fn quick_switch_key(index: usize) -> Option<egui::Key> {
-    [
-        egui::Key::Num1,
-        egui::Key::Num2,
-        egui::Key::Num3,
-        egui::Key::Num4,
-        egui::Key::Num5,
-        egui::Key::Num6,
-        egui::Key::Num7,
-        egui::Key::Num8,
-        egui::Key::Num9,
-    ]
-    .get(index)
-    .copied()
-}
-
 /// Pre-formatted display text for the Nth (0-based) quick-switch slot (e.g.
 /// `"\u{2318} 1"`), or `None` past `MAX_QUICK_SWITCH_TABS`.
+#[cfg(test)]
 fn quick_switch_label(index: usize) -> Option<String> {
-    if index >= MAX_QUICK_SWITCH_TABS {
-        return None;
-    }
-
-    let n = index + 1;
-    Some(if cfg!(target_os = "macos") {
-        format!("\u{2318} {n}")
-    } else {
-        format!("Ctrl+{n}")
-    })
+    crate::keyboard::QUICK_ACTIONS
+        .get(index)
+        .and_then(|action| crate::keyboard::label(&Default::default(), *action))
 }
 
 const fn terminal_font_family(preference: TerminalFontPreference) -> TerminalFontFamily {
@@ -639,6 +646,7 @@ impl FesTermApp {
             festerm_macos_window::install_application_menu(std::sync::Arc::new(move || {
                 context.request_repaint()
             }));
+        self.update_native_menu();
     }
 
     /// Starts the platform wake-notification hook (resume-from-sleep on
@@ -700,33 +708,78 @@ impl FesTermApp {
     fn sync_native_window_chrome(&self, _context: &egui::Context, _frame: &eframe::Frame) {}
 
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
+        while let Some(command) = self.native_menu.try_recv() {
+            self.dispatch_native_menu_command(command, context);
+        }
+    }
+
+    fn dispatch_native_menu_command(
+        &mut self,
+        command: festerm_macos_window::NativeMenuCommand,
+        context: &egui::Context,
+    ) {
         if self.overlays.blocks_terminal_input() {
             return;
         }
-        while let Some(command) = self.native_menu.try_recv() {
-            use festerm_macos_window::NativeMenuCommand;
-            match command {
-                NativeMenuCommand::NewSession => {
-                    self.state.dispatch(AppCommand::OpenLauncher, context)
-                }
-                NativeMenuCommand::StartLocalShell => {
-                    self.state.dispatch(AppCommand::StartLocalSession, context)
-                }
-                NativeMenuCommand::OpenSettings => {
-                    self.state.dispatch(AppCommand::OpenSettings, context)
-                }
-                NativeMenuCommand::CloseActiveSurface => {
-                    let active = self.state.active();
-                    self.request_close_tab(active, context);
-                }
-                NativeMenuCommand::ToggleCommandPalette => self.palette.toggle(),
-                NativeMenuCommand::ToggleSessionInspector => {
-                    self.toggle_inspector_from_current_focus(context)
-                }
-                NativeMenuCommand::ClearTerminal => self.clear_active_terminal(context),
-                NativeMenuCommand::ResetTerminal => self.reset_active_terminal(context),
-                NativeMenuCommand::ToggleFocusMode => self.toggle_focus_mode(context),
+        use festerm_config::KeyboardAction as A;
+        use festerm_macos_window::NativeMenuCommand;
+        let action = match command {
+            NativeMenuCommand::NewSession => Some(A::NewSession),
+            NativeMenuCommand::StartLocalShell => Some(A::StartLocalShell),
+            NativeMenuCommand::OpenSettings => Some(A::Settings),
+            NativeMenuCommand::CloseActiveSurface => Some(A::CloseActiveSurface),
+            NativeMenuCommand::ToggleCommandPalette => Some(A::CommandPalette),
+            NativeMenuCommand::ClearTerminal => Some(A::ClearTerminal),
+            NativeMenuCommand::ResetTerminal => Some(A::ResetTerminal),
+            NativeMenuCommand::ToggleFocusMode => Some(A::ToggleFocusMode),
+            NativeMenuCommand::ToggleSessionInspector => None,
+        };
+        if let Some(action) = action {
+            let bindings = self.state.interface_settings().keyboard_bindings().clone();
+            // Some native integrations also surface the accelerator key.
+            // Remove that counterpart before egui dispatch, not by frame time.
+            crate::keyboard::consume(context, &bindings, action);
+            if let TabContent::Session(session) = &self.state.active_tab().content {
+                let mut recorder = session
+                    .controller
+                    .input_recorder
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                recorder.set_target(
+                    self.state.active().chip_id(),
+                    session.controller.lifecycle_generation(),
+                );
+                recorder.record(
+                    "native-menu",
+                    festerm_ui_egui::routing_trace::Metadata {
+                        class: action.title(),
+                        modifiers: 0,
+                    },
+                    "menu-command-dispatched-key-provenance-unknown",
+                    "no-delivery",
+                    0,
+                );
             }
+        }
+        match command {
+            NativeMenuCommand::NewSession => self.state.dispatch(AppCommand::OpenLauncher, context),
+            NativeMenuCommand::StartLocalShell => {
+                self.state.dispatch(AppCommand::StartLocalSession, context)
+            }
+            NativeMenuCommand::OpenSettings => {
+                self.state.dispatch(AppCommand::OpenSettings, context)
+            }
+            NativeMenuCommand::CloseActiveSurface => {
+                let active = self.state.active();
+                self.request_close_tab(active, context);
+            }
+            NativeMenuCommand::ToggleCommandPalette => self.palette.toggle(),
+            NativeMenuCommand::ToggleSessionInspector => {
+                self.toggle_inspector_from_current_focus(context)
+            }
+            NativeMenuCommand::ClearTerminal => self.clear_active_terminal(context),
+            NativeMenuCommand::ResetTerminal => self.reset_active_terminal(context),
+            NativeMenuCommand::ToggleFocusMode => self.toggle_focus_mode(context),
         }
     }
 
@@ -747,6 +800,62 @@ impl FesTermApp {
             matches!(self.state.active_tab().content, TabContent::Session(_)),
             self.state.inspector_open(),
         );
+        use festerm_config::KeyboardAction as A;
+        use festerm_macos_window::NativeMenuCommand as N;
+        let settings = self.state.interface_settings();
+        let shortcuts = [
+            (N::NewSession, A::NewSession),
+            (N::StartLocalShell, A::StartLocalShell),
+            (N::OpenSettings, A::Settings),
+            (N::CloseActiveSurface, A::CloseActiveSurface),
+            (N::ToggleCommandPalette, A::CommandPalette),
+            (N::ClearTerminal, A::ClearTerminal),
+            (N::ResetTerminal, A::ResetTerminal),
+            (N::ToggleFocusMode, A::ToggleFocusMode),
+        ]
+        .into_iter()
+        .filter_map(|(command, action)| {
+            if self.overlays.blocks_terminal_input()
+                || (self.palette.is_open() && action != A::CommandPalette) {
+                return None;
+            }
+            if action.scope() == festerm_config::KeyboardScope::Terminal
+                && (self.state.inspector_open() || !matches!(&self.state.active_tab().content,
+                    TabContent::Session(session) if !session.search.is_open()
+                        && session.host_key_prompt().is_none() && session.password_prompt().is_none()))
+            {
+                return None;
+            }
+            let parsed = festerm_config::Chord::parse(
+                settings
+                    .keyboard_bindings()
+                    .effective(action, cfg!(target_os = "macos")),
+                cfg!(target_os = "macos"),
+            )
+            .ok()??;
+            let key = match parsed.key {
+                "Comma" => ",".into(),
+                "Period" => ".".into(),
+                "Tab" => "\t".into(),
+                "Minus" => "-".into(),
+                "Plus" => "+".into(),
+                "Equals" => "=".into(),
+                key if key.starts_with('F') && key.len() > 1 => {
+                    char::from_u32(0xf704 + key[1..].parse::<u32>().ok()? - 1)?.to_string()
+                }
+                key => key.to_lowercase(),
+            };
+            Some(festerm_macos_window::NativeShortcut {
+                command,
+                key,
+                control: parsed.ctrl,
+                command_modifier: parsed.command,
+                option: parsed.alt,
+                shift: parsed.shift,
+            })
+        })
+        .collect::<Vec<_>>();
+        self.native_menu.update_shortcuts(&shortcuts);
     }
 
     /// Applies the one close policy shared by chrome, shortcuts, the command
@@ -2227,6 +2336,9 @@ impl FesTermApp {
     /// `docs/gui-design.md` ("a searchable session switcher keyed primarily
     /// by stable identity").
     fn palette_items(&self) -> Vec<PaletteItem> {
+        use festerm_config::KeyboardAction as A;
+        let bindings = self.state.interface_settings().keyboard_bindings().clone();
+        let binding_label = |action| crate::keyboard::label(&bindings, action);
         const NEW_LAUNCHER_TAB: u64 = 1;
         const START_LOCAL_SESSION: u64 = 3;
         const CLOSE_ACTIVE_TAB: u64 = 5;
@@ -2253,16 +2365,14 @@ impl FesTermApp {
             PaletteItem {
                 id: NEW_LAUNCHER_TAB,
                 label: "New Session…".to_owned(),
-                hint: ApplicationShortcut::NewSession.label().map(str::to_owned),
+                hint: binding_label(A::NewSession),
                 is_tab: false,
                 shortcut_label: None,
             },
             PaletteItem {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
-                hint: ApplicationShortcut::StartLocalShell
-                    .label()
-                    .map(str::to_owned),
+                hint: binding_label(A::StartLocalShell),
                 is_tab: false,
                 shortcut_label: None,
             },
@@ -2276,68 +2386,49 @@ impl FesTermApp {
                     } else {
                         "Enter Focus Mode".to_owned()
                     },
-                    hint: ApplicationShortcut::ToggleFocusMode
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::ToggleFocusMode),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: ZOOM_IN,
                     label: "Zoom In".to_owned(),
-                    hint: Some(if cfg!(target_os = "macos") {
-                        "\u{2318}++".to_owned()
-                    } else {
-                        "Ctrl++".to_owned()
-                    }),
+                    hint: binding_label(A::ZoomIn),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: ZOOM_OUT,
                     label: "Zoom Out".to_owned(),
-                    hint: ApplicationShortcut::ZoomOut.label().map(str::to_owned),
+                    hint: binding_label(A::ZoomOut),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: RESET_ZOOM,
                     label: "Reset Zoom".to_owned(),
-                    hint: ApplicationShortcut::ZoomReset.label().map(str::to_owned),
+                    hint: binding_label(A::ZoomReset),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: COPY,
                     label: "Copy".to_owned(),
-                    // Handled by egui's built-in clipboard shortcut, which
-                    // binds to Cmd/Ctrl+C regardless of platform (unlike the
-                    // app-level `ApplicationShortcut`s, which shift to
-                    // Ctrl+Shift on Windows/Linux to leave Ctrl+C free for
-                    // terminal interrupt).
-                    hint: Some(if cfg!(target_os = "macos") {
-                        "\u{2318}+C".to_owned()
-                    } else {
-                        "Ctrl+C".to_owned()
-                    }),
+                    hint: binding_label(A::Copy),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: PASTE,
                     label: "Paste".to_owned(),
-                    hint: Some(if cfg!(target_os = "macos") {
-                        "\u{2318}+V".to_owned()
-                    } else {
-                        "Ctrl+V".to_owned()
-                    }),
+                    hint: binding_label(A::Paste),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: FIND_IN_TERMINAL,
                     label: "Find in Terminal…".to_owned(),
-                    hint: ApplicationShortcut::Find.label().map(str::to_owned),
+                    hint: binding_label(A::Find),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2348,27 +2439,21 @@ impl FesTermApp {
                     } else {
                         "Manage Port Forwards…".to_owned()
                     },
-                    hint: ApplicationShortcut::PortForwardManager
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::PortForwardManager),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: RESET_TERMINAL,
                     label: "Reset Terminal".to_owned(),
-                    hint: ApplicationShortcut::ResetTerminal
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::ResetTerminal),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: CLEAR_TERMINAL_HISTORY,
                     label: "Clear Terminal".to_owned(),
-                    hint: ApplicationShortcut::ClearTerminal
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::ClearTerminal),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2398,34 +2483,28 @@ impl FesTermApp {
                 PaletteItem {
                     id: RELOAD_MARKDOWN,
                     label: "Reload Markdown".to_owned(),
-                    hint: ApplicationShortcut::MarkdownReload
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::MarkdownReload),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: TOGGLE_MARKDOWN_MODE,
                     label: "Toggle Preview/Source".to_owned(),
-                    hint: ApplicationShortcut::MarkdownPreviewSource
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::MarkdownPreviewSource),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: FIND_IN_MARKDOWN,
                     label: "Find in Markdown…".to_owned(),
-                    hint: ApplicationShortcut::MarkdownFind.label().map(str::to_owned),
+                    hint: binding_label(A::MarkdownFind),
                     is_tab: false,
                     shortcut_label: None,
                 },
                 PaletteItem {
                     id: TOGGLE_MARKDOWN_OUTLINE,
                     label: "Toggle Markdown Outline".to_owned(),
-                    hint: ApplicationShortcut::MarkdownOutline
-                        .label()
-                        .map(str::to_owned),
+                    hint: binding_label(A::MarkdownOutline),
                     is_tab: false,
                     shortcut_label: None,
                 },
@@ -2444,9 +2523,7 @@ impl FesTermApp {
                 | TabContent::SftpFileManager(_)
                 | TabContent::Session(_) => "Close Session…".to_owned(),
             },
-            hint: ApplicationShortcut::CloseActiveSurface
-                .label()
-                .map(str::to_owned),
+            hint: binding_label(A::CloseActiveSurface),
             is_tab: false,
             shortcut_label: None,
         });
@@ -2499,7 +2576,9 @@ impl FesTermApp {
                 label,
                 hint,
                 is_tab: true,
-                shortcut_label: quick_switch_label(index),
+                shortcut_label: crate::keyboard::QUICK_ACTIONS
+                    .get(index)
+                    .and_then(|action| binding_label(*action)),
             });
         }
         items
@@ -2559,8 +2638,74 @@ impl FesTermApp {
     /// dispatch through the same `AppCommand` path as chip clicks and the
     /// palette.
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.overlays.blocks_terminal_input() {
+        let recorder_id = egui::Id::new(festerm_ui_egui::routing_trace::CONTEXT_ID);
+        if let TabContent::Session(session) = &self.state.active_tab().content {
+            let recorder = session.controller.input_recorder.clone();
+            recorder
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .set_target(
+                    self.state.active().chip_id(),
+                    session.controller.lifecycle_generation(),
+                );
+            recorder
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .set_focus(if self.overlays.blocks_terminal_input() {
+                    "modal"
+                } else if self.palette.is_open() {
+                    "palette"
+                } else if self.state.inspector_open() {
+                    "inspector"
+                } else if session.search.is_open() {
+                    "terminal-search"
+                } else if session.host_key_prompt().is_some() || session.password_prompt().is_some()
+                {
+                    "authentication-widget"
+                } else {
+                    "terminal"
+                });
+            ctx.data_mut(|data| data.insert_temp(recorder_id, recorder));
+        } else {
+            ctx.data_mut(|data| {
+                data.remove::<festerm_ui_egui::routing_trace::SharedRecorder>(recorder_id)
+            });
+        }
+        let bindings = self.state.interface_settings().keyboard_bindings().clone();
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("effective-keyboard-bindings"),
+                bindings.clone(),
+            )
+        });
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("command-palette-shortcut-label"),
+                crate::keyboard::label(&bindings, festerm_config::KeyboardAction::CommandPalette)
+                    .unwrap_or_else(|| "Unbound".into()),
+            )
+        });
+        if crate::keyboard::composition_owns_keys(ctx) || self.overlays.blocks_terminal_input() {
             return;
+        }
+        let terminal_owns_input = matches!(&self.state.active_tab().content,
+            TabContent::Session(session) if !session.search.is_open()
+                && session.host_key_prompt().is_none() && session.password_prompt().is_none())
+            && !self.palette.is_open()
+            && !self.state.inspector_open();
+        if terminal_owns_input {
+            crate::keyboard::prepare_terminal_events(ctx);
+        }
+        if crate::keyboard::consume_exact(
+            ctx,
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            egui::Key::F12,
+        ) {
+            self.palette.close();
+            self.state.dispatch(AppCommand::OpenSettings, ctx);
+            ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::new("keyboard-settings-recovery"), true)
+            });
         }
         let open_palette = ApplicationShortcut::CommandPalette.consume(ctx);
         if open_palette {
@@ -2573,10 +2718,7 @@ impl FesTermApp {
         // below so the same keystroke works whether or not the palette
         // happens to be open.
         for index in 0..MAX_QUICK_SWITCH_TABS {
-            let Some(key) = quick_switch_key(index) else {
-                break;
-            };
-            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, key)) {
+            if crate::keyboard::consume(ctx, &bindings, crate::keyboard::QUICK_ACTIONS[index]) {
                 if let Some(tab) = self.state.tabs().get(index) {
                     let target = tab.id;
                     self.state.dispatch(AppCommand::ActivateTab(target), ctx);
@@ -2603,25 +2745,23 @@ impl FesTermApp {
         let settings_legacy = ApplicationShortcut::Settings.consume(ctx);
         let settings_hotkey = ApplicationShortcut::SettingsHotkey.consume(ctx);
         let settings = settings_legacy || settings_hotkey;
-        let zoom_in = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ctx.input_mut(|input| {
-                input.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus)
-                    || input.consume_key(egui::Modifiers::COMMAND, egui::Key::Equals)
-            });
-        let zoom_out = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ApplicationShortcut::ZoomOut.consume(ctx);
-        let reset_zoom = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ApplicationShortcut::ZoomReset.consume(ctx);
-        let clear_terminal = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ApplicationShortcut::ClearTerminal.consume(ctx);
-        let reset_terminal = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ApplicationShortcut::ResetTerminal.consume(ctx);
-        let toggle_focus_mode = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ApplicationShortcut::ToggleFocusMode.consume(ctx);
-        let open_port_forward_manager = matches!(&self.state.active_tab().content, TabContent::Session(session) if session.live_port_forwarding_available())
+        let zoom_in = terminal_owns_input
+            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::ZoomIn)
+                | crate::keyboard::consume(
+                    ctx,
+                    &bindings,
+                    festerm_config::KeyboardAction::ZoomInAlternate,
+                ));
+        let zoom_out = terminal_owns_input && ApplicationShortcut::ZoomOut.consume(ctx);
+        let reset_zoom = terminal_owns_input && ApplicationShortcut::ZoomReset.consume(ctx);
+        let clear_terminal = terminal_owns_input && ApplicationShortcut::ClearTerminal.consume(ctx);
+        let reset_terminal = terminal_owns_input && ApplicationShortcut::ResetTerminal.consume(ctx);
+        let toggle_focus_mode =
+            terminal_owns_input && ApplicationShortcut::ToggleFocusMode.consume(ctx);
+        let open_port_forward_manager = terminal_owns_input
+            && matches!(&self.state.active_tab().content, TabContent::Session(session) if session.live_port_forwarding_available())
             && ApplicationShortcut::PortForwardManager.consume(ctx);
-        let open_find = matches!(self.state.active_tab().content, TabContent::Session(_))
-            && ApplicationShortcut::Find.consume(ctx);
+        let open_find = terminal_owns_input && ApplicationShortcut::Find.consume(ctx);
         let markdown_find = matches!(
             self.state.active_tab().content,
             TabContent::MarkdownViewer(_)
@@ -2648,6 +2788,27 @@ impl FesTermApp {
             && matches!(self.state.active_tab().content, TabContent::Session(_));
         let open_markdown_file =
             !terminal_owns_plain_ctrl_chords && ApplicationShortcut::OpenMarkdownFile.consume(ctx);
+        let terminal_input = terminal_owns_input;
+        let copy = terminal_input
+            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::Copy)
+                | crate::keyboard::consume(
+                    ctx,
+                    &bindings,
+                    festerm_config::KeyboardAction::CopyAlternate,
+                ));
+        let paste = terminal_input
+            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::Paste)
+                | crate::keyboard::consume(
+                    ctx,
+                    &bindings,
+                    festerm_config::KeyboardAction::PasteAlternate,
+                ));
+        if copy {
+            self.copy_active_selection(ctx);
+        }
+        if paste {
+            self.paste_into_active_session(ctx);
+        }
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
@@ -2778,6 +2939,20 @@ impl FesTermApp {
         };
         if let Some(text) = session.view.selected_text(&session.terminal) {
             context.copy_text(text);
+            session.view.clear_selection();
+            festerm_ui_egui::routing_trace::record_local(
+                context,
+                "copy-request",
+                "selection-copied-and-cleared",
+                0,
+            );
+        } else {
+            festerm_ui_egui::routing_trace::record_local(
+                context,
+                "copy-request",
+                "no-selection-no-input",
+                0,
+            );
         }
         self.restore_active_terminal_focus();
         context.request_repaint();
@@ -2805,9 +2980,11 @@ impl FesTermApp {
             if self.focus_mode {
                 format!(
                     "Focus Mode · {} → Exit Focus Mode",
-                    ApplicationShortcut::CommandPalette
-                        .label()
-                        .expect("command palette always has a platform binding")
+                    crate::keyboard::label(
+                        self.state.interface_settings().keyboard_bindings(),
+                        festerm_config::KeyboardAction::CommandPalette
+                    )
+                    .unwrap_or_else(|| "Ctrl+Shift+F12 (Settings recovery)".into())
                 )
             } else {
                 "Focus Mode exited".to_owned()
@@ -3770,7 +3947,16 @@ impl FesTermApp {
                     status,
                     closable: true,
                     renamable,
-                    quick_switch_number: (index < MAX_QUICK_SWITCH_TABS).then(|| (index + 1) as u8),
+                    quick_switch_number: crate::keyboard::QUICK_ACTIONS
+                        .get(index)
+                        .filter(|action| {
+                            self.state
+                                .interface_settings()
+                                .keyboard_bindings()
+                                .effective(**action, cfg!(target_os = "macos"))
+                                == action.default_chord(cfg!(target_os = "macos"))
+                        })
+                        .map(|_| (index + 1) as u8),
                     pulse_new_output,
                 }
             })
@@ -3889,6 +4075,14 @@ impl FesTermApp {
             ChipStatus::AuthRequired => Some("Authentication is required to continue."),
             ChipStatus::Starting | ChipStatus::Connected | ChipStatus::Neutral => None,
         };
+        let recorder = session
+            .controller
+            .input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let input_recording = recorder.recording();
+        let input_report = recorder.report();
+        drop(recorder);
         crate::inspector::show(
             context,
             content_rect,
@@ -3907,6 +4101,8 @@ impl FesTermApp {
                     .host_key_prompt()
                     .map(|prompt| prompt.sha256_fingerprint()),
                 diagnostics: &diagnostics,
+                input_recording,
+                input_report: &input_report,
                 reconnect_available: session.reconnect_available(),
                 open_sftp_available: matches!(
                     session.inspector_transport,
@@ -4316,6 +4512,9 @@ impl FesTermApp {
         }
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
+        if let Some(smoke) = &mut self.native_smoke {
+            smoke.observe_palette(self.palette.is_open());
+        }
         self.update_native_menu();
         self.sync_port_forward_manager();
         if self.focus_mode && !matches!(self.state.active_tab().content, TabContent::Session(_)) {
@@ -4429,6 +4628,17 @@ impl FesTermApp {
         } else {
             false
         };
+        // Foreground widgets must see keyboard events before the terminal's
+        // blackout removes them from the shared input stream.
+        let inspector_action = inspector_open
+            .then(|| {
+                self.show_session_inspector(
+                    ui.ctx(),
+                    content_rect,
+                    inspector_escape || inspector_outside_click,
+                )
+            })
+            .flatten();
         let mut screen_command = None;
         let mut overlay_action = None;
         let paste_was_pending = self.overlays.pending_paste.is_some();
@@ -4441,6 +4651,15 @@ impl FesTermApp {
         let scroll_speed_multiplier = self.state.scroll_speed().multiplier();
         let terminal_font_set = self.terminal_font_set();
         let sftp_pane_order = self.state.sftp_pane_order();
+        let keyboard_bindings = self.state.interface_settings().keyboard_bindings().clone();
+        let palette_hint = crate::keyboard::label(
+            &keyboard_bindings,
+            festerm_config::KeyboardAction::CommandPalette,
+        );
+        let settings_hint = crate::keyboard::label(
+            &keyboard_bindings,
+            festerm_config::KeyboardAction::SettingsHotkey,
+        );
         // Matches the guard used above when the bar is actually drawn.
         let status_bar_visible = self.state.status_bar_visible() && !self.focus_mode;
         self.state.update_running_sessions(ui.ctx());
@@ -4470,6 +4689,11 @@ impl FesTermApp {
                     screen_command = screens::show_settings(
                         ui,
                         screens::SettingsViewModel {
+                            keyboard_bindings: self
+                                .state
+                                .interface_settings()
+                                .keyboard_bindings()
+                                .clone(),
                             chip_layout,
                             status_bar_visible: self.state.status_bar_visible(),
                             show_session_details: self.state.show_session_details(),
@@ -4491,12 +4715,8 @@ impl FesTermApp {
                                 .map(|path| path.to_string_lossy().into_owned()),
                             sftp_pane_order: self.state.sftp_pane_order(),
                         },
-                        ApplicationShortcut::CommandPalette
-                            .label()
-                            .unwrap_or("(unbound)"),
-                        ApplicationShortcut::SettingsHotkey
-                            .label()
-                            .unwrap_or("(unbound)"),
+                        palette_hint.as_deref().unwrap_or("(unbound)"),
+                        settings_hint.as_deref().unwrap_or("(unbound)"),
                     );
                 }
                 TabContent::Profiles => {
@@ -4560,6 +4780,7 @@ impl FesTermApp {
                             paste_available: session.accepts_input(),
                             terminal_input_enabled: !self.overlays.blocks_terminal_input()
                                 && !self.palette.is_open()
+                                && !inspector_open
                                 && !session.search.is_open(),
                             keyboard_input_enabled: session.accepts_typed_input(),
                             defer_paste_to_application: true,
@@ -4611,15 +4832,6 @@ impl FesTermApp {
         for link in deferred_links {
             self.request_external_link(link.as_ref(), ui.ctx());
         }
-        let inspector_action = inspector_open
-            .then(|| {
-                self.show_session_inspector(
-                    ui.ctx(),
-                    content_rect,
-                    inspector_escape || inspector_outside_click,
-                )
-            })
-            .flatten();
         if let Some(action) = inspector_action {
             let context = ui.ctx().clone();
             match action {
@@ -4642,6 +4854,29 @@ impl FesTermApp {
                             .dispatch(AppCommand::OpenSftpFileManager { target }, &context);
                     }
                 }
+                InspectorAction::ToggleInputRecording => {
+                    if let Some(session) = self.state.session_tab(active_tab_id) {
+                        let enabled = !session
+                            .controller
+                            .input_recorder
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .recording();
+                        self.state.dispatch(
+                            AppCommand::SetInputRecording {
+                                tab: active_tab_id,
+                                enabled,
+                            },
+                            &context,
+                        );
+                    }
+                }
+                InspectorAction::ClearInputRecording => self
+                    .state
+                    .dispatch(AppCommand::ClearInputRecording(active_tab_id), &context),
+                InspectorAction::CopyInputRecording => self
+                    .state
+                    .dispatch(AppCommand::CopyInputRecording(active_tab_id), &context),
             }
         }
         if let Some(command) = screen_command {
@@ -4752,6 +4987,17 @@ impl FesTermApp {
                     self.state.dispatch(command, &context);
                     self.apply_terminal_font_policy();
                     self.persist_interface_settings();
+                }
+                AppCommand::SetKeyboardBindings(bindings) => {
+                    if let Err(error) = bindings.validate(cfg!(target_os = "macos")) {
+                        self.overlays.transient_notice =
+                            Some((error.to_owned(), Instant::now() + Duration::from_secs(5)));
+                    } else {
+                        self.state
+                            .dispatch(AppCommand::SetKeyboardBindings(bindings), ui.ctx());
+                        self.persist_interface_settings();
+                        self.update_native_menu();
+                    }
                 }
                 AppCommand::SetTerminalFont(font) => {
                     let context = ui.ctx().clone();
@@ -4920,6 +5166,397 @@ mod tests {
 
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness, SnapshotOptions};
+
+    fn keyboard_harness() -> (
+        Harness<'static, FesTermApp>,
+        crate::session_controller::fake::FakeSshSession,
+    ) {
+        let (app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        (harness, transport)
+    }
+
+    #[test]
+    fn keyboard_capture_unbind_and_repeat_use_actual_application_dispatch() {
+        use festerm_config::KeyboardAction as A;
+        let (mut harness, transport) = keyboard_harness();
+        let mut bindings = festerm_config::KeyboardBindings::default();
+        bindings.set(A::ClearTerminal, Some("Ctrl+Shift+K".into()));
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings.clone()), &context);
+        harness.key_down_modifiers(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::K);
+        harness.step();
+        assert!(
+            transport.sent().is_empty(),
+            "captured command must not also encode ^K"
+        );
+        assert!(harness
+            .state()
+            .overlays
+            .transient_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("cleared"));
+        harness.state_mut().overlays.transient_notice = None;
+        harness.event(egui::Event::Key {
+            key: egui::Key::K,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        });
+        harness.step();
+        assert!(
+            transport.sent().is_empty(),
+            "suppressed repeats remain consumed"
+        );
+        assert!(harness.state().overlays.transient_notice.is_none());
+        harness.key_up(egui::Key::K);
+        harness.step();
+        bindings.set(A::ClearTerminal, Some(String::new()));
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        harness.key_press_modifiers(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::K);
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"\x0b");
+    }
+
+    #[test]
+    fn keyboard_native_menu_counterpart_is_not_dispatched_twice() {
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let context = egui::Context::default();
+        let (modifiers, key) = crate::keyboard::chord(
+            festerm_config::KeyboardAction::CommandPalette.default_chord(cfg!(target_os = "macos")),
+        )
+        .unwrap();
+        let mut output = context.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    modifiers,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                app.dispatch_native_menu_command(
+                    festerm_macos_window::NativeMenuCommand::ToggleCommandPalette,
+                    ui.ctx(),
+                );
+                app.handle_shortcuts(ui.ctx());
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            app.palette.is_open(),
+            "native command plus key counterpart must toggle only once"
+        );
+        app.palette.close();
+        app.overlays.about_open = true;
+        app.dispatch_native_menu_command(
+            festerm_macos_window::NativeMenuCommand::ToggleCommandPalette,
+            &context,
+        );
+        assert!(
+            !app.palette.is_open(),
+            "blocked menu intent must not be replayed later"
+        );
+    }
+
+    #[test]
+    fn keyboard_native_clipboard_provenance_does_not_leak_paste_or_swallow_control_keys() {
+        let (mut harness, transport) = keyboard_harness();
+        for (key, semantic) in [
+            (egui::Key::C, egui::Event::Copy),
+            (egui::Key::X, egui::Event::Cut),
+            (
+                egui::Key::V,
+                egui::Event::Paste("controlled-not-for-terminal".into()),
+            ),
+        ] {
+            harness.input_mut().events.push(egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::CTRL,
+            });
+            if !cfg!(target_os = "macos") {
+                harness.input_mut().events.push(semantic);
+            }
+            harness.input_mut().events.push(egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::CTRL,
+            });
+        }
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"\x03\x18\x16");
+        harness.event(egui::Event::Copy);
+        harness.run();
+        assert_eq!(
+            transport.sent().concat(),
+            b"\x03\x18\x16",
+            "explicit Copy is never an interrupt"
+        );
+        harness.event(egui::Event::Ime(egui::ImeEvent::Commit("é".into())));
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"\x03\x18\x16\xc3\xa9");
+    }
+
+    #[test]
+    fn keyboard_recovery_and_widget_focus_block_terminal_delivery() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        harness.state_mut().open_terminal_search(&context);
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::C);
+        harness.event(egui::Event::Text("controlled-query".into()));
+        harness.run();
+        assert!(transport.sent().is_empty());
+        harness.key_press_modifiers(
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            egui::Key::F12,
+        );
+        harness.run();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+        assert!(transport.sent().is_empty());
+    }
+
+    #[test]
+    fn keyboard_inspector_recording_controls_do_not_send_widget_input_to_terminal() {
+        let (app, _, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(800.0, 1000.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ToggleSessionInspector, &context);
+        harness.run();
+        harness.get_by_label("Diagnostics").click();
+        harness.run();
+        harness.get_by_label("Record input routing").click();
+        harness.run();
+        let tab = harness.state().state.active();
+        assert!(harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .input_recorder
+            .lock()
+            .unwrap()
+            .recording());
+        harness.get_by_label("Stop input recording").click();
+        harness.run();
+        assert!(!harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .input_recorder
+            .lock()
+            .unwrap()
+            .recording());
+        harness.get_by_label("Record input routing").click();
+        harness.run();
+        harness.event(egui::Event::Text("fake-inspector-token".into()));
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(
+            transport.sent().is_empty(),
+            "foreground widget input must not reach the terminal"
+        );
+        harness.get_by_label("Clear input recording").click();
+        harness.run();
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert!(!harness.state().state.inspector_open());
+        assert!(transport.sent().is_empty());
+    }
+
+    #[test]
+    fn keyboard_copy_of_fake_auth_url_never_submits_or_cancels_waiting_prompt() {
+        let (mut harness, transport) = keyboard_harness();
+        let tab = harness.state().state.active();
+        let context = harness.ctx.clone();
+        harness.state_mut().state.dispatch(
+            AppCommand::SetInputRecording { tab, enabled: true },
+            &context,
+        );
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .terminal
+            .ingest(b"\x1b[2J\x1b[Hhttps://auth.example.invalid/fake\r\nWaiting for fake token: ");
+        harness.step();
+        let grid = harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .view
+            .diagnostics()
+            .grid_rect
+            .unwrap();
+        let start = grid.left_top() + egui::vec2(2.0, 2.0);
+        let end = start + egui::vec2(295.0, 0.0);
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerMoved(end));
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        assert!(harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .view
+            .selection()
+            .range()
+            .is_some());
+        let (modifiers, key) = crate::keyboard::chord(
+            festerm_config::KeyboardAction::Copy.default_chord(cfg!(target_os = "macos")),
+        )
+        .unwrap();
+        harness.input_mut().events.push(egui::Event::Key {
+            key,
+            modifiers,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+        });
+        harness.input_mut().events.push(egui::Event::Copy);
+        harness.input_mut().events.push(egui::Event::Copy); // Native/toolkit duplicate after selection clearing.
+        harness.step();
+        assert!(harness.output().platform_output.commands.iter().any(|command| matches!(
+            command, egui::OutputCommand::CopyText(text) if text.starts_with("https://auth.example.invalid"))),
+            "controlled fixture copy output: {:?}", harness.output().platform_output.commands);
+        assert!(
+            transport.sent().is_empty(),
+            "copy must not emit token input, Enter, EOF, or interrupt"
+        );
+        harness.key_up(key);
+        harness.step();
+        harness.event(egui::Event::Copy);
+        harness.step();
+        assert!(
+            transport.sent().is_empty(),
+            "an empty-selection menu Copy is also inert"
+        );
+        harness.event(egui::Event::Text("fake-token-154".into()));
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert_eq!(
+            transport.sent().concat(),
+            b"fake-token-154\r",
+            "the prompt remains able to accept its token"
+        );
+        harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::C);
+        harness.step();
+        assert!(
+            transport.sent().concat().ends_with(b"\x03"),
+            "actual Control-C remains available"
+        );
+        let recorder = harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .input_recorder
+            .lock()
+            .unwrap();
+        let report = recorder.report();
+        assert!(report.contains("selection-copied"));
+        assert!(report.contains("control-interrupt"));
+        assert!(!report.contains("fake-token-154"));
+        assert!(!report.contains("auth.example.invalid"));
+    }
+
+    #[test]
+    fn keyboard_settings_ui_save_reload_preserves_profiles_and_preferences() {
+        let configuration = Configuration::parse("schema_version = 1\n[[profiles]]\nkind = 'local'\nid = 'controlled'\nexecutable = 'controlled-unused'\n[settings]\nstatus_bar_visible = false\nterminal_font = 'julia-mono'\n").unwrap();
+        let directory = std::env::current_dir()
+            .unwrap()
+            .join(format!(".keyboard-save-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        fs::write(&path, configuration.to_toml().unwrap()).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        app.state
+            .dispatch(AppCommand::OpenSettings, &egui::Context::default());
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(752.0, 2400.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        let title = format!(
+            "New Session — {}",
+            crate::keyboard::label(
+                &Default::default(),
+                festerm_config::KeyboardAction::NewSession
+            )
+            .unwrap()
+        );
+        harness.get_by_label(&title).click();
+        harness.run();
+        harness.get_by_label("Unbind action").click();
+        harness.run();
+        let loaded = Configuration::parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(loaded.profiles(), configuration.profiles());
+        assert!(!loaded.interface_settings().status_bar_visible());
+        assert_eq!(
+            loaded.interface_settings().terminal_font(),
+            TerminalFontPreference::JuliaMono
+        );
+        assert_eq!(
+            loaded.interface_settings().keyboard_bindings().effective(
+                festerm_config::KeyboardAction::NewSession,
+                cfg!(target_os = "macos")
+            ),
+            ""
+        );
+        harness.get_by_label("Reset action").click();
+        harness.run();
+        assert!(Configuration::parse(&fs::read_to_string(&path).unwrap())
+            .unwrap()
+            .interface_settings()
+            .keyboard_bindings()
+            .is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn paste_policy_normalizes_endings_and_counts_trailing_lines_exactly() {

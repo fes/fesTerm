@@ -1433,10 +1433,13 @@ reload/save language; ADR 0015 owns the startup contract that this automatic
 behavior relies on. No file watching, configuration editor, or
 credential-storage control is implied.
 
-There is still no sidebar, settings search, theme selector, empty category,
-or general Reset-all control. Keyboard shortcuts remain mostly fixed; the
-single quick-switch overlay preference earns a small dedicated card without
-pretending the whole keyboard model is fully user-configurable.
+There is still no category sidebar or general settings search. The leading
+**Keyboard bindings** card provides searchable application actions, effective
+and default bindings, scope, assignment/unbinding and individual/all-binding
+reset. Ctrl+Shift+F12 is the fixed keyboard recovery route. Widget navigation
+and terminal protocols are not arbitrary remapping targets. The ordinary
+Keyboard card retains quick-switch-number presentation and effective hints.
+See [the canonical keyboard inventory](keyboard-shortcuts.md).
 
 Category icons support scanning but never replace labels. Reset appears only
 for a non-default value and at appropriate setting/category scope. Terminal
@@ -2134,16 +2137,11 @@ alternate-screen mode, mouse reporting, or extended keyboard protocols cannot
 disable them.
 
 - Windows/Linux reserve `Ctrl+Shift+C` and `Ctrl+Shift+V`; macOS reserves
-  `Cmd+C` and `Cmd+V`. The pinned windowing backend (`egui-winit`) cannot
-  distinguish plain `Ctrl+C` from `Ctrl+Shift+C` before either reaches the
-  app - both convert to the same Copy command upstream, with no Shift bit
-  surviving the conversion. fesTerm resolves this the way other terminal
-  emulators resolve the same ambiguity: a Copy command with an active
-  selection copies it (and clears the selection, matching other terminal
-  programs); a Copy command with no selection is instead forwarded to a live
-  terminal as the interrupt character, so plain `Ctrl+C` still works as
-  expected in the common case where nothing is selected.
-- Shift+drag always forces local selection. Shift+right-click always opens the
+  `Cmd+C` and `Cmd+V` by default, with configurable application bindings.
+  The pinned adapter preserves per-event clipboard-key provenance. Copy only
+  copies/clears a selection; without a selection it does nothing. It never
+  synthesizes a terminal interrupt. Actual Ctrl+C remains terminal input.
+- Shift+drag does not override core mouse ownership. Shift+right-click opens the
   local context menu. Without terminal mouse reporting, ordinary drag selects
   and ordinary right-click opens the menu; with reporting, unmodified mouse
   events go to the terminal application. Middle-click follows the same

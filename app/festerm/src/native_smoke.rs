@@ -53,6 +53,8 @@ enum SmokeKind {
 }
 
 pub struct NativeWindowSmoke {
+    keyboard_mode: bool,
+    keyboard_palette_seen: bool,
     result_path: PathBuf,
     test_child_path: PathBuf,
     started: Instant,
@@ -76,6 +78,8 @@ impl NativeWindowSmoke {
     #[cfg(test)]
     pub fn finished_for_test() -> Self {
         Self {
+            keyboard_mode: false,
+            keyboard_palette_seen: false,
             result_path: PathBuf::new(),
             test_child_path: PathBuf::new(),
             started: Instant::now(),
@@ -132,6 +136,9 @@ impl NativeWindowSmoke {
         };
 
         Some(Self {
+            keyboard_mode: kind == SmokeKind::OsInput
+                && std::env::var_os("FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE").is_some(),
+            keyboard_palette_seen: false,
             result_path,
             test_child_path,
             started: Instant::now(),
@@ -151,6 +158,10 @@ impl NativeWindowSmoke {
 
     pub fn test_child_path(&self) -> PathBuf {
         self.test_child_path.clone()
+    }
+
+    pub fn observe_palette(&mut self, open: bool) {
+        self.keyboard_palette_seen |= open;
     }
 
     pub const fn test_child_arguments(&self) -> &'static [&'static str] {
@@ -256,6 +267,9 @@ impl NativeWindowSmoke {
             (SmokeKind::OsInput, Phase::AwaitInitialOutput)
                 if controller.resize_probe().observed_output_bytes() > 0 =>
             {
+                if self.keyboard_mode {
+                    controller.expect_native_input(b"\x02\x02\t\x1b[Aos-input-ok\r");
+                }
                 self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
                 self.phase = Phase::AwaitInput;
             }
@@ -267,12 +281,17 @@ impl NativeWindowSmoke {
                 let resize_applied = generations
                     .iter()
                     .any(|generation| generation.applied && generation.visible_nonblank_cells > 0);
-                if self.focus_observed && resize_applied {
+                if self.focus_observed
+                    && resize_applied
+                    && (!self.keyboard_mode
+                        || (self.keyboard_palette_seen && controller.native_input_matches()))
+                {
                     self.finish(
                         context,
                         "pass",
                         &format!(
-                            "OS input reached PTY; resize generations {}; output {}B->{}B",
+                            "OS input reached PTY; keyboard routing {}; resize generations {}; output {}B->{}B",
+                            if self.keyboard_mode { "verified" } else { "not requested" },
                             generations.len(),
                             self.initial_output_bytes.unwrap_or_default(),
                             controller.resize_probe().observed_output_bytes(),

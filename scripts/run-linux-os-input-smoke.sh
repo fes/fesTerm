@@ -21,14 +21,18 @@ command -v wmctrl >/dev/null 2>&1 ||
 cd "$repository_root"
 cargo build --workspace
 rm -f "$result_path"
+isolation="$result_path.isolation"
+mkdir "$isolation"
 
 FESTERM_NATIVE_OS_INPUT_SMOKE=1 \
+FESTERM_CONFIG_PATH="$isolation/config.toml" \
 FESTERM_NATIVE_SMOKE_RESULT_PATH="$result_path" \
 ./target/debug/festerm &
 app_pid=$!
 cleanup() {
     kill "$app_pid" 2>/dev/null || true
     wait "$app_pid" 2>/dev/null || true
+    rm -rf "$isolation"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -51,6 +55,14 @@ for size in '420 260' '860 540' '560 360' '860 540'; do
     sleep 1
 done
 
+if [ "${FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE:-}" = 1 ]; then
+    xdotool key ctrl+shift+c
+    xdotool key ctrl+shift+p
+    sleep 1
+    xdotool key Escape
+    sleep 1
+    xdotool key ctrl+b ctrl+shift+b
+fi
 xdotool key Tab Up
 xdotool type --delay 20 -- 'os-input-ok'
 xdotool key Return

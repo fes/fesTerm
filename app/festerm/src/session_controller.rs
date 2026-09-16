@@ -314,6 +314,9 @@ pub(crate) enum PendingFlush {
 /// The controller preserves the architectural invariant that only one logical
 /// writer mutates a `Terminal` from session output.
 pub struct SessionController<S: Session> {
+    pub input_recorder: festerm_ui_egui::routing_trace::SharedRecorder,
+    last_input_delivery: &'static str,
+    native_input_expectation: Option<(&'static [u8], usize, bool)>,
     session: Option<S>,
     session_name: &'static str,
     startup_error: Option<String>,
@@ -376,6 +379,9 @@ impl<S: Session> SessionController<S> {
             startup_error: None,
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
+            native_input_expectation: None,
+            input_recorder: Default::default(),
+            last_input_delivery: "no-delivery",
             pending_resize: None,
             debounced_resize: None,
             last_lifecycle: Some(lifecycle),
@@ -406,6 +412,9 @@ impl<S: Session> SessionController<S> {
             startup_error: Some(error),
             diagnostics: InputSinkDiagnostics::default(),
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
+            native_input_expectation: None,
+            input_recorder: Default::default(),
+            last_input_delivery: "no-delivery",
             pending_resize: None,
             debounced_resize: None,
             last_lifecycle: None,
@@ -625,19 +634,32 @@ impl<S: Session> SessionController<S> {
         }
     }
 
+    pub fn expect_native_input(&mut self, bytes: &'static [u8]) {
+        self.native_input_expectation = Some((bytes, 0, false));
+    }
+
+    pub fn native_input_matches(&self) -> bool {
+        self.native_input_expectation
+            .is_some_and(|(expected, offset, failed)| !failed && offset == expected.len())
+    }
+
     pub fn flush_pending_writes(&mut self) {
         let Some(session) = &self.session else {
             return;
         };
         match self.pending_writes.flush(session) {
-            PendingFlush::Drained => {}
+            PendingFlush::Drained => {
+                self.last_input_delivery = "accepted-by-session";
+            }
             PendingFlush::Backpressured => {
+                self.last_input_delivery = "queued-backpressure";
                 self.last_backpressure = Some(FlowDirection::Input);
             }
             PendingFlush::Unrecoverable {
                 error,
                 dropped_bytes,
             } => {
+                self.last_input_delivery = "rejected-by-session";
                 self.record_pending_failure(
                     format!(
                         "session pending writes became unrecoverable after {error}; \
@@ -711,11 +733,13 @@ impl<S: Session> SessionController<S> {
 
     fn queue_bytes(&mut self, bytes: &[u8], source: &str) {
         if self.session.is_none() {
+            self.last_input_delivery = "rejected-no-session";
             return;
         }
         match self.pending_writes.enqueue(bytes) {
             Ok(()) => self.flush_pending_writes(),
             Err(error) => {
+                self.last_input_delivery = "rejected-queue-bound";
                 self.record_pending_failure(error.to_string(), None);
             }
         }
@@ -873,6 +897,11 @@ impl<S: Session> SessionController<S> {
 
 impl<S: Session> EncodedInputSink for SessionController<S> {
     fn record_encoded_input(&mut self, bytes: &[u8]) {
+        if let Some((expected, offset, failed)) = &mut self.native_input_expectation {
+            let end = offset.saturating_add(bytes.len());
+            *failed |= expected.get(*offset..end) != Some(bytes);
+            *offset = end.min(expected.len().saturating_add(1));
+        }
         self.force_flush_pending_resize();
         self.diagnostics.byte_count = self
             .diagnostics
@@ -885,6 +914,43 @@ impl<S: Session> EncodedInputSink for SessionController<S> {
         self.diagnostics.event_count = self.diagnostics.event_count.saturating_add(1);
         self.diagnostics.last_outcome = Some(route.outcome);
         self.diagnostics.last_queue_depth = route.queue_depth;
+    }
+
+    fn observe_local_selection(&mut self, decision: &'static str) {
+        self.input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .annotate_selection(decision);
+    }
+
+    fn observe_local_gesture(
+        &mut self,
+        class: &'static str,
+        decision: &'static str,
+        modifiers: u8,
+    ) {
+        self.input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .record(
+                "terminal-view",
+                festerm_ui_egui::routing_trace::Metadata { class, modifiers },
+                decision,
+                "no-delivery",
+                0,
+            );
+    }
+
+    fn observe_input_event(
+        &mut self,
+        metadata: festerm_ui_egui::routing_trace::Metadata,
+        route: InputRoute,
+    ) {
+        self.observe_input_route(route);
+        self.input_recorder
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .record_route(metadata, route, self.last_input_delivery);
     }
 
     fn record_terminal_resize(&mut self, dimensions: Dimensions) {
@@ -1121,6 +1187,7 @@ pub(crate) mod fake {
     }
 
     struct FakeSshSessionInner {
+        sent: Mutex<Vec<Vec<u8>>>,
         id: festerm_session::SessionId,
         lifecycle: Mutex<SessionLifecycle>,
         events: Mutex<VecDeque<SessionEvent>>,
@@ -1136,6 +1203,7 @@ pub(crate) mod fake {
         pub fn new(events: impl IntoIterator<Item = SessionEvent>) -> Self {
             Self {
                 inner: Arc::new(FakeSshSessionInner {
+                    sent: Mutex::new(Vec::new()),
                     id: festerm_session::SessionId::next(),
                     lifecycle: Mutex::new(SessionLifecycle::Running),
                     events: Mutex::new(events.into_iter().collect()),
@@ -1150,6 +1218,10 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh operations lock")
                 .clone()
+        }
+
+        pub fn sent(&self) -> Vec<Vec<u8>> {
+            self.inner.sent.lock().expect("fake ssh sent lock").clone()
         }
 
         pub fn push_event(&self, event: SessionEvent) {
@@ -1250,7 +1322,12 @@ pub(crate) mod fake {
             SessionMetrics::default()
         }
 
-        fn try_send_input(&self, _bytes: &[u8]) -> Result<(), SessionSendError> {
+        fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
+            self.inner
+                .sent
+                .lock()
+                .expect("fake ssh sent lock")
+                .push(bytes.to_vec());
             Ok(())
         }
 

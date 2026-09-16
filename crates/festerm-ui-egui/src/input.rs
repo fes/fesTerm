@@ -57,6 +57,21 @@ pub trait EncodedInputSink {
 
     /// Observes content-free routing metadata after every routed core event.
     fn observe_input_route(&mut self, _route: InputRoute) {}
+    fn observe_input_event(
+        &mut self,
+        _metadata: crate::routing_trace::Metadata,
+        route: InputRoute,
+    ) {
+        self.observe_input_route(route);
+    }
+    fn observe_local_selection(&mut self, _decision: &'static str) {}
+    fn observe_local_gesture(
+        &mut self,
+        _class: &'static str,
+        _decision: &'static str,
+        _modifiers: u8,
+    ) {
+    }
 
     /// Receives a resize after the application-owned terminal core accepts it.
     ///
@@ -80,6 +95,16 @@ pub fn route_input(
     event: InputEvent,
     sink: &mut impl EncodedInputSink,
 ) -> InputRoute {
+    let metadata = crate::routing_trace::Metadata::from_input(&event);
+    route_input_with_metadata(terminal, event, sink, metadata)
+}
+
+fn route_input_with_metadata(
+    terminal: &mut Terminal,
+    event: InputEvent,
+    sink: &mut impl EncodedInputSink,
+    metadata: crate::routing_trace::Metadata,
+) -> InputRoute {
     let outcome = terminal.handle_input(event);
     let queue_depth = terminal.queued_input().len();
     let bytes = terminal.drain_input();
@@ -92,7 +117,7 @@ pub fn route_input(
         queue_depth,
         delivered_bytes,
     };
-    sink.observe_input_route(route);
+    sink.observe_input_event(metadata, route);
     route
 }
 
@@ -130,20 +155,29 @@ fn route_mouse_input_in_viewport(
             match (event.kind, position) {
                 (MouseEventKind::Press(MouseButton::Left), Some((position, content))) => {
                     selection.begin_at(position, content);
+                    sink.observe_local_selection("began");
                 }
                 (MouseEventKind::Move { .. }, Some((position, content))) => {
                     selection.extend_at(position, content);
+                    if selection.is_active() {
+                        sink.observe_local_selection("extended");
+                    }
                 }
                 (MouseEventKind::Release(MouseButton::Left), Some((position, content))) => {
                     selection.extend_at(position, content);
                     selection.finish();
+                    sink.observe_local_selection("finished");
                 }
-                (MouseEventKind::Release(MouseButton::Left), None) => selection.finish(),
+                (MouseEventKind::Release(MouseButton::Left), None) => {
+                    selection.finish();
+                    sink.observe_local_selection("finished-outside-grid");
+                }
                 _ => {}
             }
         }
         InputEventOutcome::SelectionClaimed | InputEventOutcome::Encoded { .. } => {
             selection.clear();
+            sink.observe_local_selection("cleared-terminal-owns-mouse");
         }
         InputEventOutcome::QueueOverflow | InputEventOutcome::Rejected => {}
     }
@@ -154,6 +188,7 @@ fn route_mouse_input_in_viewport(
 /// egui's response state for the current frame.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct KeyboardOwnership {
+    ime_composing: bool,
     pub(crate) terminal_owned: bool,
     /// While `Some`, every frame up to this deadline re-asserts egui
     /// keyboard focus on the terminal response rather than requesting it
@@ -200,6 +235,7 @@ impl KeyboardOwnership {
     }
 
     pub(crate) fn focus_out_if_owned(&mut self) -> Option<FocusEvent> {
+        self.ime_composing = false;
         if self.terminal_owned {
             self.terminal_owned = false;
             Some(FocusEvent::Out)
@@ -357,6 +393,13 @@ pub(crate) fn route_egui_events(
     let mut reports = InputRoutingReports::default();
     let mut focus_out_routed = false;
     let mut terminal_key_routed = false;
+    if suppress.blackout {
+        if selection.is_active() {
+            selection.finish();
+            sink.observe_local_gesture("selection", "finished-foreground-ownership", 0);
+        }
+        *pointer = TerminalPointerState::default();
+    }
 
     for event in events {
         if suppress.blackout && !matches!(event, egui::Event::WindowFocused(_)) {
@@ -369,12 +412,18 @@ pub(crate) fn route_egui_events(
         if suppress.keystrokes
             && matches!(
                 event,
-                egui::Event::Paste(_) | egui::Event::Text(_) | egui::Event::Key { .. }
+                egui::Event::Paste(_)
+                    | egui::Event::Text(_)
+                    | egui::Event::Key { .. }
+                    | egui::Event::Ime(_)
             )
         {
             continue;
         }
         match event {
+            egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
+                keyboard.ime_composing = !text.is_empty();
+            }
             egui::Event::Copy if keyboard_focused => {
                 match selection_text(
                     TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows),
@@ -383,28 +432,19 @@ pub(crate) fn route_egui_events(
                     Some(text) => {
                         ui.ctx().copy_text(text);
                         selection.clear();
-                    }
-                    // egui-winit collapses plain Ctrl+C and Ctrl+Shift+C into
-                    // the same `Copy` event upstream (it has no Shift check
-                    // in `is_copy_command`, and `Modifiers::command` equals
-                    // `ctrl` on Windows/Linux) - a real `Event::Key` for `C`
-                    // is never emitted for either chord, so this app-level
-                    // code can never tell them apart. With no selection to
-                    // copy, treat it as the far more common case: a plain
-                    // Ctrl+C meant as a terminal interrupt. This mirrors how
-                    // other terminal emulators resolve the same historical
-                    // ambiguity, and only fires while the session can still
-                    // accept keystrokes (`suppress.keystrokes`), so a dead
-                    // or read-only session's Ctrl+C still does nothing.
-                    None if !suppress.keystrokes => {
-                        record_terminal_input(
-                            &mut reports,
-                            selection,
-                            Instant::now(),
-                            route_input(terminal, InputEvent::Key(Key::Control('c')), sink),
+                        crate::routing_trace::record_local(
+                            ui.ctx(),
+                            "copy-request",
+                            "selection-copied-and-cleared",
+                            0,
                         );
                     }
-                    None => {}
+                    None => crate::routing_trace::record_local(
+                        ui.ctx(),
+                        "copy-request",
+                        "no-selection-no-input",
+                        0,
+                    ),
                 }
             }
             egui::Event::Paste(text) if keyboard_focused => {
@@ -415,7 +455,10 @@ pub(crate) fn route_egui_events(
                     route_input(terminal, InputEvent::Paste(text), sink),
                 );
             }
-            egui::Event::Text(text) if keyboard_focused => {
+            egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text))
+                if keyboard_focused =>
+            {
+                keyboard.ime_composing = false;
                 for character in text.chars() {
                     record_terminal_input(
                         &mut reports,
@@ -430,15 +473,21 @@ pub(crate) fn route_egui_events(
                 pressed: true,
                 modifiers,
                 ..
-            } if keyboard_focused => {
+            } if keyboard_focused && !keyboard.ime_composing => {
                 let translated = control_key(key, modifiers).or_else(|| translate_key(key));
                 if let Some(key) = translated {
                     terminal_key_routed = true;
+                    let event = InputEvent::Key(key);
+                    let mut metadata = crate::routing_trace::Metadata::from_input(&event);
+                    metadata.modifiers = u8::from(modifiers.shift)
+                        | (u8::from(modifiers.alt) << 1)
+                        | (u8::from(modifiers.ctrl) << 2)
+                        | (u8::from(modifiers.mac_cmd) << 3);
                     record_terminal_input(
                         &mut reports,
                         selection,
                         Instant::now(),
-                        route_input(terminal, InputEvent::Key(key), sink),
+                        route_input_with_metadata(terminal, event, sink, metadata),
                     );
                 }
             }
@@ -761,7 +810,7 @@ fn translate_key(key: egui::Key) -> Option<Key> {
 /// shortcut (new tab, close tab, and so on), which egui reports with `ctrl`
 /// left `false` and `mac_cmd`/`command` set instead.
 fn control_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<Key> {
-    if !modifiers.ctrl || modifiers.mac_cmd {
+    if !modifiers.ctrl || modifiers.mac_cmd || modifiers.alt {
         return None;
     }
     let character = control_key_character(key)?;

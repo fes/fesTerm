@@ -21,6 +21,10 @@ members = [
     "crates/festerm-markdown",
 ]
 resolver = "2"
+exclude = ["vendor/egui-winit"]
+
+[patch.crates-io]
+egui-winit = { path = "vendor/egui-winit" }
 
 [workspace.package]
 version = "0.1.13"

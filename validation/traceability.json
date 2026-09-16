@@ -647,11 +647,27 @@
         "routing_uses_core_paste_and_focus_modes",
         "the_markdown_picker_chord_works_from_a_non_terminal_surface",
         "a_focused_terminal_keeps_plain_control_o_for_the_program_inside_it",
-        "the_macos_markdown_picker_chord_survives_a_focused_terminal"
+        "the_macos_markdown_picker_chord_survives_a_focused_terminal",
+        "keyboard_defaults_are_valid_on_both_platform_families",
+        "keyboard_conflicts_account_for_context_and_primary_aliases",
+        "keyboard_invalid_settings_are_rejected_not_discarded",
+        "keyboard_editor_assigns_unbinds_resets_and_rejects_conflicts",
+        "keyboard_settings_ui_save_reload_preserves_profiles_and_preferences",
+        "keyboard_capture_unbind_and_repeat_use_actual_application_dispatch",
+        "keyboard_native_clipboard_provenance_does_not_leak_paste_or_swallow_control_keys",
+        "keyboard_native_menu_counterpart_is_not_dispatched_twice",
+        "keyboard_clipboard_pairing_preserves_unrelated_explicit_paste",
+        "keyboard_inspector_recording_controls_do_not_send_widget_input_to_terminal",
+        "keyboard_copy_of_fake_auth_url_never_submits_or_cancels_waiting_prompt",
+        "keyboard_recovery_and_widget_focus_block_terminal_delivery",
+        "keyboard_routing_recorder_is_opt_in_bounded_and_redacts_payloads",
+        "keyboard_mouse_trace_distinguishes_local_claimed_and_reported_without_shift_override"
       ],
       "manual_scenarios": [
         "AS-04",
-        "TI-02"
+        "TI-02",
+        "TI-10",
+        "TI-11"
       ],
       "status": "partial",
       "prerequisites": []

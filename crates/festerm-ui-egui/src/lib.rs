@@ -16,6 +16,7 @@ mod input;
 pub mod overlay;
 pub mod palette;
 mod renderer;
+pub mod routing_trace;
 mod selection;
 pub mod statusbar;
 pub mod theme;
@@ -808,13 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_with_no_selection_is_forwarded_as_a_terminal_interrupt() {
-        // egui-winit collapses plain Ctrl+C into `Event::Copy` upstream
-        // before an app ever sees a `Key` event for `C` (it has no Shift
-        // check in `is_copy_command`, and `Modifiers::command == ctrl` on
-        // Windows/Linux) - this is the regression this test guards
-        // against: an empty-selection Copy must still reach the terminal
-        // as the interrupt byte instead of being silently swallowed.
+    fn copy_with_no_selection_never_synthesizes_a_terminal_interrupt() {
         let mut harness = Harness::builder()
             .with_size(Vec2::new(800.0, 600.0))
             .build_ui_state(
@@ -830,7 +825,7 @@ mod tests {
         assert!(harness.state().view.selection().range().is_none());
         harness.event(egui::Event::Copy);
         harness.run();
-        assert_eq!(harness.state().sink.0, vec![vec![0x03]]);
+        assert!(harness.state().sink.0.is_empty());
     }
 
     #[test]

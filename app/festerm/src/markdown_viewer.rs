@@ -973,28 +973,6 @@ impl MarkdownViewerTab {
     }
 
     fn consume_shortcuts(&mut self, context: &egui::Context, tab_id: TabId) -> Option<AppCommand> {
-        if context.input_mut(|input| {
-            input.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::V,
-            )
-        }) {
-            return Some(AppCommand::ToggleMarkdownPreviewSource);
-        }
-        if context.input_mut(|input| {
-            input.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::O,
-            )
-        }) {
-            return Some(AppCommand::ToggleMarkdownOutline);
-        }
-        if context.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::R)) {
-            return Some(AppCommand::ReloadMarkdown);
-        }
-        if context.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
-            return Some(AppCommand::OpenMarkdownFind);
-        }
         if self.outline_keyboard_focus {
             if context
                 .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown))

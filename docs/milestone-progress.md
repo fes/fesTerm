@@ -1624,3 +1624,28 @@ The visual pass also favored assigning a little more of a narrow table to
 Name instead of Last Used. Headers and rows use the same responsive origins,
 so long profile names remain distinguishable without changing desktop
 column proportions or introducing horizontal scrolling.
+
+### Keyboard ownership and persistent bindings
+
+Issue #154 connected a searchable Settings action editor to strict versioned
+configuration and the existing application command paths. Defaults, overrides,
+scope validation and native/palette/chrome hints now share effective bindings;
+unbinding yields to the existing terminal encoder rather than inventing macros
+or new protocols. Ctrl+Shift+F12 remains a fixed recovery route.
+
+The audit found that egui-winit discarded clipboard-key provenance and that
+the terminal's empty-selection Copy fallback generated an interrupt, even for
+macOS Command+C. A small pinned adapter patch preserves the original key, and
+Copy no longer substitutes terminal input. The controlled fake-auth-URL
+regression exercises rendered drag selection, raw/semantic Copy ordering,
+subsequent token entry and real Control+C semantics without using user secrets.
+IME commit, exact modifiers and captured-repeat handling have deterministic
+coverage. The actual Firebase OS event sequence is not claimed from this model.
+
+Session Diagnostics also gained a default-off 256-observation RAM-only input
+recorder. It separates local selection, terminal-owned/unreported mouse events,
+encoded input and queue outcomes without storing payloads or equating focus
+bookkeeping with double handling. Native event identity and remote application
+consumption remain unknown. Native driver samples, selected-URL/platform-layout
+checks and usability evidence remain distinct from headless regression passes;
+the macOS baseline's Accessibility consent blocker is explicitly recorded.

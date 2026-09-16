@@ -182,6 +182,17 @@ kinds and fields are rejected.
 
 ## Interface settings
 
+The additive `[[settings.keyboard_bindings]]` array stores typed application
+action overrides and chord strings. An empty chord explicitly unbinds an
+action; an absent entry inherits the host-platform default. Invalid/duplicate
+actions, unsupported/reserved chords and overlapping effective mappings reject
+the document through the existing strict load path; the original file remains
+untouched. Settings applies and autosaves valid edits through the ordinary
+interface-settings transaction, preserving profiles, workspace and unrelated
+preferences. See [keyboard syntax, defaults and recovery](keyboard-shortcuts.md).
+The Session Inspector's opt-in input recorder is RAM-only and has no
+configuration representation.
+
 The optional `[settings]` table includes these interface preferences:
 `chip_layout` (`"wrap"` or `"single-row-scroll"`, default
 `"single-row-scroll"`), `status_bar_visible` (default `true`),

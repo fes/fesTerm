@@ -51,6 +51,8 @@ pub struct InspectorContent<'a> {
     pub transport: TransportFacts<'a>,
     pub trust_fingerprint: Option<&'a str>,
     pub diagnostics: &'a str,
+    pub input_recording: bool,
+    pub input_report: &'a str,
     pub reconnect_available: bool,
     pub open_sftp_available: bool,
     /// The durable provider and name this connection attaches to, if any
@@ -71,6 +73,9 @@ pub enum InspectorAction {
     Close,
     Reconnect,
     OpenSftp,
+    ToggleInputRecording,
+    ClearInputRecording,
+    CopyInputRecording,
 }
 
 /// Computes the overlay bounds within the content viewport. Kept pure so
@@ -276,6 +281,19 @@ pub fn show(
                                 .id_salt(("session_inspector_diagnostics", content.subject_id))
                                 .default_open(false)
                                 .show(ui, |ui| {
+                                    ui.label("Input routing: bounded RAM only; no text, clipboard contents, or authentication data.");
+                                    if ui.button(if content.input_recording { "Stop input recording" } else { "Record input routing" }).clicked() {
+                                        action = Some(InspectorAction::ToggleInputRecording);
+                                    }
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.button("Clear input recording").clicked() {
+                                            action = Some(InspectorAction::ClearInputRecording);
+                                        }
+                                        if ui.button("Copy redacted routing report").clicked() {
+                                            action = Some(InspectorAction::CopyInputRecording);
+                                        }
+                                    });
+                                    ui.add(Label::new(RichText::new(content.input_report).monospace().size(10.0)).wrap());
                                     ui.add(
                                         Label::new(
                                             RichText::new(content.diagnostics)
@@ -355,6 +373,8 @@ mod tests {
             },
             trust_fingerprint: None,
             diagnostics: "",
+            input_recording: false,
+            input_report: "",
             reconnect_available: true,
             open_sftp_available: true,
             persistent_session: None,

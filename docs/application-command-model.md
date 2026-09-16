@@ -111,6 +111,13 @@ Examples that are application commands include:
 
 This distinction prevents the application command system from becoming a second terminal-input protocol.
 
+Keyboard-binding replacements and Session Inspector input-recording
+start/stop/clear/report-copy are typed application commands. The bounded,
+off-by-default recorder observes existing core and controller outcomes; it
+does not become an input owner, log terminal/clipboard contents, or invent
+physical-event identities. Keyboard/menu/UI actions retain their ordinary
+dispatch policy. See [the keyboard routing inventory](keyboard-shortcuts.md).
+
 Terminal-local selection Copy and Paste contents remain UI/input operations.
 Explicit OSC 8 activation emits an application `OpenExternalLink` intent so
 URL parsing, scheme/host policy, safe rejection feedback, and OS launch remain
