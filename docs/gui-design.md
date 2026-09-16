@@ -1449,6 +1449,27 @@ customized binding can never be shown twice with two different values.
 Modifier keycaps use the Command glyph on macOS and spell the remaining
 modifiers out, matching how the palette and chip hints already render chords
 and staying inside the bundled interface face's glyph coverage.
+The action table is not separately scrollable: the Settings page already
+scrolls, and a short nested viewport made the catalogue painful to page
+through. Selecting a row expands its editor in place, directly beneath that
+row, so assigning a binding never means scrolling away from the action being
+changed; choosing another action closes the one already open, and choosing the
+open action again closes it. Each row carries
+a gutter dot and a **Customized** badge when its chord differs from the
+default, so "what have I changed?" is answerable by scanning the list rather
+than by opening each action. Keycaps sit in fixed-width columns counted from
+the right — column zero is the key, and each chord fills leftwards from it —
+measured across every visible row. Anchoring on the key keeps the column
+people actually scan straight down the table while each chord stays one
+contiguous group; reserving a column per modifier instead would make every
+row hold space for modifiers it does not use and split short chords across
+gaps.
+A chord is set either by typing it or by **Press keys**, which
+captures the next combination pressed; while capturing, those keys are taken
+by the editor instead of being dispatched, so binding a shortcut cannot also
+fire it, and Escape cancels. Capture is re-armed on every frame the editor
+draws, so leaving Settings mid-capture releases the keyboard rather than
+swallowing input.
 See [the canonical keyboard inventory](keyboard-shortcuts.md).
 
 Chip rename and other focused editing surfaces retain native clipboard intent;
@@ -1459,7 +1480,11 @@ retained queued-input observations on eventual delivery, rejection or reconnect
 discard, including after recording stops, without recreating cleared records.
 
 Category icons support scanning but never replace labels. Reset appears only
-for a non-default value and at appropriate setting/category scope. Terminal
+for a non-default value and at appropriate setting/category scope, except
+where hiding it would leave users unable to tell a reset exists at all: the
+keyboard editor's per-action and all-binding resets stay visible and are
+disabled, with a hover explaining that the value is already the default.
+Terminal
 font changes may alter cell geometry and resize active PTYs, so unusually
 disruptive changes require a clear consequence before application. Profile,
 credential, and trust-record edits use their own staged and security-aware

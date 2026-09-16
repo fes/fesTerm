@@ -6578,8 +6578,8 @@ mod tests {
             assert!(
                 harness
                     .query_by_label("Reset all keyboard bindings")
-                    .is_none(),
-                "the all-bindings reset stays hidden until something is customized"
+                    .is_some(),
+                "the all-bindings reset stays visible so users can see a reset exists"
             );
 
             // Capture a realistic working state rather than a pristine one:
@@ -6643,7 +6643,7 @@ mod tests {
         // Tall enough that every card, including the keyboard editor at the
         // bottom, is laid out inside the viewport and therefore interactive.
         Harness::builder()
-            .with_size(egui::vec2(width, 3600.0))
+            .with_size(egui::vec2(width, 5200.0))
             .build_ui_state(
                 |ui, state: &mut SettingsHarnessState| {
                     if let Some(command) = show_settings(
