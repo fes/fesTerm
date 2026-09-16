@@ -984,13 +984,25 @@ impl FesTermApp {
         });
     }
 
-    fn handle_paste_request(&mut self, tab: TabId, text: String) {
+    fn handle_paste_request(
+        &mut self,
+        tab: TabId,
+        text: String,
+        clipboard_token: Option<u64>,
+        context: &egui::Context,
+    ) {
         let input_ownership_epoch = self.state.input_ownership_epoch();
         let text = normalize_paste_line_endings(&text);
         let Some(session) = self.state.session_tab_mut(tab) else {
             return;
         };
         if !session.accepts_input() {
+            if let Some(token) = clipboard_token {
+                session
+                    .controller
+                    .cancel_clipboard_input(token, "discarded-clipboard-cancelled");
+            }
+            self.show_clipboard_discard_notice(tab);
             return;
         }
         let bracketed_paste = session.terminal.modes().bracketed_paste();
@@ -1000,14 +1012,12 @@ impl FesTermApp {
             || line_count >= LARGE_PASTE_LINE_THRESHOLD
             || (!bracketed_paste && line_count > 1);
         if !requires_confirmation {
-            let _ = festerm_ui_egui::route_input(
-                &mut session.terminal,
-                festerm_core::InputEvent::Paste(text),
-                &mut session.controller,
-            );
+            self.deliver_ordered_paste(tab, text, clipboard_token, context);
             return;
         }
         self.overlays.pending_paste = Some(PendingPasteConfirmation {
+            clipboard_token,
+            opened_frame: context.cumulative_frame_nr(),
             tab,
             identity: session.label.clone(),
             text,
@@ -1182,8 +1192,14 @@ impl FesTermApp {
             return;
         };
         if let Some(session) = self.state.session_tab_mut(pending.tab) {
+            if let Some(token) = pending.clipboard_token {
+                session
+                    .controller
+                    .cancel_clipboard_input(token, "discarded-clipboard-cancelled");
+            }
             session.view.request_focus_on_next_frame();
         }
+        self.show_clipboard_discard_notice(pending.tab);
     }
 
     /// Inspects this frame's OS file drops (`docs/gui-design.md`
@@ -1402,6 +1418,8 @@ impl FesTermApp {
         let Some(pending) = self.overlays.pending_paste.as_ref().cloned() else {
             return;
         };
+        let opening_frame = pending.clipboard_token.is_some()
+            && pending.opened_frame == context.cumulative_frame_nr();
         let valid_target = self.state.active() == pending.tab
             && self.state.input_ownership_epoch() == pending.input_ownership_epoch
             && self
@@ -1409,6 +1427,9 @@ impl FesTermApp {
                 .session_tab_mut(pending.tab)
                 .is_some_and(|session| {
                     session.accepts_input()
+                        && pending
+                            .clipboard_token
+                            .is_none_or(|token| session.controller.clipboard_input_pending(token))
                         && session.controller.lifecycle_generation() == pending.lifecycle_generation
                         && session.terminal.modes().bracketed_paste() == pending.bracketed_paste
                         && session.status_bar_label() == pending.transport_state
@@ -1428,6 +1449,9 @@ impl FesTermApp {
         egui::Modal::new(egui::Id::new("paste_confirmation"))
             .backdrop_color(egui::Color32::from_black_alpha(128))
             .show(context, |ui| {
+                if opening_frame {
+                    ui.disable();
+                }
                 ui.set_width(confirmation_width(context.content_rect().width(), 440.0));
                 let unit = if line_count == 1 { "line" } else { "lines" };
                 ui.heading(format!(
@@ -1443,6 +1467,9 @@ impl FesTermApp {
                     "Target state: {} \u{00b7} {line_count} {unit} \u{00b7} {character_count} characters",
                     pending.transport_state
                 ));
+                if pending.clipboard_token.is_some() {
+                    ui.label("Waiting keyboard input follows Paste; Cancel discards it.");
+                }
                 ui.add_space(6.0);
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
@@ -1461,7 +1488,7 @@ impl FesTermApp {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let cancel_button = ui.button("Cancel");
-                    if !pending.cancel_focus_requested {
+                    if !pending.cancel_focus_requested && !opening_frame {
                         cancel_button.request_focus();
                     }
                     if cancel_button.clicked() {
@@ -1473,19 +1500,16 @@ impl FesTermApp {
                 });
             });
         if let Some(current) = self.overlays.pending_paste.as_mut() {
-            current.cancel_focus_requested = true;
+            current.cancel_focus_requested = !opening_frame;
+        }
+        if opening_frame {
+            context.request_repaint();
         }
         if cancel {
             self.cancel_paste_confirmation();
         } else if paste {
             self.overlays.pending_paste = None;
-            if let Some(session) = self.state.session_tab_mut(pending.tab) {
-                let _ = festerm_ui_egui::route_input(
-                    &mut session.terminal,
-                    festerm_core::InputEvent::Paste(pending.text),
-                    &mut session.controller,
-                );
-            }
+            self.deliver_ordered_paste(pending.tab, pending.text, pending.clipboard_token, context);
         }
     }
 
@@ -2671,6 +2695,13 @@ impl FesTermApp {
             && !self.overlays.blocks_terminal_input()
     }
 
+    fn clipboard_confirmation_opening(&self, context: &egui::Context) -> bool {
+        self.overlays.pending_paste.as_ref().is_some_and(|pending| {
+            pending.clipboard_token.is_some()
+                && pending.opened_frame == context.cumulative_frame_nr()
+        })
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         self.cancel_invalid_clipboard_paste(ctx);
         let deferred_id = egui::Id::new("ordered-keyboard-events");
@@ -2682,8 +2713,36 @@ impl FesTermApp {
             .iter()
             .any(|event| matches!(event, egui::Event::WindowFocused(false)))
         {
+            let cancelling = self.clipboard_paste.is_some();
             self.cancel_clipboard_paste(ctx);
+            if cancelling {
+                let bindings = self.state.interface_settings().keyboard_bindings().clone();
+                let before = events.len();
+                events.retain(|event| {
+                    crate::keyboard::is_global_key(event, &bindings)
+                        || !matches!(
+                            event,
+                            egui::Event::Key { .. }
+                                | egui::Event::Text(_)
+                                | egui::Event::Ime(_)
+                                | egui::Event::Copy
+                                | egui::Event::Cut
+                                | egui::Event::Paste(_)
+                        )
+                });
+                if events.len() != before {
+                    self.overlays.transient_notice = Some((
+                        "Clipboard operation cancelled on focus loss; pending input was not sent."
+                            .into(),
+                        Instant::now() + Duration::from_secs(5),
+                    ));
+                }
+            }
         }
+        // The native adapter publishes ready reads before this frame's input.
+        // Resolve their queue position before any later key/text is routed.
+        self.associate_input_recorder(ctx);
+        self.complete_clipboard_paste(ctx);
         let mut pending = std::collections::VecDeque::from(events);
         let mut remaining = Vec::new();
         if pending.is_empty() {
@@ -2693,6 +2752,41 @@ impl FesTermApp {
         while let Some(event) = pending.pop_front() {
             if matches!(event, egui::Event::WindowFocused(false)) {
                 self.cancel_clipboard_paste(ctx);
+            }
+            let new_confirmation_action = self.clipboard_confirmation_opening(ctx)
+                && crate::keyboard::is_bound_key(
+                    &event,
+                    self.state.interface_settings().keyboard_bindings(),
+                );
+            if new_confirmation_action
+                || (self.clipboard_paste.is_some()
+                    && crate::keyboard::is_global_key(
+                        &event,
+                        self.state.interface_settings().keyboard_bindings(),
+                    ))
+            {
+                let before = remaining.len();
+                remaining.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Key { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Ime(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Paste(_)
+                    )
+                });
+                let discarded = before - remaining.len();
+                self.cancel_clipboard_paste(ctx);
+                if new_confirmation_action {
+                    self.cancel_paste_confirmation();
+                }
+                if discarded > 0 {
+                    self.overlays.transient_notice = Some((
+                        format!("Clipboard operation cancelled: pending input was not sent ({discarded} current-frame input events)."),
+                        Instant::now() + Duration::from_secs(5)));
+                }
             }
             // Deliver earlier widget/terminal input before a later shortcut
             // can change its owner. Retain only the unprocessed suffix.
@@ -2732,6 +2826,7 @@ impl FesTermApp {
             }
             ctx.input_mut(|input| input.events = packet);
             self.handle_shortcut_packet(ctx);
+            self.cancel_invalid_clipboard_paste(ctx);
             remaining.extend(ctx.input_mut(|input| std::mem::take(&mut input.events)));
         }
         ctx.input_mut(|input| input.events = remaining);
@@ -3089,10 +3184,25 @@ impl FesTermApp {
         };
         let generation = session.controller.lifecycle_generation();
         if let Some(text) = text {
-            self.handle_paste_request(tab, text);
+            self.state
+                .session_tab_mut(tab)
+                .unwrap()
+                .controller
+                .finish_failed_clipboard_input();
+            self.handle_paste_request(tab, text, None, context);
         } else if let Some(token) =
             egui_winit::clipboard_requests::request(context, egui::ViewportId::ROOT)
         {
+            if !self
+                .state
+                .session_tab_mut(tab)
+                .unwrap()
+                .controller
+                .begin_clipboard_input(token)
+            {
+                egui_winit::clipboard_requests::cancel(context, egui::ViewportId::ROOT, token);
+                return;
+            }
             self.clipboard_paste = Some(ClipboardPasteOrigin {
                 token,
                 tab,
@@ -3107,6 +3217,34 @@ impl FesTermApp {
     fn cancel_clipboard_paste(&mut self, context: &egui::Context) {
         if let Some(origin) = self.clipboard_paste.take() {
             egui_winit::clipboard_requests::cancel(context, egui::ViewportId::ROOT, origin.token);
+            if let Some(session) = self.state.session_tab_mut(origin.tab) {
+                session
+                    .controller
+                    .fail_clipboard_input(origin.token, "discarded-clipboard-cancelled");
+            }
+            self.show_clipboard_discard_notice(origin.tab);
+            let bindings = self.state.interface_settings().keyboard_bindings().clone();
+            let discarded = context.input_mut(|input| {
+                let before = input.events.len();
+                input.events.retain(|event| {
+                    crate::keyboard::is_global_key(event, &bindings)
+                        || !matches!(
+                            event,
+                            egui::Event::Key { .. }
+                                | egui::Event::Text(_)
+                                | egui::Event::Ime(_)
+                                | egui::Event::Copy
+                                | egui::Event::Cut
+                                | egui::Event::Paste(_)
+                        )
+                });
+                before - input.events.len()
+            });
+            if discarded > 0 {
+                self.overlays.transient_notice = Some((
+                    format!("Clipboard operation cancelled: pending input was not sent ({discarded} current-frame input events)."),
+                    Instant::now() + Duration::from_secs(5)));
+            }
         }
     }
 
@@ -3119,6 +3257,7 @@ impl FesTermApp {
             || self.state.input_ownership_epoch() != origin.ownership_epoch
             || !self.state.session_tab(origin.tab).is_some_and(|session| {
                 session.accepts_input()
+                    && session.controller.clipboard_input_pending(origin.token)
                     && session.controller.lifecycle_generation() == origin.generation
             })
         {
@@ -3135,14 +3274,70 @@ impl FesTermApp {
                 .clipboard_paste
                 .is_some_and(|origin| origin.token == token)
             {
-                let origin = self.clipboard_paste.take().unwrap();
+                let origin = self.clipboard_paste.unwrap();
                 if let Some(text) = text {
-                    self.handle_paste_request(origin.tab, text);
+                    self.clipboard_paste = None;
+                    self.handle_paste_request(origin.tab, text, Some(origin.token), context);
+                    if self
+                        .state
+                        .session_tab(origin.tab)
+                        .is_some_and(|session| session.controller.clipboard_input_failed(token))
+                    {
+                        self.clipboard_paste = Some(origin);
+                    }
+                } else {
+                    if let Some(session) = self.state.session_tab_mut(origin.tab) {
+                        session
+                            .controller
+                            .fail_clipboard_input(origin.token, "discarded-clipboard-read-failed");
+                    }
+                    self.show_clipboard_discard_notice(origin.tab);
                 }
             }
         }
     }
 
+    fn deliver_ordered_paste(
+        &mut self,
+        tab: TabId,
+        text: String,
+        token: Option<u64>,
+        context: &egui::Context,
+    ) {
+        if let Some(session) = self.state.session_tab_mut(tab) {
+            let prepared =
+                token.is_none_or(|token| session.controller.prepare_clipboard_input(token));
+            if prepared {
+                let _ = festerm_ui_egui::route_input(
+                    &mut session.terminal,
+                    festerm_core::InputEvent::Paste(text),
+                    &mut session.controller,
+                );
+            }
+            // Encoding or queue admission may have failed without filling the
+            // reserved position. Never release the suffix in that case.
+            if let Some(token) = token {
+                if session.controller.clipboard_input_pending(token) {
+                    session
+                        .controller
+                        .fail_clipboard_input(token, "discarded-clipboard-write-failed");
+                }
+            }
+        }
+        self.show_clipboard_discard_notice(tab);
+        context.request_repaint();
+    }
+
+    fn show_clipboard_discard_notice(&mut self, tab: TabId) {
+        let count = self.state.session_tab_mut(tab).map_or(0, |session| {
+            session.controller.take_clipboard_discarded_bytes()
+        });
+        if count > 0 {
+            self.overlays.transient_notice = Some((
+                        format!("Clipboard operation cancelled or failed: {count} following input bytes were not sent. Re-enter any required input."),
+                        Instant::now() + Duration::from_secs(5)));
+        }
+    }
     fn toggle_focus_mode(&mut self, context: &egui::Context) {
         if !matches!(self.state.active_tab().content, TabContent::Session(_)) {
             return;
@@ -4684,7 +4879,9 @@ impl FesTermApp {
         }
         self.handle_native_menu_commands(ui.ctx());
         self.handle_shortcuts(ui.ctx());
-        let terminal_input_target = self.terminal_owns_input().then_some(self.state.active());
+        let opening_clipboard_confirmation = self.clipboard_confirmation_opening(ui.ctx());
+        let terminal_input_target = (self.terminal_owns_input() || opening_clipboard_confirmation)
+            .then_some(self.state.active());
         if let Some(smoke) = &mut self.native_smoke {
             smoke.observe_palette(self.palette.is_open());
         }
@@ -4953,7 +5150,8 @@ impl FesTermApp {
                         let options = festerm_ui_egui::TerminalViewOptions {
                             paste_available: session.accepts_input(),
                             terminal_input_enabled: terminal_input_target == Some(active_tab_id)
-                                && !self.overlays.blocks_terminal_input()
+                                && (!self.overlays.blocks_terminal_input()
+                                    || opening_clipboard_confirmation)
                                 && !self.palette.is_open()
                                 && !inspector_open
                                 && self.rename_restore_tab.is_none()
@@ -5235,7 +5433,19 @@ impl FesTermApp {
             }
         }
 
-        self.complete_clipboard_paste(ui.ctx());
+        self.cancel_invalid_clipboard_paste(ui.ctx());
+        let tabs = self
+            .state
+            .tabs()
+            .iter()
+            .map(|tab| tab.id)
+            .collect::<Vec<_>>();
+        for tab in tabs {
+            if let Some(session) = self.state.session_tab_mut(tab) {
+                session.controller.finish_failed_clipboard_input();
+            }
+            self.show_clipboard_discard_notice(tab);
+        }
         self.sync_port_forward_manager();
         if self.overlays.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
@@ -5412,6 +5622,247 @@ mod tests {
                 22,
             );
         (tab, transport)
+    }
+
+    #[test]
+    fn keyboard_ready_clipboard_precedes_current_frame_enter_and_text() {
+        for (event, suffix) in [
+            (
+                keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+                "\r",
+            ),
+            (egui::Event::Text("following".into()), "following"),
+        ] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let token = keyboard_clipboard_request(&mut harness);
+            keyboard_clipboard_reply(&context, token, "controlled-marker");
+            harness.input_mut().events.push(event);
+            harness.step();
+            assert_eq!(
+                transport.sent().concat(),
+                format!("controlled-marker{suffix}").as_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn keyboard_unresolved_paste_orders_same_batch_and_later_session_input() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let tab = harness.state().state.active();
+        let mut bindings = festerm_config::KeyboardBindings::default();
+        bindings.set(
+            festerm_config::KeyboardAction::Paste,
+            Some("Ctrl+Shift+F8".into()),
+        );
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        harness.state_mut().state.dispatch(
+            AppCommand::SetInputRecording { tab, enabled: true },
+            &context,
+        );
+        harness.input_mut().events.extend([
+            keyboard_event(
+                egui::Key::F8,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            ),
+            egui::Event::Text("controlled-following-token".into()),
+            keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+        ]);
+        harness.step();
+        assert!(transport.sent().is_empty());
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("later".into()));
+        harness.step();
+        assert!(transport.sent().is_empty());
+        let report = harness
+            .state()
+            .state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .input_recorder
+            .lock()
+            .unwrap()
+            .report();
+        assert!(report.contains("queued-clipboard"));
+        assert!(!report.contains("controlled-following-token"));
+        let token =
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT).unwrap();
+        keyboard_clipboard_reply(&context, token, "controlled-marker");
+        harness.step();
+        assert_eq!(
+            transport.sent().concat(),
+            b"controlled-markercontrolled-following-token\rlater"
+        );
+    }
+
+    #[test]
+    fn keyboard_cancelled_or_failed_clipboard_never_releases_following_input() {
+        for cause in ["read-failed", "generation", "switch", "recovery"] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let tab = harness.state().state.active();
+            let token = keyboard_clipboard_request(&mut harness);
+            harness.input_mut().events.extend([
+                egui::Event::Text("held-secret".into()),
+                keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+            ]);
+            harness.step();
+            assert!(transport.sent().is_empty());
+            let mut other = None;
+            match cause {
+                "read-failed" => {
+                    egui_winit::clipboard_requests::complete(
+                        &context,
+                        egui::ViewportId::ROOT,
+                        token,
+                        None,
+                    );
+                    harness
+                        .input_mut()
+                        .events
+                        .push(keyboard_event(egui::Key::Enter, egui::Modifiers::NONE));
+                }
+                "generation" => {
+                    harness
+                        .state_mut()
+                        .state
+                        .session_tab_mut(tab)
+                        .unwrap()
+                        .controller
+                        .advance_lifecycle_generation();
+                    keyboard_clipboard_reply(&context, token, "stale");
+                    harness
+                        .input_mut()
+                        .events
+                        .push(egui::Event::Text("old-generation".into()));
+                }
+                "switch" => {
+                    other = Some(keyboard_second_session(&mut harness).1);
+                    keyboard_clipboard_reply(&context, token, "stale");
+                }
+                _ => harness.input_mut().events.push(keyboard_event(
+                    egui::Key::F12,
+                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                )),
+            }
+            harness.step();
+            assert!(transport.sent().is_empty(), "{cause}");
+            assert!(other.is_none_or(|transport| transport.sent().is_empty()));
+            assert!(
+                harness
+                    .state()
+                    .overlays
+                    .transient_notice
+                    .as_ref()
+                    .is_some_and(|(message, _)| message.contains("not sent")
+                        && !message.contains("held-secret")),
+                "{cause}"
+            );
+            assert!(harness.state().clipboard_paste.is_none());
+        }
+    }
+
+    #[test]
+    fn keyboard_same_batch_recovery_cancels_unencoded_following_input() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let mut bindings = festerm_config::KeyboardBindings::default();
+        bindings.set(
+            festerm_config::KeyboardAction::Paste,
+            Some("Ctrl+Shift+F8".into()),
+        );
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        harness.input_mut().events.extend([
+            keyboard_event(
+                egui::Key::F8,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            ),
+            egui::Event::Text("not-for-settings".into()),
+            keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+            keyboard_event(
+                egui::Key::F12,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            ),
+        ]);
+        harness.step();
+        assert!(matches!(
+            harness.state().state.active_tab().content,
+            TabContent::Settings
+        ));
+        assert!(transport.sent().is_empty());
+        assert!(harness.state().overlays.transient_notice.is_some());
+        assert!(harness.state().clipboard_paste.is_none());
+    }
+
+    #[test]
+    fn keyboard_confirmation_opening_frame_holds_unseen_prompt_input() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let token = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+        harness.input_mut().events.extend([
+            egui::Event::Text("following".into()),
+            keyboard_event(egui::Key::Enter, egui::Modifiers::NONE),
+        ]);
+        harness.step();
+        assert!(transport.sent().is_empty());
+        assert!(harness.state().overlays.pending_paste.is_some());
+        harness.run();
+        harness.get_by_label("Paste").click();
+        harness.run();
+        assert_eq!(
+            transport.sent().concat(),
+            b"controlled-one\ncontrolled-twofollowing\r"
+        );
+    }
+
+    #[test]
+    fn keyboard_buffered_enter_waits_for_deliberate_paste_confirmation() {
+        for confirm in [false, true] {
+            let (mut harness, transport) = keyboard_harness();
+            let context = harness.ctx.clone();
+            let token = keyboard_clipboard_request(&mut harness);
+            harness
+                .input_mut()
+                .events
+                .push(keyboard_event(egui::Key::Enter, egui::Modifiers::NONE));
+            harness.step();
+            keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+            harness.run();
+            assert!(transport.sent().is_empty());
+            assert!(
+                harness.state().overlays.pending_paste.is_some(),
+                "buffered Enter cannot dismiss or submit the dialog"
+            );
+            harness
+                .get_by_label(if confirm { "Paste" } else { "Cancel" })
+                .click();
+            // The click driver spans several frames; cancellation reports the
+            // discarded input in the existing transient notification.
+            for _ in 0..4 {
+                harness.step();
+            }
+            if confirm {
+                assert_eq!(
+                    transport.sent().concat(),
+                    b"controlled-one\ncontrolled-two\r"
+                );
+            } else {
+                assert!(transport.sent().is_empty());
+                assert!(harness.state().overlays.transient_notice.is_some());
+            }
+            assert!(harness.state().overlays.pending_paste.is_none());
+        }
     }
 
     #[test]

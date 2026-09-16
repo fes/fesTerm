@@ -1627,6 +1627,15 @@ column proportions or introducing horizontal scrolling.
 
 ### Keyboard ownership and persistent bindings
 
+The final ordering follow-up reserves asynchronous paste's position in the
+existing bounded session byte queue. Ready completion precedes later keyboard
+dispatch; unresolved following input cannot overtake paste or escape after
+cancellation, failure or generation change. Confirmation retains waiting
+keyboard input until deliberate approval and reports discarded input without
+contents. Protocol replies and mouse/focus reporting keep their existing
+behavior. The native oracle observes accepted session bytes; delayed-read and
+failure scenarios have deterministic, separately classified coverage.
+
 The subsequent delayed-paste review fix replaces unowned terminal clipboard
 callbacks with bounded identified reads tied to tab, transport generation and
 ownership epoch. Paired native payloads bypass rereading; late/cancelled

@@ -146,6 +146,19 @@ cleared ones.
 
 ### Keyboard baseline and candidate evidence
 
+The following-input ordering fix adds ready-callback + Enter/text, unresolved
+request + same-batch input, bounded overflow, transport failure, recovery,
+generation and confirmation regressions. Verify that a deliberately delayed
+read never lets Enter overtake its paste; cancellation must report discarded
+input without sending it to the original or a different session. Protocol
+replies and mouse/focus reports must remain serviceable. The native smoke
+oracle now observes UI bytes accepted by the session, not merely their earlier
+encoding order. The existing native reader sample is not a forced delayed-read
+or failure-injection test; these new cases remain separately qualified by
+deterministic fake-reader/transport tests pending native evidence.
+The parent reported the Linux native identified-read sample passing on
+`9adce6c`; that evidence predates this ordering follow-up.
+
 The delayed-paste follow-up adds identified native reads and fake-callback
 regressions for tab/ownership/generation changes, replacements, duplicates,
 same-batch supplied payloads, context/middle/native-menu/palette surfaces and

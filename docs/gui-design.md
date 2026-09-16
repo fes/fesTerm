@@ -2228,6 +2228,16 @@ this policy without a second clipboard read. Unowned widget Paste callbacks
 never authorize terminal input; native menu, palette and local terminal
 gestures converge through the same identified-read path.
 
+Following keyboard input waits in the existing bounded session queue until
+that read resolves. Successful paste precedes waiting keys; cancellation,
+failure or overflow discards them with a content-free notification rather
+than executing Enter without its paste. A newly opened asynchronous-paste
+confirmation captures its opening frame's keyboard input and has inert
+controls for that rendering; Cancel is focused on the next frame. Its hint
+explains that deliberate Paste releases waiting keyboard input afterward,
+whereas Cancel discards it. Mouse/focus reports and terminal replies retain
+their existing independent behavior.
+
 Normalize line endings for the session input representation without trimming
 whitespace, rewriting shell syntax, or claiming content is safe. A confirmed
 paste sends the captured original text—not an escaped or truncated preview—as

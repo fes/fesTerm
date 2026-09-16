@@ -50,6 +50,8 @@ pub(crate) struct PendingCloseConfirmation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingPasteConfirmation {
+    pub(crate) clipboard_token: Option<u64>,
+    pub(crate) opened_frame: u64,
     pub(crate) tab: TabId,
     pub(crate) identity: String,
     pub(crate) text: String,

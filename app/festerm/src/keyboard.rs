@@ -96,6 +96,14 @@ pub fn consume_exact(context: &egui::Context, expected: Modifiers, key: Key) -> 
 }
 
 pub fn is_bound_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
+    is_bound_key_in_scope(event, bindings, false)
+}
+
+pub fn is_global_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
+    is_bound_key_in_scope(event, bindings, true)
+}
+
+fn is_bound_key_in_scope(event: &egui::Event, bindings: &KeyboardBindings, global: bool) -> bool {
     let egui::Event::Key {
         key,
         modifiers,
@@ -116,8 +124,13 @@ pub fn is_bound_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
     };
     matches(Modifiers::CTRL | Modifiers::SHIFT, Key::F12)
         || Action::ALL.into_iter().any(|action| {
-            chord(bindings.effective(action, cfg!(target_os = "macos")))
-                .is_some_and(|(modifiers, key)| matches(modifiers, key))
+            (!global
+                || matches!(
+                    action.scope(),
+                    festerm_config::KeyboardScope::Global | festerm_config::KeyboardScope::Document
+                ))
+                && chord(bindings.effective(action, cfg!(target_os = "macos")))
+                    .is_some_and(|(modifiers, key)| matches(modifiers, key))
         })
 }
 

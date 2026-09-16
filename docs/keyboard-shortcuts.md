@@ -150,6 +150,29 @@ duplicate callbacks cannot satisfy newer requests. Untagged widget Paste
 callbacks cannot authorize terminal delivery. The ordinary risky-paste
 confirmation still captures and validates the original target and payload.
 
+An identified read reserves a position in that session's existing bounded
+pending-write queue. Later keyboard/text/paste bytes wait behind it, including
+input in the initiating batch. A ready response is handled before the next
+frame's keyboard events; the captured paste fills its reserved position before
+waiting input can reach the transport. The same 4 MiB pending-byte limit
+includes these waiting bytes; the reservation itself is constant-size,
+content-free metadata, not an unbounded event queue.
+
+Read failure, cancellation, ownership/generation changes or overflow never
+release the waiting keyboard suffix into another operation. Discarded or
+rejected input produces a content-free “not sent” notification and trace queue
+outcomes. Global recovery/switch commands can cancel an unresolved operation;
+earlier unencoded input from that batch is not handed to the new surface.
+For a new risky-paste confirmation, that opening frame's keyboard input also
+waits: controls are inert during its first rendering, then Cancel receives
+focus. Deliberate Paste sends the clipboard operation followed by waiting keys;
+Cancel discards them. Thus an already typed Enter cannot submit the dialog.
+
+This is a keyboard/paste ordering barrier, not a new mouse policy. Core replies
+and existing focus/mouse reports remain serviceable (in particular, a pointer
+release is not withheld or discarded because clipboard input was cancelled).
+No clipboard/typed contents are added to routing reports.
+
 ### Terminal and widget inventory
 
 | Input / surface | Owner and current behavior |
@@ -259,6 +282,13 @@ regressions, not a claim that the user's gesture generated a measured byte:
   input in B, and its late response cannot complete a newer B request. Fake
   callback regressions cover replacement, duplication, round trips, all
   terminal paste invocation paths and still-valid confirmation.
+* **Following-input ordering:** the next reviewed candidate handled a ready
+  callback after TerminalView, so `ready("controlled-marker"), Enter` emitted
+  `0d` before the marker. The ready callback now precedes keyboard dispatch,
+  and unresolved reads reserve their position in the bounded session queue.
+  Tests require `controlled-marker` followed by `0d`, including an Enter
+  already waiting from the initiating batch. Failed reads and cancelled
+  confirmations emit neither the clipboard text nor the waiting Enter.
 * **Hidden Markdown binding:** removing an app binding previously would not
   remove the viewer's second hard-coded handler. Those four application
   shortcuts now have one configurable dispatch source.

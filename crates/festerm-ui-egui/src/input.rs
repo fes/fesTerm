@@ -51,6 +51,9 @@ pub struct InputSinkDiagnostics {
 
 /// Application-owned destination for bytes encoded by the core.
 pub trait EncodedInputSink {
+    /// Distinguishes ordered keyboard/paste input from focus/mouse reports;
+    /// no payload is exposed to this optional classification hook.
+    fn begin_input_event(&mut self, _keyboard_input: bool) {}
     /// Delivers transient encoded bytes. Implementations must not retain them
     /// unless they are an active session transport.
     fn record_encoded_input(&mut self, bytes: &[u8]);
@@ -105,6 +108,7 @@ fn route_input_with_metadata(
     sink: &mut impl EncodedInputSink,
     metadata: crate::routing_trace::Metadata,
 ) -> InputRoute {
+    sink.begin_input_event(matches!(&event, InputEvent::Key(_) | InputEvent::Paste(_)));
     let outcome = terminal.handle_input(event);
     let queue_depth = terminal.queued_input().len();
     let bytes = terminal.drain_input();

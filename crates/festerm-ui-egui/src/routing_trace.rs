@@ -170,6 +170,14 @@ impl Recorder {
             record.queue = queue;
         }
     }
+
+    pub fn clipboard_wait_became_backpressure(&mut self) {
+        for record in &mut self.records {
+            if record.queue == "queued-clipboard" {
+                record.queue = "queued-backpressure";
+            }
+        }
+    }
     pub fn report(&self) -> String {
         let mut report = format!("fesTerm redacted input routing\nrecording={} retained={} capacity={} dropped={}\nphysical-event-id=unknown; observation IDs correlate core/queue outcomes only\nmodifiers: Shift=1 Alt=2 Ctrl=4 Command=8; text modifiers redacted\nqueue acceptance is not evidence of which remote program handled input\n", self.recording, self.records.len(), CAPACITY, self.dropped);
         for record in &self.records {

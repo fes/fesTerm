@@ -71,6 +71,15 @@ without a second read. View-owned context/middle-click gestures return read
 intent to the composition root rather than issuing unowned Paste callbacks.
 Widget Paste events alone never authorize terminal input.
 
+Identified reads reserve one metadata-only position in the existing bounded
+session write queue. Later keyboard/paste writes wait at that position;
+successful delivery fills it, while cancellation/failure rejects the waiting
+suffix with explicit content-free feedback. Ready callbacks precede later
+keyboard dispatch. The composition root continues to own confirmation and
+target validation; SessionController owns only bounded bytes and ordering.
+Core replies and focus/mouse protocol reports remain independent of this
+keyboard barrier, preserving existing query and gesture behavior.
+
 Likewise, clipboard delivery remains terminal input, but risky-paste policy is
 owned by the composition root so stable session identity/generation and UI
 focus can be enforced before one ordered paste is returned to the terminal
