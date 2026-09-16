@@ -2218,6 +2218,16 @@ disconnect, close, or any transition that stops input invalidates and cancels
 the operation rather than sending different content or targeting another
 session. It never follows activation to a different chip.
 
+This ownership rule starts before asynchronous clipboard delivery, not only
+when a confirmation opens. Explicit terminal reads carry a unique request ID,
+originating tab, transport generation and ownership epoch. A newer request
+supersedes the old one; late or duplicate replies cannot fulfil another
+request. Returning to the original tab after switching away does not revive
+it. Native keyboard payloads already available with their key go straight to
+this policy without a second clipboard read. Unowned widget Paste callbacks
+never authorize terminal input; native menu, palette and local terminal
+gestures converge through the same identified-read path.
+
 Normalize line endings for the session input representation without trimming
 whitespace, rewriting shell syntax, or claiming content is safe. A confirmed
 paste sends the captured original text—not an escaped or truncated preview—as

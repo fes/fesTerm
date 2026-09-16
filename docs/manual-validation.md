@@ -146,6 +146,16 @@ cleared ones.
 
 ### Keyboard baseline and candidate evidence
 
+The delayed-paste follow-up adds identified native reads and fake-callback
+regressions for tab/ownership/generation changes, replacements, duplicates,
+same-batch supplied payloads, context/middle/native-menu/palette surfaces and
+confirmation. Rerun the revised keyboard native mode: it now sets the isolated
+test desktop clipboard to `controlled-clipboard` (does not read/restore its
+previous value), invokes palette Paste, and requires that exact prefix in its
+controlled input oracle. Earlier native passes do not qualify this new reader.
+Native cross-session/reconnect cancellation remains an additional TI-12 check;
+the deterministic fake-reader coverage is not OS-delivered proof.
+
 The existing Linux Xorg OS-input baseline passed at `7e93ece` (run
 `20260916T002402Z-linux-festerm-dd35f3ad-7af5-4f55-8291-e687b0213761`).
 This is not the new keyboard-specific candidate qualification.

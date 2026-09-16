@@ -1848,6 +1848,7 @@ pub struct AppState {
     active: TabId,
     configuration: Configuration,
     inspector_open: bool,
+    input_ownership_epoch: u64,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
     show_session_details: bool,
@@ -1919,6 +1920,7 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
+            input_ownership_epoch: 0,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -1972,6 +1974,7 @@ impl AppState {
             active: id,
             configuration,
             inspector_open: false,
+            input_ownership_epoch: 0,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -2105,6 +2108,7 @@ impl AppState {
             active,
             configuration,
             inspector_open: false,
+            input_ownership_epoch: 0,
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -2263,6 +2267,10 @@ impl AppState {
 
     pub const fn inspector_open(&self) -> bool {
         self.inspector_open
+    }
+
+    pub const fn input_ownership_epoch(&self) -> u64 {
+        self.input_ownership_epoch
     }
 
     pub const fn chip_layout(&self) -> ChipLayout {
@@ -2502,6 +2510,7 @@ impl AppState {
     /// every invocation surface must converge here rather than implementing
     /// independent tab/session policy.
     pub fn dispatch(&mut self, command: AppCommand, context: &egui::Context) {
+        let previous_owner = (self.active, self.inspector_open);
         if let Some(profile_id) = command.launched_profile_id() {
             self.pending_profile_usage = Some(profile_id.to_owned());
         }
@@ -2804,6 +2813,9 @@ impl AppState {
         // for Launcher, Settings, or authentication forms.
         if !matches!(self.active_tab().content, TabContent::Session(_)) {
             self.inspector_open = false;
+        }
+        if previous_owner != (self.active, self.inspector_open) {
+            self.input_ownership_epoch = self.input_ownership_epoch.saturating_add(1);
         }
     }
 

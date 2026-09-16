@@ -61,6 +61,11 @@ if [ "${FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE:-}" = 1 ]; then
     sleep 1
     xdotool key Escape
     sleep 1
+    xdotool key ctrl+shift+p
+    sleep 1
+    xdotool type --delay 20 -- 'paste'
+    xdotool key Return
+    sleep 1
     xdotool key ctrl+b ctrl+shift+b
 fi
 xdotool key Tab Up

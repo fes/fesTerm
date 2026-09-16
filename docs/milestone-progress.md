@@ -1627,6 +1627,14 @@ column proportions or introducing horizontal scrolling.
 
 ### Keyboard ownership and persistent bindings
 
+The subsequent delayed-paste review fix replaces unowned terminal clipboard
+callbacks with bounded identified reads tied to tab, transport generation and
+ownership epoch. Paired native payloads bypass rereading; late/cancelled
+responses cannot fulfil a newer request. Deterministic fake readers cover all
+terminal paste surfaces and cancellation/confirmation, and the opt-in native
+keyboard sample now checks palette Paste using only a controlled clipboard.
+That revised native path requires new platform evidence.
+
 The #154 review follow-up covers focused chip rename and Inspector paste,
 ordered same-batch switching with per-session recorder attribution, deferred
 queue settlement across stop/clear/eviction/reconnect, effective Markdown

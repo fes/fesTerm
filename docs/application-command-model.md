@@ -64,6 +64,13 @@ lifecycle generation while **Confirm before closing live sessions** is on,
 and dispatches `CloseTab` immediately when that preference is off. Widgets and
 individual invocation routes never interpret the preference themselves. Only
 a revalidated confirmation dispatches `CloseTab` in the confirming mode.
+Explicit terminal clipboard reads carry request identity, originating tab,
+transport generation and input-ownership epoch; cancellation/supersession
+cannot retarget a late callback. Already supplied native-key payloads are used
+without a second read. View-owned context/middle-click gestures return read
+intent to the composition root rather than issuing unowned Paste callbacks.
+Widget Paste events alone never authorize terminal input.
+
 Likewise, clipboard delivery remains terminal input, but risky-paste policy is
 owned by the composition root so stable session identity/generation and UI
 focus can be enforced before one ordered paste is returned to the terminal

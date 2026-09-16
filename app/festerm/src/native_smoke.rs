@@ -268,7 +268,11 @@ impl NativeWindowSmoke {
                 if controller.resize_probe().observed_output_bytes() > 0 =>
             {
                 if self.keyboard_mode {
-                    controller.expect_native_input(b"\x02\x02\t\x1b[Aos-input-ok\r");
+                    // The opt-in driver invokes palette Paste, exercising the
+                    // identified native clipboard reader without user content.
+                    context.copy_text("controlled-clipboard".into());
+                    controller
+                        .expect_native_input(b"controlled-clipboard\x02\x02\t\x1b[Aos-input-ok\r");
                 }
                 self.initial_output_bytes = Some(controller.resize_probe().observed_output_bytes());
                 self.phase = Phase::AwaitInput;

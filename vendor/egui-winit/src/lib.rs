@@ -21,6 +21,7 @@ use egui::{Pos2, Rect, Theme, Vec2, ViewportBuilder, ViewportCommand, ViewportId
 pub use winit;
 
 pub mod clipboard;
+pub mod clipboard_requests;
 mod dropped_file;
 mod safe_area;
 mod window_settings;
@@ -263,6 +264,10 @@ impl State {
     /// viewport.
     pub fn take_egui_input(&mut self, window: &Window) -> egui::RawInput {
         profiling::function_scope!();
+        if let Some(token) = clipboard_requests::take_request(&self.egui_ctx, self.viewport_id) {
+            let text = self.clipboard.get();
+            clipboard_requests::complete(&self.egui_ctx, self.viewport_id, token, text);
+        }
 
         self.egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
 

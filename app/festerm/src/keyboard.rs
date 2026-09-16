@@ -122,7 +122,7 @@ pub fn is_bound_key(event: &egui::Event, bindings: &KeyboardBindings) -> bool {
 }
 
 /// Remove only clipboard events derived from an adjacent native key.
-/// Unpaired events are explicit menu/widget/RequestPaste intent.
+/// Unpaired events retain widget/RequestPaste intent, not terminal authorization.
 pub fn prepare_terminal_events(context: &egui::Context) {
     context.input_mut(|input| {
         let mut preceding_clipboard = 0;
@@ -133,6 +133,19 @@ pub fn prepare_terminal_events(context: &egui::Context) {
             !derived
         });
     });
+}
+
+pub fn paired_paste(context: &egui::Context) -> Option<String> {
+    context.input(|input| {
+        input.events.windows(2).find_map(|pair| {
+            if clipboard_key_kind(&pair[0]) == 3 {
+                if let egui::Event::Paste(text) = &pair[1] {
+                    return Some(text.clone());
+                }
+            }
+            None
+        })
+    })
 }
 
 fn semantic_clipboard_kind(event: &egui::Event) -> u8 {

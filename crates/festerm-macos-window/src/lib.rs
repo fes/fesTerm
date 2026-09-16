@@ -5,6 +5,7 @@
 /// and the command palette.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeMenuCommand {
+    Paste,
     NewSession,
     StartLocalShell,
     OpenSettings,
@@ -29,6 +30,7 @@ pub struct NativeShortcut {
 #[cfg(any(target_os = "macos", test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeMenuAction {
+    Paste,
     NewSession,
     StartLocalShell,
     OpenSettings,
@@ -44,6 +46,7 @@ enum NativeMenuAction {
 impl NativeMenuAction {
     const fn command(self) -> NativeMenuCommand {
         match self {
+            Self::Paste => NativeMenuCommand::Paste,
             Self::NewSession => NativeMenuCommand::NewSession,
             Self::StartLocalShell => NativeMenuCommand::StartLocalShell,
             Self::OpenSettings => NativeMenuCommand::OpenSettings,
@@ -215,6 +218,10 @@ mod menu {
         unsafe impl NSObjectProtocol for MenuTarget {}
 
         impl MenuTarget {
+            #[unsafe(method(pasteFromClipboard:))]
+            fn paste_from_clipboard(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuAction::Paste);
+            }
             #[unsafe(method(newSession:))]
             fn new_session(&self, _sender: Option<&AnyObject>) {
                 self.emit(NativeMenuAction::NewSession);
@@ -460,7 +467,14 @@ mod menu {
         let edit = menu(mtm, "Edit");
         main.addItem(&submenu_root(mtm, "Edit", &edit));
         edit.addItem(&responder_item(mtm, "Copy", "c", sel!(copy:)));
-        edit.addItem(&responder_item(mtm, "Paste", "v", sel!(paste:)));
+        edit.addItem(&custom_item(
+            mtm,
+            "Paste",
+            "",
+            NSEventModifierFlags::empty(),
+            sel!(pasteFromClipboard:),
+            &target,
+        ));
         edit.addItem(&NSMenuItem::separatorItem(mtm));
         edit.addItem(&custom_item(
             mtm,
@@ -752,6 +766,7 @@ mod tests {
     #[test]
     fn native_menu_actions_map_to_shared_commands() {
         let cases = [
+            (NativeMenuAction::Paste, NativeMenuCommand::Paste),
             (NativeMenuAction::NewSession, NativeMenuCommand::NewSession),
             (
                 NativeMenuAction::StartLocalShell,

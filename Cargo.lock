@@ -2052,6 +2052,7 @@ dependencies = [
  "cargo-packager-updater",
  "directories",
  "eframe",
+ "egui-winit",
  "egui_kittest",
  "festerm-config",
  "festerm-core",

@@ -134,9 +134,21 @@ macOS also has OS/responder menu operations: Quit Cmd+Q, Hide Cmd+H,
 Hide Others Cmd+Option+H, Minimize Cmd+M, Close Window Cmd+Shift+W,
 Services and window management. These are not terminal encodings. Custom
 application menu accelerators are updated from effective bindings. Clipboard
-menu **clicks** retain responder Copy/Paste intent; their fixed native key
+menu **clicks** retain responder Copy intent; Paste enters application policy
+for terminals and ordinary widget paste otherwise. Fixed native clipboard key
 equivalents are removed so AppKit cannot secretly retain an unbound Cmd+C/V.
 Widget clipboard shortcuts remain native egui editing behavior.
+
+Terminal paste is origin-bound. A native key's paired Paste payload is used
+directly in event order, without rereading a changed clipboard. Keyboard
+bindings without a supplied payload, native Edit Paste, palette Paste, context
+Paste and middle-click issue an identified read for the originating tab,
+transport generation and input-ownership epoch. Switching away and back,
+losing terminal ownership, reconnecting, or superseding a request cancels it.
+There is at most one outstanding read and one response per viewport; late or
+duplicate callbacks cannot satisfy newer requests. Untagged widget Paste
+callbacks cannot authorize terminal delivery. The ordinary risky-paste
+confirmation still captures and validates the original target and payload.
 
 ### Terminal and widget inventory
 
@@ -238,6 +250,15 @@ regressions, not a claim that the user's gesture generated a measured byte:
   raw-key + derived-semantic provenance lets terminal Ctrl+C/X/V encode
   `03 18 16` with no clipboard-text leak. Native/widget/menu intent is not
   reconstructed from frame-wide modifiers.
+* **Delayed paste retargeting:** the reviewed candidate discarded
+  `[Paste-key, Paste("controlled-marker")]` and issued an untagged RequestPaste.
+  A same-batch switch A→B then allowed its later Paste callback to write B.
+  After, the paired payload reaches A through the existing policy before the
+  switch, without a clipboard reread. An asynchronous read started by A carries
+  a distinct request ID and origin; switching/generation changes produce zero
+  input in B, and its late response cannot complete a newer B request. Fake
+  callback regressions cover replacement, duplication, round trips, all
+  terminal paste invocation paths and still-valid confirmation.
 * **Hidden Markdown binding:** removing an app binding previously would not
   remove the viewer's second hard-coded handler. Those four application
   shortcuts now have one configurable dispatch source.
@@ -302,8 +323,11 @@ The first command runs synthesized production app/controller, editor, strict
 configuration and recorder regressions. It is aggregated by both optional
 validation runners. `--native` additionally uses the existing Xorg xdotool,
 macOS CGEvent/Accessibility or Windows SendKeys driver, isolated configuration
-and controlled PTY child. It checks Copy with no selection and palette capture,
-then exact encoded Ctrl+B/Shift+Ctrl+B, Tab, Up and a fixed token. It is a
+and controlled PTY child. The opt-in keyboard mode **replaces the test desktop's
+clipboard with `controlled-clipboard`**, without reading or saving its previous
+contents. It checks Copy with no selection and palette capture, invokes palette
+Paste to exercise the identified native reader, then checks exact encoded
+Ctrl+B/Shift+Ctrl+B, Tab, Up and a fixed token. It is a
 targeted native sample, not exhaustive layout/tool certification or an
 OS-delivered selected-auth-URL regression.
 

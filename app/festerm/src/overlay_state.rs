@@ -55,6 +55,7 @@ pub(crate) struct PendingPasteConfirmation {
     pub(crate) text: String,
     pub(crate) transport_state: &'static str,
     pub(crate) lifecycle_generation: u64,
+    pub(crate) input_ownership_epoch: u64,
     pub(crate) bracketed_paste: bool,
     pub(crate) cancel_focus_requested: bool,
 }

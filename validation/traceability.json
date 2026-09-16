@@ -664,6 +664,13 @@
         "keyboard_ime_cancellation_by_tab_click_releases_shortcuts_and_recovery",
         "keyboard_pending_delivery_settles_original_observation_across_stop_clear_and_generation",
         "keyboard_markdown_toolbar_uses_custom_and_unbound_effective_hints",
+        "keyboard_delayed_paste_cancels_on_tab_generation_and_owner_changes",
+        "keyboard_late_or_duplicate_clipboard_callbacks_cannot_fulfil_new_requests",
+        "keyboard_paired_paste_uses_original_payload_before_same_batch_switch",
+        "keyboard_async_shortcut_then_same_batch_switch_cancels_before_native_read",
+        "keyboard_identified_paste_preserves_confirmation_and_generation_safety",
+        "keyboard_native_menu_and_local_gestures_request_identified_clipboard_reads",
+        "paste_palette_command_requests_an_os_clipboard_paste",
         "keyboard_copy_of_fake_auth_url_never_submits_or_cancels_waiting_prompt",
         "keyboard_recovery_and_widget_focus_block_terminal_delivery",
         "keyboard_routing_recorder_is_opt_in_bounded_and_redacts_payloads",
@@ -726,7 +733,14 @@
       "automated_tests": [
         "paste_policy_normalizes_endings_and_counts_trailing_lines_exactly",
         "paste_preview_is_bounded_and_escapes_non_whitespace_controls",
-        "deferred_paste_requests_preserve_multiplicity_for_application_policy"
+        "deferred_paste_requests_preserve_multiplicity_for_application_policy",
+        "keyboard_delayed_paste_cancels_on_tab_generation_and_owner_changes",
+        "keyboard_late_or_duplicate_clipboard_callbacks_cannot_fulfil_new_requests",
+        "keyboard_paired_paste_uses_original_payload_before_same_batch_switch",
+        "keyboard_async_shortcut_then_same_batch_switch_cancels_before_native_read",
+        "keyboard_identified_paste_preserves_confirmation_and_generation_safety",
+        "keyboard_native_menu_and_local_gestures_request_identified_clipboard_reads",
+        "paste_palette_command_requests_an_os_clipboard_paste"
       ],
       "manual_scenarios": [
         "PS-01",

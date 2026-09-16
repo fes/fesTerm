@@ -113,6 +113,11 @@ func runOsInputSmoke() {
         Thread.sleep(forTimeInterval: 1)
         postKey(53) // Escape closes palette, not terminal input
         Thread.sleep(forTimeInterval: 1)
+        postKey(35, flags: [.maskCommand, .maskShift])
+        Thread.sleep(forTimeInterval: 1)
+        for key: CGKeyCode in [35, 0, 1, 17, 14] { postKey(key) } // paste
+        postKey(36) // Palette Paste requests the identified clipboard read
+        Thread.sleep(forTimeInterval: 1)
         postKey(11, flags: .maskControl)
         postKey(11, flags: [.maskControl, .maskShift])
     }

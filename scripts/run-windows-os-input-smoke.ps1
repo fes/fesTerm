@@ -88,6 +88,10 @@ try {
         Start-Sleep -Seconds 1
         $shell.SendKeys('{ESC}')
         Start-Sleep -Seconds 1
+        $shell.SendKeys('^+p')
+        Start-Sleep -Seconds 1
+        $shell.SendKeys('paste{ENTER}')
+        Start-Sleep -Seconds 1
         $shell.SendKeys('^b^+b')
     }
     $shell.SendKeys('{TAB}{UP}os-input-ok{ENTER}')

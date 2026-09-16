@@ -329,6 +329,14 @@ const fn terminal_font_family(preference: TerminalFontPreference) -> TerminalFon
     }
 }
 
+#[derive(Clone, Copy)]
+struct ClipboardPasteOrigin {
+    token: u64,
+    tab: TabId,
+    generation: u64,
+    ownership_epoch: u64,
+}
+
 /// Composition root.
 ///
 /// `AppState` owns the always-nonempty tab collection and session/command
@@ -356,6 +364,7 @@ pub struct FesTermApp {
     inspector_restore_focus: Option<egui::Id>,
     rename_restore_focus: Option<egui::Id>,
     rename_restore_tab: Option<TabId>,
+    clipboard_paste: Option<ClipboardPasteOrigin>,
     /// Confirmation prompts, in-flight secure-storage lookup, and transient
     /// status banner (see `overlay_state`); grouped into one type so the
     /// several call sites that need "is anything blocking terminal input"
@@ -625,6 +634,7 @@ impl FesTermApp {
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
+            clipboard_paste: None,
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             wake_monitor: None,
@@ -710,6 +720,7 @@ impl FesTermApp {
     fn handle_native_menu_commands(&mut self, context: &egui::Context) {
         while let Some(command) = self.native_menu.try_recv() {
             self.dispatch_native_menu_command(command, context);
+            self.cancel_invalid_clipboard_paste(context);
         }
     }
 
@@ -718,12 +729,15 @@ impl FesTermApp {
         command: festerm_macos_window::NativeMenuCommand,
         context: &egui::Context,
     ) {
-        if self.overlays.blocks_terminal_input() {
+        if self.overlays.blocks_terminal_input()
+            && command != festerm_macos_window::NativeMenuCommand::Paste
+        {
             return;
         }
         use festerm_config::KeyboardAction as A;
         use festerm_macos_window::NativeMenuCommand;
         let action = match command {
+            NativeMenuCommand::Paste => None,
             NativeMenuCommand::NewSession => Some(A::NewSession),
             NativeMenuCommand::StartLocalShell => Some(A::StartLocalShell),
             NativeMenuCommand::OpenSettings => Some(A::Settings),
@@ -762,6 +776,13 @@ impl FesTermApp {
             }
         }
         match command {
+            NativeMenuCommand::Paste => {
+                if self.terminal_owns_input() {
+                    self.paste_into_active_session(context);
+                } else {
+                    context.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                }
+            }
             NativeMenuCommand::NewSession => self.state.dispatch(AppCommand::OpenLauncher, context),
             NativeMenuCommand::StartLocalShell => {
                 self.state.dispatch(AppCommand::StartLocalSession, context)
@@ -964,6 +985,7 @@ impl FesTermApp {
     }
 
     fn handle_paste_request(&mut self, tab: TabId, text: String) {
+        let input_ownership_epoch = self.state.input_ownership_epoch();
         let text = normalize_paste_line_endings(&text);
         let Some(session) = self.state.session_tab_mut(tab) else {
             return;
@@ -991,6 +1013,7 @@ impl FesTermApp {
             text,
             transport_state: session.status_bar_label(),
             lifecycle_generation: session.controller.lifecycle_generation(),
+            input_ownership_epoch,
             bracketed_paste,
             cancel_focus_requested: false,
         });
@@ -1380,6 +1403,7 @@ impl FesTermApp {
             return;
         };
         let valid_target = self.state.active() == pending.tab
+            && self.state.input_ownership_epoch() == pending.input_ownership_epoch
             && self
                 .state
                 .session_tab_mut(pending.tab)
@@ -2318,6 +2342,7 @@ impl FesTermApp {
                     }
                 }
             }
+            self.cancel_invalid_clipboard_paste(context);
         }
     }
 
@@ -2647,17 +2672,28 @@ impl FesTermApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        self.cancel_invalid_clipboard_paste(ctx);
         let deferred_id = egui::Id::new("ordered-keyboard-events");
         let mut events = ctx
             .data_mut(|data| data.remove_temp::<Vec<egui::Event>>(deferred_id))
             .unwrap_or_default();
         events.extend(ctx.input_mut(|input| std::mem::take(&mut input.events)));
+        if events
+            .iter()
+            .any(|event| matches!(event, egui::Event::WindowFocused(false)))
+        {
+            self.cancel_clipboard_paste(ctx);
+        }
         let mut pending = std::collections::VecDeque::from(events);
         let mut remaining = Vec::new();
         if pending.is_empty() {
             self.handle_shortcut_packet(ctx);
+            self.cancel_invalid_clipboard_paste(ctx);
         }
         while let Some(event) = pending.pop_front() {
+            if matches!(event, egui::Event::WindowFocused(false)) {
+                self.cancel_clipboard_paste(ctx);
+            }
             // Deliver earlier widget/terminal input before a later shortcut
             // can change its owner. Retain only the unprocessed suffix.
             if remaining.iter().any(|event| {
@@ -2762,6 +2798,16 @@ impl FesTermApp {
             return;
         }
         let terminal_owns_input = self.terminal_owns_input();
+        let paired_paste = terminal_owns_input
+            .then(|| crate::keyboard::paired_paste(ctx))
+            .flatten();
+        let paste = terminal_owns_input
+            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::Paste)
+                | crate::keyboard::consume(
+                    ctx,
+                    &bindings,
+                    festerm_config::KeyboardAction::PasteAlternate,
+                ));
         if terminal_owns_input {
             crate::keyboard::prepare_terminal_events(ctx);
         }
@@ -2865,18 +2911,11 @@ impl FesTermApp {
                     &bindings,
                     festerm_config::KeyboardAction::CopyAlternate,
                 ));
-        let paste = terminal_input
-            && (crate::keyboard::consume(ctx, &bindings, festerm_config::KeyboardAction::Paste)
-                | crate::keyboard::consume(
-                    ctx,
-                    &bindings,
-                    festerm_config::KeyboardAction::PasteAlternate,
-                ));
         if copy {
             self.copy_active_selection(ctx);
         }
         if paste {
-            self.paste_into_active_session(ctx);
+            self.paste_into_active_session_with_text(ctx, paired_paste);
         }
 
         if new_tab {
@@ -3027,17 +3066,81 @@ impl FesTermApp {
         context.request_repaint();
     }
 
-    /// Requests the OS deliver the clipboard's contents as a paste event,
-    /// which the existing `egui::Event::Paste` handling in
-    /// `route_egui_events` then routes into the focused terminal, the same
-    /// path the OS paste shortcut uses.
     fn paste_into_active_session(&mut self, context: &egui::Context) {
-        if !matches!(self.state.active_tab().content, TabContent::Session(_)) {
+        self.paste_into_active_session_with_text(context, None);
+    }
+
+    fn paste_into_active_session_with_text(
+        &mut self,
+        context: &egui::Context,
+        text: Option<String>,
+    ) {
+        if !self.terminal_owns_input() {
             return;
         }
+        self.cancel_clipboard_paste(context);
+        let tab = self.state.active();
+        let Some(session) = self
+            .state
+            .session_tab(tab)
+            .filter(|session| session.accepts_input())
+        else {
+            return;
+        };
+        let generation = session.controller.lifecycle_generation();
+        if let Some(text) = text {
+            self.handle_paste_request(tab, text);
+        } else if let Some(token) =
+            egui_winit::clipboard_requests::request(context, egui::ViewportId::ROOT)
+        {
+            self.clipboard_paste = Some(ClipboardPasteOrigin {
+                token,
+                tab,
+                generation,
+                ownership_epoch: self.state.input_ownership_epoch(),
+            });
+        }
         self.restore_active_terminal_focus();
-        context.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
         context.request_repaint();
+    }
+
+    fn cancel_clipboard_paste(&mut self, context: &egui::Context) {
+        if let Some(origin) = self.clipboard_paste.take() {
+            egui_winit::clipboard_requests::cancel(context, egui::ViewportId::ROOT, origin.token);
+        }
+    }
+
+    fn cancel_invalid_clipboard_paste(&mut self, context: &egui::Context) {
+        let Some(origin) = self.clipboard_paste else {
+            return;
+        };
+        if !self.terminal_owns_input()
+            || self.state.active() != origin.tab
+            || self.state.input_ownership_epoch() != origin.ownership_epoch
+            || !self.state.session_tab(origin.tab).is_some_and(|session| {
+                session.accepts_input()
+                    && session.controller.lifecycle_generation() == origin.generation
+            })
+        {
+            self.cancel_clipboard_paste(context);
+        }
+    }
+
+    fn complete_clipboard_paste(&mut self, context: &egui::Context) {
+        self.cancel_invalid_clipboard_paste(context);
+        if let Some((token, text)) =
+            egui_winit::clipboard_requests::take_response(context, egui::ViewportId::ROOT)
+        {
+            if self
+                .clipboard_paste
+                .is_some_and(|origin| origin.token == token)
+            {
+                let origin = self.clipboard_paste.take().unwrap();
+                if let Some(text) = text {
+                    self.handle_paste_request(origin.tab, text);
+                }
+            }
+        }
     }
 
     fn toggle_focus_mode(&mut self, context: &egui::Context) {
@@ -4713,6 +4816,7 @@ impl FesTermApp {
         let mut overlay_action = None;
         let paste_was_pending = self.overlays.pending_paste.is_some();
         let mut deferred_pastes = Vec::new();
+        let mut clipboard_read_requested = false;
         let mut deferred_links = Vec::new();
         let chip_layout = self.state.chip_layout();
         let native_store_available = self.native_store_available();
@@ -4865,6 +4969,7 @@ impl FesTermApp {
                             options,
                         );
                         deferred_pastes = session.view.take_paste_requests();
+                        clipboard_read_requested = session.view.take_clipboard_read_request();
                         deferred_links = session.view.take_link_requests();
                     }
                     session
@@ -4898,11 +5003,12 @@ impl FesTermApp {
             // A later clipboard-delivery event invalidates the captured
             // operation. Never replace an open dialog or route a second paste.
             self.cancel_paste_confirmation();
-        } else if terminal_input_target == Some(active_tab_id)
-            && self.terminal_owns_input()
-            && deferred_pastes.len() == 1
-        {
-            self.handle_paste_request(active_tab_id, deferred_pastes.remove(0));
+        }
+        // Untagged Paste events may belong to an old widget request. They
+        // never authorize terminal delivery; native key payloads were handled
+        // in order above, and explicit terminal reads have identified replies.
+        if clipboard_read_requested && terminal_input_target == Some(active_tab_id) {
+            self.paste_into_active_session(ui.ctx());
         }
         for link in deferred_links {
             self.request_external_link(link.as_ref(), ui.ctx());
@@ -5129,6 +5235,7 @@ impl FesTermApp {
             }
         }
 
+        self.complete_clipboard_paste(ui.ctx());
         self.sync_port_forward_manager();
         if self.overlays.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
@@ -5198,6 +5305,7 @@ impl FesTermApp {
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
+            clipboard_paste: None,
             overlays: OverlayState::default(),
             native_menu: festerm_macos_window::NativeMenu::unavailable(),
             wake_monitor: None,
@@ -5268,6 +5376,276 @@ mod tests {
         let (modifiers, key) =
             crate::keyboard::chord(action.default_chord(cfg!(target_os = "macos"))).unwrap();
         keyboard_event(key, modifiers)
+    }
+
+    fn keyboard_clipboard_request(harness: &mut Harness<'static, FesTermApp>) -> u64 {
+        let context = harness.ctx.clone();
+        harness.state_mut().paste_into_active_session(&context);
+        egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT).unwrap()
+    }
+
+    fn keyboard_clipboard_reply(context: &egui::Context, token: u64, text: &str) {
+        egui_winit::clipboard_requests::complete(
+            context,
+            egui::ViewportId::ROOT,
+            token,
+            Some(text.into()),
+        );
+    }
+
+    fn keyboard_second_session(
+        harness: &mut Harness<'static, FesTermApp>,
+    ) -> (TabId, crate::session_controller::fake::FakeSshSession) {
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenLauncher, &context);
+        let transport = crate::session_controller::fake::FakeSshSession::new([]);
+        let tab = harness
+            .state_mut()
+            .state
+            .replace_active_with_test_ssh_session(
+                transport.clone(),
+                "controlled",
+                "second.example.test",
+                22,
+            );
+        (tab, transport)
+    }
+
+    #[test]
+    fn keyboard_delayed_paste_cancels_on_tab_generation_and_owner_changes() {
+        for change in ["tab", "generation", "inspector", "round-trip", "window"] {
+            let (mut harness, first_transport) = keyboard_harness();
+            let first = harness.state().state.active();
+            let context = harness.ctx.clone();
+            let (second, second_transport) = keyboard_second_session(&mut harness);
+            harness
+                .state_mut()
+                .state
+                .dispatch(AppCommand::ActivateTab(first), &context);
+            harness.run();
+            let token = keyboard_clipboard_request(&mut harness);
+            match change {
+                "tab" => harness
+                    .state_mut()
+                    .state
+                    .dispatch(AppCommand::ActivateTab(second), &context),
+                "generation" => harness
+                    .state_mut()
+                    .state
+                    .session_tab_mut(first)
+                    .unwrap()
+                    .controller
+                    .advance_lifecycle_generation(),
+                "round-trip" => {
+                    harness
+                        .state_mut()
+                        .state
+                        .dispatch(AppCommand::ActivateTab(second), &context);
+                    harness
+                        .state_mut()
+                        .state
+                        .dispatch(AppCommand::ActivateTab(first), &context);
+                }
+                "window" => harness.event(egui::Event::WindowFocused(false)),
+                _ => harness
+                    .state_mut()
+                    .state
+                    .dispatch(AppCommand::ToggleSessionInspector, &context),
+            }
+            keyboard_clipboard_reply(&context, token, "controlled-stale-marker");
+            harness.run();
+            assert!(harness.state().clipboard_paste.is_none());
+            assert!(
+                first_transport.sent().is_empty() && second_transport.sent().is_empty(),
+                "{change}"
+            );
+            assert!(harness.state().overlays.pending_paste.is_none());
+        }
+    }
+
+    #[test]
+    fn keyboard_late_or_duplicate_clipboard_callbacks_cannot_fulfil_new_requests() {
+        let (mut harness, first_transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let first = keyboard_clipboard_request(&mut harness);
+        let replacement = keyboard_clipboard_request(&mut harness);
+        assert_ne!(first, replacement);
+        keyboard_clipboard_reply(&context, first, "discard-old");
+        harness.run();
+        assert!(first_transport.sent().is_empty());
+        keyboard_clipboard_reply(&context, replacement, "accepted-first");
+        harness.run();
+        keyboard_clipboard_reply(&context, replacement, "discard-duplicate");
+        harness.run();
+        assert_eq!(first_transport.sent().concat(), b"accepted-first");
+        let cancelled = keyboard_clipboard_request(&mut harness);
+        let (_, second_transport) = keyboard_second_session(&mut harness);
+        harness.run();
+        let second = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, cancelled, "discard-old-session");
+        harness.run();
+        assert!(second_transport.sent().is_empty());
+        assert_eq!(harness.state().clipboard_paste.unwrap().token, second);
+        keyboard_clipboard_reply(&context, second, "accepted-second");
+        harness.run();
+        assert_eq!(second_transport.sent().concat(), b"accepted-second");
+    }
+
+    #[test]
+    fn keyboard_paired_paste_uses_original_payload_before_same_batch_switch() {
+        use festerm_config::KeyboardAction as A;
+        let (mut harness, first_transport) = keyboard_harness();
+        let first = harness.state().state.active();
+        let context = harness.ctx.clone();
+        let (second, second_transport) = keyboard_second_session(&mut harness);
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ActivateTab(first), &context);
+        harness.run();
+        harness.input_mut().events.extend([
+            bound_event(A::Paste),
+            egui::Event::Paste("controlled-original-clipboard".into()),
+            bound_event(A::Quick2),
+        ]);
+        harness.step();
+        assert_eq!(harness.state().state.active(), second);
+        assert_eq!(
+            first_transport.sent().concat(),
+            b"controlled-original-clipboard"
+        );
+        assert!(second_transport.sent().is_empty());
+        assert!(
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT)
+                .is_none()
+        );
+        harness.event(egui::Event::Paste("unauthorized-widget-callback".into()));
+        harness.run();
+        assert!(second_transport.sent().is_empty());
+    }
+
+    #[test]
+    fn keyboard_async_shortcut_then_same_batch_switch_cancels_before_native_read() {
+        use festerm_config::KeyboardAction as A;
+        let (mut harness, first_transport) = keyboard_harness();
+        let first = harness.state().state.active();
+        let context = harness.ctx.clone();
+        let (second, second_transport) = keyboard_second_session(&mut harness);
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ActivateTab(first), &context);
+        let mut bindings = festerm_config::KeyboardBindings::default();
+        bindings.set(A::Paste, Some("Ctrl+Shift+F8".into()));
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::SetKeyboardBindings(bindings), &context);
+        harness.run();
+        harness.input_mut().events.extend([
+            keyboard_event(
+                egui::Key::F8,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            ),
+            bound_event(A::Quick2),
+        ]);
+        harness.step();
+        assert_eq!(harness.state().state.active(), second);
+        assert!(harness.state().clipboard_paste.is_none());
+        assert!(
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT)
+                .is_none()
+        );
+        assert!(first_transport.sent().is_empty() && second_transport.sent().is_empty());
+    }
+
+    #[test]
+    fn keyboard_identified_paste_preserves_confirmation_and_generation_safety() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        let token = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, token, "controlled-one\ncontrolled-two");
+        harness.run();
+        assert!(transport.sent().is_empty());
+        assert!(harness.state().overlays.pending_paste.is_some());
+        harness.get_by_label("Paste").click();
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"controlled-one\ncontrolled-two");
+        let token = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, token, "discard-one\ndiscard-two");
+        harness.run();
+        let tab = harness.state().state.active();
+        harness
+            .state_mut()
+            .state
+            .session_tab_mut(tab)
+            .unwrap()
+            .controller
+            .advance_lifecycle_generation();
+        harness.run();
+        assert!(harness.state().overlays.pending_paste.is_none());
+        assert_eq!(transport.sent().concat(), b"controlled-one\ncontrolled-two");
+        let token = keyboard_clipboard_request(&mut harness);
+        keyboard_clipboard_reply(&context, token, "discard-round\ntrip");
+        harness.run();
+        keyboard_second_session(&mut harness);
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ActivateTab(tab), &context);
+        harness.run();
+        assert!(
+            harness.state().overlays.pending_paste.is_none(),
+            "returning to the origin does not revive a confirmation"
+        );
+        assert_eq!(transport.sent().concat(), b"controlled-one\ncontrolled-two");
+    }
+
+    #[test]
+    fn keyboard_native_menu_and_local_gestures_request_identified_clipboard_reads() {
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .dispatch_native_menu_command(festerm_macos_window::NativeMenuCommand::Paste, &context);
+        let token =
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT).unwrap();
+        keyboard_clipboard_reply(&context, token, "native-menu");
+        harness.run();
+        let grid = harness.get_by_label("Terminal viewport").rect();
+        harness.event(egui::Event::PointerMoved(grid.center()));
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.event(egui::Event::PointerButton {
+            pos: grid.center(),
+            button: egui::PointerButton::Middle,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let token =
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT).unwrap();
+        keyboard_clipboard_reply(&context, token, "middle-click");
+        harness.run();
+        harness.get_by_label("Terminal viewport").click_secondary();
+        harness.run();
+        harness.get_by_label("Paste").click();
+        harness.run();
+        let token =
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT).unwrap();
+        keyboard_clipboard_reply(&context, token, "context-menu");
+        harness.run();
+        assert_eq!(
+            transport.sent().concat(),
+            b"native-menumiddle-clickcontext-menu"
+        );
     }
 
     #[test]
@@ -7122,18 +7500,16 @@ mod tests {
     #[test]
     fn paste_palette_command_requests_an_os_clipboard_paste() {
         const PASTE: u64 = 14;
-        let context = egui::Context::default();
-        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
-
-        app.dispatch_palette_selection(PASTE, &context);
-        context.viewport(|viewport| {
-            assert!(
-                viewport
-                    .commands
-                    .contains(&egui::ViewportCommand::RequestPaste),
-                "selecting Paste must ask the OS to deliver clipboard contents"
-            );
-        });
+        let (mut harness, transport) = keyboard_harness();
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .dispatch_palette_selection(PASTE, &context);
+        let token =
+            egui_winit::clipboard_requests::take_request(&context, egui::ViewportId::ROOT).unwrap();
+        keyboard_clipboard_reply(&context, token, "controlled-palette");
+        harness.run();
+        assert_eq!(transport.sent().concat(), b"controlled-palette");
     }
 
     #[test]
