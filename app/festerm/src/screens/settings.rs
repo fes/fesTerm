@@ -233,9 +233,10 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             if settings_toggle_row(
                                 ui,
                                 "Compact New Session layout",
-                                "Drop the descriptions from the New Session tab's launch \
-                                 cards so the saved-profile and running-session panels \
-                                 start higher up the window. Off by default.",
+                                "Shrink the New Session tab's launch cards so the \
+                                 saved-profile and running-session panels start higher \
+                                 up the window. Card descriptions are kept. Off by \
+                                 default.",
                                 compact_launcher_grid,
                             ) {
                                 command = Some(AppCommand::ToggleCompactLauncherGrid);

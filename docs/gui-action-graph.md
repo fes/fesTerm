@@ -398,8 +398,9 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 
 `MD-01` is resolved by the approved readability-first design in
 `docs/markdown-viewer-design.md`. The local runtime viewer now makes `MD-02`,
-`MD-04`, `MD-05`, and `MD-06` testable; `MD-03` remains deferred until the
-planned GUI SFTP browser can surface a concrete remote-file selection action.
+`MD-04`, `MD-05`, and `MD-06` testable. The GUI SFTP browser's double-click
+route (`SFTPG-05`) now supplies the concrete remote-file selection action, so
+`MD-03` is testable too, though still only partially covered.
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
@@ -422,7 +423,7 @@ it has no implemented control yet.
 | Session Launcher and lifecycle | `LAUNCH-*`, `ROOT-03..06` |
 | Primary layout, chrome, context menus, platform menus, About, status | `WIN-*`, `MENU-*`, `TERM-08`, `CHIP-*`, `SET-02` |
 | Tab model, identity, icons, states, overflow/wrapping | `CHIP-*`, `BELL-*`, `VIS-01`, `A11Y-01` |
-| Local / SSH / Serial creation | `LOCAL-*`, `LAUNCH-*`, `TRUST-*`, `AUTH-*`, `SSH-*`, `SERIAL-*` |
+| Local / SSH / Serial creation | `LOCAL-*`, `LAUNCH-*`, `TRUST-*`, `AUTH-*`, `SSH-*`, `SERIAL-*`, `SFTPG-*` |
 | Profile editing | `PROF-*` |
 | Settings / configuration recovery | `SET-*`, `CONF-*` |
 | Workspace restore/failure/identity | `WORK-*` |
@@ -430,7 +431,7 @@ it has no implemented control yet.
 | Contextual notification and persistent status bar | `STATUS-*`, `SET-02` |
 | Visual language, color, density, typography | `VIS-01`, `TYPE-01`, `A11Y-03`, `WIN-03` |
 | Terminal typography, scheme, cursor | `TYPE-*`, `ZOOM-*`, `SCHEME-01`, `CURSOR-01` |
-| Keyboard, palette, search | `KEY-01`, `PAL-*`, `SEARCH-*` |
+| Keyboard, palette, search | `KEY-*`, `PAL-*`, `SEARCH-*` |
 | Clipboard, IME, paste | `TERM-03`, `TERM-06..07`, `PASTE-*` |
 | Scrollback, background output, links, bell, mouse, focus | `HIST-*`, `TERM-02/05`, `BELL-*`, `CHIP-01`, `INSP-04` |
 | Fullscreen/focus mode, closing/quitting, OS title | `WIN-04`, `FOCUS-*`, `CLOSE-*`, `STOP-01`, `QUIT-*`, `PRIV-01` |
