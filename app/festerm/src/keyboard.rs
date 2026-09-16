@@ -498,34 +498,26 @@ fn keycap_token(part: &str) -> String {
     .to_owned()
 }
 
-/// Keycap slots, in display order: portable modifier, macOS Control,
-/// Alt/Option, Shift, then the key itself. Every row reserves the same slot
-/// for the same modifier, so the key column runs straight down the table
-/// instead of floating wherever a row's modifier count leaves it.
+/// Keycap columns are counted from the right: column 0 is the key itself,
+/// column 1 the modifier before it, and so on. Chords are right-anchored and
+/// read as one unit, so compacting from the key outwards keeps each chord
+/// contiguous and keeps the key column — the one people scan — straight,
+/// without every row reserving space for modifiers it does not use.
 const CHORD_SLOTS: usize = 5;
 /// Gap between two occupied keycap columns.
 const CHORD_COLUMN_GAP: f32 = 6.0;
 
 fn keycap_slots(chord: &str) -> [Option<String>; CHORD_SLOTS] {
     let mut slots: [Option<String>; CHORD_SLOTS] = Default::default();
-    if chord.is_empty() {
-        return slots;
+    for (column, part) in chord
+        .split('+')
+        .filter(|part| !part.is_empty())
+        .rev()
+        .enumerate()
+        .take(CHORD_SLOTS)
+    {
+        slots[column] = Some(keycap_token(part));
     }
-    let parts: Vec<&str> = chord.split('+').collect();
-    let (modifiers, key) = parts.split_at(parts.len() - 1);
-    for part in modifiers {
-        let slot = match *part {
-            "Primary" | "Command" => 0,
-            // Off macOS, Primary *is* Ctrl, so both spellings render the same
-            // token and must share one column rather than sit in two.
-            "Ctrl" if cfg!(target_os = "macos") => 1,
-            "Ctrl" => 0,
-            "Alt" => 2,
-            _ => 3,
-        };
-        slots[slot] = Some(keycap_token(part));
-    }
-    slots[CHORD_SLOTS - 1] = Some(keycap_token(key[0]));
     slots
 }
 
@@ -673,10 +665,11 @@ fn show_row(
                 // would double-count between cells.
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let slots = keycap_slots(chord);
-                // Reversed: a right-to-left layout consumes children from the
-                // right edge inwards, so the key column is added first.
+                // A right-to-left layout consumes children from the right
+                // edge inwards, which is the same order the columns are
+                // numbered in.
                 let mut gap = false;
-                for slot in (0..CHORD_SLOTS).rev() {
+                for slot in 0..CHORD_SLOTS {
                     if columns[slot] <= 0.0 {
                         continue;
                     }
@@ -899,9 +892,16 @@ pub fn show_editor(
     });
 
     if let Some(action) = chosen {
-        editor.selected = Some(action);
-        editor.draft = bindings.effective(action, mac).into();
-        editor.feedback = None;
+        // Clicking the open action again closes it: the row is the control
+        // that opened the editor, so it is also the one to shut it.
+        if editor.selected == Some(action) {
+            editor.selected = None;
+            editor.feedback = None;
+        } else {
+            editor.selected = Some(action);
+            editor.draft = bindings.effective(action, mac).into();
+            editor.feedback = None;
+        }
         editor.recording = false;
     }
 
@@ -1409,43 +1409,40 @@ mod tests {
     }
 
     #[test]
-    fn chord_keycaps_occupy_one_column_per_modifier_slot() {
+    fn chord_keycaps_compact_into_columns_anchored_on_the_key() {
         let mac = cfg!(target_os = "macos");
-        let key = CHORD_SLOTS - 1;
+        let primary = if mac { "⌘" } else { "Ctrl" };
+
+        // Column 0 is the key, and every chord fills leftwards from it, so
+        // the key column stays straight no matter how many modifiers precede
+        // it and no row reserves space for modifiers it does not use.
         let palette = keycap_slots("Primary+Shift+P");
-        assert_eq!(palette[0].as_deref(), Some(if mac { "⌘" } else { "Ctrl" }));
-        assert_eq!(palette[3].as_deref(), Some("Shift"));
-        assert_eq!(palette[key].as_deref(), Some("P"));
+        assert_eq!(palette[0].as_deref(), Some("P"));
+        assert_eq!(palette[1].as_deref(), Some("Shift"));
+        assert_eq!(palette[2].as_deref(), Some(primary));
         assert!(
-            palette[1].is_none() && palette[2].is_none(),
-            "unused modifier columns stay empty so occupied ones line up"
-        );
-        assert_eq!(
-            keycap_slots("Primary+T")[key].as_deref(),
-            Some("T"),
-            "a shorter chord must still put its key in the key column"
+            palette[3].is_none() && palette[4].is_none(),
+            "unused columns must be the outermost ones, not gaps inside the chord"
         );
 
-        let control = keycap_slots("Ctrl+Shift+Tab");
-        assert_eq!(control[3].as_deref(), Some("Shift"));
-        assert_eq!(control[key].as_deref(), Some("Tab"));
-        if mac {
-            assert_eq!(
-                control[1].as_deref(),
-                Some("Control"),
-                "macOS Control is its own key and needs its own column"
-            );
-            assert!(control[0].is_none());
-        } else {
-            assert_eq!(
-                control[0].as_deref(),
-                Some("Ctrl"),
-                "off macOS Primary is Ctrl, so both spellings share one column"
-            );
-            assert!(control[1].is_none());
-        }
+        let short = keycap_slots("Primary+O");
+        assert_eq!(short[0].as_deref(), Some("O"), "the key shares one column");
         assert_eq!(
-            keycap_slots("Primary+Alt+R")[2].as_deref(),
+            short[1].as_deref(),
+            Some(primary),
+            "a shorter chord compacts towards the key rather than leaving a hole"
+        );
+        assert!(short[2].is_none());
+
+        let control = keycap_slots("Ctrl+Shift+Tab");
+        assert_eq!(control[0].as_deref(), Some("Tab"));
+        assert_eq!(control[1].as_deref(), Some("Shift"));
+        assert_eq!(
+            control[2].as_deref(),
+            Some(if mac { "Control" } else { "Ctrl" })
+        );
+        assert_eq!(
+            keycap_slots("Primary+Alt+R")[1].as_deref(),
             Some(if mac { "Option" } else { "Alt" })
         );
         assert!(
@@ -1453,21 +1450,46 @@ mod tests {
             "an unbound action occupies no column"
         );
 
-        // Every slot a default chord uses must be one the renderer knows, or
-        // a keycap would silently land in the wrong column.
+        // Every default chord must fit the columns the renderer reserves, or
+        // a keycap would be dropped instead of drawn.
         for action in Action::ALL {
             let chord = action.default_chord(mac);
-            let slots = keycap_slots(chord);
-            assert_eq!(
-                slots.iter().filter(|slot| slot.is_some()).count(),
-                if chord.is_empty() {
-                    0
-                } else {
-                    chord.split('+').count()
-                },
-                "every part of {chord} needs a distinct column"
-            );
+            let drawn = keycap_slots(chord)
+                .iter()
+                .filter(|slot| slot.is_some())
+                .count();
+            let expected = if chord.is_empty() {
+                0
+            } else {
+                chord.split('+').count()
+            };
+            assert_eq!(drawn, expected, "every part of {chord} needs a column");
+            assert!(expected <= CHORD_SLOTS);
         }
+    }
+
+    #[test]
+    fn clicking_the_open_action_again_closes_its_editor() {
+        let mut harness = editor_harness();
+        harness.run();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.query_all_by_label("Binding chord").count(),
+            1,
+            "the first click must open the editor"
+        );
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, "New Session")
+            .click();
+        harness.run();
+        assert_eq!(
+            harness.query_all_by_label("Binding chord").count(),
+            0,
+            "clicking the open action again must close it"
+        );
     }
 
     #[test]

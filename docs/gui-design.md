@@ -1453,12 +1453,17 @@ The action table is not separately scrollable: the Settings page already
 scrolls, and a short nested viewport made the catalogue painful to page
 through. Selecting a row expands its editor in place, directly beneath that
 row, so assigning a binding never means scrolling away from the action being
-changed; choosing another action closes the one already open. Each row carries
+changed; choosing another action closes the one already open, and choosing the
+open action again closes it. Each row carries
 a gutter dot and a **Customized** badge when its chord differs from the
 default, so "what have I changed?" is answerable by scanning the list rather
-than by opening each action. Keycaps sit in fixed columns — one per modifier
-slot, then the key — measured across every visible row, so the key column runs
-straight down the table instead of floating with each row's modifier count.
+than by opening each action. Keycaps sit in fixed-width columns counted from
+the right — column zero is the key, and each chord fills leftwards from it —
+measured across every visible row. Anchoring on the key keeps the column
+people actually scan straight down the table while each chord stays one
+contiguous group; reserving a column per modifier instead would make every
+row hold space for modifiers it does not use and split short chords across
+gaps.
 A chord is set either by typing it or by **Press keys**, which
 captures the next combination pressed; while capturing, those keys are taken
 by the editor instead of being dispatched, so binding a shortcut cannot also
