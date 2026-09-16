@@ -30,6 +30,9 @@ use windows_sys::Win32::System::Threading::{
     CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
 };
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 use festerm_pty::default_local_profile;
 use festerm_ssh::PersistentSessionName;
 use fs2::FileExt;
@@ -1307,6 +1310,9 @@ fn retire_active(
     stolen: bool,
 ) {
     if let Some(previous) = active.take() {
+        // The store must precede the drop: `client_io_loop`'s disconnect paths
+        // re-read this flag to decide whether the retired client is owed a
+        // notice, and they only run once the sender below is gone.
         previous.stolen.store(stolen, Ordering::Release);
         drop(previous.output);
         retired_clients.push(previous.thread);
@@ -1482,6 +1488,54 @@ fn is_retryable_client_write(error: &io::Error) -> bool {
     )
 }
 
+fn write_stolen_notice<S: Write>(stream: &mut S) -> io::Result<()> {
+    stream.write_all(STOLEN_NOTICE_BYTES)?;
+    #[cfg(not(windows))]
+    stream.flush()?;
+    Ok(())
+}
+
+/// Decides how a worker exits once one of the daemon's channels has closed.
+///
+/// [`retire_active`] sets `stolen` and *then* drops the channels, so a worker
+/// that passed its `stolen` check microseconds before the takeover observes the
+/// disconnect rather than the flag. Re-checking here keeps the invariant that a
+/// stolen client is owed exactly one notice, while an ordinary daemon shutdown
+/// (flag clear, as in the failed-replay path of [`replace_active`]) still exits
+/// silently instead of fabricating one.
+fn finish_disconnected_client<S: Write>(stream: &mut S, stolen: &AtomicBool) -> io::Result<()> {
+    if !stolen.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    write_stolen_notice(stream)
+}
+
+// Test seam that makes the takeover race above reproducible: it runs in the
+// window between the worker's `stolen` check and its `output` poll, which is
+// otherwise too narrow to schedule deterministically. Compiled away entirely
+// outside tests.
+#[cfg(test)]
+thread_local! {
+    static BEFORE_OUTPUT_POLL: RefCell<Option<Box<dyn FnMut()>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_before_output_poll_hook(hook: impl FnMut() + 'static) {
+    BEFORE_OUTPUT_POLL.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[inline]
+fn before_output_poll() {
+    #[cfg(test)]
+    BEFORE_OUTPUT_POLL.with(|slot| {
+        if let Ok(mut slot) = slot.try_borrow_mut() {
+            if let Some(hook) = slot.as_mut() {
+                hook();
+            }
+        }
+    });
+}
+
 fn client_io_loop<S: Read + Write>(
     mut stream: S,
     generation: u64,
@@ -1495,10 +1549,7 @@ fn client_io_loop<S: Read + Write>(
     let mut buffer = [0u8; 4096];
     'client: loop {
         if stolen.load(Ordering::Acquire) {
-            stream.write_all(STOLEN_NOTICE_BYTES)?;
-            #[cfg(not(windows))]
-            stream.flush()?;
-            return Ok(());
+            return write_stolen_notice(&mut stream);
         }
         loop {
             if stolen.load(Ordering::Acquire) {
@@ -1535,7 +1586,9 @@ fn client_io_loop<S: Read + Write>(
                     pending_input = Some(command);
                     break;
                 }
-                Err(mpsc::TrySendError::Disconnected(_)) => return Ok(()),
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return finish_disconnected_client(&mut stream, &stolen)
+                }
             }
         }
         for _ in 0..CLIENT_QUEUE_CAPACITY {
@@ -1543,6 +1596,7 @@ fn client_io_loop<S: Read + Write>(
                 continue 'client;
             }
             if pending_output.is_none() {
+                before_output_poll();
                 match output.try_recv() {
                     Ok(ClientOutput::Data(data)) => {
                         sessiond_trace(format_args!(
@@ -1552,7 +1606,9 @@ fn client_io_loop<S: Read + Write>(
                         pending_output = Some((data, 0));
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return finish_disconnected_client(&mut stream, &stolen)
+                    }
                 }
             }
             let (data, written) = pending_output
@@ -2927,6 +2983,37 @@ mod tests {
             assert_eq!(written, b"duplex output");
             assert_eq!(reads.get(), 1);
         }
+    }
+
+    /// A takeover sets `stolen` and only then drops the output sender, so a
+    /// worker that polls `output` an instant after passing its own `stolen`
+    /// check observes the disconnect rather than the flag. It is still owed the
+    /// notice. The hook reproduces that interleaving exactly, without sleeps.
+    #[test]
+    fn a_takeover_during_the_output_poll_still_sends_the_stolen_notice() {
+        let (input, _commands) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (output, received_output) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let stolen = Arc::new(AtomicBool::new(false));
+        let takeover_stolen = Arc::clone(&stolen);
+        let mut output = Some(output);
+        set_before_output_poll_hook(move || {
+            if let Some(output) = output.take() {
+                takeover_stolen.store(true, Ordering::Release);
+                drop(output);
+            }
+        });
+
+        let mut written = Vec::new();
+        let stream = ClientTestStream {
+            input: io::Cursor::new(Vec::new()),
+            reads: Rc::new(Cell::new(0)),
+            output_on_read: None,
+            on_write: |bytes: &[u8]| written.extend_from_slice(bytes),
+        };
+
+        client_io_loop(stream, 7, input, received_output, Arc::clone(&stolen)).unwrap();
+
+        assert_eq!(written, STOLEN_NOTICE_BYTES);
     }
 
     #[test]

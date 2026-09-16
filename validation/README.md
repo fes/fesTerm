@@ -102,3 +102,18 @@ python scripts/build_ui_state_doc.py --check
 That check only compares the committed document against the committed manifest
 and images; it does not render, so it needs no GPU. Re-running the capture step
 is a local or VM operation.
+
+## Soak scripts
+
+Some defects only appear under a particular thread interleaving. Where the
+interleaving can be forced, the regression lives in the crate's own test suite
+and runs in CI. Where it cannot, a soak script repeats the end-to-end test often
+enough to make a reopened window visible:
+
+```text
+./scripts/stress-sessiond-takeover.sh 200
+```
+
+That one covers durable-session takeover, where a client being replaced must
+still receive `SESSION_STOLEN`. It is a qualification aid, not a CI gate: run it
+on each platform after touching `client_io_loop` or the retirement path.

@@ -1260,6 +1260,7 @@
         "reconnect_boundary_discards_pending_input_without_replaying_it",
         "disconnected_native_session_offers_resume_in_the_inspector",
         "second_client_replaces_first_client_and_first_receives_stolen_notice",
+        "a_takeover_during_the_output_poll_still_sends_the_stolen_notice",
         "local_children_identify_festerm_and_drop_an_inherited_terminal_session",
         "profiles_delete_flow_returns_a_delete_profile_command",
         "local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path",
