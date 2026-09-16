@@ -1675,6 +1675,54 @@ pub(crate) async fn read_local_directory_snapshot(
     })
 }
 
+/// Synchronous counterpart to [`read_local_directory_snapshot`] for callers
+/// without a `tokio` runtime (for example, blocking GUI background threads).
+///
+/// Unlike the async version, this does not canonicalize `path`: the
+/// snapshot's path is the literal path the caller navigated to, and entry
+/// sizes are only populated for regular files (directories and other entry
+/// types report no size), matching what the caller displays.
+pub fn read_local_directory_snapshot_sync(
+    path: &Path,
+) -> Result<SftpDirectorySnapshot, SftpSessionError> {
+    let metadata =
+        std::fs::metadata(path).map_err(|error| SftpSessionError::LocalDirectoryUnavailable {
+            path: display_path(path),
+            reason: error.to_string(),
+        })?;
+    if !metadata.is_dir() {
+        return Err(SftpSessionError::LocalPathNotDirectory {
+            path: display_path(path),
+        });
+    }
+
+    let mut entries = Vec::new();
+    for entry in
+        std::fs::read_dir(path).map_err(|error| local_error("list directory", path, error))?
+    {
+        let entry = entry.map_err(|error| local_error("list directory", path, error))?;
+        let entry_path = entry.path();
+        let entry_metadata = std::fs::symlink_metadata(&entry_path)
+            .map_err(|error| local_error("inspect path", &entry_path, error))?;
+        entries.push(SftpDirectoryItem {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            path: SftpPath::local(entry_path),
+            file_type: local_entry_type(entry_metadata.file_type()),
+            size: entry_metadata.is_file().then_some(entry_metadata.len()),
+            modified_at: entry_metadata.modified().ok(),
+            permissions: local_permissions(&entry_metadata),
+        });
+    }
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+
+    Ok(SftpDirectorySnapshot {
+        location: SftpLocation::Local,
+        path: SftpPath::local(path.to_path_buf()),
+        loaded_at: SystemTime::now(),
+        entries,
+    })
+}
+
 fn local_directory_item(
     name: String,
     path: &Path,

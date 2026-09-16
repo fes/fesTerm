@@ -5171,39 +5171,7 @@ fn local_snapshot_and_metadata(
 }
 
 fn read_local_snapshot(path: &Path) -> Result<SftpDirectorySnapshot, String> {
-    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
-    if !metadata.is_dir() {
-        return Err(format!("{} is not a directory", path.display()));
-    }
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let entry_path = entry.path();
-        let metadata = fs::symlink_metadata(&entry_path).map_err(|error| error.to_string())?;
-        let file_type = if metadata.file_type().is_dir() {
-            SftpEntryType::Directory
-        } else if metadata.file_type().is_file() {
-            SftpEntryType::File
-        } else if metadata.file_type().is_symlink() {
-            SftpEntryType::Symlink
-        } else {
-            SftpEntryType::Other
-        };
-        entries.push(SftpDirectoryItem {
-            name: entry.file_name().to_string_lossy().into_owned(),
-            path: SftpPath::local(entry_path),
-            file_type,
-            size: metadata.is_file().then_some(metadata.len()),
-            modified_at: metadata.modified().ok(),
-            permissions: None,
-        });
-    }
-    Ok(SftpDirectorySnapshot {
-        location: SftpLocation::Local,
-        path: SftpPath::local(path.to_path_buf()),
-        loaded_at: SystemTime::now(),
-        entries,
-    })
+    festerm_ssh::read_local_directory_snapshot_sync(path).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
