@@ -4265,13 +4265,6 @@ pub fn show_settings(
                         ui.heading("Settings");
                         ui.add_space(2.0);
 
-                        settings_card(ui, "Keyboard bindings", |ui| {
-                            if let Some(action) = crate::keyboard::show_editor(ui, &keyboard_bindings) {
-                                command = Some(action);
-                            }
-                        });
-                        ui.add_space(12.0);
-
                         settings_card(ui, "Interface", |ui| {
                             if settings_segmented_row(
                                 ui,
@@ -4655,6 +4648,16 @@ pub fn show_settings(
                                 ui.colored_label(theme::STATUS_ERROR, feedback);
                             }
                         });
+
+                        ui.add_space(12.0);
+
+                        settings_card(ui, "Keyboard bindings", |ui| {
+                            if let Some(action) =
+                                crate::keyboard::show_editor(ui, &keyboard_bindings)
+                            {
+                                command = Some(action);
+                            }
+                        });
                     });
                 });
         });
@@ -4677,16 +4680,25 @@ const fn terminal_font_label(font: TerminalFontPreference) -> &'static str {
 /// Settings groups related controls the same way the rest of the app does
 /// instead of a flat, plain list of buttons.
 fn settings_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
+    let _ = settings_card_response(ui, title, body);
+}
+
+fn settings_card_response(
+    ui: &mut Ui,
+    title: &str,
+    body: impl FnOnce(&mut Ui),
+) -> egui::InnerResponse<()> {
     egui::Frame::new()
         .fill(theme::SURFACE_TAB_INACTIVE)
         .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ssh_section_heading(ui, title);
             ui.add_space(6.0);
             body(ui);
-        });
+        })
 }
 
 /// One labeled on/off preference row: a fixed title and state-independent
@@ -6709,6 +6721,58 @@ mod tests {
 
         assert!(harness.query_by_label("Open Settings").is_some());
         assert!(harness.query_by_label("Cmd+Shift+S").is_some());
+    }
+
+    #[test]
+    fn settings_keyboard_bindings_card_is_last() {
+        let mut harness = wide_settings_harness();
+        harness.run();
+
+        let keyboard_top = harness.get_by_label("KEYBOARD BINDINGS").rect().top();
+        for earlier_card in [
+            "INTERFACE",
+            "SCROLLING",
+            "TERMINAL TYPOGRAPHY",
+            "KEYBOARD",
+            "SFTP",
+        ] {
+            assert!(
+                harness.get_by_label(earlier_card).rect().top() < keyboard_top,
+                "{earlier_card} must appear before Keyboard bindings"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_cards_fill_the_same_available_width() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(640.0, 320.0))
+            .build_ui_state(
+                |ui, widths: &mut Option<(f32, f32)>| {
+                    let short = settings_card_response(ui, "Short", |ui| {
+                        ui.label("Short content");
+                    })
+                    .response
+                    .rect
+                    .width();
+                    ui.add_space(12.0);
+                    let long = settings_card_response(ui, "Long", |ui| {
+                        ui.label("Long content that would otherwise determine a wider card");
+                    })
+                    .response
+                    .rect
+                    .width();
+                    *widths = Some((short, long));
+                },
+                None,
+            );
+        harness.run();
+
+        let (short, long) = harness.state().expect("both settings cards render");
+        assert!(
+            (short - long).abs() < 0.1,
+            "card widths differ: {short} vs {long}"
+        );
     }
 
     #[test]
