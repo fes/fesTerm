@@ -1,6 +1,7 @@
 mod confirmations;
 
 use std::{
+    rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
@@ -9,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::documents::{DocumentRegistry, SharedDocuments};
 use eframe::egui;
 use festerm_config::{
     Configuration, EmojiPresentationPreference, InterfaceSettings, PersistenceProviderKind,
@@ -370,6 +372,11 @@ pub struct FesTermApp {
     /// content-free status so local sessions and the rest of the app stay
     /// available.
     secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
+    /// Every open text document in the whole application (ADR 0034 §2). Held
+    /// by the window but owned by the process, so a file opened in two windows
+    /// is one buffer with one undo history rather than two that silently
+    /// overwrite each other.
+    documents: SharedDocuments,
     secure_storage_feedback: Option<&'static str>,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
@@ -613,6 +620,7 @@ impl FesTermApp {
         configuration_status: ConfigurationStartupStatus,
         configuration_reloader: ConfigurationReloader,
         secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
+        documents: SharedDocuments,
     ) -> Self {
         let mut window = Self::with_configuration_status_and_secret_store(
             context,
@@ -624,6 +632,9 @@ impl FesTermApp {
             secret_store,
         );
         window.configuration_reloader = configuration_reloader;
+        // The registry is application-scoped: a second window joins the one
+        // that already exists rather than starting its own.
+        window.documents = documents;
         window.role = WindowRole::Secondary;
         // The native menu bar, the wake monitor, and native-window smoke stay
         // with the primary window; a secondary window shares the process and
@@ -739,6 +750,7 @@ impl FesTermApp {
             configuration_status,
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store,
+            documents: DocumentRegistry::shared(),
             secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
@@ -1217,12 +1229,14 @@ impl FesTermApp {
         ConfigurationStartupStatus,
         ConfigurationReloader,
         Result<Arc<dyn SecretStore>, SecretStoreError>,
+        SharedDocuments,
     ) {
         (
             self.state.configuration().clone(),
             self.configuration_status,
             self.configuration_reloader.clone(),
             self.secret_store.clone(),
+            Rc::clone(&self.documents),
         )
     }
 
@@ -5434,6 +5448,11 @@ impl FesTermApp {
         self.state.replace_configuration(configuration);
     }
 
+    #[cfg(test)]
+    pub(crate) const fn documents_for_test(&self) -> &SharedDocuments {
+        &self.documents
+    }
+
     pub(crate) const fn accept_window_close_for_test(&mut self) {
         self.window_close_accepted = true;
     }
@@ -5449,6 +5468,7 @@ impl FesTermApp {
             configuration_status: ConfigurationStartupStatus::Missing,
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store: Ok(Arc::new(MemorySecretStore::new())),
+            documents: DocumentRegistry::shared(),
             secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,

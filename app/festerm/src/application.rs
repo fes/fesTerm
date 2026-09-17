@@ -373,13 +373,19 @@ impl FesTermApplication {
         // Without this, opening a window from an otherwise idle application
         // leaves egui with no reason to repaint and the window never appears.
         context.request_repaint();
-        let (configuration, status, reloader, secret_store) =
+        let (configuration, status, reloader, secret_store, documents) =
             self.windows[0].app.shared_application_services();
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
         tracing::info!(target: "festerm::app", window = id.0, "opening an additional window");
-        let mut app =
-            FesTermApp::secondary_window(context, configuration, status, reloader, secret_store);
+        let mut app = FesTermApp::secondary_window(
+            context,
+            configuration,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
         if let Some(tab) = detached {
             app.adopt_detached_tab(tab);
         }
@@ -502,6 +508,47 @@ mod tests {
         let opened = application.window_mut(1);
         assert_eq!(opened.tab_count_for_test(), 1);
         assert!(opened.active_tab_is_launcher_for_test());
+    }
+
+    /// ADR 0034 §2: a file opened in two windows is one document. Two
+    /// registries would mean two undo histories and two chances to overwrite
+    /// the other window's work.
+    #[test]
+    fn every_window_shares_one_document_registry() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-shared-documents-{}-{}",
+            std::process::id(),
+            application.window_count()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("notes.md");
+        std::fs::write(&path, "alpha\n").unwrap();
+
+        let first = application
+            .window_mut(0)
+            .documents_for_test()
+            .borrow_mut()
+            .open_local(&path)
+            .unwrap();
+        let second = application
+            .window_mut(1)
+            .documents_for_test()
+            .borrow_mut()
+            .open_local(&path)
+            .unwrap();
+
+        assert_eq!(first, second);
+        let documents = application.window_mut(1).documents_for_test().borrow();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents.get(second).unwrap().views(), 2);
+        drop(documents);
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// Issue #119's central requirement: a setting changed in one window

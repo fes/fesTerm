@@ -13,6 +13,8 @@ mod discovery;
 // once the editor tab lands; the allowance goes with it.
 #[allow(dead_code)]
 mod document_store;
+#[allow(dead_code)]
+mod documents;
 mod environment;
 mod inspector;
 mod keyboard;
