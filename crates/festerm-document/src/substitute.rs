@@ -89,7 +89,44 @@ impl SubstituteCommand {
         };
         let (pattern, rest) = take_delimited(rest)?;
         let (replacement, replacement_tokens, flags_text) = take_replacement_delimited(rest)?;
-        let flags = parse_flags(flags_text)?;
+        Self::from_tokens(
+            pattern,
+            replacement,
+            range,
+            parse_flags(flags_text)?,
+            replacement_tokens,
+        )
+    }
+
+    /// Builds a substitution from already-separated Find/Replace fields.
+    ///
+    /// Toolbar callers already own literal pattern and replacement strings, so
+    /// routing them through a synthetic `:%s/.../.../` command would add a
+    /// fragile delimiter-escaping round trip. This constructor shares the same
+    /// replacement token model as `parse`, preserving ADR 0034 §10a's one
+    /// dialect while avoiding command-line delimiter syntax entirely.
+    pub fn from_parts(
+        pattern: &str,
+        replacement: &str,
+        range: SubstituteRange,
+        flags: SubstituteFlags,
+    ) -> Result<Self, SubstituteError> {
+        Self::from_tokens(
+            pattern.to_owned(),
+            replacement.to_owned(),
+            range,
+            validate_flags(flags)?,
+            tokenize_literal_replacement(replacement)?,
+        )
+    }
+
+    fn from_tokens(
+        pattern: String,
+        replacement: String,
+        range: SubstituteRange,
+        flags: SubstituteFlags,
+        replacement_tokens: Vec<ReplacementToken>,
+    ) -> Result<Self, SubstituteError> {
         Ok(Self {
             range,
             pattern,
@@ -297,66 +334,37 @@ fn take_replacement_delimited(
     input: &str,
 ) -> Result<(String, Vec<ReplacementToken>, &str), SubstituteError> {
     let mut display = String::new();
-    let mut tokens = Vec::new();
-    let mut literal = String::new();
+    let mut token_source = String::new();
     let mut chars = input.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
         match ch {
             '/' => {
-                push_literal(&mut tokens, &mut literal);
-                return Ok((display, tokens, &input[index + ch.len_utf8()..]));
+                return Ok((
+                    display,
+                    tokenize_command_replacement(&token_source)?,
+                    &input[index + ch.len_utf8()..],
+                ));
             }
-            '\\' => match chars.next() {
+            '\\' => match chars.peek().copied() {
                 Some((_, '/')) => {
-                    literal.push('/');
+                    chars.next();
                     display.push('/');
+                    token_source.push('/');
                 }
                 Some((_, '\\')) => {
-                    literal.push('\\');
+                    chars.next();
                     display.push('\\');
+                    token_source.push('\\');
+                    token_source.push('\\');
                 }
-                Some((_, ch @ '1'..='9')) => {
-                    push_literal(&mut tokens, &mut literal);
-                    tokens.push(ReplacementToken::CaptureIndex(ch as usize - '0' as usize));
+                _ => {
                     display.push('\\');
-                    display.push(ch);
-                }
-                Some((_, '&')) => {
-                    literal.push('&');
-                    display.push('&');
-                }
-                Some((_, 'u' | 'U' | 'l' | 'L' | 'e' | 'E')) => {
-                    return Err(SubstituteError::new(
-                        "Case-conversion replacements are not supported",
-                        "ADR 0034 keeps substitution literal and capture-based only; \\u, \\U, \\l, \\L, and related escapes are rejected.",
-                    ));
-                }
-                Some((_, '=')) => {
-                    return Err(SubstituteError::new(
-                        "Expression replacements are not supported",
-                        "Substitutions cannot evaluate expressions or shell out; use literal text and capture references only.",
-                    ));
-                }
-                Some((_, escaped)) => {
-                    literal.push('\\');
-                    literal.push(escaped);
-                    display.push('\\');
-                    display.push(escaped);
-                }
-                None => {
-                    literal.push('\\');
-                    display.push('\\');
+                    token_source.push('\\');
                 }
             },
-            '&' => {
-                push_literal(&mut tokens, &mut literal);
-                tokens.push(ReplacementToken::WholeMatch);
-                display.push('&');
-            }
-            '$' => parse_dollar_replacement(&mut chars, &mut tokens, &mut literal, &mut display)?,
             _ => {
-                literal.push(ch);
                 display.push(ch);
+                token_source.push(ch);
             }
         }
     }
@@ -364,6 +372,88 @@ fn take_replacement_delimited(
         "Unterminated substitution field",
         "Pattern and replacement must both be followed by the / delimiter; escape a literal delimiter as \\/.",
     ))
+}
+
+fn tokenize_command_replacement(
+    replacement: &str,
+) -> Result<Vec<ReplacementToken>, SubstituteError> {
+    tokenize_replacement(replacement, BackslashPair::OneLiteralBackslash)
+}
+
+fn tokenize_literal_replacement(
+    replacement: &str,
+) -> Result<Vec<ReplacementToken>, SubstituteError> {
+    tokenize_replacement(replacement, BackslashPair::TwoLiteralBackslashes)
+}
+
+#[derive(Clone, Copy)]
+enum BackslashPair {
+    OneLiteralBackslash,
+    TwoLiteralBackslashes,
+}
+
+fn tokenize_replacement(
+    replacement: &str,
+    pair_mode: BackslashPair,
+) -> Result<Vec<ReplacementToken>, SubstituteError> {
+    let mut tokens = Vec::new();
+    let mut literal = String::new();
+    let mut chars = replacement.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        match ch {
+            '\\' => parse_backslash_replacement(&mut chars, &mut tokens, &mut literal, pair_mode)?,
+            '&' => {
+                push_literal(&mut tokens, &mut literal);
+                tokens.push(ReplacementToken::WholeMatch);
+            }
+            '$' => {
+                parse_dollar_replacement(&mut chars, &mut tokens, &mut literal, &mut String::new())?
+            }
+            _ => literal.push(ch),
+        }
+    }
+    push_literal(&mut tokens, &mut literal);
+    Ok(tokens)
+}
+
+fn parse_backslash_replacement<I>(
+    chars: &mut std::iter::Peekable<I>,
+    tokens: &mut Vec<ReplacementToken>,
+    literal: &mut String,
+    pair_mode: BackslashPair,
+) -> Result<(), SubstituteError>
+where
+    I: Iterator<Item = (usize, char)>,
+{
+    match chars.next() {
+        Some((_, '\\')) => match pair_mode {
+            BackslashPair::OneLiteralBackslash => literal.push('\\'),
+            BackslashPair::TwoLiteralBackslashes => literal.push_str(r"\\"),
+        },
+        Some((_, ch @ '1'..='9')) => {
+            push_literal(tokens, literal);
+            tokens.push(ReplacementToken::CaptureIndex(ch as usize - '0' as usize));
+        }
+        Some((_, '&')) => literal.push('&'),
+        Some((_, 'u' | 'U' | 'l' | 'L' | 'e' | 'E')) => {
+            return Err(SubstituteError::new(
+                "Case-conversion replacements are not supported",
+                "ADR 0034 keeps substitution literal and capture-based only; \\u, \\U, \\l, \\L, and related escapes are rejected.",
+            ));
+        }
+        Some((_, '=')) => {
+            return Err(SubstituteError::new(
+                "Expression replacements are not supported",
+                "Substitutions cannot evaluate expressions or shell out; use literal text and capture references only.",
+            ));
+        }
+        Some((_, escaped)) => {
+            literal.push('\\');
+            literal.push(escaped);
+        }
+        None => literal.push('\\'),
+    }
+    Ok(())
 }
 
 fn parse_dollar_replacement<I>(
@@ -457,19 +547,23 @@ fn parse_flags(flags: &str) -> Result<SubstituteFlags, SubstituteError> {
             ));
         }
     }
-    if parsed.case_insensitive && parsed.case_sensitive {
+    validate_flags(parsed)
+}
+
+fn validate_flags(flags: SubstituteFlags) -> Result<SubstituteFlags, SubstituteError> {
+    if flags.case_insensitive && flags.case_sensitive {
         return Err(SubstituteError::new(
             "Contradictory substitution flags",
             "Use either i for case-insensitive matching or I for case-sensitive matching, not both.",
         ));
     }
-    if parsed.confirm && parsed.count_only {
+    if flags.confirm && flags.count_only {
         return Err(SubstituteError::new(
             "Contradictory substitution flags",
             "Use either c to confirm changes or n to count without changes, not both.",
         ));
     }
-    Ok(parsed)
+    Ok(flags)
 }
 
 fn replace_flag(flag: &mut bool) -> bool {
@@ -637,6 +731,40 @@ mod tests {
             .unwrap()
     }
 
+    fn global_flags() -> SubstituteFlags {
+        SubstituteFlags {
+            global: true,
+            ..SubstituteFlags::default()
+        }
+    }
+
+    fn replacements_from_parts(replacement: &str) -> Vec<String> {
+        SubstituteCommand::from_parts(
+            "(a)",
+            replacement,
+            SubstituteRange::WholeDocument,
+            global_flags(),
+        )
+        .unwrap()
+        .plan("aa", 99..99, Some(99..99), 100)
+        .unwrap()
+        .replacements
+        .into_iter()
+        .map(|replacement| replacement.replacement)
+        .collect()
+    }
+
+    fn replacements_from_command(command: &str) -> Vec<String> {
+        SubstituteCommand::parse(command)
+            .unwrap()
+            .plan("aa", 99..99, Some(99..99), 100)
+            .unwrap()
+            .replacements
+            .into_iter()
+            .map(|replacement| replacement.replacement)
+            .collect()
+    }
+
     #[test]
     fn the_current_line_range_is_parsed() {
         let command = SubstituteCommand::parse(":s/a/b/").unwrap();
@@ -672,6 +800,72 @@ mod tests {
         let command = SubstituteCommand::parse(r":s/a\/b/c\\d/").unwrap();
         assert_eq!(command.pattern, "a/b");
         assert_eq!(command.replacement, r"c\d");
+    }
+
+    #[test]
+    fn from_parts_single_backslash_matches_the_equivalent_command() {
+        assert_eq!(
+            replacements_from_parts(r"\"),
+            replacements_from_command(r":%s/(a)/\\/g")
+        );
+        assert_eq!(replacements_from_parts(r"\"), vec![r"\", r"\"]);
+    }
+
+    #[test]
+    fn from_parts_double_backslash_matches_the_equivalent_command() {
+        assert_eq!(
+            replacements_from_parts(r"\\"),
+            replacements_from_command(r":%s/(a)/\\\\/g")
+        );
+        assert_eq!(replacements_from_parts(r"\\"), vec![r"\\", r"\\"]);
+    }
+
+    #[test]
+    fn from_parts_backslash_capture_alias_matches_the_equivalent_command() {
+        assert_eq!(
+            replacements_from_parts(r"\1"),
+            replacements_from_command(r":%s/(a)/\1/g")
+        );
+        assert_eq!(replacements_from_parts(r"\1"), vec!["a", "a"]);
+    }
+
+    #[test]
+    fn from_parts_dollar_capture_keeps_following_text_literal() {
+        assert_eq!(
+            replacements_from_parts("$1a"),
+            replacements_from_command(r":%s/(a)/$1a/g")
+        );
+        assert_eq!(replacements_from_parts("$1a"), vec!["aa", "aa"]);
+    }
+
+    #[test]
+    fn from_parts_ampersand_alias_matches_the_equivalent_command() {
+        assert_eq!(
+            replacements_from_parts("&"),
+            replacements_from_command(r":%s/(a)/&/g")
+        );
+        assert_eq!(replacements_from_parts("&"), vec!["a", "a"]);
+    }
+
+    #[test]
+    fn whole_document_planning_ignores_view_scoped_ranges() {
+        let planned =
+            SubstituteCommand::from_parts("a", "x", SubstituteRange::WholeDocument, global_flags())
+                .unwrap()
+                .plan("aa", 99..99, None, 100)
+                .unwrap();
+        assert_eq!(planned.replacement_count(), 2);
+    }
+
+    #[test]
+    fn a_pattern_with_no_matches_returns_an_empty_successful_plan() {
+        let planned =
+            SubstituteCommand::from_parts("z", "x", SubstituteRange::WholeDocument, global_flags())
+                .unwrap()
+                .plan("aa", 0..0, None, 100)
+                .unwrap();
+        assert_eq!(planned.replacement_count(), 0);
+        assert_eq!(planned.total_matches, 0);
     }
 
     #[test]

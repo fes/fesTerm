@@ -621,15 +621,26 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
                 egui::Stroke::new(1.5, color),
             );
         }
+        // Sized and placed by eye rather than by arithmetic. A triangle drawn
+        // to a circle's radius covers barely half its area, so it reads as the
+        // smaller mark of the three; and a triangle centred on its bounding
+        // box sits low, because the eye centres it on its centroid. It is
+        // given the full slot width, a height to match, a centroid on the
+        // shared centre line, and a hairline of its own colour to make up the
+        // weight the shape still loses to the circle.
         ChipMarker::Triangle => {
             let centre = rect.center();
+            let height = diameter;
             let points = vec![
-                egui::pos2(centre.x, centre.y - radius),
-                egui::pos2(centre.x + radius, centre.y + radius * 0.8),
-                egui::pos2(centre.x - radius, centre.y + radius * 0.8),
+                egui::pos2(centre.x, centre.y - height * 2.0 / 3.0),
+                egui::pos2(centre.x + radius, centre.y + height / 3.0),
+                egui::pos2(centre.x - radius, centre.y + height / 3.0),
             ];
-            ui.painter()
-                .add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+            ui.painter().add(egui::Shape::convex_polygon(
+                points,
+                color,
+                egui::Stroke::new(1.0, color),
+            ));
         }
     }
     response.on_hover_text(status.accessible_label());

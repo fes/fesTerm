@@ -11,7 +11,8 @@ use std::path::PathBuf;
 use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
 use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
 use festerm_document::{
-    AutoSaveControl, BannerAction, DocumentId, DocumentStatus, Severity, StatusAccent,
+    AutoSaveControl, BannerAction, CompiledSearch, DocumentId, DocumentStatus, MatchRange,
+    SearchOutcome, Severity, StatusAccent, SubstituteCommand, SubstituteFlags, SubstituteRange,
 };
 use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
@@ -34,6 +35,7 @@ const BAR_PADDING_Y: i8 = 6;
 const BANNER_ACCENT_WIDTH: f32 = 3.0;
 const ORIGIN_ICON_SIZE: f32 = 12.0;
 const MODE_SEGMENT_GAP: f32 = 2.0;
+const FIND_FIELD_WIDTH: f32 = 170.0;
 const SPLIT_DIVIDER_WIDTH: f32 = 9.0;
 const BANNER_PADDING_X: i8 = BAR_PADDING_X;
 const BANNER_PADDING_Y: i8 = BAR_PADDING_Y;
@@ -79,6 +81,136 @@ impl EditorViewOptions {
     }
 }
 
+/// How many matches one view will collect and highlight. Bounded because a
+/// pattern like `.*` over a multi-megabyte file would otherwise allocate a
+/// range per character (ADR 0034 §10a and §11).
+const MATCH_LIMIT: usize = 2_000;
+
+/// What Find/Replace is holding for this view. Per-view, because where one
+/// window is in its search says nothing about where another window is
+/// (ADR 0034 §10a).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FindState {
+    pub(crate) open: bool,
+    /// Whether the Replace field is shown. Find alone is the common case and
+    /// a Replace box nobody asked for is an invitation to change text by
+    /// accident.
+    pub(crate) replacing: bool,
+    query: String,
+    replacement: String,
+    /// The last results that compiled. A half-typed expression keeps these
+    /// rather than clearing the highlights out from under the user.
+    outcome: Option<SearchOutcome>,
+    /// The pattern `outcome` was found for, so results are only recomputed
+    /// when the query or the text actually changed.
+    searched: Option<(String, u64)>,
+    error: Option<String>,
+    current: Option<usize>,
+    focus_query: bool,
+    /// A match the body should select and scroll to on the next frame. The
+    /// caret belongs to the text widget, so navigation asks for it rather
+    /// than setting it.
+    pending_selection: Option<MatchRange>,
+}
+
+impl FindState {
+    /// Opens the bar, optionally with Replace showing, and asks for the Find
+    /// field to take focus on the next frame.
+    fn open(&mut self, replacing: bool) {
+        self.open = true;
+        self.replacing = replacing;
+        self.focus_query = true;
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+        self.outcome = None;
+        self.searched = None;
+        self.error = None;
+        self.current = None;
+    }
+
+    /// Recompiles and re-runs the search when the query or the document's
+    /// revision has moved on. An invalid pattern records the error and leaves
+    /// the previous results standing.
+    fn refresh(&mut self, text: &str, revision: u64) {
+        if self.query.is_empty() {
+            self.outcome = None;
+            self.searched = None;
+            self.error = None;
+            self.current = None;
+            return;
+        }
+        if self
+            .searched
+            .as_ref()
+            .is_some_and(|(query, seen)| query == &self.query && *seen == revision)
+        {
+            return;
+        }
+        match CompiledSearch::compile(&self.query) {
+            Ok(search) => {
+                let outcome = search.find_all(text, MATCH_LIMIT);
+                self.current = outcome.matches.first().map(|_| 0);
+                self.outcome = Some(outcome);
+                self.error = None;
+                self.searched = Some((self.query.clone(), revision));
+            }
+            Err(error) => {
+                self.error = Some(error.headline().to_owned());
+                self.searched = Some((self.query.clone(), revision));
+            }
+        }
+    }
+
+    fn matches(&self) -> &[MatchRange] {
+        self.outcome
+            .as_ref()
+            .map_or(&[][..], |outcome| &outcome.matches)
+    }
+
+    /// `1 of 12`, `No matches`, or the error — whichever the user needs to
+    /// read to know what pressing Next will do.
+    fn summary(&self) -> String {
+        if let Some(error) = &self.error {
+            return error.clone();
+        }
+        if self.query.is_empty() {
+            return String::new();
+        }
+        let total = self.matches().len();
+        if total == 0 {
+            return "No matches".to_owned();
+        }
+        let position = self.current.map_or(1, |index| index + 1);
+        let truncated = self
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.truncated);
+        if truncated {
+            format!("{position} of {total}+")
+        } else {
+            format!("{position} of {total}")
+        }
+    }
+
+    fn step(&mut self, forward: bool) -> Option<MatchRange> {
+        let total = self.matches().len();
+        if total == 0 {
+            return None;
+        }
+        let index = match (self.current, forward) {
+            (Some(index), true) => (index + 1) % total,
+            (Some(index), false) => (index + total - 1) % total,
+            (None, true) => 0,
+            (None, false) => total - 1,
+        };
+        self.current = Some(index);
+        self.matches().get(index).cloned()
+    }
+
+}
+
 /// What a view is showing of its document. Per-view, not per-document: two
 /// editors on one file may sit in different modes (ADR 0034 §4).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -116,6 +248,11 @@ pub(crate) struct TextEditorTab {
     /// Built the first time a rendered mode is asked for, so a file nobody
     /// previews never pays for a parse.
     preview: Option<MarkdownPreviewPane>,
+    /// The tab this view is drawn in, learned on the first frame. Ids that
+    /// have to survive between two different `Ui` scopes are anchored to it.
+    tab: Option<TabId>,
+    /// Find/Replace, while it is open, and the results it is holding.
+    find: FindState,
     /// The Compare view, while it is open. Per-view: comparing is looking,
     /// not changing, so another window goes on editing (ADR 0034 §6).
     compare: Option<ComparePane>,
@@ -139,6 +276,8 @@ impl TextEditorTab {
             mode: EditorMode::Edit,
             preview: None,
             compare: None,
+            tab: None,
+            find: FindState::default(),
         }
     }
 
@@ -270,8 +409,10 @@ impl TextEditorTab {
             // draw a view of nothing.
             return Some(AppCommand::CloseTab(tab_id));
         };
+        self.tab = Some(tab_id);
         self.adopt_external_edits(documents);
         self.sync_compare(documents);
+        self.route_find_shortcuts(ui);
 
         let mut command = None;
         egui::Frame::new()
@@ -285,6 +426,10 @@ impl TextEditorTab {
                         command = Some(bar_command);
                     }
                     hairline(ui);
+                    if self.find.open {
+                        self.show_find_bar(ui, documents);
+                        hairline(ui);
+                    }
                     // The banner stays pinned above Compare: the decision it
                     // asks for is the reason Compare is open (ADR 0034 §6).
                     if let Some(action) = show_banner(ui, &status, self.compare.is_some()) {
@@ -333,6 +478,28 @@ impl TextEditorTab {
         if let Some(pane) = self.compare.as_mut() {
             pane.sync(&self.buffer, &source);
         }
+    }
+
+    /// Opens Find (and Replace, when a replacement is given) with a query
+    /// already in it, so the gallery can show the bar in the state it spends
+    /// its life in rather than empty.
+    #[cfg(test)]
+    pub(crate) fn open_find_for_gallery(&mut self, query: &str, replacement: Option<&str>) {
+        self.find.open(replacement.is_some());
+        self.find.query = query.to_owned();
+        if let Some(replacement) = replacement {
+            self.find.replacement = replacement.to_owned();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn find_error_for_test(&self) -> Option<&str> {
+        self.find.error.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn find_match_count_for_test(&self) -> usize {
+        self.find.matches().len()
     }
 
     #[cfg(test)]
@@ -473,6 +640,12 @@ impl TextEditorTab {
                     if toolbar_button(ui, Some(Icon::Refresh), "Refresh", "Refresh", false) {
                         command = Some(AppCommand::RefreshTextDocument);
                     }
+                    if toolbar_button(ui, None, "Find", "Find", false) {
+                        self.find.open(false);
+                    }
+                    if toolbar_button(ui, None, "Replace", "Find and replace", false) {
+                        self.find.open(true);
+                    }
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         label(ui, &self.options.summary(), theme::TEXT_MUTED, false);
                     });
@@ -510,6 +683,195 @@ impl TextEditorTab {
             if let Some(open) = documents.borrow_mut().get_mut(self.document) {
                 open.set_auto_save_requested(checked);
             }
+        }
+    }
+
+    /// The Find/Replace bar, below the command bar and above the banner: it is
+    /// Stable ids for the Find bar's two fields, anchored to the tab rather
+    /// than to whichever nested `Ui` happens to be building them, so undo
+    /// routing in the body can ask whether one of them holds focus.
+    fn find_field_id(&self, index: usize) -> egui::Id {
+        egui::Id::new(("text-editor-find-field", self.tab, index))
+    }
+
+    fn show_find_bar(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
+        let (query_id, replacement_id) = (self.find_field_id(0), self.find_field_id(1));
+        let revision = documents
+            .borrow()
+            .get(self.document)
+            .map_or(0, |open| open.text().revision());
+        self.find.refresh(&self.buffer, revision);
+
+        egui::Frame::new()
+            .fill(theme::SURFACE_PANEL)
+            .inner_margin(egui::Margin::symmetric(BAR_PADDING_X, BAR_PADDING_Y))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_height(TOOLBAR_BUTTON_HEIGHT);
+                    ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_GAP;
+                    let find_label = label(ui, "Find", theme::TEXT_MUTED, false);
+                    let query = ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.find.query)
+                                .id(query_id)
+                                .desired_width(FIND_FIELD_WIDTH)
+                                .hint_text("Pattern"),
+                        )
+                        .labelled_by(find_label.id);
+                    if std::mem::take(&mut self.find.focus_query) {
+                        query.request_focus();
+                    }
+                    if self.find.replacing {
+                        let replace_label = label(ui, "Replace", theme::TEXT_MUTED, false);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.find.replacement)
+                                .id(replacement_id)
+                                .desired_width(FIND_FIELD_WIDTH)
+                                .hint_text("Replacement"),
+                        )
+                        .labelled_by(replace_label.id);
+                    }
+
+                    let summary = self.find.summary();
+                    let summary_color = if self.find.error.is_some() {
+                        theme::STATUS_ERROR
+                    } else {
+                        theme::TEXT_MUTED
+                    };
+                    label(ui, &summary, summary_color, false);
+
+                    let has_matches = !self.find.matches().is_empty();
+                    // Disabled, not merely inert: a Next with nothing to go to
+                    // has to say so rather than quietly doing nothing.
+                    ui.add_enabled_ui(has_matches, |ui| {
+                        if toolbar_button(ui, None, "Previous", "Previous match", false) {
+                            self.find.pending_selection = self.find.step(false);
+                        }
+                        if toolbar_button(ui, None, "Next", "Next match", false) {
+                            self.find.pending_selection = self.find.step(true);
+                        }
+                        if self.find.replacing {
+                            if toolbar_button(ui, None, "Replace", "Replace this match", false) {
+                                self.replace_current(documents);
+                            }
+                            if toolbar_button(ui, None, "Replace All", "Replace every match", false)
+                            {
+                                self.replace_all(documents);
+                            }
+                        }
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        if toolbar_button(ui, None, "×", "Close Find", false) {
+                            self.find.close();
+                        }
+                    });
+                });
+            });
+    }
+
+    /// Replaces the match the counter is pointing at, through the same engine
+    /// `:s` uses, so the Replace field's dialect is the editor's one dialect.
+    fn replace_current(&mut self, documents: &SharedDocuments) {
+        let Some(index) = self.find.current else {
+            return;
+        };
+        let Some(found) = self.find.matches().get(index).cloned() else {
+            return;
+        };
+        self.substitute(documents, Some(found));
+    }
+
+    fn replace_all(&mut self, documents: &SharedDocuments) {
+        self.substitute(documents, None);
+    }
+
+    /// One substitution, committed as one undo transaction. `only` restricts it
+    /// to a single match by planning over the whole document and keeping the
+    /// edit that lands on it, so a single Replace and a Replace All cannot
+    /// disagree about what the pattern means.
+    fn substitute(&mut self, documents: &SharedDocuments, only: Option<MatchRange>) {
+        let flags = SubstituteFlags {
+            global: true,
+            ..SubstituteFlags::default()
+        };
+        let command = match SubstituteCommand::from_parts(
+            &self.find.query,
+            &self.find.replacement,
+            SubstituteRange::WholeDocument,
+            flags,
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                self.find.error = Some(error.headline().to_owned());
+                return;
+            }
+        };
+        let plan = match command.plan(&self.buffer, 0..0, None, MATCH_LIMIT) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.find.error = Some(error.headline().to_owned());
+                return;
+            }
+        };
+        let edits = match plan.to_text_edits(&self.buffer) {
+            Ok(edits) => edits,
+            Err(error) => {
+                self.find.error = Some(error.headline().to_owned());
+                return;
+            }
+        };
+        let edits: Vec<_> = match &only {
+            Some(found) => edits
+                .into_iter()
+                .filter(|edit| edit.start == found.start)
+                .collect(),
+            None => edits,
+        };
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut registry = documents.borrow_mut();
+        let Some(open) = registry.get_mut(self.document) else {
+            return;
+        };
+        match open.text_mut().apply_edits(edits) {
+            Ok(_) => {
+                self.buffer = open.text().text().to_owned();
+                self.find.error = None;
+                // The text moved, so the results describe a document that no
+                // longer exists; the next frame recollects them.
+                self.find.searched = None;
+            }
+            Err(refusal) => {
+                self.find.error = Some(refusal.headline().to_owned());
+            }
+        }
+    }
+
+    /// Cmd+F and Cmd+Alt+F, taken before the body sees them so they cannot
+    /// reach the text as characters, and Esc while the bar is open.
+    fn route_find_shortcuts(&mut self, ui: &mut egui::Ui) {
+        let (replace, find, escape) = ui.input_mut(|input| {
+            // The wider combination has to be offered the key first: egui
+            // matches modifiers logically, so a plain COMMAND test would
+            // swallow Cmd+Alt+F and open Find without the Replace field.
+            let replace = input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+                egui::Key::F,
+            );
+            let find = input.consume_key(egui::Modifiers::COMMAND, egui::Key::F);
+            let escape =
+                self.find.open && input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+            (replace, find, escape)
+        });
+        if replace {
+            self.find.open(true);
+        } else if find {
+            self.find.open(false);
+        }
+        if escape {
+            self.find.close();
         }
     }
 
@@ -623,7 +985,17 @@ impl TextEditorTab {
         body_id: egui::Id,
         read_only: bool,
     ) {
-        if read_only || !ui.memory(|memory| memory.has_focus(body_id)) {
+        // Undo belongs to the whole editor, not only to the body: a user who
+        // has just pressed Replace All is holding the button, not the text,
+        // and Cmd+Z has to take the substitution back anyway. The one place it
+        // must not be intercepted is inside the Find bar's own fields, where
+        // it means "undo what I typed into this box".
+        let in_find_field = self.find.open
+            && ui.memory(|memory| (0..2).any(|index| memory.has_focus(self.find_field_id(index))));
+        if read_only || in_find_field {
+            return;
+        }
+        if !ui.memory(|memory| memory.has_focus(body_id)) && !self.find.open {
             return;
         }
         let (undo, redo) = ui.ctx().input_mut(|input| {
@@ -662,6 +1034,24 @@ impl TextEditorTab {
         let width = ui.available_width();
         let body_id = ui.id().with("text-editor-text");
         self.route_undo_shortcuts(ui, documents, body_id, read_only);
+        // Taken out of `self` before the widget borrows the buffer mutably.
+        let highlights: Vec<(usize, usize, bool)> = if self.find.open {
+            let current = self.find.current;
+            self.find
+                .matches()
+                .iter()
+                .enumerate()
+                .filter(|(_, found)| !found.is_empty())
+                .map(|(index, found)| (found.start, found.end, Some(index) == current))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+            let mut job = highlight_matches(text.as_str(), &highlights);
+            job.wrap.max_width = wrap_width;
+            ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
+        };
         let output = egui::TextEdit::multiline(&mut self.buffer)
             .id(body_id)
             .font(FontId::monospace(EDITOR_TEXT_SIZE))
@@ -669,6 +1059,7 @@ impl TextEditorTab {
             .desired_rows(1)
             .interactive(!read_only)
             .margin(egui::Margin::symmetric(14, 8))
+            .layouter(&mut layouter)
             .show(ui);
 
         if gutter > 0.0 {
@@ -684,6 +1075,20 @@ impl TextEditorTab {
                     self.buffer = open.text().text().to_owned();
                 }
             }
+        }
+
+        if let Some(found) = self.find.pending_selection.take() {
+            let start = self.buffer[..found.start.min(self.buffer.len())]
+                .chars()
+                .count();
+            let end = self.buffer[..found.end.min(self.buffer.len())].chars().count();
+            let mut state = output.state.clone();
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(start),
+                egui::text::CCursor::new(end),
+            )));
+            state.store(ui.ctx(), body_id);
+            ui.ctx().memory_mut(|memory| memory.request_focus(body_id));
         }
 
         if let Some(range) = output.cursor_range {
@@ -894,7 +1299,51 @@ fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
     ui.painter().galley(rect.left_top(), galley, colour);
 }
 
-fn label(ui: &mut egui::Ui, text: &str, colour: egui::Color32, strong: bool) {
+/// Lays the body out with every match behind a wash of colour and the current
+/// one behind a stronger one, so "which of these is Next going to take me to"
+/// is answerable by looking (ADR 0034 §10a).
+fn highlight_matches(text: &str, highlights: &[(usize, usize, bool)]) -> egui::text::LayoutJob {
+    let font = FontId::monospace(EDITOR_TEXT_SIZE);
+    let mut job = egui::text::LayoutJob::default();
+    let mut cursor = 0;
+    let push = |job: &mut egui::text::LayoutJob, range: std::ops::Range<usize>, background| {
+        if range.is_empty() {
+            return;
+        }
+        job.append(
+            &text[range],
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color: theme::TEXT_PRIMARY,
+                background,
+                ..Default::default()
+            },
+        );
+    };
+    for &(start, end, current) in highlights {
+        // A stale result set describes text that has since moved on; skip
+        // rather than slice through a character.
+        if start < cursor || end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        push(&mut job, cursor..start, egui::Color32::TRANSPARENT);
+        push(
+            &mut job,
+            start..end,
+            if current {
+                theme::SURFACE_SELECTION
+            } else {
+                theme::SURFACE_CARD
+            },
+        );
+        cursor = end;
+    }
+    push(&mut job, cursor..text.len(), egui::Color32::TRANSPARENT);
+    job
+}
+
+fn label(ui: &mut egui::Ui, text: &str, colour: egui::Color32, strong: bool) -> egui::Response {
     let font = FontId::proportional(if strong {
         LABEL_TEXT_SIZE + 1.0
     } else {
@@ -904,6 +1353,7 @@ fn label(ui: &mut egui::Ui, text: &str, colour: egui::Color32, strong: bool) {
     let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
     ui.painter().galley(rect.left_top(), galley, colour);
+    response
 }
 
 #[cfg(test)]
@@ -1072,10 +1522,26 @@ mod tests {
     fn typing_harness(
         path: &std::path::Path,
     ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+        typing_harness_sized(path, egui::vec2(700.0, 420.0))
+    }
+
+    /// Find/Replace puts eight controls in one row, so its tests need a window
+    /// wide enough to hold them; a clipped button is not in the accessibility
+    /// tree and would fail for a reason that has nothing to do with the test.
+    fn find_harness(
+        path: &std::path::Path,
+    ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+        typing_harness_sized(path, egui::vec2(1180.0, 420.0))
+    }
+
+    fn typing_harness_sized(
+        path: &std::path::Path,
+        size: egui::Vec2,
+    ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
         let (documents, editor) = editor_for(path);
         let tab_id = crate::tabs::TabId::next_for_test();
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(700.0, 420.0))
+            .with_size(size)
             .build_ui_state(
                 move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
                     state.1.show(ui, tab_id, &state.0);
@@ -1095,6 +1561,189 @@ mod tests {
             .text()
             .text()
             .to_owned()
+    }
+
+    /// Opens Find the way the user does, types a pattern into the field the
+    /// bar put focus in, and lets the frame settle.
+    fn open_find_and_type(
+        harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>,
+        replacing: bool,
+        pattern: &str,
+    ) {
+        let modifiers = if replacing {
+            egui::Modifiers::COMMAND | egui::Modifiers::ALT
+        } else {
+            egui::Modifiers::COMMAND
+        };
+        harness.key_press_modifiers(modifiers, egui::Key::F);
+        harness.run();
+        type_into_find_field(harness, 0, pattern);
+    }
+
+    /// The Find bar's single-line fields in the order they are laid out: the
+    /// pattern first, the replacement second. Addressed by role because both
+    /// carry the accessible name of the label beside them, which is what a
+    /// screen reader should read out and therefore what the test should not
+    /// try to disambiguate by.
+    /// Focuses a Find bar field and types into it. Focus has to be asked for
+    /// and then allowed to settle: typing at whatever happens to hold focus is
+    /// how a replacement ends up appended to the pattern.
+    fn type_into_find_field(
+        harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>,
+        index: usize,
+        text: &str,
+    ) {
+        find_field(harness, index).focus();
+        harness.run();
+        find_field(harness, index).type_text(text);
+        harness.run();
+    }
+
+    fn find_field<'h>(
+        harness: &'h Harness<'static, (SharedDocuments, TextEditorTab)>,
+        index: usize,
+    ) -> egui_kittest::Node<'h> {
+        harness
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .nth(index)
+            .expect("the Find bar's field")
+    }
+
+    #[test]
+    fn command_f_opens_find_and_counts_what_the_pattern_matches() {
+        let directory = TemporaryDirectory::new("find-open");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, false, "alpha");
+
+        assert!(
+            harness.query_by_label("1 of 2").is_some(),
+            "the bar has to say which match of how many, not just that it found something"
+        );
+    }
+
+    #[test]
+    fn a_half_typed_expression_reports_itself_and_keeps_the_last_good_results() {
+        let directory = TemporaryDirectory::new("find-invalid");
+        let path = directory.file("notes.md", "alpha\nalpha\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, false, "alpha");
+        assert!(harness.query_by_label("1 of 2").is_some());
+
+        // A lone `(` is the ordinary half-typed state of someone reaching for
+        // a group, not a mistake worth clearing their highlights for.
+        type_into_find_field(&mut harness, 0, "(");
+
+        let (_, editor) = harness.state();
+        assert!(
+            editor.find_error_for_test().is_some(),
+            "an invalid expression has to say so"
+        );
+        assert_eq!(
+            editor.find_match_count_for_test(),
+            2,
+            "the last valid results should still be standing"
+        );
+    }
+
+    #[test]
+    fn next_walks_the_matches_and_wraps_once() {
+        let directory = TemporaryDirectory::new("find-next");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, false, "alpha");
+        harness.get_by_label("Next match").click();
+        harness.run();
+        assert!(harness.query_by_label("2 of 2").is_some());
+
+        harness.get_by_label("Next match").click();
+        harness.run();
+        assert!(
+            harness.query_by_label("1 of 2").is_some(),
+            "Next past the last match wraps to the first"
+        );
+    }
+
+    #[test]
+    fn replace_all_changes_every_match_in_one_undo() {
+        let directory = TemporaryDirectory::new("find-replace-all");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, true, "alpha");
+        type_into_find_field(&mut harness, 1, "gamma");
+        harness.get_by_label("Replace every match").click();
+        harness.run();
+
+        assert_eq!(document_text(&harness), "gamma\nbeta\ngamma\n");
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(
+            document_text(&harness),
+            "alpha\nbeta\nalpha\n",
+            "a replacement across the document comes back in one press"
+        );
+    }
+
+    #[test]
+    fn replace_uses_the_same_capture_dialect_the_command_area_does() {
+        let directory = TemporaryDirectory::new("find-captures");
+        let path = directory.file("notes.md", "alpha beta\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, true, "(alpha) (beta)");
+        type_into_find_field(&mut harness, 1, "$2 $1");
+        harness.get_by_label("Replace every match").click();
+        harness.run();
+
+        assert_eq!(document_text(&harness), "beta alpha\n");
+    }
+
+    #[test]
+    fn escape_closes_find_without_touching_the_text() {
+        let directory = TemporaryDirectory::new("find-escape");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, false, "alpha");
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+
+        assert_eq!(
+            harness
+                .query_all_by_role(egui::accesskit::Role::TextInput)
+                .count(),
+            0,
+            "Escape closes the bar"
+        );
+        assert_eq!(document_text(&harness), "alpha\n");
+    }
+
+    #[test]
+    fn undo_inside_the_find_field_does_not_take_back_the_document() {
+        let directory = TemporaryDirectory::new("find-undo-boundary");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = find_harness(&path);
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("typed");
+        harness.run();
+        let before = document_text(&harness);
+        assert!(before.contains("typed"));
+
+        open_find_and_type(&mut harness, false, "alpha");
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+
+        assert_eq!(
+            document_text(&harness),
+            before,
+            "Cmd+Z in the pattern field means the pattern, not the document"
+        );
     }
 
     #[test]

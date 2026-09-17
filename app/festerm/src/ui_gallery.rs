@@ -337,6 +337,24 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_dirty_close,
         },
         Scenario {
+            id: "text-editor-conflict-chip",
+            section: "editor",
+            title: "A document's three states side by side on the chips",
+            caption: "Saved, edited, and changed-underneath are three different \
+                      shapes before they are three different colours, so the row \
+                      still reads with the colour taken away.",
+            capture: capture_text_editor_conflict_chip,
+        },
+        Scenario {
+            id: "text-editor-find",
+            section: "editor",
+            title: "Find and Replace over the open document",
+            caption: "One regular-expression dialect for the toolbar and the \
+                      command area alike, saying which match of how many is \
+                      current before anything is replaced.",
+            capture: capture_text_editor_find,
+        },
+        Scenario {
             id: "text-editor-split",
             section: "editor",
             title: "The editor split with its live preview",
@@ -1291,6 +1309,16 @@ fn capture_text_editor_saved() -> image::RgbaImage {
     render_text_editor(None)
 }
 
+fn capture_text_editor_find() -> image::RgbaImage {
+    render_text_editor_in(
+        None,
+        crate::text_editor::EditorMode::Edit,
+        Some(&|_documents, editor, _path| {
+            editor.open_find_for_gallery("relay", Some("service"));
+        }),
+    )
+}
+
 fn capture_text_editor_split() -> image::RgbaImage {
     render_text_editor_in(None, crate::text_editor::EditorMode::Split, None)
 }
@@ -1360,6 +1388,84 @@ fn capture_text_editor_dirty_close() -> image::RgbaImage {
     harness
         .state_mut()
         .request_active_tab_close_for_gallery(&context);
+    harness.run();
+
+    let image = finish(&mut harness);
+    let _ = fs::remove_dir_all(&directory);
+    image
+}
+
+fn capture_text_editor_conflict_chip() -> image::RgbaImage {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let directory = std::env::temp_dir().join(format!(
+        "festerm-ui-gallery-conflict-chip-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    // Three files so the row shows all three document states at once, which is
+    // the only way to review whether the shapes are told apart at the size
+    // they are actually drawn (ADR 0034 §8).
+    let saved = directory.join("README.md");
+    let edited = directory.join("NOTES.md");
+    let conflicted = directory.join("CHANGELOG.md");
+    for path in [&saved, &edited, &conflicted] {
+        fs::write(path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
+    }
+
+    let context = egui::Context::default();
+    let mut app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());
+    app.dispatch_for_gallery(
+        crate::tabs::AppCommand::OpenTextEditor {
+            path: saved.clone(),
+        },
+        &context,
+    );
+    app.dispatch_for_gallery(
+        crate::tabs::AppCommand::OpenTextEditor {
+            path: conflicted.clone(),
+        },
+        &context,
+    );
+    let conflicted_tab = app.active_tab_for_gallery();
+    app.dispatch_for_gallery(
+        crate::tabs::AppCommand::OpenTextEditor {
+            path: edited.clone(),
+        },
+        &context,
+    );
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(980.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+            app,
+        );
+    harness.run();
+
+    // Both documents are typed into, because a file changed underneath a view
+    // that has no unsaved edits of its own is simply adopted -- it is the
+    // collision between the two versions that is a conflict.
+    let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    body.focus();
+    body.type_text("\n## Known Issues\n\n- The relay drops duplicate deliveries.\n");
+    harness.run();
+
+    harness.state_mut().dispatch_for_gallery(
+        crate::tabs::AppCommand::ActivateTab(conflicted_tab),
+        &context,
+    );
+    harness.run();
+    let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    body.focus();
+    body.type_text("\n- Mine.\n");
+    harness.run();
+
+    fs::write(&conflicted, "Rewritten by somebody else.\n")
+        .expect("the gallery can change a fixture underneath the editor");
+    harness.state_mut().refresh_documents_for_gallery();
     harness.run();
 
     let image = finish(&mut harness);

@@ -319,6 +319,11 @@ impl DocumentRegistry {
         self.by_key.get(&origin.key()).copied()
     }
 
+    /// Every open document, for callers that must act on all of them.
+    pub(crate) fn open_ids(&self) -> impl Iterator<Item = DocumentId> + '_ {
+        self.documents.keys().copied()
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.documents.len()
     }

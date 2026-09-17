@@ -98,7 +98,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "0baab41b67e46ab3bfe8f6a391c3e18715c1205bc55a77d5efe01b6b74e0848a"
+      "sha256": "479b7a0e8a55653eeeabaac7a0152eb1cc233ae3422697b6d6b46a5e831c84e7"
+    },
+    {
+      "id": "text-editor-conflict-chip",
+      "section": "editor",
+      "title": "A document's three states side by side on the chips",
+      "caption": "Saved, edited, and changed-underneath are three different shapes before they are three different colours, so the row still reads with the colour taken away.",
+      "image": "text-editor-conflict-chip.png",
+      "width": 980,
+      "height": 700,
+      "tier": "headless",
+      "sha256": "53d1a4bbeaa28baa9cdaa368ce308a719a018e9eff62cb21131f54235c860da4"
     },
     {
       "id": "text-editor-dirty-close",
@@ -109,7 +120,18 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "d9f2b0036b4b9cd45f32339598853d9d9c79efe6b3ff1143329658f3e57f8d4e"
+      "sha256": "c3b1455b26bf5bd341545d5ea55a61dadf1cdc4de49b992468df9781f5f6a082"
+    },
+    {
+      "id": "text-editor-find",
+      "section": "editor",
+      "title": "Find and Replace over the open document",
+      "caption": "One regular-expression dialect for the toolbar and the command area alike, saying which match of how many is current before anything is replaced.",
+      "image": "text-editor-find.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "51a8f7498c811928e27734c442026db9d869831275cdcaada3ab2ffc3775e7c1"
     },
     {
       "id": "text-editor-saved",
@@ -120,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "979b6a7ab005d8724d5c00244e3b32bc44f5cd11c131750d48f69d4258f85514"
+      "sha256": "1381af3e25064715a1760580656c4878f16590294548d71db56980dac47028f9"
     },
     {
       "id": "text-editor-split",
@@ -131,7 +153,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "0ec43f0a538d01900a81560ef5e39f3a77a5e8b8a1add7adcfe450d04914cdc4"
+      "sha256": "bfdc53725b70a3fcc1ab55551b0bf467ad4f8755578e576c8cec9e2e64e6a68d"
     },
     {
       "id": "text-editor-unsaved",
@@ -142,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "9338da6889dd5dae4939b5f49c728ca4e42b1e8b644d152d499bbe66080cfb58"
+      "sha256": "8b7f2cf9d66180dc57dd1e287a49db6e0caaa30ed5e3bf267a5faa0d8dc8795b"
     },
     {
       "id": "keyboard-editor-collapsed",

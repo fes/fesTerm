@@ -5558,6 +5558,22 @@ impl FesTermApp {
         self.request_close_tab(active, context);
     }
 
+    pub(crate) fn active_tab_for_gallery(&self) -> crate::tabs::TabId {
+        self.state.active()
+    }
+
+    /// Re-reads every open document's source, which is what the per-frame
+    /// freshness poll does on its own schedule; the gallery needs it to happen
+    /// now so a fixture changed underneath an editor is in conflict by the
+    /// time the frame is captured.
+    pub(crate) fn refresh_documents_for_gallery(&mut self) {
+        let documents = self.state.documents().clone();
+        let ids: Vec<_> = documents.borrow().open_ids().collect();
+        for id in ids {
+            documents.borrow_mut().refresh(id);
+        }
+    }
+
     pub(crate) const fn accept_window_close_for_test(&mut self) {
         self.window_close_accepted = true;
     }
