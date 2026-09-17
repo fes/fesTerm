@@ -122,6 +122,22 @@ impl EditRefusal {
             Self::Refused(reason) => reason.headline(),
         }
     }
+
+    /// The whole reason, for a surface that has room for a sentence. The
+    /// headline alone says what happened; this says why, which is what a
+    /// person needs before they can do anything about it.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::OutOfOrder | Self::OutOfBounds => {
+                "The changes did not describe a consistent set of edits to this document.".to_owned()
+            }
+            Self::Stale => {
+                "The text the changes were prepared against has since moved on, so none of them were applied."
+                    .to_owned()
+            }
+            Self::Refused(reason) => reason.detail(),
+        }
+    }
 }
 
 /// The text of one document, shared by every view of it.

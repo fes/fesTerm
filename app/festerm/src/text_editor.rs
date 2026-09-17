@@ -18,7 +18,8 @@ use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
 use crate::documents::SharedDocuments;
 use crate::markdown_viewer::{
-    elide_middle, toolbar_button, toolbar_button_response, toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP,
+    elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
+    toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP,
     TOOLBAR_BUTTON_HEIGHT,
 };
 use crate::tabs::{AppCommand, TabId};
@@ -36,6 +37,10 @@ const BANNER_ACCENT_WIDTH: f32 = 3.0;
 const ORIGIN_ICON_SIZE: f32 = 12.0;
 const MODE_SEGMENT_GAP: f32 = 2.0;
 const FIND_FIELD_WIDTH: f32 = 170.0;
+/// Width reserved for the match counter, so the navigation beside it keeps
+/// still while the count changes.
+const FIND_SUMMARY_WIDTH: f32 = 112.0;
+const FIND_WARNING_SIZE: f32 = 14.0;
 const OPTIONS_MENU_WIDTH: f32 = 250.0;
 const OPTIONS_MENU_GAP: f32 = 6.0;
 const OPTIONS_FIELD_WIDTH: f32 = 48.0;
@@ -124,6 +129,60 @@ impl OptionsState {
 /// range per character (ADR 0034 §10a and §11).
 const MATCH_LIMIT: usize = 2_000;
 
+/// Why the bar cannot do what was asked, in the two lengths the row needs:
+/// something short enough to sit between the fields and the navigation, and
+/// the whole reason for a hover.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FindError {
+    headline: String,
+    detail: String,
+}
+
+impl FindError {
+    fn from_parts(headline: &str, detail: &str) -> Self {
+        Self {
+            headline: headline.to_owned(),
+            detail: detail.to_owned(),
+        }
+    }
+
+    /// What the hover says: the whole complaint, which is routinely a
+    /// sentence and cannot go inline without displacing the navigation.
+    fn full(&self) -> String {
+        format!("{} — {}", self.headline, self.detail)
+    }
+}
+
+/// One of the verbs the Find bar offers. Named rather than inlined so the
+/// row can lay them out and an overflow menu can list them from one source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FindAction {
+    Previous,
+    Next,
+    Replace,
+    ReplaceAll,
+}
+
+impl FindAction {
+    fn label(self) -> &'static str {
+        match self {
+            FindAction::Previous => "Previous",
+            FindAction::Next => "Next",
+            FindAction::Replace => "Replace",
+            FindAction::ReplaceAll => "Replace All",
+        }
+    }
+
+    fn accessible_label(self) -> &'static str {
+        match self {
+            FindAction::Previous => "Previous match",
+            FindAction::Next => "Next match",
+            FindAction::Replace => "Replace this match",
+            FindAction::ReplaceAll => "Replace every match",
+        }
+    }
+}
+
 /// What Find/Replace is holding for this view. Per-view, because where one
 /// window is in its search says nothing about where another window is
 /// (ADR 0034 §10a).
@@ -142,7 +201,7 @@ pub(crate) struct FindState {
     /// The pattern `outcome` was found for, so results are only recomputed
     /// when the query or the text actually changed.
     searched: Option<(String, u64)>,
-    error: Option<String>,
+    error: Option<FindError>,
     current: Option<usize>,
     focus_query: bool,
     /// A match the body should select and scroll to on the next frame. The
@@ -195,7 +254,7 @@ impl FindState {
                 self.searched = Some((self.query.clone(), revision));
             }
             Err(error) => {
-                self.error = Some(error.headline().to_owned());
+                self.error = Some(FindError::from_parts(error.headline(), error.detail()));
                 self.searched = Some((self.query.clone(), revision));
             }
         }
@@ -207,12 +266,10 @@ impl FindState {
             .map_or(&[][..], |outcome| &outcome.matches)
     }
 
-    /// `1 of 12`, `No matches`, or the error — whichever the user needs to
-    /// read to know what pressing Next will do.
+    /// `1 of 12` or `No matches` — whichever the user needs to read to know
+    /// what pressing Next will do. A pattern that will not compile is
+    /// reported separately, beside a warning mark.
     fn summary(&self) -> String {
-        if let Some(error) = &self.error {
-            return error.clone();
-        }
         if self.query.is_empty() {
             return String::new();
         }
@@ -547,8 +604,8 @@ impl TextEditorTab {
     }
 
     #[cfg(test)]
-    pub(crate) fn find_error_for_test(&self) -> Option<&str> {
-        self.find.error.as_deref()
+    pub(crate) fn find_error_for_test(&self) -> Option<String> {
+        self.find.error.as_ref().map(FindError::full)
     }
 
     #[cfg(test)]
@@ -787,41 +844,134 @@ impl TextEditorTab {
                         .labelled_by(replace_label.id);
                     }
 
-                    let summary = self.find.summary();
-                    let summary_color = if self.find.error.is_some() {
-                        theme::STATUS_ERROR
-                    } else {
-                        theme::TEXT_MUTED
-                    };
-                    label(ui, &summary, summary_color, false);
+                    // The counter reads as the navigation's position, so it
+                    // is spaced away from the fields and kept at a fixed
+                    // width: a row that jitters sideways between "No matches"
+                    // and "1 of 6" moves Next out from under the pointer.
+                    ui.add_space(TOOLBAR_GROUP_GAP);
+                    self.show_find_summary(ui);
 
                     let has_matches = !self.find.matches().is_empty();
                     // Disabled, not merely inert: a Next with nothing to go to
                     // has to say so rather than quietly doing nothing.
-                    ui.add_enabled_ui(has_matches, |ui| {
-                        if toolbar_button(ui, None, "Previous", "Previous match", false) {
-                            self.find.pending_selection = self.find.step(false);
-                        }
-                        if toolbar_button(ui, None, "Next", "Next match", false) {
-                            self.find.pending_selection = self.find.step(true);
-                        }
-                        if self.find.replacing {
-                            if toolbar_button(ui, None, "Replace", "Replace this match", false) {
-                                self.replace_current(documents);
+                    if self.find_actions_fit(ui) {
+                        ui.add_enabled_ui(has_matches, |ui| {
+                            for action in self.find_actions() {
+                                if toolbar_button(
+                                    ui,
+                                    None,
+                                    action.label(),
+                                    action.accessible_label(),
+                                    false,
+                                ) {
+                                    self.run_find_action(action, documents);
+                                }
                             }
-                            if toolbar_button(ui, None, "Replace All", "Replace every match", false)
-                            {
-                                self.replace_all(documents);
+                        });
+                    } else {
+                        // Too narrow for the verbs, so they collapse into one
+                        // menu rather than being clipped off the edge where
+                        // they cannot be reached at all (ADR 0034 §9).
+                        let overflow = toolbar_button_response(
+                            ui,
+                            Some(Icon::Overflow),
+                            "",
+                            "Find actions",
+                            false,
+                        );
+                        let mut chosen = None;
+                        egui::Popup::menu(&overflow).show(|ui| {
+                            for action in self.find_actions() {
+                                if ui
+                                    .add_enabled(has_matches, egui::Button::new(action.label()))
+                                    .clicked()
+                                {
+                                    chosen = Some(action);
+                                    ui.close();
+                                }
                             }
+                        });
+                        if let Some(action) = chosen {
+                            self.run_find_action(action, documents);
                         }
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        if toolbar_button(ui, None, "×", "Close Find", false) {
-                            self.find.close();
-                        }
-                    });
+                    }
+                    // Close stays beside what it closes rather than being
+                    // pushed to the far edge, where a lone glyph across a gap
+                    // reads as some other control entirely.
+                    ui.add_space(TOOLBAR_GROUP_GAP);
+                    if toolbar_button(ui, None, "×", "Close Find", false) {
+                        self.find.close();
+                    }
                 });
             });
+    }
+
+
+    /// The verbs the bar offers, in the order they are laid out. Replace only
+    /// appears once a replacement can be typed.
+    fn find_actions(&self) -> Vec<FindAction> {
+        let mut actions = vec![FindAction::Previous, FindAction::Next];
+        if self.find.replacing {
+            actions.push(FindAction::Replace);
+            actions.push(FindAction::ReplaceAll);
+        }
+        actions
+    }
+
+    fn run_find_action(&mut self, action: FindAction, documents: &SharedDocuments) {
+        match action {
+            FindAction::Previous => self.find.pending_selection = self.find.step(false),
+            FindAction::Next => self.find.pending_selection = self.find.step(true),
+            FindAction::Replace => self.replace_current(documents),
+            FindAction::ReplaceAll => self.replace_all(documents),
+        }
+    }
+
+    /// Whether the verbs and the close control still fit on the row. Measured
+    /// rather than assumed, because the widths come from the font the user is
+    /// actually running.
+    fn find_actions_fit(&self, ui: &egui::Ui) -> bool {
+        let actions = self.find_actions();
+        let buttons: f32 = actions
+            .iter()
+            .map(|action| toolbar_button_width(ui, None, action.label()))
+            .sum();
+        let gaps = TOOLBAR_BUTTON_GAP * actions.len() as f32 + TOOLBAR_GROUP_GAP;
+        let close = toolbar_button_width(ui, None, "\u{d7}");
+        ui.available_width() >= buttons + gaps + close
+    }
+
+    /// The match counter, or a short note that the pattern will not compile.
+    ///
+    /// The error is kept to two words with the detail on hover: spelling a
+    /// regex complaint out inline would push the navigation off the row, and
+    /// it carries a warning mark so the state does not rest on colour alone.
+    fn show_find_summary(&self, ui: &mut egui::Ui) {
+        let width = FIND_SUMMARY_WIDTH;
+        ui.allocate_ui_with_layout(
+            vec2(width, TOOLBAR_BUTTON_HEIGHT),
+            // Right-aligned inside its reserved width, so it sits against the
+            // navigation it describes rather than drifting back towards the
+            // fields as the count shortens.
+            egui::Layout::right_to_left(Align::Center),
+            |ui| {
+                ui.set_width(width);
+                match &self.find.error {
+                    Some(error) => {
+                        label(ui, "Invalid pattern", theme::STATUS_ERROR, false)
+                            .on_hover_text(error.full());
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::Vec2::splat(FIND_WARNING_SIZE),
+                            Sense::hover(),
+                        );
+                        icon::paint(ui.painter(), Icon::Warning, rect, theme::STATUS_ERROR);
+                    }
+                    None => {
+                        label(ui, &self.find.summary(), theme::TEXT_MUTED, false);
+                    }
+                }
+            },
+        );
     }
 
     /// Replaces the match the counter is pointing at, through the same engine
@@ -857,21 +1007,21 @@ impl TextEditorTab {
         ) {
             Ok(command) => command,
             Err(error) => {
-                self.find.error = Some(error.headline().to_owned());
+                self.find.error = Some(FindError::from_parts(error.headline(), error.detail()));
                 return;
             }
         };
         let plan = match command.plan(&self.buffer, 0..0, None, MATCH_LIMIT) {
             Ok(plan) => plan,
             Err(error) => {
-                self.find.error = Some(error.headline().to_owned());
+                self.find.error = Some(FindError::from_parts(error.headline(), error.detail()));
                 return;
             }
         };
         let edits = match plan.to_text_edits(&self.buffer) {
             Ok(edits) => edits,
             Err(error) => {
-                self.find.error = Some(error.headline().to_owned());
+                self.find.error = Some(FindError::from_parts(error.headline(), error.detail()));
                 return;
             }
         };
@@ -899,7 +1049,8 @@ impl TextEditorTab {
                 self.find.searched = None;
             }
             Err(refusal) => {
-                self.find.error = Some(refusal.headline().to_owned());
+                self.find.error =
+                    Some(FindError::from_parts(refusal.headline(), &refusal.detail()));
             }
         }
     }
@@ -1798,6 +1949,59 @@ mod tests {
             .query_all_by_role(egui::accesskit::Role::TextInput)
             .next()
             .expect("the fixed column count field")
+    }
+
+
+    #[test]
+    fn a_narrow_window_puts_the_find_verbs_in_a_menu_rather_than_off_the_edge() {
+        let directory = TemporaryDirectory::new("find-narrow");
+        let path = directory.file("notes.md", "alpha\nalpha\n");
+        // The window the Find bar does not fit in. A clipped button is absent
+        // from the accessibility tree, which is exactly the failure being
+        // guarded against: unreachable, not merely unseen.
+        let mut harness = typing_harness(&path);
+
+        open_find_and_type(&mut harness, true, "alpha");
+        type_into_find_field(&mut harness, 1, "beta");
+
+        assert!(
+            harness.query_by_label("Replace every match").is_none(),
+            "there is no room for the verbs on this row"
+        );
+
+        harness.get_by_label("Find actions").click();
+        harness.run();
+        harness.get_by_label("Replace All").click();
+        harness.run();
+
+        assert_eq!(
+            document_text(&harness),
+            "beta\nbeta\n",
+            "every action stays reachable through the menu, however narrow the window"
+        );
+    }
+
+    #[test]
+    fn an_uncompilable_pattern_says_so_briefly_and_keeps_its_full_reason() {
+        let directory = TemporaryDirectory::new("find-brief-error");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = find_harness(&path);
+
+        open_find_and_type(&mut harness, false, "(");
+
+        assert!(
+            harness.query_by_label("Invalid pattern").is_some(),
+            "the row has to stay a row: the regex engine's full complaint would \
+             push the navigation off the end of it"
+        );
+        assert!(
+            harness
+                .state()
+                .1
+                .find_error_for_test()
+                .is_some_and(|error| error.len() > "Invalid pattern".len()),
+            "and the detail has to still be there for the hover to show"
+        );
     }
 
     #[test]

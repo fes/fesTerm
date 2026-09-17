@@ -295,6 +295,13 @@ changing it neither mutates text nor enters the undo history. These controls
 remain reachable from a compact editor-options menu when the window is too
 narrow for the toolbar to hold them.
 
+The same rule holds for the Find bar. Its two fields and its match counter are
+the irreducible core and stay on the row at every width; when the row can no
+longer hold the verbs, Previous, Next, Replace and Replace All collapse into a
+single overflow menu rather than being clipped off the edge, and the control
+that closes the bar stays beside them. A control that cannot be reached is
+worse than one that has to be opened.
+
 A global preference may seed defaults for newly opened views, but changing one
 view never rearranges a sibling window.
 

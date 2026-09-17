@@ -3497,6 +3497,24 @@ pub(crate) fn toolbar_button_response(
 /// The trailing slot is for a disclosure chevron: a button that opens a menu
 /// has to look different from one that acts immediately, and the mark for
 /// that sits after the words, not before them.
+/// The width `toolbar_button_response` would take for this label, so a bar
+/// can work out whether its controls fit before it lays any of them out.
+pub(crate) fn toolbar_button_width(
+    ui: &egui::Ui,
+    icon_name: Option<Icon>,
+    label: &str,
+) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::proportional(TOOLBAR_TEXT_SIZE),
+        theme::TEXT_SECONDARY,
+    );
+    let icon_width = icon_name
+        .map(|_| TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP)
+        .unwrap_or(0.0);
+    (TOOLBAR_BUTTON_PADDING_X * 2.0 + icon_width + galley.size().x).max(TOOLBAR_BUTTON_HEIGHT)
+}
+
 pub(crate) fn toolbar_button_with_trailing(
     ui: &mut egui::Ui,
     icon_name: Option<Icon>,
