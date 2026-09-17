@@ -713,6 +713,10 @@ impl Default for SshLauncherForm {
     /// Port starts prefilled with the actual default (`"22"`) rather than
     /// an empty field with "(default: 22)" wording, so the box always shows
     /// the value that will actually be used.
+    ///
+    /// The destination pane starts on the single `user@host:port` field:
+    /// it is the fastest way to state a destination, and the separate
+    /// fields are one click away.
     fn default() -> Self {
         Self {
             host: String::new(),
@@ -720,7 +724,7 @@ impl Default for SshLauncherForm {
             username: String::new(),
             quick_connect: String::new(),
             advanced_open: false,
-            destination_expanded: true,
+            destination_expanded: false,
             authentication_method: SshAuthenticationMethod::default(),
             password: String::new(),
             private_key: String::new(),
@@ -744,10 +748,6 @@ impl Default for SshLauncherForm {
 impl SshLauncherForm {
     const DEFAULT_PORT: u16 = DEFAULT_SSH_PORT;
 
-    /// The SFTP launcher opens on the compact `user@host:port` notation it
-    /// has always led with, where SSH opens on the separate fields. Both
-    /// surfaces render the same pane and can be toggled to the other
-    /// notation; only the starting choice differs.
     fn destination(&mut self) -> DestinationFields<'_> {
         DestinationFields {
             username: &mut self.username,
@@ -755,13 +755,6 @@ impl SshLauncherForm {
             port: &mut self.port,
             quick_connect: &mut self.quick_connect,
             expanded: &mut self.destination_expanded,
-        }
-    }
-
-    fn for_sftp() -> Self {
-        Self {
-            destination_expanded: false,
-            ..Self::default()
         }
     }
 
@@ -793,9 +786,9 @@ impl SshLauncherForm {
             .map(SshPortForwardDraft::from_configuration)
             .collect();
         self.advanced_open = true;
-        // A profile fills the individual fields, so show them rather than
-        // the compact notation they would be squashed into.
-        self.destination_expanded = true;
+        // Compose the shorthand too, so the destination reads correctly in
+        // whichever notation the user has the pane set to.
+        self.sync_quick_connect_from_advanced();
     }
 
     fn sync_remote_durable_provider_default(
@@ -1220,7 +1213,7 @@ impl Default for LauncherState {
             ssh: SshLauncherForm::default(),
             ssh_profile_prefilled: false,
             sftp_open: false,
-            sftp: SshLauncherForm::for_sftp(),
+            sftp: SshLauncherForm::default(),
             sftp_profile_prefilled: false,
             serial_open: false,
             serial: SerialLauncherForm::default(),
@@ -2769,7 +2762,14 @@ fn show_profile_row(
     });
 
     if response.clicked() {
-        action = Some(ProfileTableAction::Connect);
+        // Activating a row means different things on the two surfaces it
+        // appears on: the Launcher exists to start sessions, while the
+        // Profiles tab exists to manage them. Connecting from Profiles
+        // stays available from the row menu.
+        action = Some(match menu_kind {
+            ProfileTableMenu::Launcher => ProfileTableAction::Connect,
+            ProfileTableMenu::Profiles => ProfileTableAction::Edit,
+        });
     }
 
     ProfileTableRowResponse { response, action }
@@ -4566,6 +4566,14 @@ mod tests {
         harness.run();
     }
 
+    /// Switches the destination pane from its default `user@host:port`
+    /// field to the separate Username/Host/Port fields, for tests that
+    /// address those fields individually.
+    fn use_separate_destination_fields(harness: &mut Harness<'static, LauncherHarnessState>) {
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
+    }
+
     fn generated_openssh_private_key() -> String {
         let mut random = russh::keys::key::safe_rng();
         let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
@@ -4616,21 +4624,21 @@ mod tests {
         open_ssh_form(&mut harness);
 
         assert!(
-            harness.get_by_label("Username").is_focused(),
-            "Username leads the SSH form's default notation, so it must take the initial \
-             keyboard focus rather than stranding it on a field further down"
+            harness.get_by_label("Quick connect").is_focused(),
+            "the single user@host:port field leads the SSH form's default notation, so it \
+             must take the initial keyboard focus"
         );
 
-        harness.get_by_label("Use user@host:port").click();
+        harness.get_by_label("Use separate fields").click();
         harness.run();
 
         assert!(
-            harness.query_by_label("Username").is_none(),
-            "toggling to the compact notation must replace the separate fields, not join them"
+            harness.query_by_label("Quick connect").is_none(),
+            "toggling to the separate fields must replace the one-line field, not join it"
         );
         assert!(
-            harness.query_by_label("Quick connect").is_some(),
-            "toggling to the compact notation must reveal the one-line field"
+            harness.get_by_label("Username").is_focused(),
+            "focus must follow the toggle onto the newly leading field"
         );
     }
 
@@ -4643,6 +4651,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
 
         let host_top = harness.get_by_label("Host").rect().top();
         let port_top = harness.get_by_label("Port").rect().top();
@@ -4681,6 +4690,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "example.invalid");
         enter_text(&mut harness, "Username", "test-user");
         enter_text(&mut harness, "Password", "transient-test-password");
@@ -4713,7 +4723,7 @@ mod tests {
     }
 
     #[test]
-    fn ssh_launcher_defaults_to_the_full_connection_form() {
+    fn ssh_launcher_defaults_to_the_squashed_destination_field() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4722,17 +4732,17 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.query_by_label("Host").is_some(),
-            "a freshly opened SSH launcher must show the full connection form"
+            harness.query_by_label("Quick connect").is_some(),
+            "a freshly opened SSH launcher must show the squashed user@host:port field"
         );
         assert!(
-            harness.query_by_label("Quick connect").is_none(),
-            "the two notations are alternatives: the one-line field must stay hidden \
-             until the user asks for it"
+            harness.query_by_label("Host").is_none(),
+            "the two notations are alternatives: the separate fields must stay hidden \
+             until the user asks for them"
         );
         assert!(
-            harness.query_by_label("Use user@host:port").is_some(),
-            "the SSH launcher must still offer the squashed one-line notation"
+            harness.query_by_label("Use separate fields").is_some(),
+            "the SSH launcher must still offer the separate destination fields"
         );
     }
 
@@ -4742,8 +4752,6 @@ mod tests {
         harness.run();
         open_ssh_form(&mut harness);
 
-        harness.get_by_label("Use user@host:port").click();
-        harness.run();
         enter_text(
             &mut harness,
             "Quick connect",
@@ -4787,7 +4795,7 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.get_by_label("Username").is_focused(),
+            harness.get_by_label("Quick connect").is_focused(),
             "the preserved opening-focus affordance must land on the leading field"
         );
     }
@@ -4800,6 +4808,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Host", "10.1.2.3");
         enter_text(&mut harness, "Username", "fes");
@@ -4887,6 +4896,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Host", "10.1.2.3");
         harness.get_by_label("Port").click();
@@ -5075,6 +5085,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Username", "fes");
         harness.get_by_label("Connect").click();
@@ -5117,6 +5128,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "ssh.example.test");
         enter_text(&mut harness, "Username", "deploy");
         enter_text(&mut harness, "Password", "transient-secret");
@@ -5217,6 +5229,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Host", "invalid host");
         harness.get_by_label("Connect").click();
@@ -5241,6 +5254,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
 
         harness.get_by_label("Connect").click();
@@ -5306,6 +5320,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "example.invalid");
         enter_text(&mut harness, "Username", "test-user");
 
@@ -6411,6 +6426,8 @@ mod tests {
             harness.get_by_label("Password").is_focused(),
             "a restored destination should focus the password field it still needs"
         );
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
 
         harness.get_by_label("Username").focus();
         harness.run();
@@ -6540,6 +6557,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
 
         harness.get_by_label("Connect").click();

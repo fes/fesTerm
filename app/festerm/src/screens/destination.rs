@@ -288,6 +288,7 @@ impl<'a> DestinationPane<'a> {
     /// was pressed in a destination field, which surfaces treat as a
     /// submit without re-deriving it.
     pub(super) fn show(mut self, ui: &mut Ui, request_focus: bool) -> bool {
+        let mut request_focus = request_focus;
         ui.horizontal(|ui| {
             super::ssh_section_heading(ui, "Connection");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -298,6 +299,10 @@ impl<'a> DestinationPane<'a> {
                 };
                 if ui.small_button(toggle_label).clicked() {
                     self.fields.toggle_notation();
+                    // Focus follows the toggle onto whichever field now
+                    // leads, so switching notation mid-thought does not
+                    // cost the user a click to carry on typing.
+                    request_focus = true;
                 }
             });
         });

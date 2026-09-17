@@ -63,9 +63,9 @@
       "caption": "The default SSH launch surface: a Connection section led by the squashed user@host:port field and repeating it as Username, Host and Port, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.",
       "image": "ssh-connect-collapsed.png",
       "width": 804,
-      "height": 610,
+      "height": 562,
       "tier": "headless",
-      "sha256": "92600eece94fe8af999524315c2d7dcad46a256062d2774c01b82abcfbe03326"
+      "sha256": "4ffaddd9b97c4b2948e87cef14e10a69eb225c554ccb876383bd119b67bec88f"
     },
     {
       "id": "diagnostics-durable-session",
@@ -239,9 +239,9 @@
       "caption": "The same SSH-family editor in SFTP mode, offering the graphical file-manager toggle instead of a terminal type.",
       "image": "profiles-sftp-editor.png",
       "width": 416,
-      "height": 474,
+      "height": 430,
       "tier": "headless",
-      "sha256": "2635033d4ee7e9fa6afdce5ce1471063df67f9c99c4a7dc1ee23bce93aaefee6"
+      "sha256": "df4fd5662d96247abed73c302c71988af00fcacd0c208c46fe833ead5b379fd2"
     },
     {
       "id": "profiles-ssh-editor",
@@ -250,9 +250,9 @@
       "caption": "Editing an existing SSH profile's connection metadata and durable- session settings.",
       "image": "profiles-ssh-editor.png",
       "width": 520,
-      "height": 545,
+      "height": 501,
       "tier": "headless",
-      "sha256": "e885b25fa4fde14302d0190ccc30ee4ddd13267141c652c4384ff96fb54690da"
+      "sha256": "ec17d8f9e38047416036c1a7632ea3bc08b8b101be325f7af07a7bcfcc248fea"
     },
     {
       "id": "settings-interface-scrolling",

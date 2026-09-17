@@ -232,7 +232,7 @@ impl Default for SshProfileDraft {
             username: String::new(),
             port_forwards: Vec::new(),
             quick_connect: String::new(),
-            destination_expanded: true,
+            destination_expanded: false,
             profile_kind: RemoteProfileKind::Ssh,
             sftp_gui_mode: true,
             auth_method: SshAuthenticationMethod::Password,
@@ -308,8 +308,8 @@ impl SshProfileDraft {
                 .iter()
                 .map(SshPortForwardDraft::from_configuration)
                 .collect(),
-            quick_connect: String::new(),
-            destination_expanded: true,
+            quick_connect: format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
+            destination_expanded: false,
             profile_kind: ssh.profile_kind(),
             sftp_gui_mode: ssh.sftp_gui_mode(),
             auth_method: match stored_credential_kind {
@@ -1624,8 +1624,6 @@ mod tests {
         harness.run();
         open_new_profile(&mut harness, "SSH");
 
-        harness.get_by_label("Use user@host:port").click();
-        harness.run();
         assert!(
             harness.query_by_label("Host").is_none(),
             "the two notations are alternatives here too, not a pair"
@@ -1651,6 +1649,35 @@ mod tests {
                 "the shorthand must fill {label} in the editor just as it does in the launchers"
             );
         }
+    }
+
+    #[test]
+    fn editing_an_existing_ssh_profile_shows_its_destination_already_composed() {
+        // The editor opens on the shorthand notation, so a stored profile has
+        // to arrive with `user@host:port` already assembled rather than
+        // presenting the user with an empty field over populated state.
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            2222,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        click_profile_action(&mut harness, "prod", "Edit");
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Quick connect").value().as_deref(),
+            Some("deploy@ssh.example.test:2222"),
+            "the stored username, host and port must be composed into the shorthand"
+        );
     }
 
     #[test]
@@ -1693,6 +1720,13 @@ mod tests {
             "scrolling must be able to bring the last profile into view, but it stopped \
              at {after} of {PANEL_HEIGHT}"
         );
+    }
+
+    /// See `screens::tests::use_separate_destination_fields`: the editor
+    /// shares that pane, and so shares its default notation.
+    fn use_separate_destination_fields(harness: &mut Harness<'static, ProfilesHarnessState>) {
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
     }
 
     fn open_new_profile(harness: &mut Harness<'static, ProfilesHarnessState>, kind: &str) {
@@ -1899,6 +1933,29 @@ mod tests {
                 "{label} must be offered by the New Profile menu"
             );
         }
+    }
+
+    #[test]
+    fn clicking_a_profiles_row_opens_its_editor_rather_than_connecting() {
+        // The Launcher exists to start sessions, the Profiles tab to
+        // manage them, so the same row component means "edit" here and
+        // "connect" there. Connecting from Profiles stays on the row menu.
+        let local = Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![local]).unwrap());
+        harness.run();
+
+        harness.get_by_label("dev-shell — Local · /bin/zsh").click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Edit Local Profile").is_some(),
+            "clicking a Profiles row must open its editor"
+        );
+        assert!(
+            harness.state().command.is_none(),
+            "clicking a Profiles row must not start a session"
+        );
     }
 
     #[test]
@@ -2491,6 +2548,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2571,6 +2629,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2622,6 +2681,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SFTP");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "files"),
             ("Username", "deploy"),
@@ -2677,6 +2737,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "production"),
             ("Username", "other-user"),
@@ -2851,6 +2912,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2927,6 +2989,7 @@ mod tests {
         assert!(harness
             .query_by_label("Use graphical file manager")
             .is_some());
+        use_separate_destination_fields(&mut harness);
 
         for (label, value) in [
             ("Name", "files"),

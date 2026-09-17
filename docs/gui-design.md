@@ -343,12 +343,12 @@ then an **Authentication** section and an initially off **Durable remote
 session** control.
 
 The Connection section shows the destination in one of two interchangeable
-notations, never both at once: separate **Username**, **Host** and **Port**
-fields (the SSH form's default, with Username taking the opening focus), or a
-single **Quick connect** `user@host[:port]` field (the SFTP form's default).
-A toggle on the section heading switches between them and carries the
-destination across, so neither notation is second-class and neither duplicates
-the other on screen. The SSH launcher, the SFTP launcher and the Profiles
+notations, never both at once: a single **Quick connect** `user@host[:port]`
+field, which is the default everywhere and takes the opening focus, or
+separate **Username**, **Host** and **Port** fields in that order. A toggle on
+the section heading switches between them, carries the destination across and
+moves focus onto whichever field now leads, so neither notation is
+second-class and neither duplicates the other on screen. The SSH launcher, the SFTP launcher and the Profiles
 editor for SSH/SFTP profiles all render this same pane, so the notation
 toggle, field order and focus behave identically wherever a destination is
 edited; each surface adds only its own surrounding controls. The SSH and SFTP
