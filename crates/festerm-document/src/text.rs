@@ -106,6 +106,13 @@ pub struct TextDocument {
     bounds: DocumentBounds,
     undo: UndoHistory,
     saved_token: Option<u64>,
+    /// Bumped by every change to the content, including undo and redo.
+    ///
+    /// The undo token cannot stand in for this: a run of coalesced keystrokes
+    /// is deliberately one transaction with one token, so a debounced
+    /// auto-save reading the token would believe an actively typed document
+    /// had settled (ADR 0034 §7).
+    revision: u64,
 }
 
 impl TextDocument {
@@ -147,6 +154,7 @@ impl TextDocument {
             bounds,
             undo: UndoHistory::new(),
             saved_token: None,
+            revision: 0,
         })
     }
 
@@ -186,6 +194,12 @@ impl TextDocument {
         bytes
     }
 
+    /// A counter that changes whenever the content does, so a caller can tell
+    /// "nothing has happened since I last looked" from "something has".
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Whether the buffer differs from the content last successfully saved or
     /// loaded.
     pub fn is_dirty(&self) -> bool {
@@ -211,6 +225,7 @@ impl TextDocument {
         self.indentation = replacement.indentation;
         self.undo.clear();
         self.saved_token = None;
+        self.revision = self.revision.wrapping_add(1);
         Ok(())
     }
 
@@ -298,6 +313,7 @@ impl TextDocument {
             let inverse = edit.inverse();
             splice(&mut self.text, &inverse);
         }
+        self.revision = self.revision.wrapping_add(1);
         true
     }
 
@@ -309,6 +325,7 @@ impl TextDocument {
         for edit in &transaction.edits {
             splice(&mut self.text, edit);
         }
+        self.revision = self.revision.wrapping_add(1);
         true
     }
 
@@ -372,6 +389,7 @@ impl TextDocument {
         self.check_bounds(&candidate)?;
         self.text = candidate;
         self.undo.push(edits, coalescable);
+        self.revision = self.revision.wrapping_add(1);
         Ok(())
     }
 

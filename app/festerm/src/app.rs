@@ -4735,7 +4735,14 @@ impl FesTermApp {
             documents.borrow_mut().poll(Instant::now())
         };
         self.window_was_focused = regained_focus;
-        if !changed.is_empty() {
+        // Auto-save runs on the same beat as the freshness poll, after it, so
+        // a document that has just been found in conflict is not written a
+        // frame later by the debounce that was already counting down.
+        // A failure leaves its error on the document, where every view's
+        // banner already reads from, so there is nothing to route here beyond
+        // making the frame that shows it happen.
+        let written = documents.borrow_mut().auto_save(Instant::now());
+        if !changed.is_empty() || !written.is_empty() {
             context.request_repaint();
         }
         // Polling has to keep happening while the window sits idle, or an

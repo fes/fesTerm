@@ -36,6 +36,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(1_500);
 /// that it is gone before it becomes stale news.
 const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 
+/// How long a document must sit unchanged before Auto-save writes it.
+///
+/// Auto-save is idle-debounced rather than periodic (ADR 0034 §7): a write per
+/// keystroke would put a partial word on disk, wake every other view's poll,
+/// and, on a remote origin, spend a round trip on text the user is still in
+/// the middle of typing.
+const AUTO_SAVE_IDLE: Duration = Duration::from_millis(900);
+
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
 
@@ -58,6 +66,13 @@ pub(crate) struct OpenDocument {
     /// When an outside change was last taken up, so the notice can fade
     /// instead of sitting there claiming news that is minutes old.
     reloaded: Option<Instant>,
+    /// The content revision last seen by Auto-save and when it was seen, which
+    /// is what turns a stream of keystrokes into one write once typing stops.
+    settled: Option<(u64, Instant)>,
+    /// The revision an Auto-save last failed at. Auto-save does not try that
+    /// same content again: a failing write retried on a timer would bury the
+    /// error under its own repetition (ADR 0034 §7).
+    auto_save_blocked_at: Option<u64>,
 }
 
 impl OpenDocument {
@@ -250,6 +265,8 @@ impl DocumentRegistry {
                 last_error: None,
                 checked: Instant::now(),
                 reloaded: None,
+                settled: None,
+                auto_save_blocked_at: None,
             },
         );
         id
@@ -358,6 +375,58 @@ impl DocumentRegistry {
         };
         document.save = SaveProgress::Idle;
         Some(outcome)
+    }
+
+    /// Writes every document whose Auto-save is on and whose typing has
+    /// settled, and returns what happened to each one that was attempted.
+    ///
+    /// This is the whole of Auto-save's scheduling: one debounce per document,
+    /// coalesced by construction because a write is only considered once the
+    /// content has stopped changing. Failures are not retried on the clock --
+    /// the document stays dirty, keeps its error, and is only reconsidered
+    /// once the user edits again, which is the only new information there is
+    /// (ADR 0034 §7).
+    pub(crate) fn auto_save(&mut self, now: Instant) -> Vec<(DocumentId, SaveOutcome)> {
+        let mut due = Vec::new();
+        for (id, document) in &mut self.documents {
+            let revision = document.text.revision();
+            let changed = document.settled.is_none_or(|(seen, _)| seen != revision);
+            if changed {
+                document.settled = Some((revision, now));
+                // New content is new information, so an earlier failure stops
+                // standing in the way.
+                if document.auto_save_blocked_at.is_some_and(|at| at != revision) {
+                    document.auto_save_blocked_at = None;
+                }
+                continue;
+            }
+            if document.auto_save_blocked_at == Some(revision) {
+                continue;
+            }
+            if !document.auto_save_should_write() || document.save != SaveProgress::Idle {
+                continue;
+            }
+            let Some((_, since)) = document.settled else {
+                continue;
+            };
+            if now.duration_since(since) >= AUTO_SAVE_IDLE {
+                due.push(*id);
+            }
+        }
+
+        let mut outcomes = Vec::new();
+        for id in due {
+            let Some(outcome) = self.save(id) else {
+                continue;
+            };
+            if let Some(document) = self.documents.get_mut(&id) {
+                if outcome != SaveOutcome::Saved {
+                    document.auto_save_blocked_at = Some(document.text.revision());
+                }
+            }
+            outcomes.push((id, outcome));
+        }
+        outcomes
     }
 
     /// Re-checks every local document whose turn has come round, which is how
@@ -767,6 +836,129 @@ mod tests {
         assert_eq!(
             registry.get(id).unwrap().status().auto_save(),
             AutoSaveControl::Paused
+        );
+    }
+
+    #[test]
+    fn auto_save_waits_for_typing_to_settle_and_then_writes_once() {
+        let directory = TemporaryDirectory::new("autosave-debounce");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        let start = Instant::now();
+
+        // Three keystrokes, each one arriving before the debounce expires.
+        for (step, text) in ["m", "i", "n"].iter().enumerate() {
+            type_into(&mut registry, id, text);
+            let now = start + AUTO_SAVE_IDLE.mul_f32(0.6) * (step as u32 + 1);
+            assert!(
+                registry.auto_save(now).is_empty(),
+                "a document still being typed into is not written"
+            );
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\n");
+
+        let settled = start + AUTO_SAVE_IDLE * 4;
+        assert_eq!(
+            registry.auto_save(settled),
+            vec![(id, SaveOutcome::Saved)],
+            "one write, once the typing stopped"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\nmin");
+        assert!(!registry.get(id).unwrap().text().is_dirty());
+
+        assert!(
+            registry.auto_save(settled + AUTO_SAVE_IDLE * 2).is_empty(),
+            "a clean document is not written again and again"
+        );
+    }
+
+    #[test]
+    fn auto_save_left_off_never_writes_however_long_it_waits() {
+        let directory = TemporaryDirectory::new("autosave-off");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "mine\n");
+        let start = Instant::now();
+
+        assert!(registry.auto_save(start).is_empty());
+        assert!(registry.auto_save(start + AUTO_SAVE_IDLE * 10).is_empty());
+        assert!(registry.auto_save(start + AUTO_SAVE_IDLE * 20).is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\n");
+        assert!(
+            registry.get(id).unwrap().text().is_dirty(),
+            "and nothing about the document was quietly changed"
+        );
+    }
+
+    #[test]
+    fn auto_save_pauses_on_conflict_rather_than_overwriting_the_other_version() {
+        let directory = TemporaryDirectory::new("autosave-conflict");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        change_outside(&path, "theirs\n");
+        registry.refresh(id);
+
+        let start = Instant::now();
+        assert!(registry.auto_save(start).is_empty());
+        assert!(registry.auto_save(start + AUTO_SAVE_IDLE * 4).is_empty());
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
+        assert_eq!(
+            registry.get(id).unwrap().status().auto_save(),
+            AutoSaveControl::Paused
+        );
+    }
+
+    #[test]
+    fn a_failed_auto_save_is_not_retried_until_the_document_changes_again() {
+        let directory = TemporaryDirectory::new("autosave-failure");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        registry.get_mut(id).unwrap().set_auto_save_requested(true);
+        type_into(&mut registry, id, "mine\n");
+        // The file is replaced from outside *without* the document noticing,
+        // so the write itself is what discovers the clash.
+        change_outside(&path, "theirs\n");
+
+        // The first call is the frame that notices the edit; the debounce is
+        // measured from there, exactly as the application's per-frame call
+        // does it.
+        let start = Instant::now();
+        assert!(registry.auto_save(start).is_empty());
+        let first = registry.auto_save(start + AUTO_SAVE_IDLE * 2);
+        assert_eq!(first.len(), 1, "the write was attempted once");
+        assert!(matches!(first[0].1, SaveOutcome::Conflict(_)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
+
+        assert!(
+            registry.auto_save(start + AUTO_SAVE_IDLE * 8).is_empty(),
+            "the same failing content is not attempted again on a timer"
+        );
+        assert!(registry.get(id).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn auto_save_belongs_to_the_document_so_every_view_agrees() {
+        let directory = TemporaryDirectory::new("autosave-shared");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut registry = DocumentRegistry::new();
+        let first = registry.open_local(&path).unwrap();
+        let second = registry.open_local(&path).unwrap();
+        assert_eq!(first, second, "two views, one document");
+
+        registry.get_mut(first).unwrap().set_auto_save_requested(true);
+
+        assert_eq!(
+            registry.get(second).unwrap().status().auto_save(),
+            AutoSaveControl::On,
+            "the second view cannot hold a different answer"
         );
     }
 

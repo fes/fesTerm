@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "b1a6310aa7c62da2c3b40aae41794ac60f50c82de151b8d6b44431f9369d83d2"
+      "sha256": "a390d035f9929c3055708820391b5978b31292c94995315b8c396a5d49110333"
     },
     {
       "id": "text-editor-dirty-close",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "835d7e51fb0a811127a4fac5c44dc5c4f962df64bd751671fafa2170d73ac8f4"
+      "sha256": "2bff37760ebdf21efd98b61e17f9ff182e582c356b2d51916d36afcc8aecdb98"
     },
     {
       "id": "text-editor-saved",
@@ -120,7 +120,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "dfe5e051de0fb1cf1c00c77009f67e86e9b79d33291bdd1e0edbf372b3cb4c77"
+      "sha256": "b430962d1a20efcb2ff6b4ad79dc5cc029ca3477979014e1ca12e1db94a35335"
     },
     {
       "id": "text-editor-split",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "5fc76f3aaf5e7b55cc681cde97306458cc90ea4ce2d295d46d5eb47501f8b091"
+      "sha256": "3099d352a85091d51c1862132c9bca71cb3175fd7f2bc09efcdabb0dd3a55c02"
     },
     {
       "id": "text-editor-unsaved",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "2fded2c1cebd44613c154842d18a6b43c33926d5a4cb7acaee216dacb613278f"
+      "sha256": "69d05736e386d26511a218d7e48a260958060c80fa8ef0bcebaf16a7af8d8a40"
     },
     {
       "id": "keyboard-editor-collapsed",

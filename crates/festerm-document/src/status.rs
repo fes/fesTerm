@@ -190,6 +190,17 @@ impl AutoSaveControl {
     pub const fn writes(self) -> bool {
         matches!(self, Self::On)
     }
+
+    /// The control's own words for its state. A paused Auto-save says so in
+    /// text rather than relying on a tick that is on but not writing, which
+    /// would be indistinguishable from one that is (ADR 0034 §8).
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off | Self::On => "Auto-save",
+            Self::Paused => "Auto-save · paused",
+            Self::Unavailable => "Auto-save · unavailable",
+        }
+    }
 }
 
 /// Everything status is derived from.

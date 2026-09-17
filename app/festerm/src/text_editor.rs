@@ -10,7 +10,9 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
 use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
-use festerm_document::{BannerAction, DocumentId, DocumentStatus, Severity, StatusAccent};
+use festerm_document::{
+    AutoSaveControl, BannerAction, DocumentId, DocumentStatus, Severity, StatusAccent,
+};
 use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
 use crate::documents::SharedDocuments;
@@ -24,12 +26,13 @@ use crate::text_compare::ComparePane;
 /// Width of the line-number gutter's digits area before padding.
 const GUTTER_PADDING_X: f32 = 12.0;
 const GUTTER_MIN_DIGITS: usize = 2;
+/// The tighter gap inside one group of related toolbar controls.
+const TOOLBAR_GROUP_GAP: f32 = 6.0;
 const EDITOR_TEXT_SIZE: f32 = 13.0;
 const BAR_PADDING_X: i8 = 9;
 const BAR_PADDING_Y: i8 = 6;
 const BANNER_ACCENT_WIDTH: f32 = 3.0;
 const ORIGIN_ICON_SIZE: f32 = 12.0;
-const MODE_CONTROL_GAP: f32 = 14.0;
 const MODE_SEGMENT_GAP: f32 = 2.0;
 const SPLIT_DIVIDER_WIDTH: f32 = 9.0;
 const BANNER_PADDING_X: i8 = BAR_PADDING_X;
@@ -276,9 +279,9 @@ impl TextEditorTab {
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    self.show_origin_bar(ui, documents, &status);
+                    self.show_origin_bar(ui);
                     hairline(ui);
-                    if let Some(bar_command) = self.show_command_bar(ui, &status) {
+                    if let Some(bar_command) = self.show_command_bar(ui, documents, &status) {
                         command = Some(bar_command);
                     }
                     hairline(ui);
@@ -375,31 +378,14 @@ impl TextEditorTab {
         }
     }
 
-    fn show_origin_bar(
-        &mut self,
-        ui: &mut egui::Ui,
-        documents: &SharedDocuments,
-        status: &DocumentStatus,
-    ) {
+    fn show_origin_bar(&mut self, ui: &mut egui::Ui) {
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(BAR_PADDING_X, BAR_PADDING_Y))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.set_height(TOOLBAR_BUTTON_HEIGHT);
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        let auto_save = status.auto_save();
-                        let mut checked = auto_save.checked();
-                        let checkbox = ui.add_enabled(
-                            auto_save.enabled(),
-                            egui::Checkbox::new(&mut checked, "Auto-save"),
-                        );
-                        if checkbox.changed() {
-                            if let Some(open) = documents.borrow_mut().get_mut(self.document) {
-                                open.set_auto_save_requested(checked);
-                            }
-                        }
                         if self.renders_markdown() {
-                            ui.add_space(MODE_CONTROL_GAP);
                             self.show_mode_control(ui);
                         }
                         ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
@@ -447,6 +433,7 @@ impl TextEditorTab {
     fn show_command_bar(
         &mut self,
         ui: &mut egui::Ui,
+        documents: &SharedDocuments,
         status: &DocumentStatus,
     ) -> Option<AppCommand> {
         let mut command = None;
@@ -461,6 +448,17 @@ impl TextEditorTab {
                             command = Some(AppCommand::SaveTextDocument);
                         }
                     });
+                    ui.scope(|ui| {
+                        // Save and Auto-save are one group -- both answer
+                        // "what happens to this document's bytes" -- so they
+                        // sit closer to each other than to the view actions
+                        // beyond the separator.
+                        ui.spacing_mut().item_spacing.x = TOOLBAR_GROUP_GAP;
+                        self.show_auto_save_control(ui, documents, status);
+                    });
+                    ui.add_space(TOOLBAR_GROUP_GAP);
+                    ui.separator();
+                    ui.add_space(TOOLBAR_GROUP_GAP);
                     if self.renders_markdown()
                         && toolbar_button(
                             ui,
@@ -481,6 +479,38 @@ impl TextEditorTab {
                 });
             });
         command
+    }
+
+    /// Auto-save sits beside Save rather than beside `Edit | Preview | Split`,
+    /// because it belongs to the document every view shares, not to the view
+    /// that happens to be showing it (ADR 0034 §7).
+    fn show_auto_save_control(
+        &self,
+        ui: &mut egui::Ui,
+        documents: &SharedDocuments,
+        status: &DocumentStatus,
+    ) {
+        let auto_save = status.auto_save();
+        let mut checked = auto_save.checked();
+        // Sized to its wording rather than to the longest wording it could
+        // ever take: reserving that much leaves a visible dead gap beside
+        // Save in the state the row is almost always in, and the label only
+        // grows at the same moment the banner above it changes height anyway.
+        let checkbox = ui.add_enabled(
+            auto_save.enabled(),
+            egui::Checkbox::new(&mut checked, auto_save.label()),
+        );
+        let checkbox = match auto_save {
+            AutoSaveControl::Paused | AutoSaveControl::Unavailable => checkbox
+                .on_disabled_hover_text(status.detail())
+                .on_hover_text(status.detail()),
+            AutoSaveControl::On | AutoSaveControl::Off => checkbox,
+        };
+        if checkbox.changed() {
+            if let Some(open) = documents.borrow_mut().get_mut(self.document) {
+                open.set_auto_save_requested(checked);
+            }
+        }
     }
 
     fn show_body(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
@@ -1016,6 +1046,107 @@ mod tests {
             .text()
             .text()
             .to_owned()
+    }
+
+    #[test]
+    fn ticking_auto_save_then_typing_puts_the_text_on_disk_without_pressing_save() {
+        let directory = TemporaryDirectory::new("autosave-keystrokes");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        harness.get_by_label("Auto-save").click();
+        harness.run();
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta");
+        harness.run();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "alpha\n",
+            "nothing is written while the typing is still arriving"
+        );
+
+        // The first call is the frame that sees the new text; the debounce
+        // runs from there, which is what the application's per-frame call does.
+        let start = std::time::Instant::now();
+        assert!(harness.state().0.borrow_mut().auto_save(start).is_empty());
+        let written = harness
+            .state()
+            .0
+            .borrow_mut()
+            .auto_save(start + std::time::Duration::from_secs(5));
+
+        assert_eq!(written.len(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\nbeta");
+        harness.run();
+        harness.get_by_label("Saved");
+    }
+
+    #[test]
+    fn auto_save_is_offered_beside_save_and_holds_for_the_whole_document() {
+        let directory = TemporaryDirectory::new("autosave-control");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        harness.get_by_label("Auto-save").click();
+        harness.run();
+
+        let document = harness.state().1.document();
+        assert!(
+            harness
+                .state()
+                .0
+                .borrow()
+                .get(document)
+                .unwrap()
+                .auto_save_requested(),
+            "the control writes through to the document, not to the view"
+        );
+
+        harness.get_by_label("Auto-save").click();
+        harness.run();
+        assert!(
+            !harness
+                .state()
+                .0
+                .borrow()
+                .get(document)
+                .unwrap()
+                .auto_save_requested(),
+            "and turning it off again discards nothing"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\n");
+    }
+
+    #[test]
+    fn a_paused_auto_save_says_so_in_words_rather_than_by_a_tick_alone() {
+        let directory = TemporaryDirectory::new("autosave-paused");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        harness.get_by_label("Auto-save").click();
+        harness.run();
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta");
+        harness.run();
+
+        // The file changes underneath the editor, which is the recoverable
+        // interruption Auto-save pauses for.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&path, "theirs\n").unwrap();
+        let document = harness.state().1.document();
+        harness.state().0.borrow_mut().refresh(document);
+        harness.run();
+
+        harness.get_by_label("Auto-save · paused");
+        assert!(
+            harness.query_by_label("Auto-save").is_none(),
+            "the control cannot claim to be running while it is not"
+        );
     }
 
     #[test]
