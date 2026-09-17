@@ -382,6 +382,69 @@ impl DocumentRegistry {
         Some(outcome)
     }
 
+    /// Writes a document's text to a new local destination and hands back the
+    /// document identity the saving view should follow.
+    ///
+    /// The new location is a different document, not a rename: other views of
+    /// the original are still looking at the original file and must not be
+    /// moved out from under themselves (ADR 0034 §3). The caller is
+    /// responsible for releasing the view's old document once it has rebound.
+    ///
+    /// If the destination is already open, that document is what the view
+    /// binds to. Two buffers for one file is precisely what the registry
+    /// exists to prevent (§1), so the open document is reloaded from the bytes
+    /// just written rather than a second copy being made.
+    pub(crate) fn save_as(
+        &mut self,
+        id: DocumentId,
+        path: &Path,
+    ) -> Option<(SaveOutcome, Option<DocumentId>)> {
+        let origin = match LocalOrigin::new(path).map(DocumentOrigin::Local) {
+            Ok(origin) => origin,
+            Err(_) => {
+                let error = SaveError::new(
+                    "That destination cannot be used",
+                    "The chosen path is not a file this host can write to.",
+                );
+                return Some((SaveOutcome::Failed(error), None));
+            }
+        };
+        let document = self.documents.get(&id)?;
+        let bytes = document.text.to_bytes();
+        let text = document.text.clone();
+
+        let generation = match document_store::save(path, &bytes, None) {
+            Ok(generation) => generation,
+            Err(SaveFailure::Gone) => {
+                return Some((SaveOutcome::Unavailable(UnavailableReason::Missing), None));
+            }
+            Err(SaveFailure::PermissionDenied) => {
+                return Some((
+                    SaveOutcome::Unavailable(UnavailableReason::PermissionDenied),
+                    None,
+                ));
+            }
+            Err(failure) => {
+                let error = SaveError::new(failure.headline(), failure.detail());
+                return Some((SaveOutcome::Failed(error), None));
+            }
+        };
+
+        if let Some(existing) = self.by_key.get(&origin.key()).copied() {
+            // The file the user chose is open elsewhere, and it now holds the
+            // bytes just written, so that document is brought up to date
+            // rather than shadowed.
+            self.reload_from_source(existing);
+            self.retain(existing);
+            return Some((SaveOutcome::Saved, Some(existing)));
+        }
+
+        let mut text = text;
+        text.mark_saved();
+        let new_id = self.insert(origin, text, Some(generation), false);
+        Some((SaveOutcome::Saved, Some(new_id)))
+    }
+
     /// Writes every document whose Auto-save is on and whose typing has
     /// settled, and returns what happened to each one that was attempted.
     ///
@@ -708,6 +771,59 @@ mod tests {
         assert_eq!(
             registry.get(id).unwrap().status().severity(),
             Severity::Informational
+        );
+    }
+
+
+    #[test]
+    fn saving_somewhere_else_writes_there_and_leaves_the_original_alone() {
+        let directory = TemporaryDirectory::new("save-as");
+        let path = directory.file("notes.md", "alpha\n");
+        let destination = directory.path.join("copy.md");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+        type_into(&mut registry, id, "beta\n");
+
+        let (outcome, moved) = registry.save_as(id, &destination).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        let moved = moved.expect("the view has somewhere to follow");
+        assert_ne!(moved, id, "a new destination is a new document, not a rename");
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "alpha\nbeta\n");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "alpha\n",
+            "the file that was open is not what was written to"
+        );
+        assert!(!registry.get(moved).unwrap().text().is_dirty());
+        assert!(
+            registry.get(id).unwrap().text().is_dirty(),
+            "the original still holds the typing nobody has saved to it"
+        );
+    }
+
+    #[test]
+    fn saving_onto_an_already_open_file_binds_to_that_document_rather_than_a_second_copy() {
+        let directory = TemporaryDirectory::new("save-as-open");
+        let source = directory.file("notes.md", "alpha\n");
+        let destination = directory.file("other.md", "something else\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&source).unwrap();
+        let existing = registry.open_local(&destination).unwrap();
+        type_into(&mut registry, id, "beta\n");
+
+        let (outcome, moved) = registry.save_as(id, &destination).unwrap();
+
+        assert_eq!(outcome, SaveOutcome::Saved);
+        assert_eq!(
+            moved,
+            Some(existing),
+            "one file is one buffer, however it came to be written"
+        );
+        assert_eq!(
+            registry.get(existing).unwrap().text().text(),
+            "alpha\nbeta\n",
+            "and the document already open on it has to show what is now there"
         );
     }
 

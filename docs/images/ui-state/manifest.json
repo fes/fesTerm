@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "995fd2954ecbec55e942d737d4a4104c8a1f123373bb4517b7a51c5834c410c1"
+      "sha256": "d248b7aac4dc8669dae178ac0900d03a00ba8e3992dc658265956d693dda0cb4"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "0e1179d1cb2c77a0744275ab334069cbf51aa21b27d3885904da76a4563fbb81"
+      "sha256": "2a8cf090a735627b3aaefca1f3c86197d64d250511f0beab60b3a5bafaf073e1"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "70eca959c41992ec66c19fc445aced9c6e28fe61a033ee21962d1d539d5be6e9"
+      "sha256": "6997efe1998903f9af10586cd816626ca54f7c947d508b413b37cac909de580f"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "5541706a9f9c9301b5bda5fc8e31003f847441305f0d14ae4bc174d1d4d1059d"
+      "sha256": "2a462cb14a1ab8122e05b9814bd90ccfdf4127c0babc69f314632250dd0ad531"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "ddbe0635d074fec24c5ca6289ed8568d6410094f1e9fa47a77fa99d1a25e6524"
+      "sha256": "2487d61144bbe2cb88f3c17be12d4a369650bb26ce4cd6b388ae76997a24e9d1"
+    },
+    {
+      "id": "text-editor-save-as",
+      "section": "editor",
+      "title": "Choosing where a document is written",
+      "caption": "One destination browser for both origins, stating an overwrite in words before the fact rather than asking a second time after the Save is already pressed.",
+      "image": "text-editor-save-as.png",
+      "width": 1080,
+      "height": 760,
+      "tier": "headless",
+      "sha256": "627c6d4fb72bccb1e6285eee183e3ca2436641146df8b9e4b1cc2edb634b6291"
     },
     {
       "id": "text-editor-saved",
@@ -153,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "66b7a93c032694828abcb62ec6466376d43efe7a33212f7e6f13cb29eaa2422a"
+      "sha256": "d7b2fb5bda1688058ea4a84dd3c77be85ea58d7a4dcd3cb557b6f58f5296123a"
     },
     {
       "id": "text-editor-split",
@@ -164,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "c9a38d30e691d2478d59f98d20e4495b4895d2adaceed61a40128df5c6371eb3"
+      "sha256": "ea4c36a1e3d6fb969d340cfb6e1ec61c53fa324d2f19a493a93a1b7e3bc80f42"
     },
     {
       "id": "text-editor-unsaved",
@@ -175,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "f9c6b5d2403c1c7e8aa5af818304a14f8c0d52336a4db8eb8a4466ca4c3635cb"
+      "sha256": "5537f375451bf4e80b1041b559b3c86fc28be3e1d7747e79b386e841794383a6"
     },
     {
       "id": "keyboard-editor-collapsed",

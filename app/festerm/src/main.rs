@@ -24,6 +24,7 @@ mod multiplexer_sessions;
 mod native_smoke;
 mod overlay_state;
 mod port_forward_draft;
+mod save_as;
 mod screens;
 mod search;
 pub mod session_controller;

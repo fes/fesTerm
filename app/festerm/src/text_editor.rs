@@ -392,6 +392,28 @@ impl TextEditorTab {
         self.mode
     }
 
+    /// Points this view at a different document, which is what Save As does:
+    /// the view follows the file it just wrote, while any other view of the
+    /// original carries on looking at the original (ADR 0034 §3).
+    ///
+    /// Per-view presentation is deliberately kept — the user set up this
+    /// window, not this file — but Find results are dropped, because they
+    /// describe offsets into text that this view is no longer showing.
+    pub(crate) fn rebind(&mut self, document: DocumentId, documents: &SharedDocuments) {
+        let registry = documents.borrow();
+        let Some(open) = registry.get(document) else {
+            return;
+        };
+        self.document = document;
+        self.title = open.origin().file_name().to_owned();
+        self.origin_label = open.origin().qualified_label();
+        self.remote = open.origin().is_remote();
+        self.buffer = open.text().text().to_owned();
+        self.find = FindState::default();
+        self.preview = None;
+        self.compare = None;
+    }
+
     pub(crate) const fn document(&self) -> DocumentId {
         self.document
     }
@@ -737,6 +759,22 @@ impl TextEditorTab {
                     ui.add_space(TOOLBAR_GROUP_GAP);
                     ui.separator();
                     ui.add_space(TOOLBAR_GROUP_GAP);
+                    // Save As is always offered, deliberately: it is the way
+                    // out of a conflict, an unavailable source, or lost
+                    // permissions, which are exactly the states in which Save
+                    // itself is disabled (ADR 0034 §3).
+                    if toolbar_button(ui, None, "Save As\u{2026}", "Save As", false) {
+                        command = Some(AppCommand::SaveTextDocumentAs);
+                    }
+                    if toolbar_button(ui, None, "Find", "Find", false) {
+                        self.find.open(false);
+                    }
+                    if toolbar_button(ui, None, "Replace", "Find and replace", false) {
+                        self.find.open(true);
+                    }
+                    ui.add_space(TOOLBAR_GROUP_GAP);
+                    ui.separator();
+                    ui.add_space(TOOLBAR_GROUP_GAP);
                     if self.renders_markdown()
                         && toolbar_button(
                             ui,
@@ -750,12 +788,6 @@ impl TextEditorTab {
                     }
                     if toolbar_button(ui, Some(Icon::Refresh), "Refresh", "Refresh", false) {
                         command = Some(AppCommand::RefreshTextDocument);
-                    }
-                    if toolbar_button(ui, None, "Find", "Find", false) {
-                        self.find.open(false);
-                    }
-                    if toolbar_button(ui, None, "Replace", "Find and replace", false) {
-                        self.find.open(true);
                     }
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         self.show_options_menu(ui);

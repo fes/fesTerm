@@ -355,6 +355,15 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_find,
         },
         Scenario {
+            id: "text-editor-save-as",
+            section: "editor",
+            title: "Choosing where a document is written",
+            caption: "One destination browser for both origins, stating an overwrite \
+                      in words before the fact rather than asking a second time \
+                      after the Save is already pressed.",
+            capture: capture_text_editor_save_as,
+        },
+        Scenario {
             id: "text-editor-options",
             section: "editor",
             title: "The per-view editor options",
@@ -1486,6 +1495,60 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
         .expect("the gallery can change a fixture underneath the editor");
     harness.state_mut().refresh_documents_for_gallery();
     harness.run();
+
+    let image = finish(&mut harness);
+    let _ = fs::remove_dir_all(&directory);
+    image
+}
+
+
+/// The Save As sheet over a real editor, so the destination browser can be
+/// reviewed against the same chrome it actually sits on.
+fn capture_text_editor_save_as() -> image::RgbaImage {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let directory = std::env::temp_dir().join(format!(
+        "festerm-ui-gallery-save-as-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    fs::create_dir_all(directory.join("docs")).expect("the gallery can write a subdirectory");
+    fs::create_dir_all(directory.join("scripts")).expect("the gallery can write a subdirectory");
+    let path = directory.join("NOTES.md");
+    fs::write(&path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
+    fs::write(directory.join("README.md"), synthetic_markdown_prose())
+        .expect("the gallery can write its fixture");
+    fs::write(directory.join("relay.toml"), "[relay]\nlisten = \"0.0.0.0:8443\"\n")
+        .expect("the gallery can write its fixture");
+
+    let context = egui::Context::default();
+    let mut app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());
+    app.dispatch_for_gallery(
+        crate::tabs::AppCommand::OpenTextEditor { path },
+        &context,
+    );
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1080.0, 760.0))
+        .build_ui_state(
+            |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+            app,
+        );
+    harness.run();
+
+    harness.get_by_label("Save As").click();
+    harness.run();
+    // The listing arrives on a worker thread, so the sheet is empty for the
+    // first frames after it opens.
+    for _ in 0..40 {
+        harness.run();
+        if harness.query_by_label_contains("README.md").is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
 
     let image = finish(&mut harness);
     let _ = fs::remove_dir_all(&directory);

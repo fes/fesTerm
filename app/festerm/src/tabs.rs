@@ -1654,6 +1654,14 @@ pub enum AppCommand {
     },
     /// Writes the active editor's document back to its origin.
     SaveTextDocument,
+    /// Asks for a destination. The picker is an application overlay, so this
+    /// only opens it; the write happens on `SaveTextDocumentTo`.
+    SaveTextDocumentAs,
+    /// Writes the active document to a destination the user has chosen and
+    /// confirmed, and moves this view onto it.
+    SaveTextDocumentTo {
+        path: PathBuf,
+    },
     /// Re-checks the active editor's document against its source.
     RefreshTextDocument,
     /// Replaces the active editor's buffer with what the source holds,
@@ -2067,6 +2075,10 @@ pub struct AppState {
     /// additional window after this window's pass has finished borrowing it
     /// (ADR 0032). Drained once by `FesTermApplication`.
     window_open_requested: bool,
+    /// Set when a view asks for a Save As destination. The picker is an
+    /// application overlay rather than tab state, so the application takes
+    /// this each frame and opens it.
+    save_as_requested: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -2134,6 +2146,7 @@ impl AppState {
                 .map(Path::to_path_buf),
             pending_profile_edit: None,
             window_open_requested: false,
+            save_as_requested: false,
             pending_tab_move: None,
             pending_profile_create: None,
             pending_profile_usage: None,
@@ -2845,6 +2858,8 @@ impl AppState {
                 self.open_text_editor(&path);
             }
             AppCommand::SaveTextDocument => self.save_active_text_document(),
+            AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
+            AppCommand::SaveTextDocumentTo { path } => self.save_active_text_document_to(&path),
             AppCommand::RefreshTextDocument => {
                 self.with_active_document(|registry, id| {
                     registry.refresh(id);
@@ -3258,6 +3273,31 @@ impl AppState {
         });
     }
 
+    /// Writes the active editor's text to `path` and moves that view onto the
+    /// document the write produced.
+    ///
+    /// The original document is released by this view only; if another view
+    /// still holds it, it stays open on its own file, which is the whole
+    /// difference between Save As and a rename (ADR 0034 §3).
+    fn save_active_text_document_to(&mut self, path: &Path) {
+        let Some(previous) = self.active_document() else {
+            return;
+        };
+        let saved = self.documents.borrow_mut().save_as(previous, path);
+        let Some((_, Some(document))) = saved else {
+            return;
+        };
+        if document == previous {
+            return;
+        }
+        let documents = self.documents.clone();
+        if let TabContent::TextEditor(editor) = &mut self.active_tab_mut().content {
+            editor.rebind(document, &documents);
+        }
+        self.documents.borrow_mut().release(previous);
+        self.workspace_dirty = true;
+    }
+
     /// Opens a file in the editor. A second view of a file that is already
     /// open shares its document rather than reading the file again, and a tab
     /// already showing that document is raised instead of duplicated.
@@ -3441,6 +3481,11 @@ impl AppState {
     /// One-shot consumption of a pending "open another window" request (ADR
     /// 0032). Only the composition root may act on it, because only the
     /// composition root owns the window list.
+    /// Whether a Save As destination has been asked for since the last frame.
+    pub fn take_save_as_request(&mut self) -> bool {
+        std::mem::take(&mut self.save_as_requested)
+    }
+
     pub fn take_window_open_request(&mut self) -> bool {
         std::mem::take(&mut self.window_open_requested)
     }

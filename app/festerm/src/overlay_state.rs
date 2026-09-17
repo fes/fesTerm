@@ -235,6 +235,11 @@ pub(crate) struct OverlayState {
     /// manager's local-pane browsing widget instead of an OS-native file
     /// dialog.
     pub(crate) markdown_file_picker: Option<MarkdownFilePicker>,
+    /// The editor's "Save As" destination sheet (ADR 0034 §3).
+    pub(crate) save_as_picker: Option<crate::save_as::SaveAsPicker>,
+    /// The directory the last Save As sheet was browsing when it closed, so
+    /// saving several files somewhere new does not start over each time.
+    pub(crate) save_as_directory: Option<PathBuf>,
     /// Which Markdown viewer tab the open picker should retarget when it
     /// resolves, set when the picker was opened from inside a viewer
     /// (`Ctrl+O`). `None` means "open the picked file in a new tab".
@@ -279,6 +284,7 @@ impl OverlayState {
             || self.port_forward_manager.is_some()
             || self.pending_quit.is_some()
             || self.markdown_file_picker.is_some()
+            || self.save_as_picker.is_some()
             || self.about_open
     }
 }

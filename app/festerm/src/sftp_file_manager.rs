@@ -43,9 +43,9 @@ const SFTP_LIVENESS_CHECK_INTERVAL: Duration = Duration::from_secs(20);
 
 type LocalDirectoryLoadResult = Result<(SftpDirectorySnapshot, Option<SftpPathMetadata>), String>;
 
-struct LocalDirectoryLoadRequest {
-    path: SftpPath,
-    complete: Box<dyn FnOnce(LocalDirectoryLoadResult) + Send>,
+pub(crate) struct LocalDirectoryLoadRequest {
+    pub(crate) path: SftpPath,
+    pub(crate) complete: Box<dyn FnOnce(LocalDirectoryLoadResult) + Send>,
 }
 
 struct LocalDirectoryLoadShared {
@@ -57,12 +57,12 @@ struct LocalDirectoryLoadShared {
 /// One bounded loader per local browser. A request already being read may
 /// finish, while repeated navigation coalesces to only the newest pending
 /// path instead of spawning an OS thread for every click.
-struct LocalDirectoryLoader {
+pub(crate) struct LocalDirectoryLoader {
     shared: Arc<LocalDirectoryLoadShared>,
 }
 
 impl LocalDirectoryLoader {
-    fn new(thread_name: String) -> Self {
+    pub(crate) fn new(thread_name: String) -> Self {
         let shared = Arc::new(LocalDirectoryLoadShared {
             pending: Mutex::new(None),
             wake: Condvar::new(),
@@ -96,7 +96,7 @@ impl LocalDirectoryLoader {
         Self { shared }
     }
 
-    fn schedule(&self, request: LocalDirectoryLoadRequest) {
+    pub(crate) fn schedule(&self, request: LocalDirectoryLoadRequest) {
         *self
             .shared
             .pending
@@ -167,8 +167,8 @@ const SFTP_TOOL_BUTTON_SIZE: f32 = 28.0;
 const SFTP_BREADCRUMB_HEIGHT: f32 = 28.0;
 const SFTP_FILTER_FIELD_HEIGHT: f32 = 26.0;
 const SFTP_TABLE_HEADER_HEIGHT: f32 = 27.0;
-const SFTP_TABLE_ROW_HEIGHT: f32 = 31.0;
-const SFTP_TABLE_CELL_PADDING: f32 = 7.0;
+pub(crate) const SFTP_TABLE_ROW_HEIGHT: f32 = 31.0;
+pub(crate) const SFTP_TABLE_CELL_PADDING: f32 = 7.0;
 /// Floors for the file table's metadata columns, in addition to the mockup's
 /// 53/15/22/10 proportions. Wide enough for "4.0 KiB", "Yesterday" and
 /// "Folder" plus each cell's 7px insets.
@@ -192,7 +192,7 @@ const SFTP_PANE_HEAD_PADDING: f32 = 11.0;
 const SFTP_TOOLBAR_PADDING: f32 = 8.0;
 const SFTP_FILTER_ROW_PADDING: f32 = 8.0;
 /// Gap between the toolbar's navigation buttons and the breadcrumb field.
-const SFTP_TOOLBAR_NAV_GAP: f32 = 2.0;
+pub(crate) const SFTP_TOOLBAR_NAV_GAP: f32 = 2.0;
 /// Mockup `.fsftp-pane-foot { padding: 0 9px; gap: 8px }`.
 const SFTP_PANE_FOOTER_PADDING: f32 = 9.0;
 const SFTP_PANE_FOOTER_GAP: f32 = 8.0;
@@ -308,7 +308,7 @@ const SFTP_VISUAL_SPEC: SftpVisualSpec = SftpVisualSpec {
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SftpTextRole {
+pub(crate) enum SftpTextRole {
     PaneLabel,
     PaneMeta,
     Breadcrumb,
@@ -324,7 +324,7 @@ enum SftpTextRole {
     DialogMeta,
 }
 
-fn font_for_text_role(role: SftpTextRole) -> FontId {
+pub(crate) fn font_for_text_role(role: SftpTextRole) -> FontId {
     match role {
         SftpTextRole::PaneLabel => FontId::new(11.0, FontFamily::Proportional),
         SftpTextRole::PaneMeta => FontId::new(10.0, FontFamily::Monospace),
@@ -970,7 +970,7 @@ pub(crate) struct SftpPaneState {
     pub(crate) cursor_path: Option<String>,
     pub(crate) history: Vec<SftpPath>,
     history_scroll_offsets: Vec<f32>,
-    scroll_offset: f32,
+    pub(crate) scroll_offset: f32,
     previous_valid_scroll_offset: f32,
     pub(crate) loading: bool,
     pub(crate) stale: bool,
@@ -986,7 +986,7 @@ pub(crate) struct SftpPaneState {
 }
 
 impl SftpPaneState {
-    fn new(path: SftpPath) -> Self {
+    pub(crate) fn new(path: SftpPath) -> Self {
         let path_text = path.display();
         Self {
             current_path: path.clone(),
@@ -1056,7 +1056,7 @@ impl SftpPaneState {
             .unwrap_or_default()
     }
 
-    fn visible_entries(&mut self) -> &[SftpDirectoryItem] {
+    pub(crate) fn visible_entries(&mut self) -> &[SftpDirectoryItem] {
         if self.visible_entries_cache.is_none() {
             let filter = self.filter.trim().to_ascii_lowercase();
             let mut indices = self
@@ -1104,7 +1104,7 @@ impl SftpPaneState {
         self.visible_entries_cache = None;
     }
 
-    fn set_filter(&mut self, filter: String) {
+    pub(crate) fn set_filter(&mut self, filter: String) {
         if self.filter != filter {
             self.filter = filter;
             self.invalidate_visible_entries();
@@ -1116,7 +1116,7 @@ impl SftpPaneState {
         self.set_filter(String::new());
     }
 
-    fn set_sort(&mut self, column: SftpSortColumn) {
+    pub(crate) fn set_sort(&mut self, column: SftpSortColumn) {
         if self.sort.column == column {
             self.sort.descending = !self.sort.descending;
         } else {
@@ -1128,7 +1128,7 @@ impl SftpPaneState {
         self.invalidate_visible_entries();
     }
 
-    fn select_single(&mut self, path: &SftpPath) {
+    pub(crate) fn select_single(&mut self, path: &SftpPath) {
         let key = path_key(path);
         self.selected_paths.clear();
         self.selected_paths.insert(key.clone());
@@ -1142,7 +1142,7 @@ impl SftpPaneState {
         self.cursor_path = None;
     }
 
-    fn set_snapshot(
+    pub(crate) fn set_snapshot(
         &mut self,
         snapshot: SftpDirectorySnapshot,
         metadata: Option<SftpPathMetadata>,
@@ -1193,7 +1193,7 @@ impl SftpPaneState {
             .or_else(|| valid.iter().next().cloned());
     }
 
-    fn set_error(&mut self, summary: String, details: String) {
+    pub(crate) fn set_error(&mut self, summary: String, details: String) {
         self.loading = false;
         self.error = Some(summary);
         self.details = Some(details);
@@ -1336,7 +1336,7 @@ impl SftpPaneState {
         self.history.last().cloned()
     }
 
-    fn update_scroll_offset(&mut self, offset: f32) {
+    pub(crate) fn update_scroll_offset(&mut self, offset: f32) {
         self.scroll_offset = offset;
         if let Some(current) = self.history_scroll_offsets.last_mut() {
             *current = offset;
@@ -4417,7 +4417,7 @@ async fn connect_remote_session(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SftpGlyph {
+pub(crate) enum SftpGlyph {
     Back,
     Up,
     Home,
@@ -4437,7 +4437,7 @@ enum SftpGlyph {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CellAlign {
+pub(crate) enum CellAlign {
     Left,
     Right,
 }
@@ -4462,7 +4462,7 @@ fn transfer_state_color(state: &SftpTransferState) -> Color32 {
     }
 }
 
-fn toolbar_icon_button(ui: &mut Ui, glyph: SftpGlyph, label: &str) -> egui::Response {
+pub(crate) fn toolbar_icon_button(ui: &mut Ui, glyph: SftpGlyph, label: &str) -> egui::Response {
     let button = egui::Button::new("")
         .min_size(egui::vec2(SFTP_TOOL_BUTTON_SIZE, SFTP_TOOL_BUTTON_SIZE))
         .fill(Color32::TRANSPARENT)
@@ -4659,7 +4659,7 @@ fn show_filter_field(
     inner.inner
 }
 
-fn sftp_table_columns(available_width: f32) -> [f32; 4] {
+pub(crate) fn sftp_table_columns(available_width: f32) -> [f32; 4] {
     let width = available_width.max(0.0);
     let mut columns = [width * 0.53, width * 0.15, width * 0.22, width * 0.10];
     // The mockup's percentages assume a wide pane. In a split view on a
@@ -4698,7 +4698,7 @@ fn footer_summary(pane: &SftpPaneState) -> String {
     }
 }
 
-fn show_table_header_cell(
+pub(crate) fn show_table_header_cell(
     ui: &mut Ui,
     width: f32,
     align: CellAlign,
@@ -4795,7 +4795,7 @@ fn show_table_header_cell(
     .inner
 }
 
-fn show_table_text_cell(ui: &mut Ui, width: f32, align: CellAlign, text: RichText) {
+pub(crate) fn show_table_text_cell(ui: &mut Ui, width: f32, align: CellAlign, text: RichText) {
     ui.allocate_ui_with_layout(
         egui::vec2(width, SFTP_TABLE_ROW_HEIGHT),
         match align {
@@ -4836,7 +4836,7 @@ fn show_table_text_cell(ui: &mut Ui, width: f32, align: CellAlign, text: RichTex
     );
 }
 
-fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
+pub(crate) fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
     match item.file_type {
         SftpEntryType::Directory => "Folder",
         SftpEntryType::Symlink => "Symlink",
@@ -4924,7 +4924,7 @@ pub(crate) fn local_home_directory() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR_STR))
 }
 
-fn item_glyph(item: &SftpDirectoryItem) -> SftpGlyph {
+pub(crate) fn item_glyph(item: &SftpDirectoryItem) -> SftpGlyph {
     match item_type_label(item) {
         "Folder" => SftpGlyph::Folder,
         "Symlink" => SftpGlyph::Symlink,
@@ -4974,7 +4974,12 @@ fn paint_sort_indicator(
     ));
 }
 
-fn paint_sftp_glyph(painter: &egui::Painter, glyph: SftpGlyph, rect: egui::Rect, color: Color32) {
+pub(crate) fn paint_sftp_glyph(
+    painter: &egui::Painter,
+    glyph: SftpGlyph,
+    rect: egui::Rect,
+    color: Color32,
+) {
     match glyph {
         SftpGlyph::Back => icon::paint(painter, Icon::Back, rect, color),
         SftpGlyph::Search => icon::paint(painter, Icon::Search, rect, color),
@@ -5468,7 +5473,7 @@ fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn format_size(size: Option<u64>) -> String {
+pub(crate) fn format_size(size: Option<u64>) -> String {
     let Some(size) = size else {
         return "—".to_owned();
     };
@@ -5485,7 +5490,7 @@ fn format_size(size: Option<u64>) -> String {
 /// and `Mon D` (with a trailing year when it differs from the current one)
 /// otherwise. All comparisons use UTC so the result is deterministic and
 /// doesn't require pulling in a timezone-aware date/time dependency.
-fn format_modified(timestamp: Option<SystemTime>) -> String {
+pub(crate) fn format_modified(timestamp: Option<SystemTime>) -> String {
     let Some(timestamp) = timestamp else {
         return "—".to_owned();
     };
@@ -5562,7 +5567,7 @@ fn transfer_state_label(state: &SftpTransferState) -> &'static str {
     }
 }
 
-fn path_key(path: &SftpPath) -> String {
+pub(crate) fn path_key(path: &SftpPath) -> String {
     match path {
         SftpPath::Local(path) => format!("local:{}", path.display()),
         SftpPath::Remote(path) => format!("remote:{path}"),
@@ -5577,13 +5582,13 @@ fn path_field_id(focus: PaneFocus) -> egui::Id {
     egui::Id::new(("sftp-pane-path", focus))
 }
 
-struct BreadcrumbSegment {
-    label: String,
-    path: SftpPath,
-    current: bool,
+pub(crate) struct BreadcrumbSegment {
+    pub(crate) label: String,
+    pub(crate) path: SftpPath,
+    pub(crate) current: bool,
 }
 
-fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
+pub(crate) fn breadcrumb_segments(path: &SftpPath) -> Vec<BreadcrumbSegment> {
     match path {
         SftpPath::Remote(path) => {
             let trimmed = path.trim_end_matches('/');

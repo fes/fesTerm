@@ -3598,6 +3598,78 @@ impl FesTermApp {
         }
     }
 
+    /// Opens the Save As sheet on the document the active editor is showing.
+    ///
+    /// It starts in that document's own directory, because saving a copy
+    /// beside the original is far and away the common case, and falls back to
+    /// wherever the last sheet was left.
+    fn open_save_as_picker(&mut self, ctx: &egui::Context) {
+        let Some(document) = self.state.active_document() else {
+            return;
+        };
+        let documents = self.state.documents().clone();
+        let registry = documents.borrow();
+        let Some(open) = registry.get(document) else {
+            return;
+        };
+        let name = open.origin().file_name().to_owned();
+        let directory = match open.origin() {
+            festerm_document::DocumentOrigin::Local(origin) => origin
+                .path()
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .or_else(|| self.overlays.save_as_directory.clone()),
+            festerm_document::DocumentOrigin::Remote(_) => self.overlays.save_as_directory.clone(),
+        }
+        .unwrap_or_else(crate::sftp_file_manager::local_home_directory);
+        drop(registry);
+        self.overlays.save_as_picker = Some(crate::save_as::SaveAsPicker::new(
+            directory,
+            name,
+            ctx.clone(),
+        ));
+        ctx.request_repaint();
+    }
+
+    fn close_save_as_picker(&mut self, ctx: &egui::Context) {
+        if let Some(picker) = self.overlays.save_as_picker.take() {
+            self.overlays.save_as_directory = picker.current_directory();
+        }
+        self.restore_active_terminal_focus();
+        ctx.request_repaint();
+    }
+
+    fn show_save_as_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
+        let Some(picker) = self.overlays.save_as_picker.as_mut() else {
+            return;
+        };
+        picker.poll();
+        let width = (content_rect.width() - 32.0).clamp(420.0, 700.0);
+        let height = (content_rect.height() - 24.0).clamp(360.0, 600.0);
+        let mut outcome = None;
+        egui::Modal::new(egui::Id::new("text_editor_save_as")).show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.set_max_width(width);
+                    ui.set_max_height(height);
+                    ui.heading("Save As");
+                    ui.add_space(6.0);
+                    outcome = Some(picker.ui(ui));
+                });
+        });
+        match outcome {
+            Some(crate::save_as::SaveAsOutcome::Save { path }) => {
+                self.close_save_as_picker(ctx);
+                self.state
+                    .dispatch(AppCommand::SaveTextDocumentTo { path }, ctx);
+            }
+            Some(crate::save_as::SaveAsOutcome::Cancelled) => self.close_save_as_picker(ctx),
+            Some(crate::save_as::SaveAsOutcome::Pending) | None => {}
+        }
+    }
+
     fn show_markdown_file_picker(&mut self, ctx: &egui::Context, content_rect: egui::Rect) {
         let Some(picker) = self.overlays.markdown_file_picker.as_mut() else {
             return;
@@ -5422,6 +5494,11 @@ impl FesTermApp {
         } else {
             self.show_markdown_file_picker(ui.ctx(), content_rect);
         }
+
+        if self.state.take_save_as_request() {
+            self.open_save_as_picker(ui.ctx());
+        }
+        self.show_save_as_picker(ui.ctx(), content_rect);
 
         self.show_about(ui.ctx(), about_escape);
 
@@ -7464,6 +7541,66 @@ mod tests {
             .filter_map(|node| node.accesskit_node().label())
             .find(|label| label.ends_with("chip"))
             .unwrap_or_else(|| panic!("no chip for {file}"))
+    }
+
+
+    #[test]
+    fn save_as_opens_a_destination_sheet_from_the_toolbar() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+
+        harness.get_by_label("Save As").click();
+        harness.run();
+
+        assert!(
+            harness.state().overlays.save_as_picker.is_some(),
+            "the toolbar's Save As has to be the way to a destination, not a dead control"
+        );
+        assert!(
+            harness.query_by_label("File name").is_some(),
+            "and the sheet has to be on screen with somewhere to type the name"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn saving_to_a_new_destination_moves_the_view_onto_the_file_it_wrote() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "beta");
+
+        let destination = directory.join("COPY.md");
+        harness.state_mut().state.dispatch(
+            AppCommand::SaveTextDocumentTo {
+                path: destination.clone(),
+            },
+            &context,
+        );
+        harness.run();
+
+        assert!(
+            std::fs::read_to_string(&destination)
+                .unwrap()
+                .contains("beta"),
+            "the typing has to reach the file the user chose"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\n",
+            "and must not reach the one they saved away from"
+        );
+        assert_eq!(
+            chip_name(&harness, "COPY.md"),
+            "COPY.md, saved chip",
+            "the view follows the file it wrote, clean, under its new name"
+        );
+        assert!(
+            harness.query_by_label_contains("NOTES.md").is_none(),
+            "and nothing is left behind claiming to be the old file"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
