@@ -724,6 +724,16 @@ two-line-chip mode.
   **Show session details in chips** preference is off, the active session's
   same sanitized secondary display value moves into the status bar instead;
   this is the only intentional identity/title exception.
+- When the **Show durable session name in status bar** preference is on, a
+  session attached to tmux, GNU screen, or the fesTerm session daemon also
+  names that session as `provider · session name` (for example
+  `tmux · deploy-watch`), whether it is local or reached over SSH. This is the
+  durable session's stable identity, which the terminal-provided title cannot
+  supply, so it is a separate preference from **Show session details in
+  chips** and the two may appear together. It reuses the same non-secret
+  metadata Session Inspector already shows, sits with the left-hand session
+  facts in `text.muted`, and is absent — with no placeholder or empty
+  separator — for ordinary sessions and application surfaces. Off by default.
 - Client clock/date, shell version, encoding, line-ending convention, command
   timing, and last-input/output timestamps are absent.
 

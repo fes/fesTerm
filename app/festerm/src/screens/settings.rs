@@ -38,6 +38,7 @@ pub(crate) struct SettingsViewModel {
     pub compact_launcher_grid: bool,
     pub pulse_new_output_dot: bool,
     pub show_resumable_sessions: bool,
+    pub show_durable_session_in_status_bar: bool,
     pub default_sftp_local_directory: Option<String>,
     pub sftp_pane_order: SftpPaneOrderPreference,
 }
@@ -72,6 +73,7 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         compact_launcher_grid,
         pulse_new_output_dot,
         show_resumable_sessions,
+        show_durable_session_in_status_bar,
         default_sftp_local_directory,
         sftp_pane_order,
     } = settings;
@@ -270,6 +272,23 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                                 show_resumable_sessions,
                             ) {
                                 command = Some(AppCommand::ToggleShowResumableSessions);
+                            }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+                            if settings_toggle_row(
+                                ui,
+                                "Show durable session name in status bar",
+                                "Name the tmux, GNU screen, or fesTerm session daemon \
+                                 session the active terminal is attached to, as \
+                                 \"provider · session name\". This is the durable \
+                                 session's stable identity, which the terminal-provided \
+                                 title cannot supply; it is separate from \"Show session \
+                                 details in chips\" and unaffected by it. Ordinary \
+                                 sessions show nothing. Off by default.",
+                                show_durable_session_in_status_bar,
+                            ) {
+                                command = Some(AppCommand::ToggleDurableSessionInStatusBar);
                             }
                             ui.add_space(10.0);
                             if ui.button("Reset interface settings to defaults").clicked() {
@@ -920,6 +939,7 @@ mod tests {
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
+                            show_durable_session_in_status_bar: false,
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },
@@ -1365,6 +1385,30 @@ mod tests {
     }
 
     #[test]
+    fn settings_toggle_durable_session_status_bar_control_returns_the_toggle_command() {
+        // Feature request #168: the durable-session status-bar item has its
+        // own preference, deliberately not folded into "Show session details
+        // in chips" -- identity and detail are different questions.
+        let mut harness = settings_harness();
+        harness.run();
+
+        let label = "Show durable session name in status bar";
+        assert!(harness
+            .query_by_role_and_label(accesskit::Role::CheckBox, label)
+            .is_some());
+
+        harness
+            .get_by_role_and_label(accesskit::Role::CheckBox, label)
+            .click();
+        harness.run();
+
+        assert!(matches!(
+            harness.state().command,
+            Some(AppCommand::ToggleDurableSessionInStatusBar)
+        ));
+    }
+
+    #[test]
     fn settings_close_confirmation_control_returns_the_toggle_command() {
         let mut harness = settings_harness();
         harness.run();
@@ -1499,6 +1543,7 @@ mod tests {
                             compact_launcher_grid: false,
                             pulse_new_output_dot: false,
                             show_resumable_sessions: false,
+                            show_durable_session_in_status_bar: false,
                             default_sftp_local_directory: None,
                             sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
                         },

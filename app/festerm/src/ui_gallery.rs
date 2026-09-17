@@ -787,6 +787,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         compact_launcher_grid: false,
         pulse_new_output_dot: true,
         show_resumable_sessions: true,
+        show_durable_session_in_status_bar: false,
         default_sftp_local_directory: Some("/home/devuser/sftp/example-drop".to_owned()),
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
     }

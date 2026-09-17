@@ -67,6 +67,16 @@ pub struct StatusBarContent<'a> {
     /// session details in chips"). Sits after dimensions/locality and before
     /// the right-aligned state; never shown alongside chip secondary text.
     pub detail: Option<&'a str>,
+    /// The durable session the active terminal is attached to, as
+    /// `provider · session name` (e.g. `"tmux · deploy-watch"`), shown only
+    /// while the **Show durable session name in status bar** preference is
+    /// on (`docs/gui-design.md` "Bottom status bar").
+    ///
+    /// This is stable identity rather than the terminal-provided title, and
+    /// it is independent of `detail`: the two answer different questions
+    /// ("which durable session owns this shell?" versus "what is this tab
+    /// showing right now?") and may appear together.
+    pub durable_session: Option<&'a str>,
     /// Optional active SSH port-forward count for the focused session.
     pub port_forwards: Option<&'a str>,
 }
@@ -104,6 +114,13 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
             }
             if let Some(detail) = content.detail {
                 ui.label(RichText::new(detail).small().color(STATUS_BAR_TEXT_DIM));
+            }
+            if let Some(durable_session) = content.durable_session {
+                ui.label(
+                    RichText::new(durable_session)
+                        .small()
+                        .color(STATUS_BAR_TEXT_DIM),
+                );
             }
             if let Some(port_forwards) = content.port_forwards {
                 ui.label(
@@ -164,6 +181,7 @@ mod tests {
                         status: ChipStatus::Connected,
                         status_label: "Running",
                         detail: None,
+                        durable_session: None,
                         port_forwards: None,
                     },
                 );
@@ -188,6 +206,7 @@ mod tests {
                         status: ChipStatus::Neutral,
                         status_label: "",
                         detail: None,
+                        durable_session: None,
                         port_forwards: None,
                     },
                 );
@@ -213,6 +232,7 @@ mod tests {
                         status: ChipStatus::Neutral,
                         status_label: "Read only",
                         detail: None,
+                        durable_session: None,
                         port_forwards: None,
                     },
                 );
@@ -239,6 +259,7 @@ mod tests {
                         status: ChipStatus::Connected,
                         status_label: "Running",
                         detail: Some("cargo test — fesTerm"),
+                        durable_session: None,
                         port_forwards: None,
                     },
                 );
@@ -261,11 +282,47 @@ mod tests {
                         status: ChipStatus::Connected,
                         status_label: "Connected",
                         detail: None,
+                        durable_session: None,
                         port_forwards: Some("2 active forwards"),
                     },
                 );
             });
         harness.run();
         assert!(harness.query_by_label("2 active forwards").is_some());
+    }
+
+    #[test]
+    fn status_bar_shows_durable_session_identity_alongside_the_relocated_detail() {
+        // Feature request #168: identity and detail answer different
+        // questions, so unlike the chip/status-bar detail relationship these
+        // two are not alternatives and may appear together.
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(500.0, 60.0))
+            .build_ui(|ui| {
+                show(
+                    ui,
+                    StatusBarContent {
+                        context: None,
+                        dimensions: Some("80×24"),
+                        system: Some("Local · macOS"),
+                        status: ChipStatus::Connected,
+                        status_label: "Running",
+                        detail: Some("cargo test — fesTerm"),
+                        durable_session: Some("tmux · deploy-watch"),
+                        port_forwards: None,
+                    },
+                );
+            });
+        harness.run();
+
+        let durable = harness.get_by_label("tmux · deploy-watch").rect();
+        let detail = harness.get_by_label("cargo test — fesTerm").rect();
+        assert!(
+            detail.right() <= durable.left(),
+            "durable identity belongs with the left-hand session facts, after the \
+             relocated detail: detail ended at {} and identity started at {}",
+            detail.right(),
+            durable.left()
+        );
     }
 }

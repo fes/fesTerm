@@ -2643,6 +2643,40 @@ schema_version = 99
     }
 
     #[test]
+    fn durable_session_status_bar_preference_round_trips_through_toml_and_defaults_to_off() {
+        // Feature request #168.
+        let settings = InterfaceSettings::DEFAULT.with_show_durable_session_in_status_bar(true);
+        let configuration = Configuration::empty()
+            .with_interface_settings(settings.clone())
+            .unwrap();
+
+        let serialized = configuration.to_toml().unwrap();
+
+        assert!(serialized.contains("show_durable_session_in_status_bar = true"));
+        assert_eq!(
+            Configuration::parse(&serialized)
+                .unwrap()
+                .interface_settings()
+                .clone(),
+            settings
+        );
+
+        // An older settings table with no key keeps today's status bar.
+        let older_document = "schema_version = 1\n\n[settings]\nstatus_bar_visible = false\n";
+        assert!(!Configuration::parse(older_document)
+            .unwrap()
+            .interface_settings()
+            .show_durable_session_in_status_bar());
+
+        let default_serialized = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::DEFAULT)
+            .unwrap()
+            .to_toml()
+            .unwrap();
+        assert!(!default_serialized.contains("show_durable_session_in_status_bar"));
+    }
+
+    #[test]
     fn show_resumable_sessions_preference_round_trips_through_toml_and_defaults_to_off() {
         // Feature request #70.
         let settings = InterfaceSettings::DEFAULT.with_show_resumable_sessions(true);

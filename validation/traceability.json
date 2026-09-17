@@ -1005,7 +1005,13 @@
         "overlay_hides_reconnect_when_unavailable_or_already_reconnecting",
         "disconnected_overlay_reconnects_the_same_tab_through_application_command",
         "status_bar_omits_status_label_and_dot_when_neutral",
-        "status_bar_shows_an_active_port_forward_count_when_present"
+        "status_bar_shows_an_active_port_forward_count_when_present",
+        "status_bar_shows_durable_session_identity_alongside_the_relocated_detail",
+        "durable_session_label_names_every_provider_and_omits_ordinary_sessions",
+        "the_status_bar_names_the_active_tabs_durable_session_only_when_asked",
+        "toggle_durable_session_in_status_bar_flips_state_and_resets_to_off",
+        "settings_toggle_durable_session_status_bar_control_returns_the_toggle_command",
+        "durable_session_status_bar_preference_round_trips_through_toml_and_defaults_to_off"
       ],
       "manual_scenarios": [
         "NP-05",

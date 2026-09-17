@@ -3982,6 +3982,8 @@ impl FesTermApp {
     /// Application surfaces keep the same 24 px geometry with empty content.
     fn show_status_bar(&self, ui: &mut egui::Ui) {
         let show_session_details = self.state.show_session_details();
+        let show_durable_session = self.state.show_durable_session_in_status_bar();
+        let mut durable_session = None;
         let (context, dimensions, system, status, status_label, detail, port_forwards) =
             match &self.state.active_tab().content {
                 TabContent::Launcher
@@ -4021,6 +4023,13 @@ impl FesTermApp {
                 ),
                 TabContent::Session(session) => {
                     let status = session.chip_status();
+                    // Durable identity is a separate question from the
+                    // chip's detail, so this is gated on its own preference
+                    // and may appear alongside `detail` rather than
+                    // replacing it (feature request #168).
+                    if show_durable_session {
+                        durable_session = session.durable_session_label();
+                    }
                     // Only relocate the detail here while chips are compact
                     // (`docs/gui-design.md` "Show session details in
                     // chips"): when chips already show it, repeating it in
@@ -4063,6 +4072,7 @@ impl FesTermApp {
                         status,
                         status_label,
                         detail: detail.as_deref(),
+                        durable_session: durable_session.as_deref(),
                         port_forwards: port_forwards.as_deref(),
                     },
                 );
@@ -4567,6 +4577,9 @@ impl FesTermApp {
                             compact_launcher_grid: self.state.compact_launcher_grid(),
                             pulse_new_output_dot: self.state.pulse_new_output_dot(),
                             show_resumable_sessions: self.state.show_resumable_sessions(),
+                            show_durable_session_in_status_bar: self
+                                .state
+                                .show_durable_session_in_status_bar(),
                             default_sftp_local_directory: self
                                 .state
                                 .default_sftp_local_directory()
@@ -5056,6 +5069,60 @@ mod tests {
             .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
         harness.run();
         (harness, transport)
+    }
+
+    #[test]
+    fn the_status_bar_names_the_active_tabs_durable_session_only_when_asked() {
+        // Feature request #168: off by default, shown for the active tab
+        // when enabled, and absent again on a surface that has no durable
+        // session -- without touching the session itself.
+        let context = egui::Context::default();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.state
+            .session_tab_mut(tab)
+            .expect("the test tab is a session")
+            .inspector_transport = crate::tabs::InspectorTransport::Ssh {
+            username: "deploy".to_owned(),
+            host: "web-1.example.test".to_owned(),
+            port: 22,
+            persistence: Some(crate::tabs::InspectorPersistence {
+                provider_label: festerm_config::PersistenceProviderKind::Tmux.label(),
+                session_name: "deploy-watch".to_owned(),
+            }),
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 600.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+
+        assert!(
+            harness.query_by_label("tmux · deploy-watch").is_none(),
+            "the durable-session item must stay off until it is asked for"
+        );
+
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::ToggleDurableSessionInStatusBar, &context);
+        harness.run();
+        assert!(
+            harness.query_by_label("tmux · deploy-watch").is_some(),
+            "an attached session must name itself once the preference is on"
+        );
+
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenLauncher, &context);
+        harness.run();
+        assert!(
+            harness.query_by_label("tmux · deploy-watch").is_none(),
+            "an application surface has no durable session to report"
+        );
+        assert!(
+            transport.sent().is_empty(),
+            "reporting identity must not send anything to the session"
+        );
     }
 
     fn keyboard_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {

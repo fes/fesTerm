@@ -88,6 +88,13 @@ pub struct InterfaceSettings {
     /// exactly as it does today.
     #[serde(default, skip_serializing_if = "is_false")]
     show_resumable_sessions: bool,
+    /// Whether the status bar names the durable session the active terminal
+    /// is attached to, as `provider · session name` (feature request #168).
+    /// Off by default: the status bar keeps its current fields exactly.
+    /// Independent of `show_session_details`, which governs the chip's
+    /// launch/title detail rather than durable-session identity.
+    #[serde(default, skip_serializing_if = "is_false")]
+    show_durable_session_in_status_bar: bool,
     /// Whether the GUI SFTP file manager shows the Local or Remote pane on
     /// the left. This is a global habit preference, not per-tab state.
     #[serde(default, skip_serializing_if = "SftpPaneOrderPreference::is_default")]
@@ -119,6 +126,7 @@ impl InterfaceSettings {
         compact_launcher_grid: false,
         pulse_new_output_dot: false,
         show_resumable_sessions: false,
+        show_durable_session_in_status_bar: false,
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         default_sftp_local_directory: None,
     };
@@ -207,6 +215,16 @@ impl InterfaceSettings {
         self
     }
 
+    /// Sets whether the status bar names the durable session the active
+    /// terminal is attached to (feature request #168).
+    pub const fn with_show_durable_session_in_status_bar(
+        mut self,
+        show_durable_session_in_status_bar: bool,
+    ) -> Self {
+        self.show_durable_session_in_status_bar = show_durable_session_in_status_bar;
+        self
+    }
+
     /// Sets the visual left/right order for the GUI SFTP panes.
     pub const fn with_sftp_pane_order(mut self, sftp_pane_order: SftpPaneOrderPreference) -> Self {
         self.sftp_pane_order = sftp_pane_order;
@@ -280,6 +298,10 @@ impl InterfaceSettings {
 
     pub const fn show_resumable_sessions(&self) -> bool {
         self.show_resumable_sessions
+    }
+
+    pub const fn show_durable_session_in_status_bar(&self) -> bool {
+        self.show_durable_session_in_status_bar
     }
 
     pub const fn sftp_pane_order(&self) -> SftpPaneOrderPreference {
