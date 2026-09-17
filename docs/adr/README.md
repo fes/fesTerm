@@ -36,6 +36,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
 - [ADR 0031: Mobile (iOS/Android) Port Strategy](0031-mobile-ios-android-port-strategy.md) — exploratory design only; see `docs/mobile-port-plan.md`, `docs/mobile-layout-design.md`, and `docs/mobile-signing-and-release.md`
+- [ADR 0034: Shared Mutable Documents for Native Text Editing](0034-shared-mutable-text-documents.md) — amends ADR 0030's read-only snapshot boundary; see issue #166
 
 ## Status Values
 

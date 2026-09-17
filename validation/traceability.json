@@ -1085,6 +1085,26 @@
       ]
     },
     {
+      "id": "text-editing",
+      "edges": [
+        "EDIT-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#approved-native-text-editing",
+        "docs/adr/0034-shared-mutable-text-documents.md"
+      ],
+      "decisions": [
+        "ADR-0034"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [],
+      "status": "deferred",
+      "prerequisites": [
+        "the native text editor is design-approved only; the document registry, write path, freshness/conflict model, and vi subset are unimplemented",
+        "a manual scenario for real watcher behaviour, atomic replacement, permission preservation, and remote disconnect/reconnect is registered with the implementation"
+      ]
+    },
+    {
       "id": "bell-attention",
       "edges": [
         "BELL-*"

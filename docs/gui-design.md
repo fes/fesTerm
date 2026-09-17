@@ -671,6 +671,64 @@ Any accepted viewer must follow the existing application-surface model: it
 cannot resize or take ownership of a live terminal session, terminal escape
 sequences cannot open it without an explicit user action, Escape/Close returns
 to a known prior surface, and closing the final viewer returns to Launcher.
+
+### Approved native text editing
+
+Product review accepts extending the viewer into a bounded native text editor
+for supported local and SFTP text and Markdown files. The architecture — shared
+mutable documents, identity, write atomicity, freshness, conflict, auto-save,
+per-view presentation, and the vi subset — is decided in
+[ADR 0034](adr/0034-shared-mutable-text-documents.md). Implementation and
+native validation remain pending; builds must not offer a disabled or
+non-working editing promise before the corresponding capability exists.
+
+The accepted shape is:
+
+- **One document, many views.** A file opened in several tabs or windows is one
+  document. Text, undo history, dirty state, save generation, conflict state,
+  and Auto-save belong to the document; caret, selection, scroll, find, line
+  numbers, fixed columns, and vi mode belong to each view. An editor and a
+  Markdown Preview of the same file are two views, and Preview shows unsaved
+  edits on the next frame without any disk or SFTP round trip.
+- **Editing surfaces.** A view is `Edit`, `Preview`, or `Split`; Split is one
+  view with two panes sharing that view's caret and settings. **Open in
+  Markdown** opens or focuses a separate Preview tab, which can be dragged to
+  another window like any other tab.
+- **Commands.** Save, Save As…, Find, Replace, Open in Markdown, and Refresh are
+  application commands shared by toolbar, menus, palette, keyboard bindings, and
+  vi's `:` equivalents. A disabled command explains why. Refresh never discards
+  a dirty buffer.
+- **Saving.** Saves revalidate the source first and replace the file atomically;
+  an interrupted write never reports success, and nothing is ever overwritten or
+  merged silently. Auto-save belongs to the document, sits beside Save, is
+  debounced rather than per keystroke, and pauses on conflict, offline, or
+  error. Closing the final view of a dirty document still prompts.
+- **Freshness.** An externally changed clean document reloads every view and
+  keeps each view's position; an externally changed dirty document raises one
+  shared conflict offering Compare, Reload, Keep my version, and Save As.
+  Compare is a read-only, per-view, line-oriented look at the two versions with
+  the banner still pinned above it; it merges nothing and resolves nothing. A
+  deleted, renamed, or unreadable source keeps the buffer and says it is
+  unavailable, disabling only the commands that genuinely cannot run. A remote origin that drops keeps the buffer editable and marked
+  `Offline` until reconnection revalidates it.
+- **Legibility.** Document state is text first: the banner names it, the tab
+  chip carries it by shape plus accessible name rather than colour, and vi's
+  mode is spelled out in the status bar. The status bar's language, encoding,
+  line ending, and indentation are a read-out in this release.
+- **Presentation never edits.** Line numbers and fixed columns are per-view and
+  change nothing on disk; fixed columns wraps visually at the chosen column and
+  never inserts a line break.
+- **Save As.** One picker covers local and remote destinations, reuses the SFTP
+  file-browser pattern, states an existing target in words before the explicit
+  Save press, and binds to an already-open document rather than creating a
+  second buffer for one file. It stays available whenever Save cannot run.
+- **Closing.** Only the final view of a dirty document prompts. The prompt names
+  the file and its origin, defaults to Save, treats Escape as Cancel, and makes
+  Discard an explicit press that Return never triggers.
+- **Bounds.** Editable size and line limits are explicit; a document beyond them
+  is refused for editing before an unsafe buffer is allocated while remaining
+  readable where the viewer can show it. Nothing about an open document is
+  persisted in workspace state.
 The approved first release omits workspace persistence, recent-document
 history, file watching, and background remote fetch. Secondary resources never
 load implicitly; the narrow per-item local/remote image actions in the focused
