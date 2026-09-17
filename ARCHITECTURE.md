@@ -43,6 +43,7 @@ festerm-pty ----------> festerm-session
 festerm-sessiond -----> festerm-session
 festerm-ssh ----------> festerm-session
 festerm-test-support -> festerm-core and session implementations
+festerm-document -----> (no workspace dependencies)
 ```
 
 `festerm-core` must not depend on GUI, PTY, SSH, operating-system keychain, cloud identity, or persistence implementations.
@@ -66,6 +67,7 @@ change, but the responsibilities should remain distinct.
     festerm-ssh/
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
+    festerm-document/      # ADR-0034 GUI-free shared text document core
     festerm-windows-job/   # Windows process-tree shutdown support
     festerm-windows-security/ # current-user named-pipe DACL support
     festerm-windows-runtime/ # trusted optional ConPTY sidecar loading
@@ -278,6 +280,25 @@ application menu. Menu items send semantic `NativeMenuCommand` values back to
 labels and enabled state are supplied by the application command model, while
 standard Copy, Paste, window, and application actions remain on AppKit's
 responder chain.
+
+### `festerm-document`
+
+Owns the editable-text domain described by ADR-0034, with no GUI, filesystem,
+or network dependencies:
+
+- `DocumentId` handles and `DocumentOrigin` identity, including the aliasing key
+  that lets one file be open in many views at once.
+- Encoding, line-ending, and indentation detection, plus write-back that
+  restores what the file originally used.
+- Bounded undo history with typing coalescence and token-based dirty tracking,
+  so undoing back to the saved content stops reporting unsaved changes.
+- Size and line-length bounds with a refusal reason the UI can render verbatim.
+- The line comparison used by Compare.
+- `DocumentStatus`, the single source of truth for banner severity and wording,
+  command enablement, and auto-save state.
+
+Reading and writing bytes, watching for outside changes, and every widget stay
+in `festerm-app`.
 
 ### `festerm-test-support`
 

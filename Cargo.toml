@@ -19,6 +19,7 @@ members = [
     "crates/festerm-windows-security",
     "crates/festerm-windows-runtime",
     "crates/festerm-markdown",
+    "crates/festerm-document",
 ]
 resolver = "2"
 exclude = ["vendor/egui-winit"]

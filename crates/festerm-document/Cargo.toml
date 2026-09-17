@@ -1,0 +1,13 @@
+[package]
+name = "festerm-document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Shared mutable text documents for fesTerm's native editor."
+
+[dependencies]
+
+[lints]
+workspace = true
