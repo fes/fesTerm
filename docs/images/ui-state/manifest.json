@@ -32,7 +32,7 @@
       "width": 363,
       "height": 476,
       "tier": "headless",
-      "sha256": "0570ac05df549ef89cbf7e375360691265492fa26dae7ae65f29f7d5881c60a2"
+      "sha256": "af5afa4939cd45f05f7f0565aa0a71e2b5937c21f88d9ac34795b5973dce1ab4"
     },
     {
       "id": "sftp-connect-form",
@@ -41,9 +41,9 @@
       "caption": "The SFTP launch surface defaults to opening the graphical two-pane file manager once connected.",
       "image": "sftp-connect-form.png",
       "width": 424,
-      "height": 301,
+      "height": 322,
       "tier": "headless",
-      "sha256": "64077444ee73c2f35ceda164c0026287aba9c4d523b4eb8b71bf48bfa59f0c98"
+      "sha256": "80417b685be3dd0ece8e0e9655710cbdbe82b83411b97817f1e164a200cfd00c"
     },
     {
       "id": "ssh-connect-advanced",
@@ -52,9 +52,9 @@
       "caption": "Expanding 'Advanced settings' reveals the port-forwarding controls beneath the always-visible connection, authentication and durable-session sections.",
       "image": "ssh-connect-advanced.png",
       "width": 804,
-      "height": 698,
+      "height": 653,
       "tier": "headless",
-      "sha256": "f83c946b12cabd79290e2cbf89ed23ed0928fe63bd650be74d696c11d824b10d"
+      "sha256": "154a1a3d79a9f4c1f3ba75a36e7c802f64df442765a228e98e37ac708edfb3ac"
     },
     {
       "id": "ssh-connect-collapsed",
@@ -63,9 +63,9 @@
       "caption": "The default SSH launch surface: a Connection section led by the squashed user@host:port field and repeating it as Username, Host and Port, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.",
       "image": "ssh-connect-collapsed.png",
       "width": 804,
-      "height": 655,
+      "height": 562,
       "tier": "headless",
-      "sha256": "2c628124ddee7ea69c4566f6a25555331a813ebee285e3cff6d84c573a30d8c7"
+      "sha256": "4ffaddd9b97c4b2948e87cef14e10a69eb225c554ccb876383bd119b67bec88f"
     },
     {
       "id": "diagnostics-durable-session",
@@ -216,10 +216,10 @@
       "title": "Profiles list",
       "caption": "Every saved local, SSH, SFTP, and serial profile in a single searchable table, each row carrying an overflow menu for connecting, editing, duplicating, and deleting.",
       "image": "profiles-list.png",
-      "width": 736,
+      "width": 734,
       "height": 721,
       "tier": "headless",
-      "sha256": "016670bf5258f3a1c62f9091e63eb40a6c60f249fc01e3848b5d280fdfebc368"
+      "sha256": "4de549974df5f6f20fa26cd825ea963b3c13edf19a2fea9dc24c44f2fa14f972"
     },
     {
       "id": "profiles-serial-editor",
@@ -227,10 +227,10 @@
       "title": "Serial profile editor",
       "caption": "Device path and line settings (baud, data bits, parity, stop bits, flow control) for a saved serial profile.",
       "image": "profiles-serial-editor.png",
-      "width": 348,
+      "width": 362,
       "height": 264,
       "tier": "headless",
-      "sha256": "71e4c3705205e64b5e7b1c7b7312b293033af1e13cd8a017176fe569ef92cbfa"
+      "sha256": "42976089baaedb54b2f9f6a54b6bb838dcdc94eafa421dba82e96b4573e39e49"
     },
     {
       "id": "profiles-sftp-editor",
@@ -239,9 +239,9 @@
       "caption": "The same SSH-family editor in SFTP mode, offering the graphical file-manager toggle instead of a terminal type.",
       "image": "profiles-sftp-editor.png",
       "width": 416,
-      "height": 447,
+      "height": 430,
       "tier": "headless",
-      "sha256": "58106f3de6034dfd6a0bc79ef311debb50f57a915696d264db3bcff3006863ef"
+      "sha256": "df4fd5662d96247abed73c302c71988af00fcacd0c208c46fe833ead5b379fd2"
     },
     {
       "id": "profiles-ssh-editor",
@@ -250,9 +250,9 @@
       "caption": "Editing an existing SSH profile's connection metadata and durable- session settings.",
       "image": "profiles-ssh-editor.png",
       "width": 520,
-      "height": 518,
+      "height": 501,
       "tier": "headless",
-      "sha256": "10c7f6947dee98b8b0f489e96eb00f8175117b4fccb9d3e8f2f871e09e367926"
+      "sha256": "ec17d8f9e38047416036c1a7632ea3bc08b8b101be325f7af07a7bcfcc248fea"
     },
     {
       "id": "settings-interface-scrolling",

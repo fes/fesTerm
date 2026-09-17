@@ -657,7 +657,7 @@ enum Prefill {
         username: &'static str,
         host: &'static str,
     },
-    /// Fills the single combined `user@host` Quick Connect field.
+    /// Fills the single combined `user@host:port` shorthand field.
     QuickConnect(&'static str),
     /// Fills the serial form's "Device" field, which (unlike the SSH/SFTP
     /// fields) has no accessible label to query directly, so it is reached
@@ -669,11 +669,15 @@ impl Prefill {
     fn apply(self, harness: &mut Harness<'static, ()>) {
         match self {
             Prefill::UsernameAndHost { username, host } => {
+                // Every destination pane now opens on the shorthand, so the
+                // separate fields have to be asked for before they exist.
+                harness.get_by_label("Use separate fields").click();
+                harness.run();
                 enter_text(harness, "Username", username);
                 enter_text(harness, "Host", host);
             }
             Prefill::QuickConnect(value) => {
-                enter_text(harness, "user@host", value);
+                enter_text(harness, "Quick connect", value);
             }
             Prefill::SerialDevice(device) => {
                 let label_rect = harness.get_by_label("Device").rect();
@@ -726,10 +730,7 @@ fn capture_ssh_connect_collapsed() -> image::RgbaImage {
         900.0,
         "SSH — Connect to a remote host over SSH",
         false,
-        Prefill::UsernameAndHost {
-            username: "devuser",
-            host: "web-1.staging.example.com",
-        },
+        Prefill::QuickConnect("devuser@web-1.staging.example.com"),
     )
 }
 

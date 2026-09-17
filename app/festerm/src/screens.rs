@@ -38,7 +38,9 @@ use crate::tabs::{
     SshPortForwardDraftSeed, SshProfileDraftSeed, TabId,
 };
 
+mod destination;
 mod profiles;
+use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
 pub(crate) use profiles::show_profiles;
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 mod settings;
@@ -674,6 +676,14 @@ struct SshLauncherForm {
     /// Whether the SSH launcher's Advanced settings disclosure is open. The
     /// SFTP sibling still reuses this field for its legacy quick/full toggle.
     advanced_open: bool,
+    /// Which notation the shared Connection pane is currently showing: the
+    /// single `user@host:port` field (`false`) or the separate
+    /// Username/Host/Port fields (`true`). Exactly one is ever visible, and
+    /// the two are kept in step by `sync_*` when the user switches.
+    ///
+    /// Deliberately *not* `advanced_open`, which now means the port-forward
+    /// disclosure rather than this notation choice.
+    destination_expanded: bool,
     authentication_method: SshAuthenticationMethod,
     password: String,
     private_key: String,
@@ -703,6 +713,10 @@ impl Default for SshLauncherForm {
     /// Port starts prefilled with the actual default (`"22"`) rather than
     /// an empty field with "(default: 22)" wording, so the box always shows
     /// the value that will actually be used.
+    ///
+    /// The destination pane starts on the single `user@host:port` field:
+    /// it is the fastest way to state a destination, and the separate
+    /// fields are one click away.
     fn default() -> Self {
         Self {
             host: String::new(),
@@ -710,6 +724,7 @@ impl Default for SshLauncherForm {
             username: String::new(),
             quick_connect: String::new(),
             advanced_open: false,
+            destination_expanded: false,
             authentication_method: SshAuthenticationMethod::default(),
             password: String::new(),
             private_key: String::new(),
@@ -731,7 +746,17 @@ impl Default for SshLauncherForm {
 }
 
 impl SshLauncherForm {
-    const DEFAULT_PORT: u16 = 22;
+    const DEFAULT_PORT: u16 = DEFAULT_SSH_PORT;
+
+    fn destination(&mut self) -> DestinationFields<'_> {
+        DestinationFields {
+            username: &mut self.username,
+            host: &mut self.host,
+            port: &mut self.port,
+            quick_connect: &mut self.quick_connect,
+            expanded: &mut self.destination_expanded,
+        }
+    }
 
     /// Ordinary SSH sessions have no durable-session provider, so automatic
     /// recovery is not valid for them (ADR 0018); every reconnect is the
@@ -761,6 +786,9 @@ impl SshLauncherForm {
             .map(SshPortForwardDraft::from_configuration)
             .collect();
         self.advanced_open = true;
+        // Compose the shorthand too, so the destination reads correctly in
+        // whichever notation the user has the pane set to.
+        self.sync_quick_connect_from_advanced();
     }
 
     fn sync_remote_durable_provider_default(
@@ -1052,59 +1080,22 @@ impl SshLauncherForm {
 
     /// See `quick_connect`'s doc comment for the notation this accepts.
     fn parse_quick_connect(&mut self) -> Result<(), String> {
-        let input = self.quick_connect.trim();
-        if input.is_empty() {
-            return Err("Enter a destination, e.g. user@host".to_owned());
-        }
-        let (username, remainder) = input
-            .split_once('@')
-            .ok_or_else(|| "Enter a destination as user@host".to_owned())?;
-        if username.is_empty() {
-            return Err("Enter a username before @".to_owned());
-        }
-        let (host, port) = match remainder.rsplit_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (remainder, None),
-        };
-        if host.is_empty() {
-            return Err("Enter a host after @".to_owned());
-        }
-        self.username = username.to_owned();
-        self.host = host.to_owned();
-        self.port = port
-            .map(str::to_owned)
-            .unwrap_or_else(|| Self::DEFAULT_PORT.to_string());
-        Ok(())
+        self.destination().parse_quick_connect()
     }
 
-    /// Best-effort version of `parse_quick_connect` for toggling to the
-    /// advanced form: fills in whatever `username`/`host`/`port` it can from
-    /// `quick_connect`, but never surfaces or blocks on a parse error, since
-    /// revealing the advanced form must always succeed.
+    /// Best-effort version of `parse_quick_connect` for switching notation.
     fn sync_advanced_from_quick_connect(&mut self) {
-        let _ = self.parse_quick_connect();
+        self.destination().sync_expanded_from_quick_connect();
     }
 
-    /// Inverse of `sync_advanced_from_quick_connect`: composes the advanced
-    /// form's `username`/`host`/`port` back into the single quick-connect
-    /// field, omitting the port when it is still the default, so toggling
-    /// back and forth round-trips what the user actually typed.
+    /// Inverse of `sync_advanced_from_quick_connect`.
     fn sync_quick_connect_from_advanced(&mut self) {
-        if self.username.is_empty() && self.host.is_empty() {
-            return;
-        }
-        let port = self.port.trim();
-        self.quick_connect = if port.is_empty() || port == Self::DEFAULT_PORT.to_string() {
-            format!("{}@{}", self.username, self.host)
-        } else {
-            format!("{}@{}:{}", self.username, self.host, port)
-        };
+        self.destination().sync_quick_connect_from_expanded();
     }
 
-    /// Reveals the advanced form, carrying forward whatever destination the
-    /// user already typed into Quick Connect and clearing any stale
-    /// feedback from that surface (item 4: feedback must not persist across
-    /// a toggle it no longer describes).
+    /// Reveals the surface's advanced settings, carrying forward whatever
+    /// destination the user already typed and clearing any stale feedback
+    /// from the surface it replaces.
     fn open_advanced_settings(&mut self) {
         self.sync_advanced_from_quick_connect();
         self.feedback = None;
@@ -1112,9 +1103,7 @@ impl SshLauncherForm {
         self.focus_username = true;
     }
 
-    /// Inverse of `open_advanced_settings`: returns to Quick Connect,
-    /// carrying the advanced form's destination back into the single field
-    /// and clearing any stale feedback from the advanced form.
+    /// Inverse of `open_advanced_settings`.
     fn close_advanced_settings(&mut self) {
         self.sync_quick_connect_from_advanced();
         self.feedback = None;
@@ -1311,7 +1300,7 @@ fn ssh_form_has_focus(ui: &Ui, tab_id: TabId) -> bool {
 /// Unlike a plain label, this never adds space above itself: callers add
 /// spacing between sections explicitly, so the very first heading in a card
 /// sits right under the card's own top padding instead of compounding it.
-fn ssh_section_heading(ui: &mut Ui, heading: &str) {
+pub(super) fn ssh_section_heading(ui: &mut Ui, heading: &str) {
     ui.label(
         egui::RichText::new(heading.to_uppercase())
             .size(10.0)
@@ -1368,24 +1357,17 @@ fn ssh_labeled_text_edit(
     tab_id: TabId,
     field: &'static str,
     label: &str,
-    hint: &str,
+    hint: &'static str,
     value: &mut String,
     desired_width: f32,
 ) -> egui::Response {
-    ui.vertical(|ui| {
-        let label = ui.add(
-            egui::Label::new(egui::RichText::new(label).color(theme::TEXT_SECONDARY))
-                .selectable(false),
-        );
-        let field = ui.add(
-            TextEdit::singleline(value)
-                .id_salt(("launcher_ssh", tab_id, field))
-                .hint_text(hint)
-                .desired_width(desired_width),
-        );
-        field.labelled_by(label.id)
-    })
-    .inner
+    destination::labeled_text_edit(
+        ui,
+        ("launcher_ssh", tab_id, field),
+        label,
+        value,
+        FieldOptions::stacked().hint(hint).width(desired_width),
+    )
 }
 
 fn ssh_password_edit_with_hint(
@@ -1454,34 +1436,15 @@ fn ssh_multiline_secret_text_edit(
     ssh_multiline_text_edit(ui, tab_id, field, label, value, true)
 }
 
-fn show_sftp_quick_connect(
+/// The quick (non-advanced) SFTP submit row: file-manager choice, Connect
+/// button and feedback. The destination itself comes from the shared
+/// `show_destination_fields` pane above it.
+fn show_sftp_quick_submit(
     ui: &mut Ui,
-    tab_id: TabId,
     form: &mut SshLauncherForm,
-    focus_quick_connect: bool,
+    submit_with_enter: bool,
 ) -> Option<AppCommand> {
     let mut result = None;
-    ssh_section_heading(ui, "Quick Connect");
-    let submit_with_enter = ui
-        .horizontal(|ui| {
-            ui.add_space(2.0);
-            let label = ui.add(
-                egui::Label::new(egui::RichText::new("user@host").color(theme::TEXT_SECONDARY))
-                    .selectable(false),
-            );
-            let field = ui.add(
-                TextEdit::singleline(&mut form.quick_connect)
-                    .id_salt(("launcher_sftp", tab_id, "quick_connect"))
-                    .hint_text("example@169.254.1.1")
-                    .desired_width(220.0),
-            );
-            if focus_quick_connect {
-                field.request_focus();
-            }
-            let field = field.labelled_by(label.id);
-            field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
-        })
-        .inner;
     ui.add_space(8.0);
     ui.checkbox(&mut form.sftp_gui_mode, "Use graphical file manager");
     ui.add_space(8.0);
@@ -1728,6 +1691,172 @@ fn show_port_forward_drafts(
     }
 }
 
+/// Which launcher a shared section is being rendered into. Only the few
+/// genuinely surface-specific behaviours branch on this; everything else is
+/// identical by construction rather than by two copies staying in step.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LauncherSurface {
+    Ssh,
+    Sftp,
+}
+
+/// What `show_authentication_section` reports back to its launcher.
+struct AuthenticationOutcome {
+    /// Enter was pressed in a credential field.
+    submit_with_enter: bool,
+    /// The user started a session from a stored credential, which bypasses
+    /// the launcher's own submit button.
+    command: Option<AppCommand>,
+}
+
+/// The credential section shared by the SSH and SFTP launchers: method
+/// radios, the fields for the selected method, and the stored-credential
+/// shortcut. Both launchers offer exactly the same authentication choices,
+/// so they render exactly the same section and differ only in which
+/// command a stored credential starts.
+fn show_authentication_section(
+    ui: &mut Ui,
+    tab_id: TabId,
+    form: &mut SshLauncherForm,
+    surface: LauncherSurface,
+    focus_password: bool,
+    native_store_available: bool,
+) -> AuthenticationOutcome {
+    let mut command = None;
+    ssh_section_heading(ui, "Authentication");
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut form.authentication_method,
+            SshAuthenticationMethod::Password,
+            "Password or prompt",
+        );
+        ui.radio_value(
+            &mut form.authentication_method,
+            SshAuthenticationMethod::PrivateKey,
+            "Private key",
+        );
+        ui.radio_value(
+            &mut form.authentication_method,
+            SshAuthenticationMethod::Certificate,
+            "Certificate",
+        );
+    });
+    ui.add_space(12.0);
+    let submit_with_enter = match form.authentication_method {
+        SshAuthenticationMethod::Password => {
+            let submit =
+                ssh_password_edit_with_hint(ui, tab_id, &mut form.password, focus_password)
+                    .lost_focus()
+                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            ui.add_space(4.0);
+            if form.saved_profile_id.is_some() {
+                ui.checkbox(
+                    &mut form.remember_password,
+                    "Remember this password in native secure storage",
+                );
+            } else {
+                ssh_paragraph(ui, "Saving a password requires a saved profile.");
+            }
+            if form.saved_profile_has_credential {
+                ui.add_space(4.0);
+                let stored_credential_label = match form.saved_profile_credential_kind {
+                    Some(CredentialKind::PrivateKey) => "Use stored private key",
+                    Some(CredentialKind::Password) | None => "Use stored password",
+                };
+                if ui
+                    .add_enabled(
+                        native_store_available,
+                        egui::Button::new(stored_credential_label),
+                    )
+                    .clicked()
+                {
+                    match surface {
+                        LauncherSurface::Ssh => match form.submit_stored_credential() {
+                            Ok(started) => {
+                                command = Some(started);
+                                form.feedback = None;
+                            }
+                            Err(feedback) => form.feedback = Some(feedback),
+                        },
+                        LauncherSurface::Sftp => {
+                            command = form.saved_profile_id.as_ref().map(|profile_id| {
+                                AppCommand::StartStoredPasswordSftpProfile {
+                                    profile_id: profile_id.clone(),
+                                }
+                            });
+                        }
+                    }
+                }
+                if !native_store_available {
+                    ssh_paragraph(ui, "Native secure storage is unavailable.");
+                }
+            }
+            submit
+        }
+        SshAuthenticationMethod::PrivateKey => {
+            ssh_multiline_secret_text_edit(
+                ui,
+                tab_id,
+                "private_key",
+                "OpenSSH private key",
+                &mut form.private_key,
+            );
+            ssh_paragraph(ui, "The key is kept in memory only, never saved.");
+            ssh_text_edit(
+                ui,
+                tab_id,
+                "key_passphrase",
+                "Key passphrase (optional)",
+                &mut form.key_passphrase,
+                true,
+                false,
+            )
+            .lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        }
+        SshAuthenticationMethod::Certificate => {
+            ssh_multiline_secret_text_edit(
+                ui,
+                tab_id,
+                "private_key",
+                "OpenSSH private key",
+                &mut form.private_key,
+            );
+            ssh_paragraph(
+                ui,
+                "The private key and certificate are kept in memory only, never saved.",
+            );
+            ssh_text_edit(
+                ui,
+                tab_id,
+                "key_passphrase",
+                "Key passphrase (optional)",
+                &mut form.key_passphrase,
+                true,
+                false,
+            );
+            ui.add_space(4.0);
+            ssh_multiline_text_edit(
+                ui,
+                tab_id,
+                "certificate",
+                "OpenSSH certificate",
+                &mut form.certificate,
+                false,
+            );
+            ssh_paragraph(
+                ui,
+                "Paste the signed OpenSSH certificate text from the matching -cert.pub file.",
+            );
+            false
+        }
+    };
+    AuthenticationOutcome {
+        submit_with_enter,
+        command,
+    }
+}
+
 fn show_ssh_form(
     ui: &mut Ui,
     tab_id: TabId,
@@ -1754,215 +1883,29 @@ fn show_ssh_form(
             ui.set_min_width(card_width);
             ui.set_max_width(card_width);
 
-            ssh_section_heading(ui, "Connection");
-            let quick = ssh_labeled_text_edit(
-                ui,
+            let destination_enter = DestinationPane::new(
+                form.destination(),
                 tab_id,
-                "quick_connect",
-                "Quick connect",
-                "user@host:port",
-                &mut form.quick_connect,
-                f32::INFINITY,
-            );
-            if focus_quick_connect {
-                quick.request_focus();
-            }
-            if quick.changed() {
-                form.sync_advanced_from_quick_connect();
-            }
-            ui.add_space(8.0);
-            // Username leads because it matches the `user@host:port` reading
-            // order of the Quick connect field directly above it.
-            let mut destination_changed = ssh_labeled_text_edit(
-                ui,
-                tab_id,
-                "username",
-                "Username",
-                "",
-                &mut form.username,
-                f32::INFINITY,
+                "launcher_ssh",
+                FieldStyle::Stacked,
             )
-            .changed();
-            ui.add_space(8.0);
-            let host_port_width = ui.available_width();
-            if host_port_width >= 460.0 {
-                ui.horizontal(|ui| {
-                    let port_width = 110.0;
-                    let host_width =
-                        (ui.available_width() - port_width - ui.spacing().item_spacing.x).max(180.0);
-                    destination_changed |= ssh_labeled_text_edit(
-                        ui,
-                        tab_id,
-                        "host",
-                        "Host",
-                        "",
-                        &mut form.host,
-                        host_width,
-                    )
-                    .changed();
-                    destination_changed |= ssh_labeled_text_edit(
-                        ui,
-                        tab_id,
-                        "port",
-                        "Port",
-                        "",
-                        &mut form.port,
-                        port_width,
-                    )
-                    .changed();
-                });
-            } else {
-                destination_changed |= ssh_labeled_text_edit(
-                    ui,
-                    tab_id,
-                    "host",
-                    "Host",
-                    "",
-                    &mut form.host,
-                    f32::INFINITY,
-                )
-                .changed();
-                destination_changed |= ssh_labeled_text_edit(
-                    ui,
-                    tab_id,
-                    "port",
-                    "Port",
-                    "",
-                    &mut form.port,
-                    110.0,
-                )
-                .changed();
-            }
-            if destination_changed {
-                form.sync_quick_connect_from_advanced();
-            }
+            .show(ui, focus_quick_connect);
 
             ui.add_space(14.0);
             ui.separator();
             ui.add_space(14.0);
-            ssh_section_heading(ui, "Authentication");
-            ui.horizontal(|ui| {
-                ui.radio_value(
-                    &mut form.authentication_method,
-                    SshAuthenticationMethod::Password,
-                    "Password or prompt",
-                );
-                ui.radio_value(
-                    &mut form.authentication_method,
-                    SshAuthenticationMethod::PrivateKey,
-                    "Private key",
-                );
-                ui.radio_value(
-                    &mut form.authentication_method,
-                    SshAuthenticationMethod::Certificate,
-                    "Certificate",
-                );
-            });
-            ui.add_space(12.0);
-            let submit_with_enter = match form.authentication_method {
-                SshAuthenticationMethod::Password => {
-                    let submit = ssh_password_edit_with_hint(
-                        ui,
-                        tab_id,
-                        &mut form.password,
-                        focus_password,
-                    )
-                    .lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    ui.add_space(4.0);
-                    if form.saved_profile_id.is_some() {
-                        ui.checkbox(
-                            &mut form.remember_password,
-                            "Remember this password in native secure storage",
-                        );
-                    } else {
-                        ssh_paragraph(ui, "Saving a password requires a saved profile.");
-                    }
-                    if form.saved_profile_has_credential {
-                        ui.add_space(4.0);
-                        let stored_credential_label = match form.saved_profile_credential_kind {
-                            Some(CredentialKind::PrivateKey) => "Use stored private key",
-                            Some(CredentialKind::Password) | None => "Use stored password",
-                        };
-                        if ui
-                            .add_enabled(
-                                native_store_available,
-                                egui::Button::new(stored_credential_label),
-                            )
-                            .clicked()
-                        {
-                            match form.submit_stored_credential() {
-                                Ok(command) => {
-                                    result = Some(command);
-                                    form.feedback = None;
-                                }
-                                Err(feedback) => form.feedback = Some(feedback),
-                            }
-                        }
-                        if !native_store_available {
-                            ssh_paragraph(ui, "Native secure storage is unavailable.");
-                        }
-                    }
-                    submit
-                }
-                SshAuthenticationMethod::PrivateKey => {
-                    ssh_multiline_secret_text_edit(
-                        ui,
-                        tab_id,
-                        "private_key",
-                        "OpenSSH private key",
-                        &mut form.private_key,
-                    );
-                    ssh_paragraph(ui, "The key is kept in memory only, never saved.");
-                    ssh_text_edit(
-                        ui,
-                        tab_id,
-                        "key_passphrase",
-                        "Key passphrase (optional)",
-                        &mut form.key_passphrase,
-                        true,
-                        false,
-                    )
-                    .lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                }
-                SshAuthenticationMethod::Certificate => {
-                    ssh_multiline_secret_text_edit(
-                        ui,
-                        tab_id,
-                        "private_key",
-                        "OpenSSH private key",
-                        &mut form.private_key,
-                    );
-                    ssh_paragraph(
-                        ui,
-                        "The private key and certificate are kept in memory only, never saved.",
-                    );
-                    ssh_text_edit(
-                        ui,
-                        tab_id,
-                        "key_passphrase",
-                        "Key passphrase (optional)",
-                        &mut form.key_passphrase,
-                        true,
-                        false,
-                    );
-                    ui.add_space(4.0);
-                    ssh_multiline_text_edit(
-                        ui,
-                        tab_id,
-                        "certificate",
-                        "OpenSSH certificate",
-                        &mut form.certificate,
-                        false,
-                    );
-                    ssh_paragraph(
-                        ui,
-                        "Paste the signed OpenSSH certificate text from the matching -cert.pub file.",
-                    );
-                    false
-                }
-            };
+            let authentication = show_authentication_section(
+                ui,
+                tab_id,
+                form,
+                LauncherSurface::Ssh,
+                focus_password,
+                native_store_available,
+            );
+            if authentication.command.is_some() {
+                result = authentication.command;
+            }
+            let submit_with_enter = destination_enter | authentication.submit_with_enter;
 
             ui.add_space(14.0);
             ui.separator();
@@ -2067,22 +2010,20 @@ fn show_sftp_form(
                 }
             }
             ui.add_space(10.0);
+            // The same Connection pane the SSH launcher uses, so the two
+            // launchers offer one destination surface with one notation
+            // toggle rather than diverging quick/full layouts.
+            let destination_enter = DestinationPane::new(
+                form.destination(),
+                tab_id,
+                "launcher_ssh",
+                FieldStyle::Stacked,
+            )
+            .show(ui, focus_username);
             if !form.advanced_open {
-                result = show_sftp_quick_connect(ui, tab_id, form, focus_username);
+                result = show_sftp_quick_submit(ui, form, destination_enter);
                 return;
             }
-            ssh_section_heading(ui, "Connection");
-            ssh_text_edit(
-                ui,
-                tab_id,
-                "username",
-                "Username",
-                &mut form.username,
-                false,
-                focus_username,
-            );
-            ssh_text_edit(ui, tab_id, "host", "Host", &mut form.host, false, false);
-            ssh_text_edit(ui, tab_id, "port", "Port", &mut form.port, false, false);
 
             ui.add_space(10.0);
             ui.checkbox(&mut form.sftp_gui_mode, "Use graphical file manager");
@@ -2109,130 +2050,18 @@ fn show_sftp_form(
             }
 
             ui.add_space(10.0);
-            ssh_section_heading(ui, "Authentication");
-            ui.horizontal(|ui| {
-                ui.radio_value(
-                    &mut form.authentication_method,
-                    SshAuthenticationMethod::Password,
-                    "Password authentication",
-                );
-                ui.radio_value(
-                    &mut form.authentication_method,
-                    SshAuthenticationMethod::PrivateKey,
-                    "Private-key authentication",
-                );
-                ui.radio_value(
-                    &mut form.authentication_method,
-                    SshAuthenticationMethod::Certificate,
-                    "Certificate authentication",
-                );
-            });
-            ui.add_space(4.0);
-            let submit_with_enter = match form.authentication_method {
-                SshAuthenticationMethod::Password => {
-                    let submit = ssh_text_edit(
-                        ui,
-                        tab_id,
-                        "password",
-                        "Password",
-                        &mut form.password,
-                        true,
-                        focus_password,
-                    )
-                    .lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    ui.add_space(4.0);
-                    if form.saved_profile_id.is_some() {
-                        ui.checkbox(
-                            &mut form.remember_password,
-                            "Remember this password in native secure storage",
-                        );
-                    } else {
-                        ssh_paragraph(ui, "Saving a password requires a saved profile.");
-                    }
-                    if form.saved_profile_has_credential {
-                        ui.add_space(4.0);
-                        let stored_credential_label = match form.saved_profile_credential_kind {
-                            Some(CredentialKind::PrivateKey) => "Use stored private key",
-                            Some(CredentialKind::Password) | None => "Use stored password",
-                        };
-                        if ui
-                            .add_enabled(
-                                native_store_available,
-                                egui::Button::new(stored_credential_label),
-                            )
-                            .clicked()
-                        {
-                            result = form.saved_profile_id.as_ref().map(|profile_id| {
-                                AppCommand::StartStoredPasswordSftpProfile {
-                                    profile_id: profile_id.clone(),
-                                }
-                            });
-                        }
-                        if !native_store_available {
-                            ssh_paragraph(ui, "Native secure storage is unavailable.");
-                        }
-                    }
-                    submit
-                }
-                SshAuthenticationMethod::PrivateKey => {
-                    ssh_multiline_secret_text_edit(
-                        ui,
-                        tab_id,
-                        "private_key",
-                        "OpenSSH private key",
-                        &mut form.private_key,
-                    );
-                    ssh_paragraph(ui, "The key is kept in memory only, never saved.");
-                    ssh_text_edit(
-                        ui,
-                        tab_id,
-                        "key_passphrase",
-                        "Key passphrase (optional)",
-                        &mut form.key_passphrase,
-                        true,
-                        false,
-                    )
-                    .lost_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                }
-                SshAuthenticationMethod::Certificate => {
-                    ssh_multiline_secret_text_edit(
-                        ui,
-                        tab_id,
-                        "private_key",
-                        "OpenSSH private key",
-                        &mut form.private_key,
-                    );
-                    ssh_paragraph(
-                        ui,
-                        "The private key and certificate are kept in memory only, never saved.",
-                    );
-                    ssh_text_edit(
-                        ui,
-                        tab_id,
-                        "key_passphrase",
-                        "Key passphrase (optional)",
-                        &mut form.key_passphrase,
-                        true,
-                        false,
-                    );
-                    ui.add_space(4.0);
-                    ssh_multiline_text_edit(
-                        ui,
-                        tab_id,
-                        "certificate",
-                        "OpenSSH certificate",
-                        &mut form.certificate,
-                        false,
-                    );
-                    ssh_paragraph(
-                        ui,
-                        "Paste the signed OpenSSH certificate text from the matching -cert.pub file.",
-                    );
-                    false
-                }
-            };
+            let authentication = show_authentication_section(
+                ui,
+                tab_id,
+                form,
+                LauncherSurface::Sftp,
+                focus_password,
+                native_store_available,
+            );
+            if authentication.command.is_some() {
+                result = authentication.command;
+            }
+            let submit_with_enter = destination_enter | authentication.submit_with_enter;
 
             if result.is_none() {
                 ui.add_space(12.0);
@@ -2933,7 +2762,14 @@ fn show_profile_row(
     });
 
     if response.clicked() {
-        action = Some(ProfileTableAction::Connect);
+        // Activating a row means different things on the two surfaces it
+        // appears on: the Launcher exists to start sessions, while the
+        // Profiles tab exists to manage them. Connecting from Profiles
+        // stays available from the row menu.
+        action = Some(match menu_kind {
+            ProfileTableMenu::Launcher => ProfileTableAction::Connect,
+            ProfileTableMenu::Profiles => ProfileTableAction::Edit,
+        });
     }
 
     ProfileTableRowResponse { response, action }
@@ -4730,6 +4566,14 @@ mod tests {
         harness.run();
     }
 
+    /// Switches the destination pane from its default `user@host:port`
+    /// field to the separate Username/Host/Port fields, for tests that
+    /// address those fields individually.
+    fn use_separate_destination_fields(harness: &mut Harness<'static, LauncherHarnessState>) {
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
+    }
+
     fn generated_openssh_private_key() -> String {
         let mut random = russh::keys::key::safe_rng();
         let key = russh::keys::PrivateKey::random(&mut random, russh::keys::Algorithm::Ed25519)
@@ -4774,15 +4618,27 @@ mod tests {
     }
 
     #[test]
-    fn opening_the_ssh_form_focuses_the_quick_connect_field() {
+    fn opening_the_ssh_form_focuses_the_leading_destination_field() {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
 
         assert!(
             harness.get_by_label("Quick connect").is_focused(),
-            "Quick connect leads the form, so it must take the initial keyboard focus \
-             rather than stranding it on a field further down"
+            "the single user@host:port field leads the SSH form's default notation, so it \
+             must take the initial keyboard focus"
+        );
+
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Quick connect").is_none(),
+            "toggling to the separate fields must replace the one-line field, not join it"
+        );
+        assert!(
+            harness.get_by_label("Username").is_focused(),
+            "focus must follow the toggle onto the newly leading field"
         );
     }
 
@@ -4795,8 +4651,8 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
 
-        let quick_top = harness.get_by_label("Quick connect").rect().top();
         let host_top = harness.get_by_label("Host").rect().top();
         let port_top = harness.get_by_label("Port").rect().top();
         let username_top = harness.get_by_label("Username").rect().top();
@@ -4804,10 +4660,6 @@ mod tests {
         assert!(
             (host_top - port_top).abs() < 2.0,
             "Host and Port must share a row on wide launchers"
-        );
-        assert!(
-            quick_top < username_top,
-            "Quick connect must lead the Connection section"
         );
         assert!(
             username_top < host_top,
@@ -4838,6 +4690,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "example.invalid");
         enter_text(&mut harness, "Username", "test-user");
         enter_text(&mut harness, "Password", "transient-test-password");
@@ -4870,7 +4723,7 @@ mod tests {
     }
 
     #[test]
-    fn ssh_launcher_defaults_to_the_full_connection_form() {
+    fn ssh_launcher_defaults_to_the_squashed_destination_field() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4879,13 +4732,17 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.query_by_label("Host").is_some(),
-            "a freshly opened SSH launcher must show the full connection form"
+            harness.query_by_label("Quick connect").is_some(),
+            "a freshly opened SSH launcher must show the squashed user@host:port field"
         );
         assert!(
-            harness.query_by_label("Quick connect").is_some(),
-            "the SSH launcher keeps the one-line user@host:port field alongside the \
-             individual connection fields"
+            harness.query_by_label("Host").is_none(),
+            "the two notations are alternatives: the separate fields must stay hidden \
+             until the user asks for them"
+        );
+        assert!(
+            harness.query_by_label("Use separate fields").is_some(),
+            "the SSH launcher must still offer the separate destination fields"
         );
     }
 
@@ -4900,6 +4757,8 @@ mod tests {
             "Quick connect",
             "devuser@web-1.example.com:2222",
         );
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
         assert_eq!(
             harness.get_by_label("Username").value().as_deref(),
             Some("devuser"),
@@ -4917,6 +4776,8 @@ mod tests {
         );
 
         enter_text(&mut harness, "Host", ".internal");
+        harness.get_by_label("Use user@host:port").click();
+        harness.run();
         assert_eq!(
             harness.get_by_label("Quick connect").value().as_deref(),
             Some("devuser@web-1.example.com.internal:2222"),
@@ -4925,7 +4786,7 @@ mod tests {
     }
 
     #[test]
-    fn ssh_launcher_focuses_quick_connect_when_it_opens() {
+    fn ssh_launcher_focuses_its_leading_destination_field_when_it_opens() {
         let mut harness = harness();
         harness.run();
         harness
@@ -4947,6 +4808,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Host", "10.1.2.3");
         enter_text(&mut harness, "Username", "fes");
@@ -4981,12 +4843,17 @@ mod tests {
         harness.run();
 
         assert!(
-            harness.query_by_label("user@host").is_some(),
-            "a freshly opened SFTP launcher must show the Quick Connect field"
+            harness.query_by_label("Quick connect").is_some(),
+            "a freshly opened SFTP launcher must show the compact destination field"
         );
         assert!(
             harness.query_by_label("Username").is_none(),
-            "the advanced form must stay hidden until 'Show advanced settings' is checked"
+            "the two notations are alternatives, so the separate fields must stay hidden \
+             until the user toggles to them"
+        );
+        assert!(
+            harness.query_by_label("Password").is_none(),
+            "authentication must stay hidden until 'Show advanced settings' is checked"
         );
     }
 
@@ -5000,7 +4867,7 @@ mod tests {
         harness.run();
 
         harness
-            .get_by_label("user@host")
+            .get_by_label("Quick connect")
             .type_text("fes@10.1.2.3:2222");
         harness.run();
         harness.get_by_label("Use graphical file manager").click();
@@ -5029,6 +4896,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Host", "10.1.2.3");
         harness.get_by_label("Port").click();
@@ -5217,6 +5085,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Username", "fes");
         harness.get_by_label("Connect").click();
@@ -5259,6 +5128,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "ssh.example.test");
         enter_text(&mut harness, "Username", "deploy");
         enter_text(&mut harness, "Password", "transient-secret");
@@ -5359,6 +5229,7 @@ mod tests {
             .get_by_label("SSH — Connect to a remote host over SSH")
             .click();
         harness.run();
+        use_separate_destination_fields(&mut harness);
 
         enter_text(&mut harness, "Host", "invalid host");
         harness.get_by_label("Connect").click();
@@ -5383,6 +5254,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
 
         harness.get_by_label("Connect").click();
@@ -5448,6 +5320,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "example.invalid");
         enter_text(&mut harness, "Username", "test-user");
 
@@ -6553,6 +6426,8 @@ mod tests {
             harness.get_by_label("Password").is_focused(),
             "a restored destination should focus the password field it still needs"
         );
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
 
         harness.get_by_label("Username").focus();
         harness.run();
@@ -6682,6 +6557,7 @@ mod tests {
         let mut harness = harness();
         harness.run();
         open_ssh_form(&mut harness);
+        use_separate_destination_fields(&mut harness);
         enter_text(&mut harness, "Host", "invalid host");
 
         harness.get_by_label("Connect").click();

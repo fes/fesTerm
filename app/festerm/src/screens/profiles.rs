@@ -1,5 +1,9 @@
 //! Profiles application-surface presentation, split out of `screens.rs`.
 
+use super::destination::{
+    labeled_text_edit, pad_to_label_lane, DestinationFields, DestinationPane, FieldOptions,
+    FieldStyle,
+};
 use super::*;
 
 /// Which staged view the Profiles surface is currently showing. Multi-field
@@ -177,6 +181,13 @@ struct SshProfileDraft {
     port: String,
     username: String,
     port_forwards: Vec<SshPortForwardDraft>,
+    /// The single `user@host[:port]` shorthand for this profile's
+    /// destination, and which notation the editor is currently showing.
+    /// Both are transient editor state: a saved profile always stores the
+    /// separate host/port/username, whichever notation was used to type
+    /// them.
+    quick_connect: String,
+    destination_expanded: bool,
     profile_kind: RemoteProfileKind,
     sftp_gui_mode: bool,
     /// Which credential kind the editor's authentication section is
@@ -220,6 +231,8 @@ impl Default for SshProfileDraft {
             port: SshLauncherForm::DEFAULT_PORT.to_string(),
             username: String::new(),
             port_forwards: Vec::new(),
+            quick_connect: String::new(),
+            destination_expanded: false,
             profile_kind: RemoteProfileKind::Ssh,
             sftp_gui_mode: true,
             auth_method: SshAuthenticationMethod::Password,
@@ -236,6 +249,16 @@ impl Default for SshProfileDraft {
 }
 
 impl SshProfileDraft {
+    fn destination(&mut self) -> DestinationFields<'_> {
+        DestinationFields {
+            username: &mut self.username,
+            host: &mut self.host,
+            port: &mut self.port,
+            quick_connect: &mut self.quick_connect,
+            expanded: &mut self.destination_expanded,
+        }
+    }
+
     fn new_sftp() -> Self {
         Self {
             profile_kind: RemoteProfileKind::Sftp,
@@ -285,6 +308,8 @@ impl SshProfileDraft {
                 .iter()
                 .map(SshPortForwardDraft::from_configuration)
                 .collect(),
+            quick_connect: format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
+            destination_expanded: false,
             profile_kind: ssh.profile_kind(),
             sftp_gui_mode: ssh.sftp_gui_mode(),
             auth_method: match stored_credential_kind {
@@ -536,14 +561,16 @@ pub(super) fn serial_enum_combo<T: Copy + PartialEq + SerialEnumLabels>(
     current: &mut T,
 ) {
     ui.horizontal(|ui| {
-        ui.label(label);
-        egui::ComboBox::from_id_salt(("serial_enum_combo", label))
+        let label = ui.label(label);
+        pad_to_label_lane(ui, &label);
+        let combo = egui::ComboBox::from_id_salt(("serial_enum_combo", label.id))
             .selected_text(current.label())
             .show_ui(ui, |ui| {
                 for (variant, variant_label) in T::all() {
                     ui.selectable_value(current, variant, variant_label);
                 }
             });
+        combo.response.labelled_by(label.id);
     });
 }
 
@@ -655,21 +682,13 @@ fn profile_text_edit_inner(
     value: &mut String,
     password: bool,
 ) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.add_space(2.0);
-        let label = ui.add(
-            egui::Label::new(egui::RichText::new(label).color(theme::TEXT_SECONDARY))
-                .selectable(false),
-        );
-        let field = ui.add(
-            TextEdit::singleline(value)
-                .id_salt(("profiles_form", tab_id, field))
-                .password(password)
-                .desired_width(240.0),
-        );
-        field.labelled_by(label.id)
-    })
-    .inner
+    labeled_text_edit(
+        ui,
+        ("profiles_form", tab_id, field),
+        label,
+        value,
+        FieldOptions::inline().password(password),
+    )
 }
 
 /// Maximum number of `PATH` matches offered below the Local profile
@@ -896,6 +915,9 @@ pub(crate) fn show_profiles(
                     return;
                 }
 
+                // The table grows with the profile list, so it needs the same
+                // viewport-measured scroll budget the profile editors use.
+                show_bounded_content_scroll(ui, (tab_id, "profiles_list_scroll"), |ui| {
                 let table_width = ui.available_width().max(0.0);
                 egui::Frame::new()
                     .fill(theme::SURFACE_PANEL)
@@ -1025,6 +1047,7 @@ pub(crate) fn show_profiles(
                             }
                         }
                     });
+                });
             });
         }
         ProfilesScreenMode::EditLocal(draft) => {
@@ -1191,7 +1214,10 @@ pub(crate) fn show_profiles(
                                 ui.set_max_width(
                                     (ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0),
                                 );
-                                ssh_section_heading(ui, "Connection");
+                                // Name belongs to the profile, not the
+                                // destination, and heads its own section
+                                // the way the Local and Serial editors do.
+                                ssh_section_heading(ui, "Profile");
                                 if profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name)
                                     .changed()
                                 {
@@ -1199,15 +1225,17 @@ pub(crate) fn show_profiles(
                                         .durable_session
                                         .sync_session_name_from_profile_name(&draft.name);
                                 }
-                                profile_text_edit(
-                                    ui,
+                                ui.add_space(6.0);
+                                // The same destination pane the launchers
+                                // use, so the shorthand notation, field
+                                // order and focus behave identically here.
+                                DestinationPane::new(
+                                    draft.destination(),
                                     tab_id,
-                                    "username",
-                                    "Username",
-                                    &mut draft.username,
-                                );
-                                profile_text_edit(ui, tab_id, "host", "Host", &mut draft.host);
-                                profile_text_edit(ui, tab_id, "port", "Port", &mut draft.port);
+                                    "profiles_form",
+                                    FieldStyle::Inline,
+                                )
+                                .show(ui, false);
                                 if draft.profile_kind == RemoteProfileKind::Sftp {
                                     ui.add_space(10.0);
                                     ui.checkbox(
@@ -1587,6 +1615,120 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_ssh_profile_editor_shares_the_launchers_destination_pane() {
+        // The editor, the SSH launcher and the SFTP launcher all render
+        // `DestinationPane`, so the `user@host:port` shorthand and its
+        // two-way sync must work here exactly as it does there.
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        open_new_profile(&mut harness, "SSH");
+
+        assert!(
+            harness.query_by_label("Host").is_none(),
+            "the two notations are alternatives here too, not a pair"
+        );
+
+        harness.get_by_label("Quick connect").click();
+        harness.run();
+        harness
+            .get_by_label("Quick connect")
+            .type_text("deploy@web-1.staging.example.com:2222");
+        harness.run();
+
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
+        for (label, expected) in [
+            ("Username", "deploy"),
+            ("Host", "web-1.staging.example.com"),
+            ("Port", "2222"),
+        ] {
+            assert_eq!(
+                harness.get_by_label(label).value().as_deref(),
+                Some(expected),
+                "the shorthand must fill {label} in the editor just as it does in the launchers"
+            );
+        }
+    }
+
+    #[test]
+    fn editing_an_existing_ssh_profile_shows_its_destination_already_composed() {
+        // The editor opens on the shorthand notation, so a stored profile has
+        // to arrive with `user@host:port` already assembled rather than
+        // presenting the user with an empty field over populated state.
+        let profile = Profile::ssh(
+            "prod",
+            "ssh.example.test",
+            2222,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![profile]).unwrap());
+        harness.run();
+
+        click_profile_action(&mut harness, "prod", "Edit");
+        harness.run();
+
+        assert_eq!(
+            harness.get_by_label("Quick connect").value().as_deref(),
+            Some("deploy@ssh.example.test:2222"),
+            "the stored username, host and port must be composed into the shorthand"
+        );
+    }
+
+    #[test]
+    fn a_long_profiles_list_scrolls_instead_of_running_off_the_bottom() {
+        const PANEL_HEIGHT: f32 = 640.0;
+        let profiles: Vec<Profile> = (0..40)
+            .map(|index| {
+                Profile::local(format!("profile-{index:02}"), "/bin/zsh", Vec::new(), None).unwrap()
+            })
+            .collect();
+        let configuration = festerm_config::Configuration::new(profiles).unwrap();
+        let mut harness = profiles_harness(configuration);
+        harness.run();
+
+        let last = "profile-39 — Local · /bin/zsh";
+        let before = harness.get_by_label(last).rect().top();
+        assert!(
+            before > PANEL_HEIGHT,
+            "the last profile should start below the fold; it was already at {before}"
+        );
+
+        for _ in 0..40 {
+            harness.event(egui::Event::PointerMoved(egui::pos2(280.0, 400.0)));
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, -8.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            harness.run();
+        }
+
+        let after = harness.get_by_label(last).rect().top();
+        assert!(
+            after < before,
+            "scrolling must move the list; the last profile stayed at {after}"
+        );
+        assert!(
+            after < PANEL_HEIGHT,
+            "scrolling must be able to bring the last profile into view, but it stopped \
+             at {after} of {PANEL_HEIGHT}"
+        );
+    }
+
+    /// See `screens::tests::use_separate_destination_fields`: the editor
+    /// shares that pane, and so shares its default notation.
+    fn use_separate_destination_fields(harness: &mut Harness<'static, ProfilesHarnessState>) {
+        harness.get_by_label("Use separate fields").click();
+        harness.run();
+    }
+
     fn open_new_profile(harness: &mut Harness<'static, ProfilesHarnessState>, kind: &str) {
         harness.get_by_label("New Profile").click();
         harness.run();
@@ -1791,6 +1933,29 @@ mod tests {
                 "{label} must be offered by the New Profile menu"
             );
         }
+    }
+
+    #[test]
+    fn clicking_a_profiles_row_opens_its_editor_rather_than_connecting() {
+        // The Launcher exists to start sessions, the Profiles tab to
+        // manage them, so the same row component means "edit" here and
+        // "connect" there. Connecting from Profiles stays on the row menu.
+        let local = Profile::local("dev-shell", "/bin/zsh", Vec::new(), None).unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![local]).unwrap());
+        harness.run();
+
+        harness.get_by_label("dev-shell — Local · /bin/zsh").click();
+        harness.run();
+
+        assert!(
+            harness.query_by_label("Edit Local Profile").is_some(),
+            "clicking a Profiles row must open its editor"
+        );
+        assert!(
+            harness.state().command.is_none(),
+            "clicking a Profiles row must not start a session"
+        );
     }
 
     #[test]
@@ -2194,7 +2359,16 @@ mod tests {
         // A short connection-details-only form (password auth by default)
         // should keep "Save" well above a 900px-tall window rather than
         // stretching the panel to fill it.
-        assert!(harness.get_by_label("Save").rect().max.y < 500.0);
+        let save_bottom = harness.get_by_label("Save").rect().max.y;
+        // The bound guards against stretching to the 900px window, not an
+        // exact height: the card is free to grow by a row or two as its
+        // content changes, and did when the destination pane gained its
+        // notation toggle.
+        assert!(
+            save_bottom < 600.0,
+            "the editor card must size to its content, but Save ended at {save_bottom} \
+             in a 900px-tall window"
+        );
         // With ample room, the whole form fits without needing to scroll at
         // all -- once content doesn't exceed the available height, egui's
         // default `ScrollBarVisibility::VisibleWhenNeeded` keeps the
@@ -2374,6 +2548,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2454,6 +2629,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2505,6 +2681,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SFTP");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "files"),
             ("Username", "deploy"),
@@ -2560,6 +2737,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "production"),
             ("Username", "other-user"),
@@ -2734,6 +2912,7 @@ mod tests {
         harness.run();
 
         open_new_profile(&mut harness, "SSH");
+        use_separate_destination_fields(&mut harness);
         for (label, value) in [
             ("Name", "build-host"),
             ("Username", "builder"),
@@ -2810,6 +2989,7 @@ mod tests {
         assert!(harness
             .query_by_label("Use graphical file manager")
             .is_some());
+        use_separate_destination_fields(&mut harness);
 
         for (label, value) in [
             ("Name", "files"),
