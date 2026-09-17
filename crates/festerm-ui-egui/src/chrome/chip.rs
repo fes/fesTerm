@@ -180,7 +180,14 @@ pub(super) fn show_chip(
     // separate drag-handle affordance needed.
     let bg_response = ui.interact(bg_rect, chip_id, Sense::click_and_drag());
     bg_response.widget_info(|| {
-        WidgetInfo::labeled(WidgetType::Other, true, format!("{} chip", chip.primary))
+        // A document chip says its state in its name, so a screen reader is
+        // told what the shape is showing rather than only that a file is open
+        // (ADR 0034 §8).
+        let name = match chip.status.document_state() {
+            Some(state) => format!("{}, {state} chip", chip.primary),
+            None => format!("{} chip", chip.primary),
+        };
+        WidgetInfo::labeled(WidgetType::Other, true, name)
     });
     // Bring a freshly-activated chip into view (`reveal`, set by the
     // caller only on the frame its `active` id changed): with
@@ -600,8 +607,31 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
     } else {
         status.color()
     };
-    ui.painter()
-        .circle_filled(rect.center(), diameter / 2.0, color);
+    let radius = diameter / 2.0;
+    match status.marker() {
+        ChipMarker::Filled => {
+            ui.painter().circle_filled(rect.center(), radius, color);
+        }
+        // Hollow, not merely a different hue: an edited document has to be
+        // distinguishable from a saved one with the colour taken away.
+        ChipMarker::Hollow => {
+            ui.painter().circle_stroke(
+                rect.center(),
+                radius - 0.5,
+                egui::Stroke::new(1.5, color),
+            );
+        }
+        ChipMarker::Triangle => {
+            let centre = rect.center();
+            let points = vec![
+                egui::pos2(centre.x, centre.y - radius),
+                egui::pos2(centre.x + radius, centre.y + radius * 0.8),
+                egui::pos2(centre.x - radius, centre.y + radius * 0.8),
+            ];
+            ui.painter()
+                .add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+        }
+    }
     response.on_hover_text(status.accessible_label());
 }
 

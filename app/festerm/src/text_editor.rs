@@ -225,18 +225,18 @@ impl TextEditorTab {
         format!("{bytes} bytes")
     }
 
-    /// The dot the tab chip shows. Severity rather than connection state:
-    /// what matters about an editor from another tab is whether it is holding
-    /// changes that are not on disk.
+    /// The chip's state, in the shapes a document has rather than the ones a
+    /// connection has: a conflict is not a failed session, and unsaved text is
+    /// not a session still starting (ADR 0034 §8).
     pub(crate) fn chip_status(&self, documents: &SharedDocuments) -> ChipStatus {
         match self.status(documents).map(|status| status.severity()) {
-            Some(Severity::Blocking) => ChipStatus::Failed,
-            Some(Severity::Warning) => ChipStatus::Reconnecting,
+            Some(Severity::Blocking) => ChipStatus::DocumentConflict,
+            Some(Severity::Warning) => ChipStatus::DocumentUnsaved,
             Some(Severity::Informational) => {
                 if self.is_dirty(documents) {
-                    ChipStatus::Starting
+                    ChipStatus::DocumentUnsaved
                 } else {
-                    ChipStatus::Connected
+                    ChipStatus::DocumentSaved
                 }
             }
             None => ChipStatus::Neutral,
@@ -998,7 +998,7 @@ mod tests {
         assert_eq!(second.buffer, "alpha\ntyped\n");
         assert_eq!(
             second.chip_status(&documents),
-            festerm_ui_egui::chrome::ChipStatus::Starting,
+            festerm_ui_egui::chrome::ChipStatus::DocumentUnsaved,
             "a document with unsaved changes should say so on every chip"
         );
     }
@@ -1035,7 +1035,8 @@ mod tests {
         assert!(status.actions().contains(&BannerAction::KeepMyVersion));
         assert_eq!(
             editor.chip_status(&documents),
-            festerm_ui_egui::chrome::ChipStatus::Failed
+            festerm_ui_egui::chrome::ChipStatus::DocumentConflict,
+            "a conflict is its own state, not a session that failed to start"
         );
     }
 

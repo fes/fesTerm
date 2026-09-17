@@ -1187,7 +1187,14 @@ impl SessionTab {
                 ChipStatus::Connected,
             ) => "Connected",
             (InspectorTransport::Serial { .. }, ChipStatus::Connected) => "Open",
-            (_, ChipStatus::Neutral) => "",
+            // A session tab cannot carry a document's state.
+            (
+                _,
+                ChipStatus::Neutral
+                | ChipStatus::DocumentSaved
+                | ChipStatus::DocumentUnsaved
+                | ChipStatus::DocumentConflict,
+            ) => "",
         }
     }
 

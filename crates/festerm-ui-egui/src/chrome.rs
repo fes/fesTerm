@@ -169,12 +169,40 @@ pub enum ChipStatus {
     AuthRequired,
     Failed,
     Exited,
+    /// An open document whose content matches its source.
+    DocumentSaved,
+    /// An open document with changes that are not on its source yet.
+    DocumentUnsaved,
+    /// An open document whose source changed underneath it.
+    DocumentConflict,
     /// Non-session application surfaces (Launcher, Settings) carry no
     /// connection state and show no status dot.
     Neutral,
 }
 
+/// The shape a chip's state marker is drawn as.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChipMarker {
+    Filled,
+    Hollow,
+    Triangle,
+}
+
 impl ChipStatus {
+    /// The shape this state is drawn as.
+    ///
+    /// A document's state is carried by shape before colour (ADR 0034 §8), so
+    /// a saved file, an edited one, and one in conflict remain three visibly
+    /// different chips in monochrome. Connection states keep the filled dot
+    /// they have always had.
+    pub const fn marker(self) -> ChipMarker {
+        match self {
+            Self::DocumentUnsaved => ChipMarker::Hollow,
+            Self::DocumentConflict => ChipMarker::Triangle,
+            _ => ChipMarker::Filled,
+        }
+    }
+
     /// Semantic `status.*` role color (`docs/gui-design.md` "Semantic color
     /// roles"). These are placeholder concrete values until a theme system
     /// exists; the accessible label, not color alone, carries the meaning.
@@ -187,6 +215,9 @@ impl ChipStatus {
             Self::AuthRequired => theme::STATUS_ATTENTION,
             Self::Failed => theme::STATUS_ERROR,
             Self::Exited => theme::STATUS_EXITED,
+            Self::DocumentSaved => theme::STATUS_RUNNING,
+            Self::DocumentUnsaved => theme::STATUS_STARTING,
+            Self::DocumentConflict => theme::STATUS_ERROR,
             Self::Neutral => Color32::TRANSPARENT,
         }
     }
@@ -202,7 +233,22 @@ impl ChipStatus {
             Self::AuthRequired => "Authentication required",
             Self::Failed => "Failed",
             Self::Exited => "Exited",
+            Self::DocumentSaved => "Saved",
+            Self::DocumentUnsaved => "Unsaved",
+            Self::DocumentConflict => "In conflict",
             Self::Neutral => "",
+        }
+    }
+
+    /// This state's wording for the middle of a sentence, for the states a
+    /// document has. `None` for the connection states, which a chip's
+    /// accessible name has never carried.
+    pub const fn document_state(self) -> Option<&'static str> {
+        match self {
+            Self::DocumentSaved => Some("saved"),
+            Self::DocumentUnsaved => Some("unsaved"),
+            Self::DocumentConflict => Some("in conflict"),
+            _ => None,
         }
     }
 }
@@ -967,6 +1013,42 @@ mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
 
     use super::*;
+
+    #[test]
+    fn a_document_state_is_three_different_shapes_not_three_colors() {
+        // ADR 0034 §8: with the colour taken away, saved, edited, and
+        // conflicted have to remain three visibly different chips.
+        let markers = [
+            ChipStatus::DocumentSaved.marker(),
+            ChipStatus::DocumentUnsaved.marker(),
+            ChipStatus::DocumentConflict.marker(),
+        ];
+        for (index, marker) in markers.iter().enumerate() {
+            assert!(
+                !markers[index + 1..].contains(marker),
+                "{marker:?} is used for more than one document state"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_document_puts_its_state_into_the_chip_name() {
+        for status in [
+            ChipStatus::DocumentSaved,
+            ChipStatus::DocumentUnsaved,
+            ChipStatus::DocumentConflict,
+        ] {
+            assert!(status.document_state().is_some());
+        }
+        for status in [
+            ChipStatus::Connected,
+            ChipStatus::Failed,
+            ChipStatus::Exited,
+            ChipStatus::Neutral,
+        ] {
+            assert!(status.document_state().is_none());
+        }
+    }
 
     #[test]
     fn accessible_labels_never_rely_on_color_alone() {

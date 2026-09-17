@@ -4291,7 +4291,14 @@ impl FesTermApp {
                 "Attempting to reconnect to the host."
             }),
             ChipStatus::AuthRequired => Some("Authentication is required to continue."),
-            ChipStatus::Starting | ChipStatus::Connected | ChipStatus::Neutral => None,
+            // The Session Inspector only ever describes sessions, so a
+            // document's states cannot arrive here.
+            ChipStatus::Starting
+            | ChipStatus::Connected
+            | ChipStatus::Neutral
+            | ChipStatus::DocumentSaved
+            | ChipStatus::DocumentUnsaved
+            | ChipStatus::DocumentConflict => None,
         };
         let recorder = session
             .controller
@@ -5621,7 +5628,10 @@ mod tests {
 
     use super::*;
     use crate::overlay_state::{CloseConsequence, QuitConfirmationPurpose};
-    use egui_kittest::{kittest::Queryable, Harness, SnapshotOptions};
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness, SnapshotOptions,
+    };
 
     fn keyboard_harness() -> (
         Harness<'static, FesTermApp>,
@@ -7428,6 +7438,55 @@ mod tests {
         body.focus();
         body.type_text(text);
         harness.run();
+    }
+
+    /// The chip's accessible name, which is where a screen reader hears the
+    /// state the shape is showing (ADR 0034 §8).
+    fn chip_name(harness: &Harness<'static, FesTermApp>, file: &str) -> String {
+        harness
+            .query_all_by_label_contains(file)
+            .filter_map(|node| node.accesskit_node().label())
+            .find(|label| label.ends_with("chip"))
+            .unwrap_or_else(|| panic!("no chip for {file}"))
+    }
+
+    #[test]
+    fn the_chip_says_its_state_in_its_accessible_name() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+
+        assert_eq!(chip_name(&harness, "NOTES.md"), "NOTES.md, saved chip");
+
+        type_into_editor(&mut harness, "typed");
+
+        assert_eq!(
+            chip_name(&harness, "NOTES.md"),
+            "NOTES.md, unsaved chip",
+            "the state has to be in the name, not only in the shape"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_file_changed_underneath_turns_the_chip_into_a_conflict() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+
+        fs::write(&path, "somebody else\n").unwrap();
+        let documents = harness.state().state.documents().clone();
+        let id = documents.borrow().find_local(&path).expect("the open document");
+        documents.borrow_mut().refresh(id);
+        harness.run();
+
+        assert_eq!(
+            chip_name(&harness, "NOTES.md"),
+            "NOTES.md, in conflict chip",
+            "a conflict is its own state, not a louder kind of unsaved"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
