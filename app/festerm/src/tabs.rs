@@ -545,6 +545,25 @@ pub struct InspectorPersistence {
     pub session_name: String,
 }
 
+/// `provider · session name` for a transport that attaches to a durable
+/// session (feature request #168).
+///
+/// Only local shells and SSH connections can carry one; SFTP and serial
+/// have no durable session to name, and a plain shell or plain SSH
+/// connection carries `None` rather than an empty placeholder.
+fn durable_session_label_for(transport: &InspectorTransport) -> Option<String> {
+    let persistence = match transport {
+        InspectorTransport::Local { persistence } | InspectorTransport::Ssh { persistence, .. } => {
+            persistence.as_ref()
+        }
+        InspectorTransport::Sftp { .. } | InspectorTransport::Serial { .. } => None,
+    }?;
+    Some(format!(
+        "{} · {}",
+        persistence.provider_label, persistence.session_name
+    ))
+}
+
 /// A restored SSH workspace surface that deliberately has no live session.
 ///
 /// Workspace metadata contains destination details but never authentication or
@@ -1113,6 +1132,18 @@ impl SessionTab {
         }
     }
 
+    /// `provider · session name` for the durable session this tab attaches
+    /// to, when it has one -- the stable identity the terminal-provided
+    /// title cannot supply (feature request #168).
+    ///
+    /// Reuses the same non-secret metadata Session Inspector already shows,
+    /// so this never introduces a new source of truth. SFTP and serial tabs
+    /// have no durable session, and an ordinary plain shell or plain SSH
+    /// connection carries `None`.
+    pub fn durable_session_label(&self) -> Option<String> {
+        durable_session_label_for(&self.inspector_transport)
+    }
+
     pub fn dynamic_secondary(&self) -> Option<String> {
         self.controller
             .session()
@@ -1669,6 +1700,9 @@ pub enum AppCommand {
     /// running, unattached `festerm-sessiond` sessions as one-click
     /// "Resume" entries (feature request #70).
     ToggleShowResumableSessions,
+    /// Toggles whether the status bar names the durable session the active
+    /// terminal is attached to (feature request #168).
+    ToggleDurableSessionInStatusBar,
     /// Sets or clears the default starting local directory for new SFTP sessions.
     SetDefaultSftpLocalDirectory(Option<PathBuf>),
     /// Sets the visual left/right order for GUI SFTP panes.
@@ -1902,6 +1936,9 @@ pub struct AppState {
     /// unattached `festerm-sessiond` sessions as one-click "Resume" entries
     /// (feature request #70).
     show_resumable_sessions: bool,
+    /// Whether the status bar names the durable session the active terminal
+    /// is attached to (feature request #168).
+    show_durable_session_in_status_bar: bool,
     /// Visual left/right order for GUI SFTP panes.
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
@@ -1964,6 +2001,7 @@ impl AppState {
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
             show_resumable_sessions: settings.show_resumable_sessions(),
+            show_durable_session_in_status_bar: settings.show_durable_session_in_status_bar(),
             keyboard_bindings: settings.keyboard_bindings().clone(),
             sftp_pane_order: settings.sftp_pane_order(),
             default_sftp_local_directory: settings
@@ -2309,6 +2347,10 @@ impl AppState {
         self.show_resumable_sessions
     }
 
+    pub const fn show_durable_session_in_status_bar(&self) -> bool {
+        self.show_durable_session_in_status_bar
+    }
+
     pub const fn prefer_powershell(&self) -> bool {
         self.prefer_powershell
     }
@@ -2341,6 +2383,7 @@ impl AppState {
         .with_compact_launcher_grid(self.compact_launcher_grid)
         .with_pulse_new_output_dot(self.pulse_new_output_dot)
         .with_show_resumable_sessions(self.show_resumable_sessions)
+        .with_show_durable_session_in_status_bar(self.show_durable_session_in_status_bar)
         .with_keyboard_bindings(self.keyboard_bindings.clone())
         .with_sftp_pane_order(self.sftp_pane_order)
         .with_default_sftp_local_directory(
@@ -2689,6 +2732,9 @@ impl AppState {
             AppCommand::ToggleShowResumableSessions => {
                 self.show_resumable_sessions = !self.show_resumable_sessions;
             }
+            AppCommand::ToggleDurableSessionInStatusBar => {
+                self.show_durable_session_in_status_bar = !self.show_durable_session_in_status_bar;
+            }
             AppCommand::SetDefaultSftpLocalDirectory(path) => {
                 self.default_sftp_local_directory = path;
             }
@@ -2780,6 +2826,8 @@ impl AppState {
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
                 self.show_resumable_sessions = InterfaceSettings::DEFAULT.show_resumable_sessions();
+                self.show_durable_session_in_status_bar =
+                    InterfaceSettings::DEFAULT.show_durable_session_in_status_bar();
                 self.keyboard_bindings = Default::default();
                 self.sftp_pane_order = InterfaceSettings::DEFAULT.sftp_pane_order();
                 self.default_sftp_local_directory = None;
@@ -5202,6 +5250,88 @@ mod tests {
 
         state.dispatch(AppCommand::ResetInterfaceSettings, &context);
         assert!(!state.pulse_new_output_dot());
+    }
+
+    #[test]
+    fn durable_session_label_names_every_provider_and_omits_ordinary_sessions() {
+        // Feature request #168's acceptance list: local festerm-sessiond,
+        // local tmux, local GNU screen, and persistent SSH through either
+        // multiplexer, with nothing at all for sessions that have no durable
+        // identity to report.
+        for (provider, expected) in [
+            (PersistenceProviderKind::Tmux, "tmux · deploy-watch"),
+            (PersistenceProviderKind::Screen, "GNU Screen · deploy-watch"),
+            (
+                PersistenceProviderKind::FestermSessiond,
+                "fesTerm session daemon · deploy-watch",
+            ),
+        ] {
+            let persistence = || {
+                Some(InspectorPersistence {
+                    provider_label: provider.label(),
+                    session_name: "deploy-watch".to_owned(),
+                })
+            };
+            assert_eq!(
+                durable_session_label_for(&InspectorTransport::Local {
+                    persistence: persistence(),
+                })
+                .as_deref(),
+                Some(expected),
+                "a local {} session must name itself in the status bar",
+                provider.label()
+            );
+            assert_eq!(
+                durable_session_label_for(&InspectorTransport::Ssh {
+                    username: "deploy".to_owned(),
+                    host: "web-1.example.test".to_owned(),
+                    port: 22,
+                    persistence: persistence(),
+                })
+                .as_deref(),
+                Some(expected),
+                "a persistent SSH {} session reports the same identity",
+                provider.label()
+            );
+        }
+
+        for ordinary in [
+            InspectorTransport::Local { persistence: None },
+            InspectorTransport::Ssh {
+                username: "deploy".to_owned(),
+                host: "web-1.example.test".to_owned(),
+                port: 22,
+                persistence: None,
+            },
+            InspectorTransport::Sftp {
+                username: "builder".to_owned(),
+                host: "artifacts.example.test".to_owned(),
+                port: 22,
+            },
+        ] {
+            assert_eq!(
+                durable_session_label_for(&ordinary),
+                None,
+                "a session with no durable identity must render no placeholder"
+            );
+        }
+    }
+
+    #[test]
+    fn toggle_durable_session_in_status_bar_flips_state_and_resets_to_off() {
+        // Feature request #168.
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.show_durable_session_in_status_bar());
+
+        state.dispatch(AppCommand::ToggleDurableSessionInStatusBar, &context);
+        assert!(state.show_durable_session_in_status_bar());
+        assert!(state
+            .interface_settings()
+            .show_durable_session_in_status_bar());
+
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.show_durable_session_in_status_bar());
     }
 
     #[test]

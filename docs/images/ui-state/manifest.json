@@ -261,9 +261,9 @@
       "caption": "The top of Settings: chip layout, session-detail, and workspace-restore toggles, followed by scrollback limit and scroll-speed controls.",
       "image": "settings-interface-scrolling.png",
       "width": 874,
-      "height": 869,
+      "height": 961,
       "tier": "headless",
-      "sha256": "e2691d3d170cff5566504354003705f528fd2246b7b64cf3178e1e403a710b74"
+      "sha256": "13e84b83f4a72bbdeaaaba941fb800238b89f280ec00387d43964823694b0da3"
     },
     {
       "id": "settings-quick-switch",
@@ -296,7 +296,7 @@
       "width": 874,
       "height": 233,
       "tier": "headless",
-      "sha256": "d35c60e76eb3a0dca73c2a416788ed07ac696c0b94b5622f8cce87d3f9f4c731"
+      "sha256": "e6d070608a56e48aa9877631a3a514af380909c8e615c72872c7b96a586a432b"
     },
     {
       "id": "sftp-workspace-browser",
