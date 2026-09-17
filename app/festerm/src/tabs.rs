@@ -1412,6 +1412,11 @@ pub enum AppCommand {
     OpenLauncher,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
+    /// Requests one additional fesTerm window (ADR 0032). Window creation is
+    /// an Application-scoped act, so this only records the request; the
+    /// composition root drains it after this window's pass and spawns the
+    /// new viewport, which is why nothing here borrows the window list.
+    OpenWindow,
     /// Opens (or focuses) the singleton Profiles management application
     /// surface.
     OpenProfiles,
@@ -1943,6 +1948,10 @@ pub struct AppState {
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
     default_sftp_local_directory: Option<PathBuf>,
+    /// Set by `AppCommand::OpenWindow`, so the composition root can spawn an
+    /// additional window after this window's pass has finished borrowing it
+    /// (ADR 0032). Drained once by `FesTermApplication`.
+    window_open_requested: bool,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -2008,6 +2017,7 @@ impl AppState {
                 .default_sftp_local_directory()
                 .map(Path::to_path_buf),
             pending_profile_edit: None,
+            window_open_requested: false,
             pending_profile_create: None,
             pending_profile_usage: None,
             workspace_dirty: false,
@@ -2199,6 +2209,42 @@ impl AppState {
     /// Launcher choices. Existing session tabs retain their live transports
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
+        self.configuration = configuration;
+    }
+
+    /// Adopts a configuration another window committed (ADR 0032), refreshing
+    /// the interface preferences this state caches so a sibling's Settings,
+    /// profile, or keyboard-binding change takes effect on the next frame.
+    ///
+    /// Deliberately limited to the immutable document and its derived
+    /// preferences: tabs, the active-tab cursor, inspector visibility, the
+    /// input-ownership epoch, pending profile requests, and the
+    /// workspace-dirty flag are window-scoped and are never touched, so a
+    /// sibling's save cannot disturb this window's focus, scroll position, or
+    /// in-progress text entry.
+    pub fn adopt_configuration(&mut self, configuration: Configuration) {
+        let settings = configuration.interface_settings().clone();
+        self.chip_layout = chip_layout_from_preference(settings.chip_layout());
+        self.status_bar_visible = settings.status_bar_visible();
+        self.show_session_details = settings.show_session_details();
+        self.confirm_session_close = settings.confirm_session_close();
+        self.prefer_powershell = settings.prefer_powershell();
+        self.restore_workspace = settings.restore_workspace();
+        self.terminal_font = settings.terminal_font();
+        self.terminal_ligatures = settings.terminal_ligatures();
+        self.emoji_presentation = settings.emoji_presentation();
+        self.scroll_speed = settings.scroll_speed();
+        self.scrollback_limit = settings.scrollback_limit();
+        self.quick_switch_overlay = settings.quick_switch_overlay();
+        self.compact_launcher_grid = settings.compact_launcher_grid();
+        self.pulse_new_output_dot = settings.pulse_new_output_dot();
+        self.show_resumable_sessions = settings.show_resumable_sessions();
+        self.show_durable_session_in_status_bar = settings.show_durable_session_in_status_bar();
+        self.keyboard_bindings = settings.keyboard_bindings().clone();
+        self.sftp_pane_order = settings.sftp_pane_order();
+        self.default_sftp_local_directory = settings
+            .default_sftp_local_directory()
+            .map(Path::to_path_buf);
         self.configuration = configuration;
     }
 
@@ -2539,6 +2585,7 @@ impl AppState {
         }
         match command {
             AppCommand::OpenLauncher => self.open_launcher(),
+            AppCommand::OpenWindow => self.window_open_requested = true,
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
             AppCommand::CreateProfile { kind } => {
@@ -3017,6 +3064,13 @@ impl AppState {
     /// cannot read `AppState` directly.
     pub fn take_pending_profile_edit(&mut self) -> Option<String> {
         self.pending_profile_edit.take()
+    }
+
+    /// One-shot consumption of a pending "open another window" request (ADR
+    /// 0032). Only the composition root may act on it, because only the
+    /// composition root owns the window list.
+    pub fn take_window_open_request(&mut self) -> bool {
+        std::mem::take(&mut self.window_open_requested)
     }
 
     /// One-shot consumption of a pending new-profile request set by

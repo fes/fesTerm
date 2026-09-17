@@ -63,6 +63,10 @@ const PASTE_PREVIEW_LINE_LIMIT: usize = 8;
 enum ApplicationShortcut {
     CommandPalette,
     NewSession,
+    /// Opens one additional fesTerm window (ADR 0032). Window-scoped only in
+    /// that the request originates from the focused window; the new window is
+    /// created by the composition root.
+    NewWindow,
     StartLocalShell,
     CloseActiveSurface,
     NextSession,
@@ -122,6 +126,7 @@ impl ApplicationShortcut {
         match self {
             Self::CommandPalette => A::CommandPalette,
             Self::NewSession => A::NewSession,
+            Self::NewWindow => A::NewWindow,
             Self::StartLocalShell => A::StartLocalShell,
             Self::CloseActiveSurface => A::CloseActiveSurface,
             Self::NextSession => A::NextSession,
@@ -157,6 +162,11 @@ impl ApplicationShortcut {
                 },
                 egui::Key::T,
             )),
+            Self::NewWindow if cfg!(target_os = "macos") => Some((
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::N,
+            )),
+            Self::NewWindow => None,
             Self::StartLocalShell => Some((
                 if cfg!(target_os = "macos") {
                     egui::Modifiers::COMMAND
@@ -255,6 +265,8 @@ impl ApplicationShortcut {
             Self::CommandPalette => Some("Ctrl+Shift+P"),
             Self::NewSession if cfg!(target_os = "macos") => Some("\u{2318}+T"),
             Self::NewSession => Some("Ctrl+Shift+T"),
+            Self::NewWindow if cfg!(target_os = "macos") => Some("\u{2318}+Shift+N"),
+            Self::NewWindow => None,
             Self::StartLocalShell if cfg!(target_os = "macos") => Some("\u{2318}+N"),
             Self::StartLocalShell => Some("Ctrl+Shift+N"),
             Self::CloseActiveSurface if cfg!(target_os = "macos") => Some("\u{2318}+W"),
@@ -398,6 +410,28 @@ pub struct FesTermApp {
     /// down the window is let through instead of being intercepted again
     /// (`docs/gui-action-graph.md` `QUIT-03`).
     quit_confirmed: bool,
+    /// Which window this is (ADR 0032). The primary window owns the native
+    /// menu bar, the wake monitor, native window chrome, workspace
+    /// persistence, and the application quit path; a secondary window owns
+    /// only its own tabs.
+    role: WindowRole,
+    /// A configuration document this window has just committed to disk, held
+    /// for the composition root to broadcast to sibling windows (ADR 0032).
+    /// Set only after a successful save, so a sibling can never adopt a
+    /// document that is not on disk.
+    pending_configuration_broadcast: Option<Configuration>,
+    /// A secondary window's close request that survived confirmation. The
+    /// composition root drains this and drops the window; the primary
+    /// window's close is the ordinary application quit instead.
+    window_close_accepted: bool,
+}
+
+/// Distinguishes the one window that owns application-scoped host
+/// integration from the additional windows that do not (ADR 0032).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WindowRole {
+    Primary,
+    Secondary,
 }
 
 #[cfg(target_os = "macos")]
@@ -555,6 +589,40 @@ impl FesTermApp {
         app
     }
 
+    /// Builds one additional window (ADR 0032), sharing the application's
+    /// secret-store handle and configuration source with the window it was
+    /// opened from and starting on the Launcher with the current
+    /// configuration.
+    ///
+    /// A new window deliberately does not clone the originating window's
+    /// tabs: a live PTY, SSH transport, or SFTP client has exactly one owner,
+    /// so a session cannot be duplicated into a second window.
+    pub(crate) fn secondary_window(
+        context: &egui::Context,
+        configuration: Configuration,
+        configuration_status: ConfigurationStartupStatus,
+        configuration_reloader: ConfigurationReloader,
+        secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
+    ) -> Self {
+        let mut window = Self::with_configuration_status_and_secret_store(
+            context,
+            // A new window starts on the Launcher. Workspace restore is the
+            // primary window's startup behaviour, not something every later
+            // window repeats.
+            configuration.without_workspace(),
+            configuration_status,
+            secret_store,
+        );
+        window.configuration_reloader = configuration_reloader;
+        window.role = WindowRole::Secondary;
+        // The native menu bar, the wake monitor, and native-window smoke stay
+        // with the primary window; a secondary window shares the process and
+        // therefore already benefits from the primary window's liveness pass.
+        window.native_smoke = None;
+        window.primary_tab = None;
+        window
+    }
+
     fn with_configuration_status(
         context: &egui::Context,
         configuration: Configuration,
@@ -647,6 +715,9 @@ impl FesTermApp {
             update_exit_requested: false,
             update_restart_authorized: false,
             quit_confirmed: false,
+            role: WindowRole::Primary,
+            pending_configuration_broadcast: None,
+            window_close_accepted: false,
         }
     }
 
@@ -739,6 +810,7 @@ impl FesTermApp {
         let action = match command {
             NativeMenuCommand::Paste => None,
             NativeMenuCommand::NewSession => Some(A::NewSession),
+            NativeMenuCommand::NewWindow => Some(A::NewWindow),
             NativeMenuCommand::StartLocalShell => Some(A::StartLocalShell),
             NativeMenuCommand::OpenSettings => Some(A::Settings),
             NativeMenuCommand::CloseActiveSurface => Some(A::CloseActiveSurface),
@@ -784,6 +856,7 @@ impl FesTermApp {
                 }
             }
             NativeMenuCommand::NewSession => self.state.dispatch(AppCommand::OpenLauncher, context),
+            NativeMenuCommand::NewWindow => self.state.dispatch(AppCommand::OpenWindow, context),
             NativeMenuCommand::StartLocalShell => {
                 self.state.dispatch(AppCommand::StartLocalSession, context)
             }
@@ -826,6 +899,7 @@ impl FesTermApp {
         let settings = self.state.interface_settings();
         let shortcuts = [
             (N::NewSession, A::NewSession),
+            (N::NewWindow, A::NewWindow),
             (N::StartLocalShell, A::StartLocalShell),
             (N::OpenSettings, A::Settings),
             (N::CloseActiveSurface, A::CloseActiveSurface),
@@ -1073,10 +1147,64 @@ impl FesTermApp {
         let status = save(&self.configuration_reloader, &replacement);
         let was_saved = status.was_saved();
         if was_saved {
+            // The single choke point every configuration write passes
+            // through, and therefore the only place sibling windows need to
+            // learn about (ADR 0032). Broadcasting the committed document
+            // rather than the attempted one preserves
+            // commit-only-on-success: a failed save reaches no sibling.
+            self.pending_configuration_broadcast = Some(replacement.clone());
             self.state.replace_configuration(replacement);
         }
         self.configuration_status = status;
         was_saved
+    }
+
+    /// The configuration source, secret-store handle and last configuration
+    /// status a newly opened window should inherit (ADR 0032): these are
+    /// application-scoped services, so a second window shares them rather
+    /// than opening its own (which would contend for the sessiond registry
+    /// lock and re-prompt the OS keychain).
+    pub(crate) fn shared_application_services(
+        &self,
+    ) -> (
+        Configuration,
+        ConfigurationStartupStatus,
+        ConfigurationReloader,
+        Result<Arc<dyn SecretStore>, SecretStoreError>,
+    ) {
+        (
+            self.state.configuration().clone(),
+            self.configuration_status,
+            self.configuration_reloader.clone(),
+            self.secret_store.clone(),
+        )
+    }
+
+    /// Hands the composition root any configuration this window has just
+    /// committed, so it can be applied to every sibling window (ADR 0032).
+    pub(crate) fn take_configuration_broadcast(&mut self) -> Option<Configuration> {
+        self.pending_configuration_broadcast.take()
+    }
+
+    /// Adopts a configuration a sibling window committed. Deliberately narrow:
+    /// it swaps the immutable document consulted for preference reads and
+    /// future Launcher choices and refreshes the derived interface state, and
+    /// touches no tab, focus, scroll offset, selection, or in-progress text
+    /// entry (ADR 0032).
+    pub(crate) fn adopt_broadcast_configuration(&mut self, configuration: Configuration) {
+        self.state.adopt_configuration(configuration);
+    }
+
+    /// True when this window's close request has been accepted and the
+    /// composition root should drop it. Meaningful only for secondary
+    /// windows; the primary window's close is the application quit path.
+    pub(crate) const fn window_close_accepted(&self) -> bool {
+        self.window_close_accepted || self.quit_confirmed
+    }
+
+    /// One-shot consumption of this window's request for another window.
+    pub(crate) fn take_window_open_request(&mut self) -> bool {
+        self.state.take_window_open_request()
     }
 
     /// Captures a metadata-only workspace snapshot and saves it immediately
@@ -1085,6 +1213,13 @@ impl FesTermApp {
     /// Save action). The current configuration changes only after the
     /// atomic file replacement has succeeded.
     fn save_workspace(&mut self) {
+        if self.role == WindowRole::Secondary {
+            // The persisted workspace is a single tab list. Until that schema
+            // generalises to several windows (ADR 0032, deferred), only the
+            // primary window writes it, so a second window's tabs cannot
+            // silently replace the restored set.
+            return;
+        }
         self.apply_configuration_save(
             self.state.capture_workspace_configuration(),
             ConfigurationStartupStatus::WorkspaceSaveFailure,
@@ -1857,6 +1992,7 @@ impl FesTermApp {
         let binding_label = |action| crate::keyboard::label(&bindings, action);
         const NEW_LAUNCHER_TAB: u64 = 1;
         const START_LOCAL_SESSION: u64 = 3;
+        const NEW_WINDOW: u64 = 23;
         const CLOSE_ACTIVE_TAB: u64 = 5;
         const TOGGLE_FOCUS_MODE: u64 = 6;
         const ZOOM_IN: u64 = 7;
@@ -1889,6 +2025,13 @@ impl FesTermApp {
                 id: START_LOCAL_SESSION,
                 label: "Start Local Shell".to_owned(),
                 hint: binding_label(A::StartLocalShell),
+                is_tab: false,
+                shortcut_label: None,
+            },
+            PaletteItem {
+                id: NEW_WINDOW,
+                label: "New Window".to_owned(),
+                hint: binding_label(A::NewWindow),
                 is_tab: false,
                 shortcut_label: None,
             },
@@ -2107,6 +2250,7 @@ impl FesTermApp {
         match id {
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
+            23 => self.state.dispatch(AppCommand::OpenWindow, context),
             18 => self.state.dispatch(AppCommand::ReloadMarkdown, context),
             19 => self
                 .state
@@ -2473,6 +2617,7 @@ impl FesTermApp {
             return;
         }
         let new_tab = ApplicationShortcut::NewSession.consume(ctx, scope);
+        let new_window = ApplicationShortcut::NewWindow.consume(ctx, scope);
         let start_local_shell = ApplicationShortcut::StartLocalShell.consume(ctx, scope);
         let close_tab = ApplicationShortcut::CloseActiveSurface.consume(ctx, scope);
         let next_tab = ApplicationShortcut::NextSession.consume(ctx, scope);
@@ -2510,6 +2655,9 @@ impl FesTermApp {
 
         if new_tab {
             self.state.dispatch(AppCommand::OpenLauncher, ctx);
+        }
+        if new_window {
+            self.state.dispatch(AppCommand::OpenWindow, ctx);
         }
         if start_local_shell {
             self.state.dispatch(AppCommand::StartLocalSession, ctx);
@@ -4311,16 +4459,43 @@ impl FesTermApp {
 
 impl eframe::App for FesTermApp {
     fn logic(&mut self, context: &egui::Context, frame: &mut eframe::Frame) {
+        self.frame_logic(context);
+        self.sync_native_window_chrome(context, frame);
+        self.drive_native_smoke(context);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.ui_content(ui);
+    }
+}
+
+impl FesTermApp {
+    /// The per-frame, pre-paint work every window does, regardless of whether
+    /// it is the root viewport or an additional one (ADR 0032). Split out of
+    /// [`eframe::App::logic`] because a secondary window has no
+    /// `eframe::Frame` of its own - `Frame`'s fields are private to `eframe`
+    /// and it is only ever handed to the root viewport - and because the two
+    /// pieces it excludes, native window chrome and native-window smoke, are
+    /// deliberately primary-window-only.
+    pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
         if context.input(|i| i.viewport().close_requested()) {
             self.evaluate_close_request(context);
+            // Nothing cancelled the close, so this window really is going
+            // away. The primary window's teardown is eframe's; a secondary
+            // window's is the composition root's.
+            if self.overlays.pending_quit.is_none() {
+                self.window_close_accepted = true;
+            }
         }
         self.handle_dropped_files(context);
-        self.sync_native_window_chrome(context, frame);
         self.process_pending_password_store(context);
         self.check_wake_monitor_signal();
         self.pump_all_sessions(context);
         self.state.reprompt_rejected_ssh_passwords(context);
         self.update_window_title(context);
+    }
+
+    fn drive_native_smoke(&mut self, context: &egui::Context) {
         if let Some(smoke) = self.native_smoke.as_mut() {
             if let Some(primary_tab) = self.primary_tab {
                 if let Some(primary) = self.state.session_tab_mut(primary_tab) {
@@ -4336,17 +4511,11 @@ impl eframe::App for FesTermApp {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.ui_content(ui);
-    }
-}
-
-impl FesTermApp {
     /// The full chrome/palette/session UI for one frame. Split out from
     /// [`eframe::App::ui`] so headless `egui_kittest` tests can drive it
     /// directly without constructing an `eframe::Frame` (whose fields are
     /// private to `eframe` and not test-constructible).
-    fn ui_content(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn ui_content(&mut self, ui: &mut egui::Ui) {
         if !self.terminal_fonts_installed {
             self.terminal_font_generation = festerm_ui_egui::install_terminal_font_family(
                 ui.ctx(),
@@ -4998,7 +5167,56 @@ impl FesTermApp {
     /// Builds a `FesTermApp` around a launcher tab instead of a live local
     /// shell, so headless end-to-end UI tests do not need a real PTY and do
     /// not depend on `eframe::Frame`, which has no public/test constructor.
-    fn for_test_with_configuration(configuration: Configuration) -> Self {
+    /// Dispatches one application command as a window would, for
+    /// Application-level tests that need a window in a particular state.
+    pub(crate) fn dispatch_for_test(&mut self, command: AppCommand, context: &egui::Context) {
+        self.state.dispatch(command, context);
+    }
+
+    pub(crate) fn tab_count_for_test(&self) -> usize {
+        self.state.tabs().len()
+    }
+
+    pub(crate) fn active_tab_id_for_test(&self) -> TabId {
+        self.state.active()
+    }
+
+    pub(crate) fn active_tab_is_launcher_for_test(&self) -> bool {
+        matches!(self.state.active_tab().content, TabContent::Launcher)
+    }
+
+    pub(crate) const fn compact_launcher_grid_for_test(&self) -> bool {
+        self.state.compact_launcher_grid()
+    }
+
+    pub(crate) fn profile_count_for_test(&self) -> usize {
+        self.state.configuration().profiles().len()
+    }
+
+    pub(crate) fn keyboard_binding_for_test(
+        &self,
+        action: festerm_config::KeyboardAction,
+    ) -> String {
+        self.state
+            .interface_settings()
+            .keyboard_bindings()
+            .effective(action, cfg!(target_os = "macos"))
+            .to_owned()
+    }
+
+    /// Stands in for a successful configuration save, which is the only thing
+    /// that queues a cross-window broadcast. Tests use this instead of a real
+    /// save so they do not need a writable configuration file.
+    pub(crate) fn broadcast_for_test(&mut self, configuration: Configuration) {
+        self.pending_configuration_broadcast = Some(configuration.clone());
+        self.state.replace_configuration(configuration);
+    }
+
+    pub(crate) const fn accept_window_close_for_test(&mut self) {
+        self.window_close_accepted = true;
+    }
+
+    pub(crate) fn for_test_with_configuration(configuration: Configuration) -> Self {
         let state = AppState::for_test_with_configuration(configuration);
         Self {
             state,
@@ -5026,6 +5244,9 @@ impl FesTermApp {
             update_exit_requested: false,
             update_restart_authorized: false,
             quit_confirmed: false,
+            role: WindowRole::Primary,
+            pending_configuration_broadcast: None,
+            window_close_accepted: false,
         }
     }
 
@@ -7636,6 +7857,66 @@ mod tests {
         // (possibly unrelated) open.
         app.close_markdown_file_picker(&context);
         assert_eq!(app.overlays.markdown_file_picker_replaces, None);
+    }
+
+    #[test]
+    fn the_command_palette_offers_new_window_and_only_requests_it() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        let items = app.palette_items();
+        assert!(items.iter().any(|item| item.label == "New Window"));
+
+        let tabs_before = app.state.tabs().len();
+        app.dispatch_palette_selection(23, &context);
+
+        // Window creation belongs to the composition root, so the palette
+        // must not have opened a tab or otherwise changed this window.
+        assert_eq!(app.state.tabs().len(), tabs_before);
+        assert!(app.take_window_open_request());
+        assert!(!app.take_window_open_request(), "the request is one-shot");
+    }
+
+    /// macOS users reach New Window from the File menu, which travels a
+    /// different path than the palette and must request a window rather than
+    /// acting on this one.
+    #[test]
+    fn the_native_menu_new_window_command_requests_a_window() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+
+        let tabs_before = app.state.tabs().len();
+        app.dispatch_native_menu_command(
+            festerm_macos_window::NativeMenuCommand::NewWindow,
+            &context,
+        );
+
+        assert_eq!(app.state.tabs().len(), tabs_before);
+        assert!(app.take_window_open_request());
+    }
+
+    /// The persisted workspace is still a single tab list (ADR 0032), so a
+    /// second window must not overwrite it with its own tabs.
+    #[test]
+    fn a_secondary_window_does_not_persist_its_workspace() {
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.configuration_reloader =
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                std::path::PathBuf::from("/festerm-nonexistent/config.toml"),
+            );
+        app.role = WindowRole::Secondary;
+        app.configuration_status = ConfigurationStartupStatus::Loaded;
+        app.state.dispatch(AppCommand::OpenSettings, &context);
+
+        app.save_workspace();
+
+        // A real save to that unwritable path would have recorded a failure
+        // status and queued a broadcast; a skipped save records neither.
+        assert!(app.take_configuration_broadcast().is_none());
+        assert!(matches!(
+            app.configuration_status,
+            ConfigurationStartupStatus::Loaded
+        ));
     }
 
     #[test]

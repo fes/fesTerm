@@ -1021,6 +1021,40 @@
       "prerequisites": []
     },
     {
+      "id": "multi-window",
+      "edges": [
+        "WINDOW-*"
+      ],
+      "requirements": [
+        "docs/gui-design.md#windows"
+      ],
+      "decisions": [
+        "ADR-0032"
+      ],
+      "automated_tests": [
+        "opening_a_window_adds_one_window_to_the_application",
+        "a_new_window_starts_on_the_launcher_rather_than_cloning_the_originating_tabs",
+        "the_command_palette_offers_new_window_and_only_requests_it",
+        "a_closed_secondary_window_is_dropped_and_the_primary_window_is_not",
+        "an_interface_setting_committed_in_one_window_reaches_every_other_window",
+        "a_profile_saved_in_one_window_is_visible_in_every_other_windows_launcher",
+        "a_keyboard_binding_changed_in_one_window_applies_in_every_other_window",
+        "adopting_a_siblings_configuration_leaves_this_windows_tabs_untouched",
+        "adopting_a_broadcast_does_not_re_broadcast_it",
+        "a_secondary_window_does_not_persist_its_workspace",
+        "the_native_menu_new_window_command_requests_a_window",
+        "an_additional_window_renders_its_own_content_in_a_real_pass"
+      ],
+      "manual_scenarios": [
+        "CP-13"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "multi-viewport rendering and real OS window lifecycle are exercised interactively; automated coverage is headless and stops at the Application/Window model",
+        "tab drag between windows, pop-out/re-attach, per-window workspace restore, and per-window geometry persistence are deferred by ADR 0032"
+      ]
+    },
+    {
       "id": "bell-attention",
       "edges": [
         "BELL-*"

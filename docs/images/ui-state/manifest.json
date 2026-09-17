@@ -98,7 +98,7 @@
       "width": 640,
       "height": 1300,
       "tier": "headless",
-      "sha256": "babe344eba0ba761608d547d2a6daa96e6d00fae4be85c9575d40692947213b7"
+      "sha256": "33ff2048dc17ec16a6005df19809a8f4ffd9f7ccdb38511d39a14a0fe5c4fd52"
     },
     {
       "id": "keyboard-editor-filtered",
@@ -120,7 +120,7 @@
       "width": 960,
       "height": 1300,
       "tier": "headless",
-      "sha256": "15b0197001edfd5479a3fcf4b8045a07cb8aff4b8b72f71d76b2009b51e14dfe"
+      "sha256": "e687339411c82de5e06b5440b9d580387289f237fbb85435524b552b76cc85e0"
     },
     {
       "id": "keyboard-editor-selected",
@@ -131,7 +131,7 @@
       "width": 960,
       "height": 1300,
       "tier": "headless",
-      "sha256": "97a45e519fd1c201d100c802f520a6071d156d5358fedc620786550d79ceb087"
+      "sha256": "5b2e159279c685bc2a8bcc4936ef14e462fccfaa4b29eafec3d6b075a40cac8d"
     },
     {
       "id": "markdown-outline",

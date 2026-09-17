@@ -1579,6 +1579,35 @@ uses a focused consequence prompt; it never claims settings will survive the
 next launch. Successful retry clears the warning only after an atomic write has
 completed.
 
+## Windows
+
+fesTerm opens one window at startup and can open more. **New Window** is
+available from the command palette and, on macOS, from the **File** menu and
+`Cmd+Shift+N`; it is
+unbound by default on Windows and Linux, where `Ctrl+Shift+N` already starts a
+local shell, and can be bound in Settings.
+
+Every window lives in one process and renders as its own OS window (ADR 0032).
+A new window opens on the Launcher with the current profiles and preferences.
+It never clones the originating window's tabs: a live local process, SSH
+connection, or serial device has exactly one owning session, and a session is
+not duplicated into a second window. Tabs cannot yet be dragged between
+windows or popped out into one.
+
+Each window owns its own tab order, active tab, focus, scroll position,
+selection, and in-progress text entry. The first window additionally owns the
+macOS menu bar, workspace restore, and the application quit path: closing it
+quits fesTerm, with the same aggregate live-session confirmation as before,
+while closing a later window confirms and closes only that window.
+
+Configuration is shared. A setting, profile, or keyboard binding changed in
+one window applies in every window on its next frame, with no restart. That
+propagation happens only after the change has been written successfully, so a
+failed save never reaches another window, and it never disturbs another
+window's focus, scroll position, selection, open editor row, or in-progress
+text entry. Only the first window persists the workspace, because the saved
+workspace is still a single tab list.
+
 ## Workspace Workflow
 
 ### Restore

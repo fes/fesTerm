@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum KeyboardAction {
     CommandPalette,
     NewSession,
+    NewWindow,
     StartLocalShell,
     CloseActiveSurface,
     NextSession,
@@ -74,9 +75,10 @@ impl KeyboardScope {
 }
 
 impl KeyboardAction {
-    pub const ALL: [Self; 35] = [
+    pub const ALL: [Self; 36] = [
         Self::CommandPalette,
         Self::NewSession,
+        Self::NewWindow,
         Self::StartLocalShell,
         Self::CloseActiveSurface,
         Self::NextSession,
@@ -116,6 +118,7 @@ impl KeyboardAction {
         match self {
             Self::CommandPalette => "Command palette",
             Self::NewSession => "New Session",
+            Self::NewWindow => "New Window",
             Self::StartLocalShell => "Start Local Shell",
             Self::CloseActiveSurface => "Close active surface",
             Self::NextSession => "Next session",
@@ -158,6 +161,7 @@ impl KeyboardAction {
         match self {
             Self::CommandPalette => "Open the command palette to find and run commands.",
             Self::NewSession => "Open the New Session launcher.",
+            Self::NewWindow => "Open an additional fesTerm window.",
             Self::StartLocalShell => "Start a local shell session immediately.",
             Self::CloseActiveSurface => "Close the active tab or surface.",
             Self::NextSession => "Switch to the next session tab.",
@@ -222,6 +226,13 @@ impl KeyboardAction {
             (Self::CommandPalette, _) => "Primary+Shift+P",
             (Self::NewSession, true) => "Primary+T",
             (Self::NewSession, false) => "Primary+Shift+T",
+            (Self::NewWindow, true) => "Primary+Shift+N",
+            // Unbound on Windows/Linux by default, like `Settings`. The
+            // conventional chord there, `Ctrl+Shift+N`, already starts a
+            // local shell, and `Ctrl+Alt+N` is unavailable because `Ctrl+Alt`
+            // overlaps AltGr text input (see `Chord::parse`). The command
+            // palette still offers "New Window", and Settings can bind it.
+            (Self::NewWindow, false) => "",
             (Self::StartLocalShell, true) => "Primary+N",
             (Self::StartLocalShell, false) => "Primary+Shift+N",
             (Self::CloseActiveSurface, true) => "Primary+W",

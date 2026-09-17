@@ -7,6 +7,7 @@
 pub enum NativeMenuCommand {
     Paste,
     NewSession,
+    NewWindow,
     StartLocalShell,
     OpenSettings,
     CloseActiveSurface,
@@ -32,6 +33,7 @@ pub struct NativeShortcut {
 enum NativeMenuAction {
     Paste,
     NewSession,
+    NewWindow,
     StartLocalShell,
     OpenSettings,
     CloseActiveSurface,
@@ -48,6 +50,7 @@ impl NativeMenuAction {
         match self {
             Self::Paste => NativeMenuCommand::Paste,
             Self::NewSession => NativeMenuCommand::NewSession,
+            Self::NewWindow => NativeMenuCommand::NewWindow,
             Self::StartLocalShell => NativeMenuCommand::StartLocalShell,
             Self::OpenSettings => NativeMenuCommand::OpenSettings,
             Self::CloseActiveSurface => NativeMenuCommand::CloseActiveSurface,
@@ -227,6 +230,11 @@ mod menu {
                 self.emit(NativeMenuAction::NewSession);
             }
 
+            #[unsafe(method(newWindow:))]
+            fn new_window(&self, _sender: Option<&AnyObject>) {
+                self.emit(NativeMenuAction::NewWindow);
+            }
+
             #[unsafe(method(startLocalShell:))]
             fn start_local_shell(&self, _sender: Option<&AnyObject>) {
                 self.emit(NativeMenuAction::StartLocalShell);
@@ -342,6 +350,8 @@ mod menu {
                     };
                     let command = if selector == sel!(newSession:) {
                         Some(NativeMenuCommand::NewSession)
+                    } else if selector == sel!(newWindow:) {
+                        Some(NativeMenuCommand::NewWindow)
                     } else if selector == sel!(startLocalShell:) {
                         Some(NativeMenuCommand::StartLocalShell)
                     } else if selector == sel!(openSettings:) {
@@ -438,6 +448,14 @@ mod menu {
             "t",
             NSEventModifierFlags::Command,
             sel!(newSession:),
+            &target,
+        ));
+        file.addItem(&custom_item(
+            mtm,
+            "New Window",
+            "n",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+            sel!(newWindow:),
             &target,
         ));
         file.addItem(&custom_item(

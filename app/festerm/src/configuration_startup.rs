@@ -171,6 +171,7 @@ impl StartupConfiguration {
     }
 }
 
+#[derive(Clone)]
 struct SelectedConfigurationPath {
     path: PathBuf,
     /// Present only for the native default source. An explicit override never
@@ -185,6 +186,11 @@ struct SelectedConfigurationPath {
 /// watching, polling, or logging of external edits; writes occur only when
 /// fesTerm itself changes something worth persisting, via
 /// [`Self::save_workspace`] and its sibling `save_*` methods.
+///
+/// Cloned once per additional window (ADR 0032). Every clone addresses the
+/// same file, which is safe because all windows live in one process and their
+/// writes are serialized on the main thread; no clone watches or polls.
+#[derive(Clone)]
 pub(crate) struct ConfigurationReloader {
     selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
 }
