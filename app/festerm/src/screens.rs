@@ -1235,7 +1235,12 @@ fn ssh_field_id(ui: &Ui, tab_id: TabId, field: &'static str) -> egui::Id {
     ui.make_persistent_id(("launcher_ssh", tab_id, field))
 }
 
-const CONTENT_SCROLLBAR_LANE: f32 = 26.0;
+pub(super) const CONTENT_SCROLLBAR_LANE: f32 = 26.0;
+
+/// Trailing space inside every bounded scroll, so content that has been
+/// scrolled all the way down ends with the same breathing room it has at
+/// the top, rather than resting flush against the bottom of the viewport.
+const CONTENT_BOTTOM_GUTTER: f32 = 24.0;
 
 fn content_viewport_bottom(ui: &Ui) -> f32 {
     let mut bottom = ui.ctx().content_rect().bottom();
@@ -1270,7 +1275,9 @@ fn show_bounded_content_scroll<R>(
             .max_height(height)
             .show(ui, |ui| {
                 ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
-                body(ui)
+                let inner = body(ui);
+                ui.add_space(CONTENT_BOTTOM_GUTTER);
+                inner
             })
             .inner
     })
