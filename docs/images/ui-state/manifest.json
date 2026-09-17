@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "479b7a0e8a55653eeeabaac7a0152eb1cc233ae3422697b6d6b46a5e831c84e7"
+      "sha256": "a8e262f1e32a9db5970d5f09d50e456442674b3859021089135a1e6944657bb1"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "53d1a4bbeaa28baa9cdaa368ce308a719a018e9eff62cb21131f54235c860da4"
+      "sha256": "abe3c9104d4334b8f520cb9bd19f373623dcfc9b0057d25eb2371320f349c149"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "c3b1455b26bf5bd341545d5ea55a61dadf1cdc4de49b992468df9781f5f6a082"
+      "sha256": "037216b92a9d3a3a0849ec1c9aae1839b475e1d4d3032bb03915d19157d6bf7b"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "51a8f7498c811928e27734c442026db9d869831275cdcaada3ab2ffc3775e7c1"
+      "sha256": "3ad1e7ca60fade6968de9bd60fe3b92cd0bbd83dd5e0389cc104f6b3c036b04e"
+    },
+    {
+      "id": "text-editor-options",
+      "section": "editor",
+      "title": "The per-view editor options",
+      "caption": "Line numbers, a fixed column count and vi keys belong to this view alone: another window on the same file keeps its own, and none of them touches the text.",
+      "image": "text-editor-options.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "7400f55a673617713631c2156ed5cd9c050d53bf1c219d6f0430588bf6cca2b7"
     },
     {
       "id": "text-editor-saved",
@@ -142,7 +153,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "1381af3e25064715a1760580656c4878f16590294548d71db56980dac47028f9"
+      "sha256": "24e6183d9d7a9287838c6d58152032cd42b9ab7fcc05a0a368fe980b6bbeafb4"
     },
     {
       "id": "text-editor-split",
@@ -153,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "bfdc53725b70a3fcc1ab55551b0bf467ad4f8755578e576c8cec9e2e64e6a68d"
+      "sha256": "60d30b14cffdb8029a9b06b94d57ec054d9ead06b7f64ff539c70df9c74a6639"
     },
     {
       "id": "text-editor-unsaved",
@@ -164,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8b7f2cf9d66180dc57dd1e287a49db6e0caaa30ed5e3bf267a5faa0d8dc8795b"
+      "sha256": "a15fc74458cf66e84e72ddacff982c8223088fd8d92835a7e9c25e680968915a"
     },
     {
       "id": "keyboard-editor-collapsed",

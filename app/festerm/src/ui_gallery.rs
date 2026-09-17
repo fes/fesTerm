@@ -355,6 +355,15 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_find,
         },
         Scenario {
+            id: "text-editor-options",
+            section: "editor",
+            title: "The per-view editor options",
+            caption: "Line numbers, a fixed column count and vi keys belong to \
+                      this view alone: another window on the same file keeps its \
+                      own, and none of them touches the text.",
+            capture: capture_text_editor_options,
+        },
+        Scenario {
             id: "text-editor-split",
             section: "editor",
             title: "The editor split with its live preview",
@@ -1315,6 +1324,16 @@ fn capture_text_editor_find() -> image::RgbaImage {
         crate::text_editor::EditorMode::Edit,
         Some(&|_documents, editor, _path| {
             editor.open_find_for_gallery("relay", Some("service"));
+        }),
+    )
+}
+
+fn capture_text_editor_options() -> image::RgbaImage {
+    render_text_editor_in(
+        None,
+        crate::text_editor::EditorMode::Edit,
+        Some(&|_documents, editor, _path| {
+            editor.open_options_for_gallery(Some(72));
         }),
     )
 }

@@ -18,7 +18,7 @@ use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
 use crate::documents::SharedDocuments;
 use crate::markdown_viewer::{
-    elide_middle, toolbar_button, toolbar_button_response, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP,
+    elide_middle, toolbar_button, toolbar_button_response, toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP,
     TOOLBAR_BUTTON_HEIGHT,
 };
 use crate::tabs::{AppCommand, TabId};
@@ -36,6 +36,12 @@ const BANNER_ACCENT_WIDTH: f32 = 3.0;
 const ORIGIN_ICON_SIZE: f32 = 12.0;
 const MODE_SEGMENT_GAP: f32 = 2.0;
 const FIND_FIELD_WIDTH: f32 = 170.0;
+const OPTIONS_MENU_WIDTH: f32 = 250.0;
+const OPTIONS_MENU_GAP: f32 = 6.0;
+const OPTIONS_FIELD_WIDTH: f32 = 48.0;
+/// The body's own horizontal padding, named because a fixed column count has
+/// to add it back to reach the requested number of columns.
+const BODY_MARGIN_X: f32 = 14.0;
 const SPLIT_DIVIDER_WIDTH: f32 = 9.0;
 const BANNER_PADDING_X: i8 = BAR_PADDING_X;
 const BANNER_PADDING_Y: i8 = BAR_PADDING_Y;
@@ -51,17 +57,26 @@ const PRIMARY_BUTTON_RADIUS: f32 = 5.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EditorViewOptions {
     pub(crate) line_numbers: bool,
-    pub(crate) fluid_width: bool,
+    /// `Some(n)` wraps the body at `n` columns. Visual only: the wrap moves
+    /// with the setting and no line break is ever written into the document
+    /// (ADR 0034 §9). `None` lets the body use the width it is given.
+    pub(crate) fixed_columns: Option<usize>,
+    pub(crate) vi_keys: bool,
 }
 
 impl Default for EditorViewOptions {
     fn default() -> Self {
         Self {
             line_numbers: true,
-            fluid_width: true,
+            fixed_columns: None,
+            vi_keys: false,
         }
     }
 }
+
+/// The column count offered the first time the box is ticked, and the one a
+/// view falls back to if it is ticked while the field is empty.
+const DEFAULT_FIXED_COLUMNS: usize = 72;
 
 impl EditorViewOptions {
     /// The summary the command bar shows beside the options menu, so the
@@ -72,12 +87,35 @@ impl EditorViewOptions {
         } else {
             "No lines"
         };
-        let width = if self.fluid_width {
-            "Fluid width"
-        } else {
-            "Reading width"
+        let width = match self.fixed_columns {
+            Some(columns) => format!("{columns} columns"),
+            None => "Fluid width".to_owned(),
         };
-        format!("{lines} · {width} · Standard keys")
+        let keys = if self.vi_keys {
+            "vi keys"
+        } else {
+            "Standard keys"
+        };
+        format!("{lines} · {width} · {keys}")
+    }
+}
+
+/// What the options menu is holding while it is open.
+///
+/// The column field is edited as text rather than as a number, because a
+/// half-typed count is a normal state to pass through and the body must not
+/// re-wrap to "7" on the way to "72". Only a count that parses and is at
+/// least one is ever applied.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct OptionsState {
+    columns_draft: String,
+    invalid: bool,
+}
+
+impl OptionsState {
+    /// Reads the draft as a column count, or `None` if it cannot be applied.
+    fn parsed(&self) -> Option<usize> {
+        self.columns_draft.trim().parse::<usize>().ok().filter(|count| *count >= 1)
     }
 }
 
@@ -242,6 +280,8 @@ pub(crate) struct TextEditorTab {
     /// so this never drifts by more than the inside of one frame.
     buffer: String,
     options: EditorViewOptions,
+    options_state: OptionsState,
+    options_pinned_open: bool,
     caret: (usize, usize),
     status_bar_visible: bool,
     mode: EditorMode,
@@ -271,6 +311,8 @@ impl TextEditorTab {
             remote: open.origin().is_remote(),
             buffer: open.text().text().to_owned(),
             options: EditorViewOptions::default(),
+            options_state: OptionsState::default(),
+            options_pinned_open: false,
             caret: (1, 1),
             status_bar_visible: true,
             mode: EditorMode::Edit,
@@ -492,6 +534,18 @@ impl TextEditorTab {
         }
     }
 
+    /// Holds the options menu open so the gallery can photograph it. A popup
+    /// is otherwise opened by a click, which a headless capture has no way to
+    /// perform and then hold across the frame it renders.
+    #[cfg(test)]
+    pub(crate) fn open_options_for_gallery(&mut self, fixed_columns: Option<usize>) {
+        self.options_pinned_open = true;
+        self.options.fixed_columns = fixed_columns;
+        if let Some(columns) = fixed_columns {
+            self.options_state.columns_draft = columns.to_string();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn find_error_for_test(&self) -> Option<&str> {
         self.find.error.as_deref()
@@ -647,6 +701,7 @@ impl TextEditorTab {
                         self.find.open(true);
                     }
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        self.show_options_menu(ui);
                         label(ui, &self.options.summary(), theme::TEXT_MUTED, false);
                     });
                 });
@@ -982,20 +1037,20 @@ impl TextEditorTab {
         &mut self,
         ui: &mut egui::Ui,
         documents: &SharedDocuments,
-        body_id: egui::Id,
         read_only: bool,
     ) {
         // Undo belongs to the whole editor, not only to the body: a user who
-        // has just pressed Replace All is holding the button, not the text,
-        // and Cmd+Z has to take the substitution back anyway. The one place it
-        // must not be intercepted is inside the Find bar's own fields, where
-        // it means "undo what I typed into this box".
-        let in_find_field = self.find.open
-            && ui.memory(|memory| (0..2).any(|index| memory.has_focus(self.find_field_id(index))));
-        if read_only || in_find_field {
-            return;
-        }
-        if !ui.memory(|memory| memory.has_focus(body_id)) && !self.find.open {
+        // has just pressed Replace All, or who has just ticked something in
+        // the options menu, is holding a control rather than the text, and
+        // Cmd+Z has to take the last edit back all the same. The only places
+        // it must not be intercepted are the editor's own small text fields,
+        // where it means "undo what I typed into this box".
+        let in_small_field = ui.memory(|memory| {
+            (self.find.open
+                && (0..2).any(|index| memory.has_focus(self.find_field_id(index))))
+                || memory.has_focus(self.options_field_id())
+        });
+        if read_only || in_small_field {
             return;
         }
         let (undo, redo) = ui.ctx().input_mut(|input| {
@@ -1023,6 +1078,124 @@ impl TextEditorTab {
         }
     }
 
+    /// The options menu, anchored to the right-hand end of the command bar.
+    ///
+    /// Everything in here is per-view (ADR 0034 §9): two windows on one file
+    /// may be set up differently without disagreeing about the text, so none
+    /// of these choices touches the document or its undo history.
+    fn show_options_menu(&mut self, ui: &mut egui::Ui) {
+        let button = toolbar_button_with_trailing(
+            ui,
+            None,
+            Some(Icon::Disclosure),
+            "Editor options",
+            "Editor options",
+            false,
+        );
+        let mut popup = egui::Popup::menu(&button)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        if self.options_pinned_open {
+            popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
+        }
+        popup.show(|ui| {
+                ui.set_min_width(OPTIONS_MENU_WIDTH);
+                ui.set_max_width(OPTIONS_MENU_WIDTH);
+                label(ui, "Editor options", theme::TEXT_PRIMARY, true);
+                ui.add_space(OPTIONS_MENU_GAP);
+                ui.checkbox(&mut self.options.line_numbers, "Show line numbers");
+                ui.add_space(OPTIONS_MENU_GAP);
+                self.show_fixed_columns_control(ui);
+                ui.add_space(OPTIONS_MENU_GAP);
+                ui.checkbox(&mut self.options.vi_keys, "vi compatibility");
+                ui.add_space(OPTIONS_MENU_GAP);
+                let explanation = if self.options_state.invalid {
+                    "A fixed column count must be a whole number of at least one."
+                } else {
+                    "Fixed columns wrap visually at the chosen boundary. They never insert line breaks."
+                };
+                let color = if self.options_state.invalid {
+                    theme::STATUS_ERROR
+                } else {
+                    theme::TEXT_MUTED
+                };
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                ui.colored_label(color, egui::RichText::new(explanation).size(LABEL_TEXT_SIZE));
+            });
+    }
+
+    /// The "Fixed column count" row: a box that turns wrapping at a column on
+    /// and off, and the count it wraps at.
+    fn show_fixed_columns_control(&mut self, ui: &mut egui::Ui) {
+        let field_id = self.options_field_id();
+        ui.horizontal(|ui| {
+            let mut enabled = self.options.fixed_columns.is_some();
+            if ui.checkbox(&mut enabled, "Fixed column count").changed() {
+                if enabled {
+                    if self.options_state.columns_draft.trim().is_empty() {
+                        self.options_state.columns_draft = DEFAULT_FIXED_COLUMNS.to_string();
+                    }
+                    self.apply_fixed_columns();
+                } else {
+                    // Turning it off is never refused, and the draft is kept
+                    // so ticking the box again comes back to the same count.
+                    self.options.fixed_columns = None;
+                    self.options_state.invalid = false;
+                }
+            }
+            ui.add_enabled_ui(enabled, |ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut self.options_state.columns_draft)
+                        .id(field_id)
+                        .desired_width(OPTIONS_FIELD_WIDTH)
+                        .hint_text("72"),
+                );
+                if field.changed() {
+                    self.apply_fixed_columns();
+                }
+            });
+        });
+    }
+
+    /// Takes the draft count if it is usable. A count that does not parse, or
+    /// one below one, leaves the view wrapping where it already was: an
+    /// unusable number is not a new setting, it is a number still being typed.
+    fn apply_fixed_columns(&mut self) {
+        match self.options_state.parsed() {
+            Some(columns) => {
+                self.options.fixed_columns = Some(columns);
+                self.options_state.invalid = false;
+            }
+            None => self.options_state.invalid = true,
+        }
+    }
+
+    fn options_field_id(&self) -> egui::Id {
+        egui::Id::new(("text-editor-columns-field", self.tab))
+    }
+
+    /// The width the body should lay out at, in points.
+    ///
+    /// A fixed column count is a wrap boundary, not a hard limit on the
+    /// window: if the view is too narrow to show that many columns, the text
+    /// wraps at the width there is rather than being clipped.
+    fn body_width(&self, ui: &egui::Ui, available: f32) -> f32 {
+        let Some(columns) = self.options.fixed_columns else {
+            return available;
+        };
+        let column_width = ui
+            .painter()
+            .layout_no_wrap(
+                "0".to_owned(),
+                FontId::monospace(EDITOR_TEXT_SIZE),
+                theme::TEXT_PRIMARY,
+            )
+            .size()
+            .x;
+        // The body's own horizontal margin is inside the width handed to the
+        // widget, so the requested columns only fit if it is added back.
+        (column_width * columns as f32 + BODY_MARGIN_X * 2.0).min(available)
+    }
+
     fn show_text(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
         let read_only = documents
             .borrow()
@@ -1031,9 +1204,9 @@ impl TextEditorTab {
         let gutter = self.gutter_width(ui);
         let left = ui.min_rect().left();
         ui.add_space(gutter);
-        let width = ui.available_width();
+        let width = self.body_width(ui, ui.available_width());
         let body_id = ui.id().with("text-editor-text");
-        self.route_undo_shortcuts(ui, documents, body_id, read_only);
+        self.route_undo_shortcuts(ui, documents, read_only);
         // Taken out of `self` before the widget borrows the buffer mutably.
         let highlights: Vec<(usize, usize, bool)> = if self.find.open {
             let current = self.find.current;
@@ -1058,7 +1231,7 @@ impl TextEditorTab {
             .desired_width(width)
             .desired_rows(1)
             .interactive(!read_only)
-            .margin(egui::Margin::symmetric(14, 8))
+            .margin(egui::Margin::symmetric(BODY_MARGIN_X as i8, 8))
             .layouter(&mut layouter)
             .show(ui);
 
@@ -1607,6 +1780,123 @@ mod tests {
             .query_all_by_role(egui::accesskit::Role::TextInput)
             .nth(index)
             .expect("the Find bar's field")
+    }
+
+
+    /// Opens the options menu by clicking it, the way a user reaches it.
+    fn open_options_menu(harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>) {
+        harness.get_by_label("Editor options").click();
+        harness.run();
+    }
+
+    /// The column count box inside the open options menu. It is the only
+    /// single-line field the editor shows while Find is closed.
+    fn columns_field<'h>(
+        harness: &'h Harness<'static, (SharedDocuments, TextEditorTab)>,
+    ) -> egui_kittest::Node<'h> {
+        harness
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .expect("the fixed column count field")
+    }
+
+    #[test]
+    fn turning_line_numbers_off_says_so_in_the_summary() {
+        let directory = TemporaryDirectory::new("options-lines");
+        let path = directory.file("notes.md", "alpha\nbeta\n");
+        let mut harness = find_harness(&path);
+
+        assert!(harness.query_by_label_contains("Lines ·").is_some());
+
+        open_options_menu(&mut harness);
+        harness.get_by_label("Show line numbers").click();
+        harness.run();
+
+        assert!(
+            !harness.state().1.options.line_numbers,
+            "unticking the box has to take the gutter away"
+        );
+        assert!(
+            harness.query_by_label_contains("No lines ·").is_some(),
+            "the summary beside the menu has to keep up with what the menu did"
+        );
+    }
+
+    #[test]
+    fn ticking_fixed_columns_offers_a_count_and_reports_it() {
+        let directory = TemporaryDirectory::new("options-columns");
+        let path = directory.file("notes.md", "alpha\nbeta\n");
+        let mut harness = find_harness(&path);
+
+        open_options_menu(&mut harness);
+        harness.get_by_label("Fixed column count").click();
+        harness.run();
+
+        assert_eq!(
+            harness.state().1.options.fixed_columns,
+            Some(72),
+            "the box has to come on at a usable count rather than at nothing"
+        );
+        assert!(harness.query_by_label_contains("72 columns").is_some());
+    }
+
+    #[test]
+    fn a_column_count_that_cannot_be_used_leaves_the_view_where_it_was() {
+        let directory = TemporaryDirectory::new("options-invalid");
+        let path = directory.file("notes.md", "alpha\nbeta\n");
+        let mut harness = find_harness(&path);
+
+        open_options_menu(&mut harness);
+        harness.get_by_label("Fixed column count").click();
+        harness.run();
+
+        // Everything selected, then replaced by a count nothing can wrap at.
+        columns_field(&harness).focus();
+        harness.run();
+        columns_field(&harness).type_text("\u{8}\u{8}0");
+        harness.run();
+
+        assert_eq!(
+            harness.state().1.options.fixed_columns,
+            Some(72),
+            "zero columns is not a width, so the view has to stay where it was"
+        );
+        assert!(
+            harness.state().1.options_state.invalid,
+            "and the menu has to say why nothing happened"
+        );
+    }
+
+    #[test]
+    fn changing_view_options_is_not_something_undo_can_take_back() {
+        let directory = TemporaryDirectory::new("options-undo");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = find_harness(&path);
+
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        harness.run();
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("beta");
+        harness.run();
+        let typed = document_text(&harness);
+        assert!(typed.contains("beta"));
+
+        open_options_menu(&mut harness);
+        harness.get_by_label("Fixed column count").click();
+        harness.run();
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+
+        assert!(
+            !document_text(&harness).contains("beta"),
+            "undo has to reach past the option change to the typing, because a \
+             per-view option never entered the document's history at all"
+        );
+        assert_eq!(
+            harness.state().1.options.fixed_columns,
+            Some(72),
+            "and undo must not put the option back either"
+        );
     }
 
     #[test]

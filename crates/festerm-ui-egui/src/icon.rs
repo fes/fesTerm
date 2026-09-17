@@ -54,6 +54,10 @@ pub enum Icon {
     PreviousMatch,
     /// Chevron pointing down: "next match" in the Markdown Find card.
     NextMatch,
+    /// Chevron pointing down, after the words on a button that opens a menu
+    /// rather than acting on its own. Distinct from `NextMatch`, which is a
+    /// navigation control that happens to share the shape.
+    Disclosure,
     /// Re-read the current content in place. Distinct from `Reconnect`,
     /// which re-establishes a transport.
     Refresh,
@@ -229,6 +233,7 @@ mod tests {
             Icon::ExternalLink,
             Icon::PreviousMatch,
             Icon::NextMatch,
+            Icon::Disclosure,
             Icon::Refresh,
             Icon::ParentDirectory,
             Icon::HomeDirectory,
@@ -244,7 +249,7 @@ mod tests {
             Icon::SectionExpanded,
             Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 54);
+        assert_eq!(icons.len(), 55);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

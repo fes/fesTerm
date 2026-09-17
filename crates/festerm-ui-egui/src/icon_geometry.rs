@@ -430,6 +430,13 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (19.0, 9.0),
             ]),
         ],
+        Icon::Disclosure => &[
+            Primitive::Polyline(&[
+                (6.0, 10.0),
+                (12.0, 16.0),
+                (18.0, 10.0),
+            ]),
+        ],
         Icon::Outline => &[
             Primitive::Circle { x: 6.0, y: 7.0, radius: 1.0 },
             Primitive::Circle { x: 6.0, y: 12.0, radius: 1.0 },

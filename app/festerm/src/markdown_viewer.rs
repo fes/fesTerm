@@ -3489,6 +3489,22 @@ pub(crate) fn toolbar_button_response(
     accessible_label: &str,
     active: bool,
 ) -> egui::Response {
+    toolbar_button_with_trailing(ui, icon_name, None, label, accessible_label, active)
+}
+
+/// As `toolbar_button_response`, but with a second icon after the text.
+///
+/// The trailing slot is for a disclosure chevron: a button that opens a menu
+/// has to look different from one that acts immediately, and the mark for
+/// that sits after the words, not before them.
+pub(crate) fn toolbar_button_with_trailing(
+    ui: &mut egui::Ui,
+    icon_name: Option<Icon>,
+    trailing_icon: Option<Icon>,
+    label: &str,
+    accessible_label: &str,
+    active: bool,
+) -> egui::Response {
     let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
@@ -3502,8 +3518,11 @@ pub(crate) fn toolbar_button_response(
     let icon_width = icon_name
         .map(|_| TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP)
         .unwrap_or(0.0);
-    let width =
-        (TOOLBAR_BUTTON_PADDING_X * 2.0 + icon_width + galley.size().x).max(TOOLBAR_BUTTON_HEIGHT);
+    let trailing_width = trailing_icon
+        .map(|_| TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP)
+        .unwrap_or(0.0);
+    let width = (TOOLBAR_BUTTON_PADDING_X * 2.0 + icon_width + galley.size().x + trailing_width)
+        .max(TOOLBAR_BUTTON_HEIGHT);
     let (rect, response) =
         ui.allocate_exact_size(vec2(width, TOOLBAR_BUTTON_HEIGHT), Sense::click());
     response
@@ -3544,11 +3563,24 @@ pub(crate) fn toolbar_button_response(
         );
         cursor += TOOLBAR_ICON_SIZE + TOOLBAR_ICON_TEXT_GAP;
     }
+    let text_width = galley.size().x;
     ui.painter().galley(
         egui::pos2(cursor, rect.center().y - galley.size().y / 2.0),
         galley,
         theme::TEXT_SECONDARY,
     );
+    if let Some(trailing_icon) = trailing_icon {
+        let left = cursor + text_width + TOOLBAR_ICON_TEXT_GAP;
+        icon::paint(
+            ui.painter(),
+            trailing_icon,
+            egui::Rect::from_center_size(
+                egui::pos2(left + TOOLBAR_ICON_SIZE / 2.0, rect.center().y),
+                egui::Vec2::splat(TOOLBAR_ICON_SIZE),
+            ),
+            theme::TEXT_SECONDARY,
+        );
+    }
 
     response.on_hover_text(accessible_label)
 }
