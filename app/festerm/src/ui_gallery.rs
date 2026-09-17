@@ -116,9 +116,10 @@ fn scenarios() -> Vec<Scenario> {
             id: "ssh-connect-collapsed",
             section: "connection-forms",
             title: "SSH connect form",
-            caption: "The default SSH launch surface: a Connection section for host, port \
-                      and username, an Authentication section for the credential method, and \
-                      the durable-remote-session toggle, with Advanced settings collapsed.",
+            caption: "The default SSH launch surface: a Connection section led by the \
+                      squashed user@host:port field and repeating it as Username, Host and \
+                      Port, an Authentication section for the credential method, and the \
+                      durable-remote-session toggle, with Advanced settings collapsed.",
             capture: capture_ssh_connect_collapsed,
         },
         Scenario {

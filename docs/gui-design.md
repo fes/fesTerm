@@ -339,8 +339,11 @@ key-file selection, and OpenSSH-config import controls appear only when their
 capabilities are implemented and available, never as disabled placeholders.
 
 Selecting SSH opens the **Connect with SSH** form: a **Connection** section
-carrying Host, Port and Username, an **Authentication** section, and an
-initially off **Durable remote session** control.
+led by a single **Quick connect** `user@host[:port]` field -- which takes the
+opening focus and stays two-way synchronised with the Username, Host and Port
+fields below it, so either notation can be used interchangeably -- then an
+**Authentication** section and an initially off **Durable remote session**
+control.
 Enabling it exposes the shared provider (`tmux` or GNU screen), validated
 session-name, and per-launch automatic-recovery controls, allowing an ad-hoc
 connection to attach to or create a durable session without first saving a

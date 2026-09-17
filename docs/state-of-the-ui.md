@@ -73,9 +73,13 @@ Launch cards sit above saved profiles of every kind plus resumable local, tmux, 
 Each transport has its own form, and they share a deliberate shape: the
 minimum needed to connect is visible immediately, and everything else is
 behind *Advanced settings*. The SSH form separates that minimum into a
-**Connection** section (host, port, username) and an **Authentication**
-section (password, private-key or certificate), with the durable-session
-toggle on its own band beneath them; only port forwards remain folded away.
+**Connection** section and an **Authentication** section (password,
+private-key or certificate), with the durable-session toggle on its own band
+beneath them; only port forwards remain folded away. Connection leads with a
+single *Quick connect* `user@host:port` field and repeats the same
+destination as Username, Host and Port beneath it, kept in step in both
+directions -- the squashed form is the fast path, the separate fields are the
+legible one, and neither is second-class.
 A first-time SSH connection therefore needs a username and a host, and
 nothing else is in the way.
 
@@ -106,7 +110,7 @@ Expanding 'Advanced settings' reveals the port-forwarding controls beneath the a
 
 ### SSH connect form
 
-The default SSH launch surface: a Connection section for host, port and username, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.
+The default SSH launch surface: a Connection section led by the squashed user@host:port field and repeating it as Username, Host and Port, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.
 
 ![SSH connect form](images/ui-state/ssh-connect-collapsed.png)
 

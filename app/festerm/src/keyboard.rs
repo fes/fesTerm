@@ -621,6 +621,30 @@ fn chord_width(ui: &egui::Ui, chord: &str) -> f32 {
 /// Renders a chord as discrete keycaps, or an explicit "Unbound" marker so
 /// an empty binding is never mistaken for a rendering gap. Right-to-left
 /// layouts consume children in reverse, so the caller says which it is.
+/// One `label: value` line in the expanded editor's metadata block, with the
+/// labels sharing a fixed lane so the values line up under each other.
+fn metadata_row(ui: &mut egui::Ui, label: &str, value: impl FnOnce(&mut egui::Ui)) {
+    const LABEL_LANE: f32 = 66.0;
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(LABEL_LANE, 0.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_width(LABEL_LANE);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(label)
+                            .size(14.0)
+                            .color(theme::TEXT_MUTED),
+                    )
+                    .selectable(false),
+                );
+            },
+        );
+        value(ui);
+    });
+}
+
 fn show_chord(ui: &mut egui::Ui, chord: &str) {
     let caps = keycaps(chord);
     if caps.is_empty() {
@@ -1120,42 +1144,34 @@ fn show_detail(
                     .wrap(),
                 );
                 ui.add_space(14.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new("Scope")
-                            .size(14.0)
-                            .color(theme::TEXT_MUTED),
-                    );
+                // One row per fact with a fixed label lane: chords vary in
+                // width, and on a single wrapped line a long one drags the
+                // next label onto its own row and breaks the alignment.
+                metadata_row(ui, "Scope", |ui| {
                     ui.label(
                         egui::RichText::new(action.scope().title())
                             .size(14.0)
                             .color(theme::TEXT_PRIMARY),
                     );
-                    ui.add_space(14.0);
-                    ui.label(
-                        egui::RichText::new("Default")
-                            .size(14.0)
-                            .color(theme::TEXT_MUTED),
+                    ui.add_space(10.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(action.scope().help())
+                                .size(13.0)
+                                .color(theme::TEXT_MUTED),
+                        )
+                        .wrap(),
                     );
+                });
+                ui.add_space(6.0);
+                metadata_row(ui, "Default", |ui| {
                     show_chord(ui, action.default_chord(mac));
-                    ui.add_space(14.0);
-                    ui.label(
-                        egui::RichText::new("Current")
-                            .size(14.0)
-                            .color(theme::TEXT_MUTED),
-                    );
+                });
+                ui.add_space(6.0);
+                metadata_row(ui, "Current", |ui| {
                     show_chord(ui, current_chord);
                 });
-                ui.add_space(8.0);
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(action.scope().help())
-                            .size(13.0)
-                            .color(theme::TEXT_MUTED),
-                    )
-                    .wrap(),
-                );
-                ui.add_space(10.0);
+                ui.add_space(14.0);
                 let chord_label = ui.label(
                     egui::RichText::new("Binding chord")
                         .size(12.0)
