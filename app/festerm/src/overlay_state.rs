@@ -12,6 +12,7 @@
 
 use std::{path::PathBuf, sync::mpsc, time::Instant};
 
+use festerm_document::DocumentId;
 use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
 
 use crate::{
@@ -85,6 +86,43 @@ pub(crate) struct PendingFileDropConfirmation {
 #[derive(Clone, Debug)]
 pub(crate) struct PendingSettingsResetConfirmation {
     pub(crate) cancel_focus_requested: bool,
+}
+
+/// The prompt raised when closing the **final** view of a document that is
+/// holding unsaved changes (ADR 0034 §7).
+///
+/// It carries the document's name and fully qualified origin because it can be
+/// raised from a background window or by a quit that is closing several tabs at
+/// once: a prompt that only said "Save changes?" could be answered for the
+/// wrong file. It also carries the document identity rather than only the tab,
+/// so a document released or saved while the prompt is up is noticed rather
+/// than answered for.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingDocumentCloseConfirmation {
+    pub(crate) tab: TabId,
+    pub(crate) document: DocumentId,
+    /// The file's name, as the heading asks about it.
+    pub(crate) title: String,
+    /// The fully qualified origin, shown under the question in monospace.
+    pub(crate) origin: String,
+    pub(crate) restore_tab: TabId,
+    /// Set once Save has been given focus, so the focus request happens on the
+    /// frame the prompt opens and not on every frame after it.
+    pub(crate) save_focus_requested: bool,
+    /// What to do once this document is dealt with: a quit or window close
+    /// closing several dirty documents asks about each in turn.
+    pub(crate) then: AfterDocumentClose,
+}
+
+/// What raised a dirty-close prompt, and therefore what happens after it is
+/// answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AfterDocumentClose {
+    /// One tab was being closed; nothing else follows.
+    CloseTab,
+    /// A window close or quit was interrupted; resume it once every dirty
+    /// document has been answered for.
+    ResumeClose(QuitConfirmationPurpose),
 }
 
 #[derive(Clone, Debug)]
@@ -188,6 +226,8 @@ pub(crate) struct OverlayState {
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
+    /// The final-view dirty-close prompt for a text document (ADR 0034 §7).
+    pub(crate) pending_document_close: Option<PendingDocumentCloseConfirmation>,
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,
     pub(crate) pending_quit: Option<PendingQuitConfirmation>,
     pub(crate) pending_password_store: Option<PendingPasswordStore>,
@@ -233,6 +273,7 @@ impl OverlayState {
 
     pub(crate) fn blocks_terminal_input_except_paste(&self) -> bool {
         self.pending_close.is_some()
+            || self.pending_document_close.is_some()
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
             || self.port_forward_manager.is_some()

@@ -11,7 +11,8 @@ use festerm_config::InterfaceSettings;
 use festerm_ui_egui::theme;
 
 use crate::overlay_state::{
-    CloseConsequence, PendingCloseConfirmation, PendingQuitConfirmation, QuitConfirmationPurpose,
+    AfterDocumentClose, CloseConsequence, PendingCloseConfirmation,
+    PendingDocumentCloseConfirmation, PendingQuitConfirmation, QuitConfirmationPurpose,
 };
 use crate::tabs::{AppCommand, InspectorTransport, TabContent, TabId};
 
@@ -23,6 +24,12 @@ impl FesTermApp {
     /// immediately; a live transport is confirmed when that preference is
     /// enabled and closes directly otherwise.
     pub(super) fn request_close_tab(&mut self, id: TabId, context: &egui::Context) {
+        // Unsaved text is asked about before anything else and is never gated
+        // by the session-close preference: ending a session the user asked to
+        // end is not the same as throwing away what they typed.
+        if self.request_document_close(id, AfterDocumentClose::CloseTab) {
+            return;
+        }
         let confirmation = if self.state.confirm_session_close() {
             self.state
                 .tabs()
@@ -95,6 +102,20 @@ impl FesTermApp {
             if pending.purpose == QuitConfirmationPurpose::InstallUpdate {
                 context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
+            return;
+        }
+        // Unsaved text goes first: a session's scrollback can be reproduced,
+        // a document's unsaved changes cannot. Each dirty document is asked
+        // about in turn, and the close resumes only once every one of them has
+        // been answered for (ADR 0034 §7).
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            let purpose = if self.role == crate::app::WindowRole::Secondary {
+                QuitConfirmationPurpose::CloseWindow
+            } else {
+                QuitConfirmationPurpose::Quit
+            };
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.request_document_close(tab, AfterDocumentClose::ResumeClose(purpose));
             return;
         }
         let counts = self.state.live_session_counts();
@@ -214,6 +235,189 @@ impl FesTermApp {
         if let Some(session) = self.state.session_tab_mut(pending.restore_tab) {
             session.view.request_focus_on_next_frame();
         }
+    }
+
+    /// Raises the final-view dirty-close prompt for a tab, and reports
+    /// whether it did. A tab that is not a view of a document, or is one of
+    /// several views, or whose document has nothing unsaved, closes without
+    /// being asked about (ADR 0034 §7).
+    fn request_document_close(&mut self, id: TabId, then: AfterDocumentClose) -> bool {
+        let Some(consequence) = self.state.document_close_consequence(id) else {
+            return false;
+        };
+        self.palette.close();
+        self.overlays.pending_document_close = Some(PendingDocumentCloseConfirmation {
+            tab: id,
+            document: consequence.document,
+            title: consequence.title,
+            origin: consequence.origin,
+            restore_tab: self.state.active(),
+            save_focus_requested: false,
+            then,
+        });
+        true
+    }
+
+    /// The final-view dirty-close prompt (ADR 0034 §7).
+    ///
+    /// Save is the default and the focused action, Escape is Cancel, and
+    /// Discard is worded as what it does and never takes the Return key. The
+    /// document's fully qualified origin is shown under the question, because
+    /// this prompt can be raised from a background window or by a quit closing
+    /// several documents at once, and a prompt that only said "Save changes?"
+    /// could be answered for the wrong file.
+    pub(super) fn show_document_close_confirmation(
+        &mut self,
+        context: &egui::Context,
+        escape: bool,
+    ) {
+        let Some(pending) = self.overlays.pending_document_close.as_ref().cloned() else {
+            return;
+        };
+        // Revalidated every frame rather than trusted from when it opened: a
+        // sibling view saving the document, or the tab going away underneath
+        // the prompt, means there is nothing left to ask about.
+        if self.state.document_close_consequence(pending.tab).as_ref()
+            != Some(&crate::tabs::DirtyDocumentClose {
+                document: pending.document,
+                title: pending.title.clone(),
+                origin: pending.origin.clone(),
+            })
+        {
+            self.overlays.pending_document_close = None;
+            self.state.dispatch(AppCommand::CloseTab(pending.tab), context);
+            self.continue_document_close(pending.then, context);
+            return;
+        }
+
+        let mut cancel = escape;
+        let mut discard = false;
+        let mut save = false;
+        egui::Modal::new(egui::Id::new("document_close_confirmation"))
+            .backdrop_color(egui::Color32::from_black_alpha(160))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 560.0));
+                ui.add_space(4.0);
+                ui.heading(format!("Save changes to {}?", pending.title));
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.label("This is the last view of this document. Unsaved changes will be lost.");
+                ui.add_space(14.0);
+                ui.label(
+                    egui::RichText::new(&pending.origin)
+                        .monospace()
+                        .size(12.0)
+                        .color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(24.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let save_button = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new("Save")
+                                .strong()
+                                .color(theme::TEXT_ON_ACCENT),
+                        )
+                        .fill(theme::ACCENT_ACTION)
+                        .min_size(egui::vec2(84.0, 28.0)),
+                    );
+                    if !pending.save_focus_requested {
+                        save_button.request_focus();
+                    }
+                    // Which action Return reaches is drawn as a ring, not as
+                    // a fill colour, so the default is still obvious to a
+                    // reader who cannot tell the two buttons apart by hue.
+                    if save_button.has_focus() {
+                        ui.painter().rect_stroke(
+                            save_button.rect.expand(2.0),
+                            6.0,
+                            egui::Stroke::new(2.0, theme::BORDER_ACTIVE),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    if save_button.clicked() {
+                        save = true;
+                    }
+                    ui.add_space(8.0);
+                    // Bordered rather than bare, so the destructive action is
+                    // as plainly a button as the one beside it. Its weight and
+                    // its heavier border, not its colour, are what mark it as
+                    // the one that throws work away.
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Discard changes")
+                                    .strong()
+                                    .color(theme::STATUS_ERROR),
+                            )
+                            .stroke(egui::Stroke::new(1.5, theme::STATUS_ERROR))
+                            .min_size(egui::vec2(132.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        discard = true;
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add(
+                            egui::Button::new("Cancel")
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                .min_size(egui::vec2(84.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        cancel = true;
+                    }
+                });
+                ui.add_space(4.0);
+            });
+        if let Some(current) = self.overlays.pending_document_close.as_mut() {
+            current.save_focus_requested = true;
+        }
+
+        if cancel {
+            self.overlays.pending_document_close = None;
+            // Popup and menu widget IDs can disappear in the frame that opens
+            // a dialog, so focus is put back on the surface that was active
+            // rather than left on a stale node.
+            self.state
+                .dispatch(AppCommand::ActivateTab(pending.restore_tab), context);
+            return;
+        }
+        if save {
+            self.overlays.pending_document_close = None;
+            match self.state.save_document(pending.document) {
+                Some(festerm_document::SaveOutcome::Saved) => {
+                    self.state.dispatch(AppCommand::CloseTab(pending.tab), context);
+                    self.continue_document_close(pending.then, context);
+                }
+                // The write did not happen, so neither does the close: the
+                // banner now says why, and the user still has their text.
+                _ => self.state.dispatch(AppCommand::ActivateTab(pending.tab), context),
+            }
+            return;
+        }
+        if discard {
+            self.overlays.pending_document_close = None;
+            self.state.dispatch(AppCommand::CloseTab(pending.tab), context);
+            self.continue_document_close(pending.then, context);
+        }
+    }
+
+    /// Moves a window close or quit on to the next document holding unsaved
+    /// changes, and lets the close proceed once none are left.
+    fn continue_document_close(&mut self, then: AfterDocumentClose, context: &egui::Context) {
+        let AfterDocumentClose::ResumeClose(purpose) = then else {
+            return;
+        };
+        if let Some((tab, _)) = self.state.dirty_document_closes().into_iter().next() {
+            self.request_document_close(tab, AfterDocumentClose::ResumeClose(purpose));
+            return;
+        }
+        // Re-requesting the close rather than confirming it here: the session
+        // confirmation this interrupted has still not been asked, and the
+        // close request is the one place that decides whether it needs to be.
+        context.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     /// Renders the one aggregate confirmation for closing the window while

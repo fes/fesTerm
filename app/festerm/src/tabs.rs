@@ -53,7 +53,7 @@ use festerm_ui_egui::{
 
 use std::rc::Rc;
 
-use festerm_document::{DocumentId, DocumentOrigin};
+use festerm_document::{DocumentId, DocumentOrigin, SaveOutcome};
 
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::markdown_viewer::MarkdownViewerTab;
@@ -1395,6 +1395,28 @@ impl TabContent {
     pub const fn movable_across_windows(&self) -> bool {
         !matches!(self, Self::Launcher | Self::Settings | Self::Profiles)
     }
+}
+
+/// The document a tab is a view of, for the reference count that decides which
+/// close is the final one. A Markdown tab counts only when it is bound to a
+/// live document rather than reading a file of its own.
+fn view_document(content: &TabContent) -> Option<DocumentId> {
+    match content {
+        TabContent::TextEditor(editor) => Some(editor.document()),
+        TabContent::MarkdownViewer(viewer) => viewer.live_document(),
+        _ => None,
+    }
+}
+
+/// What the dirty-close prompt needs to name the document it is asking about
+/// (ADR 0034 §7). Carries the origin as well as the file name because the
+/// prompt can be raised from a background window or by a quit closing several
+/// documents at once.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DirtyDocumentClose {
+    pub(crate) document: DocumentId,
+    pub(crate) title: String,
+    pub(crate) origin: String,
 }
 
 pub struct Tab {
@@ -3177,6 +3199,43 @@ impl AppState {
         }
     }
 
+    /// What closing this tab would do to a document holding unsaved changes.
+    ///
+    /// Only the **final** view prompts: closing one of several views of a
+    /// dirty document takes nothing away, because the text and its undo
+    /// history live in the registry rather than in the tab (ADR 0034 §7).
+    pub(crate) fn document_close_consequence(&self, tab: TabId) -> Option<DirtyDocumentClose> {
+        let content = &self.tabs.iter().find(|candidate| candidate.id == tab)?.content;
+        let document = view_document(content)?;
+        let registry = self.documents.borrow();
+        let open = registry.get(document)?;
+        (open.text().is_dirty() && open.views() <= 1).then(|| DirtyDocumentClose {
+            document,
+            title: open.origin().file_name().to_owned(),
+            origin: open.origin().qualified_label(),
+        })
+    }
+
+    /// Every tab in this window that is the final view of a dirty document, in
+    /// tab order, so a quit asks about each of them once.
+    pub(crate) fn dirty_document_closes(&self) -> Vec<(TabId, DirtyDocumentClose)> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| {
+                self.document_close_consequence(tab.id)
+                    .map(|consequence| (tab.id, consequence))
+            })
+            .collect()
+    }
+
+    /// Writes a document to its source, reporting what happened so a caller
+    /// that is closing the tab afterwards can decline to close on a failure.
+    pub(crate) fn save_document(&mut self, document: DocumentId) -> Option<SaveOutcome> {
+        let documents = Rc::clone(&self.documents);
+        let mut registry = documents.borrow_mut();
+        registry.save(document)
+    }
+
     fn with_active_document(&mut self, action: impl FnOnce(&mut DocumentRegistry, DocumentId)) {
         let Some(id) = self.active_document() else {
             return;
@@ -3260,6 +3319,10 @@ impl AppState {
         };
 
         let id = TabId::next();
+        // The live preview is a view of the document, not a reader of a file,
+        // so it counts towards the reference count that keeps the document
+        // alive and decides which close is the final one (ADR 0034 §2).
+        self.documents.borrow_mut().retain(document);
         self.tabs.push(Tab {
             id,
             content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_live(
@@ -4263,6 +4326,13 @@ impl AppState {
         };
         let removed = self.tabs.remove(index);
         self.workspace_dirty = true;
+        // A view going is what makes the document's reference count fall, and
+        // the last one going is what forgets the document (ADR 0034 §2). The
+        // dirty-close policy is settled before this point: the registry does
+        // not second-guess a decision the user has already been asked to make.
+        if let Some(document) = view_document(&removed.content) {
+            self.documents.borrow_mut().release(document);
+        }
         if let TabContent::Session(session) = removed.content {
             session.controller.shutdown();
         }

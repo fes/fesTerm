@@ -98,7 +98,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "80784bae0a96a3c1a66cd617286673b7b67edef8f3f00f1f84592b0af3a97a72"
+      "sha256": "b1a6310aa7c62da2c3b40aae41794ac60f50c82de151b8d6b44431f9369d83d2"
+    },
+    {
+      "id": "text-editor-dirty-close",
+      "section": "editor",
+      "title": "Closing the last view of a document with unsaved changes",
+      "caption": "Closing the only remaining view of a typed-in document asks before anything is lost, names the file and where it lives, and makes Save the action the keyboard already has hold of.",
+      "image": "text-editor-dirty-close.png",
+      "width": 980,
+      "height": 700,
+      "tier": "headless",
+      "sha256": "835d7e51fb0a811127a4fac5c44dc5c4f962df64bd751671fafa2170d73ac8f4"
     },
     {
       "id": "text-editor-saved",
@@ -109,7 +120,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "b15b68f3e7774ff68c678753434e5faba93b53ccb53ba26d4e409c5470079f5c"
+      "sha256": "dfe5e051de0fb1cf1c00c77009f67e86e9b79d33291bdd1e0edbf372b3cb4c77"
     },
     {
       "id": "text-editor-split",
@@ -120,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "8c807211b2d0b034501c27db66298d11d5d63806159802bbaa19950d9f04efd0"
+      "sha256": "5fc76f3aaf5e7b55cc681cde97306458cc90ea4ce2d295d46d5eb47501f8b091"
     },
     {
       "id": "text-editor-unsaved",
@@ -131,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "dad0be7e49ddd245084309c9edfd661ea83da749831741defdd87c651dc98f0d"
+      "sha256": "2fded2c1cebd44613c154842d18a6b43c33926d5a4cb7acaee216dacb613278f"
     },
     {
       "id": "keyboard-editor-collapsed",

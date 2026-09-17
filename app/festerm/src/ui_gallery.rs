@@ -328,6 +328,15 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_compare,
         },
         Scenario {
+            id: "text-editor-dirty-close",
+            section: "editor",
+            title: "Closing the last view of a document with unsaved changes",
+            caption: "Closing the only remaining view of a typed-in document asks before \
+                      anything is lost, names the file and where it lives, and makes Save \
+                      the action the keyboard already has hold of.",
+            capture: capture_text_editor_dirty_close,
+        },
+        Scenario {
             id: "text-editor-split",
             section: "editor",
             title: "The editor split with its live preview",
@@ -1312,6 +1321,50 @@ fn capture_text_editor_compare() -> image::RgbaImage {
             editor.open_compare_for_gallery(documents);
         }),
     )
+}
+
+/// The dirty-close prompt, arranged the way it actually arises: the whole
+/// application, one editor tab, real typing, and a real close request.
+fn capture_text_editor_dirty_close() -> image::RgbaImage {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let directory = std::env::temp_dir().join(format!(
+        "festerm-ui-gallery-dirty-close-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    let path = directory.join("NOTES.md");
+    fs::write(&path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
+
+    let context = egui::Context::default();
+    let mut app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());
+    app.dispatch_for_gallery(
+        crate::tabs::AppCommand::OpenTextEditor { path: path.clone() },
+        &context,
+    );
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(980.0, 700.0))
+        .build_ui_state(
+            |ui, app: &mut crate::app::FesTermApp| app.ui_content(ui),
+            app,
+        );
+    harness.run();
+    let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    body.focus();
+    body.type_text("\n## Known Issues\n\n- The relay drops duplicate webhook deliveries silently.\n");
+    harness.run();
+
+    harness
+        .state_mut()
+        .request_active_tab_close_for_gallery(&context);
+    harness.run();
+
+    let image = finish(&mut harness);
+    let _ = fs::remove_dir_all(&directory);
+    image
 }
 
 fn capture_text_editor_unsaved() -> image::RgbaImage {

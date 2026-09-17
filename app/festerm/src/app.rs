@@ -4830,6 +4830,7 @@ impl FesTermApp {
                 || self.overlays.pending_paste.is_some()
                 || self.overlays.pending_file_drop.is_some()
                 || self.overlays.pending_settings_reset.is_some()
+                || self.overlays.pending_document_close.is_some()
                 || self.overlays.pending_quit.is_some());
         let port_forward_manager_escape =
             escape_pressed && self.overlays.port_forward_manager.is_some();
@@ -5384,6 +5385,8 @@ impl FesTermApp {
         self.sync_port_forward_manager();
         if self.overlays.pending_close.is_some() {
             self.show_close_confirmation(ui.ctx(), confirmation_escape);
+        } else if self.overlays.pending_document_close.is_some() {
+            self.show_document_close_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_quit.is_some() {
             self.show_quit_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_settings_reset.is_some() {
@@ -5527,6 +5530,18 @@ impl FesTermApp {
     #[cfg(test)]
     pub(crate) fn documents_for_test(&self) -> &SharedDocuments {
         self.state.documents()
+    }
+
+    /// Lets the screenshot gallery arrange a real application state -- an
+    /// open document, a real close request -- rather than drawing a modal by
+    /// hand that nothing else in the product would ever produce.
+    pub(crate) fn dispatch_for_gallery(&mut self, command: AppCommand, context: &egui::Context) {
+        self.state.dispatch(command, context);
+    }
+
+    pub(crate) fn request_active_tab_close_for_gallery(&mut self, context: &egui::Context) {
+        let active = self.state.active();
+        self.request_close_tab(active, context);
     }
 
     pub(crate) const fn accept_window_close_for_test(&mut self) {
@@ -7360,6 +7375,283 @@ mod tests {
         harness.step();
         assert!(harness.state().overlays.pending_quit.is_none());
         assert!(harness.state().quit_confirmed);
+    }
+
+    /// A directory with one Markdown file in it, opened in an editor tab, with
+    /// the application ready to render.
+    fn app_with_open_editor(
+        context: &egui::Context,
+        contents: &str,
+    ) -> (FesTermApp, std::path::PathBuf, std::path::PathBuf) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-dirty-close-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("NOTES.md");
+        std::fs::write(&path, contents).unwrap();
+
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state.dispatch(
+            AppCommand::OpenTextEditor {
+                path: path.clone(),
+            },
+            context,
+        );
+        (app, directory, path)
+    }
+
+    fn editor_harness(app: FesTermApp) -> Harness<'static, FesTermApp> {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(900.0, 640.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        harness
+    }
+
+    /// Types into the editor body through real key events, which is the only
+    /// way a test can be sure the path the user takes is the path that dirties
+    /// the document.
+    fn type_into_editor(harness: &mut Harness<'static, FesTermApp>, text: &str) {
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text(text);
+        harness.run();
+    }
+
+    #[test]
+    fn closing_a_clean_editor_asks_nothing_and_forgets_the_document() {
+        let context = egui::Context::default();
+        let (mut app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let tab = app.state.active();
+
+        app.request_close_tab(tab, &context);
+
+        assert!(app.overlays.pending_document_close.is_none());
+        assert!(
+            app.state.documents().borrow().is_empty(),
+            "the last view going is what forgets the document"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn closing_the_final_view_of_a_dirty_document_asks_first() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+
+        let tab = harness.state().state.active();
+        harness.state_mut().request_close_tab(tab, &context);
+        harness.run();
+
+        let pending = harness
+            .state()
+            .overlays
+            .pending_document_close
+            .clone()
+            .expect("the final view of a dirty document is asked about");
+        assert_eq!(pending.title, "NOTES.md");
+        assert!(
+            pending.origin.ends_with("NOTES.md"),
+            "the prompt names the fully qualified origin: {}",
+            pending.origin
+        );
+        // Named in the prompt itself, not only in the state behind it.
+        harness.get_by_label("Save changes to NOTES.md?");
+        assert!(
+            harness.query_all_by_label(pending.origin.as_str()).count() > 0,
+            "the prompt shows where the file lives"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn closing_one_of_two_views_of_a_dirty_document_asks_nothing() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "# alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+
+        // A live Markdown preview is a second view of the same document.
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::OpenTextDocumentInMarkdown, &context);
+        harness.run();
+        let editor_tab = harness
+            .state()
+            .state
+            .tabs()
+            .iter()
+            .find(|tab| matches!(tab.content, TabContent::TextEditor(_)))
+            .expect("the editor tab is still open")
+            .id;
+
+        harness.state_mut().request_close_tab(editor_tab, &context);
+        harness.run();
+
+        assert!(
+            harness.state().overlays.pending_document_close.is_none(),
+            "closing one of two views takes nothing away"
+        );
+        let documents = harness.state().state.documents().borrow();
+        assert_eq!(documents.len(), 1, "the document outlives the view");
+        let id = documents.find_local(&path).expect("still open");
+        assert!(
+            documents.get(id).unwrap().text().is_dirty(),
+            "and it still holds what was typed"
+        );
+        drop(documents);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn the_dirty_close_prompt_focuses_save_and_escape_cancels() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        let tab = harness.state().state.active();
+        harness.state_mut().request_close_tab(tab, &context);
+        harness.run();
+
+        // Save is the default action and is what the Return key reaches.
+        assert!(
+            harness
+                .query_all_by_label("Save")
+                .any(|save| save.is_focused()),
+            "Save is focused, so Return saves rather than discarding"
+        );
+
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert!(
+            harness
+                .state()
+                .state
+                .tabs()
+                .iter()
+                .any(|open| open.id == tab),
+            "cancelling leaves the tab open"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\n",
+            "and writes nothing"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn saving_from_the_dirty_close_prompt_writes_the_file_and_closes_the_tab() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        let tab = harness.state().state.active();
+        harness.state_mut().request_close_tab(tab, &context);
+        harness.run();
+
+        // Return, because Save is the focused action.
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        harness.run();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "alpha\ntyped");
+        assert!(
+            !harness
+                .state()
+                .state
+                .tabs()
+                .iter()
+                .any(|open| open.id == tab),
+            "the tab closes once the write succeeded"
+        );
+        assert!(harness.state().state.documents().borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn discarding_from_the_dirty_close_prompt_closes_without_writing() {
+        let context = egui::Context::default();
+        let (app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        let tab = harness.state().state.active();
+        harness.state_mut().request_close_tab(tab, &context);
+        harness.run();
+
+        harness.get_by_label("Discard changes").click();
+        harness.step();
+        harness.run();
+
+        assert!(harness.state().overlays.pending_document_close.is_none());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\n",
+            "discarding writes nothing"
+        );
+        assert!(!harness
+            .state()
+            .state
+            .tabs()
+            .iter()
+            .any(|open| open.id == tab));
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn quitting_with_unsaved_text_asks_about_the_document_before_anything_else() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+
+        harness.state_mut().evaluate_close_request(&context);
+        harness.run();
+
+        let pending = harness
+            .state()
+            .overlays
+            .pending_document_close
+            .clone()
+            .expect("a quit asks about unsaved text");
+        assert_eq!(pending.title, "NOTES.md");
+        assert_eq!(
+            pending.then,
+            crate::overlay_state::AfterDocumentClose::ResumeClose(QuitConfirmationPurpose::Quit),
+            "answering it resumes the quit rather than ending there"
+        );
+        assert!(!harness.state().quit_confirmed);
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn a_saved_document_is_no_longer_asked_about_when_quitting() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        harness.state_mut().evaluate_close_request(&context);
+        harness.run();
+
+        assert!(
+            harness.state().overlays.pending_document_close.is_none(),
+            "nothing is unsaved, so nothing is asked"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
