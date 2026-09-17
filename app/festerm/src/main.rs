@@ -9,6 +9,10 @@ mod application;
 mod configuration_startup;
 mod diagnostics;
 mod discovery;
+// Every entry point here is exercised by its own tests and is called for real
+// once the editor tab lands; the allowance goes with it.
+#[allow(dead_code)]
+mod document_store;
 mod environment;
 mod inspector;
 mod keyboard;

@@ -2056,6 +2056,7 @@ dependencies = [
  "egui_kittest",
  "festerm-config",
  "festerm-core",
+ "festerm-document",
  "festerm-linux-power",
  "festerm-macos-window",
  "festerm-markdown",

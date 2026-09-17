@@ -13,6 +13,7 @@ eframe = "0"
 egui-winit = "=0.36.1"
 festerm-config = { path = "../../crates/festerm-config" }
 festerm-core = { path = "../../crates/festerm-core" }
+festerm-document = { path = "../../crates/festerm-document" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }
