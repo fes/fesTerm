@@ -6,12 +6,17 @@
 //! document registry, so two tabs showing one file agree with each other
 //! without either of them being in charge.
 
+use std::path::PathBuf;
+
 use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
+use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
 use festerm_document::{BannerAction, DocumentId, DocumentStatus, Severity, StatusAccent};
 use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
 use crate::documents::SharedDocuments;
-use crate::markdown_viewer::{toolbar_button, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT};
+use crate::markdown_viewer::{
+    elide_middle, toolbar_button, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
+};
 use crate::tabs::{AppCommand, TabId};
 
 /// Width of the line-number gutter's digits area before padding.
@@ -22,6 +27,9 @@ const BAR_PADDING_X: i8 = 9;
 const BAR_PADDING_Y: i8 = 6;
 const BANNER_ACCENT_WIDTH: f32 = 3.0;
 const ORIGIN_ICON_SIZE: f32 = 12.0;
+const MODE_CONTROL_GAP: f32 = 14.0;
+const MODE_SEGMENT_GAP: f32 = 2.0;
+const SPLIT_DIVIDER_WIDTH: f32 = 9.0;
 const BANNER_PADDING_X: i8 = BAR_PADDING_X;
 const BANNER_PADDING_Y: i8 = BAR_PADDING_Y;
 
@@ -66,6 +74,26 @@ impl EditorViewOptions {
     }
 }
 
+/// What a view is showing of its document. Per-view, not per-document: two
+/// editors on one file may sit in different modes (ADR 0034 §4).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum EditorMode {
+    #[default]
+    Edit,
+    Preview,
+    Split,
+}
+
+impl EditorMode {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Edit => "Edit",
+            Self::Preview => "Preview",
+            Self::Split => "Split",
+        }
+    }
+}
+
 /// One editor tab.
 pub(crate) struct TextEditorTab {
     document: DocumentId,
@@ -79,6 +107,10 @@ pub(crate) struct TextEditorTab {
     options: EditorViewOptions,
     caret: (usize, usize),
     status_bar_visible: bool,
+    mode: EditorMode,
+    /// Built the first time a rendered mode is asked for, so a file nobody
+    /// previews never pays for a parse.
+    preview: Option<MarkdownPreviewPane>,
 }
 
 impl TextEditorTab {
@@ -96,7 +128,21 @@ impl TextEditorTab {
             options: EditorViewOptions::default(),
             caret: (1, 1),
             status_bar_visible: true,
+            mode: EditorMode::Edit,
+            preview: None,
         }
+    }
+
+    /// Only Markdown is rendered, and the file name is the only honest way to
+    /// decide: guessing from content would move the toggle under the user as
+    /// they type.
+    pub(crate) fn renders_markdown(&self) -> bool {
+        self.language_label() == "Markdown"
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn mode(&self) -> EditorMode {
+        self.mode
     }
 
     pub(crate) const fn document(&self) -> DocumentId {
@@ -238,6 +284,13 @@ impl TextEditorTab {
         command
     }
 
+    /// Puts the view in a mode for the headless screenshot gallery, which
+    /// cannot click the control.
+    #[cfg(test)]
+    pub(crate) const fn set_mode_for_gallery(&mut self, mode: EditorMode) {
+        self.mode = mode;
+    }
+
     /// Appends text the way typing would, for the headless screenshot
     /// gallery, which has no keyboard.
     #[cfg(test)]
@@ -287,6 +340,10 @@ impl TextEditorTab {
                                 open.set_auto_save_requested(checked);
                             }
                         }
+                        if self.renders_markdown() {
+                            ui.add_space(MODE_CONTROL_GAP);
+                            self.show_mode_control(ui);
+                        }
                         ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
                             let icon = if self.remote {
                                 Icon::SshRemote
@@ -311,6 +368,24 @@ impl TextEditorTab {
             });
     }
 
+    /// The Edit | Preview | Split toggle. A segmented control rather than
+    /// three loose buttons, because they are one choice with three answers.
+    /// Called inside the origin bar's right-to-left layout, so the segments
+    /// are emitted last-first to read Edit | Preview | Split on screen.
+    /// Nesting a left-to-right `Ui` here instead would claim the whole
+    /// remaining row and paint over the path.
+    fn show_mode_control(&mut self, ui: &mut egui::Ui) {
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = MODE_SEGMENT_GAP;
+            for mode in [EditorMode::Split, EditorMode::Preview, EditorMode::Edit] {
+                let selected = self.mode == mode;
+                if toolbar_button(ui, None, mode.label(), mode.label(), selected) && !selected {
+                    self.mode = mode;
+                }
+            }
+        });
+    }
+
     fn show_command_bar(
         &mut self,
         ui: &mut egui::Ui,
@@ -328,6 +403,17 @@ impl TextEditorTab {
                             command = Some(AppCommand::SaveTextDocument);
                         }
                     });
+                    if self.renders_markdown()
+                        && toolbar_button(
+                            ui,
+                            None,
+                            "Open in Markdown",
+                            "Open in Markdown",
+                            false,
+                        )
+                    {
+                        command = Some(AppCommand::OpenTextDocumentInMarkdown);
+                    }
                     if toolbar_button(ui, Some(Icon::Refresh), "Refresh", "Refresh", false) {
                         command = Some(AppCommand::RefreshTextDocument);
                     }
@@ -342,15 +428,65 @@ impl TextEditorTab {
     fn show_body(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
         let footer = if self.status_bar_visible { 0.0 } else { 24.0 };
         let height = (ui.available_height() - footer).max(120.0);
+        let mode = if self.renders_markdown() {
+            self.mode
+        } else {
+            // A toggle that is not offered cannot be left switched on, which
+            // is what would happen to a Markdown file renamed to .txt.
+            EditorMode::Edit
+        };
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
             ui.set_height(height);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
+            match mode {
+                EditorMode::Edit => self.show_edit_pane(ui, documents, ui.available_width()),
+                EditorMode::Preview => self.show_preview_pane(ui, height),
+                EditorMode::Split => {
+                    let pane_width = ((ui.available_width() - SPLIT_DIVIDER_WIDTH) / 2.0).max(120.0);
                     ui.horizontal_top(|ui| {
-                        self.show_text(ui, documents);
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.allocate_ui(vec2(pane_width, height), |ui| {
+                            ui.set_height(height);
+                            self.show_edit_pane(ui, documents, pane_width);
+                        });
+                        let (divider, _) =
+                            ui.allocate_exact_size(vec2(SPLIT_DIVIDER_WIDTH, height), Sense::hover());
+                        ui.painter().line_segment(
+                            [divider.center_top(), divider.center_bottom()],
+                            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                        );
+                        ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
+                            ui.set_height(height);
+                            self.show_preview_pane(ui, height);
+                        });
                     });
+                }
+            }
+        });
+    }
+
+    fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
+        egui::ScrollArea::vertical()
+            .id_salt("text-editor-body")
+            .auto_shrink([false, false])
+            .max_width(width)
+            .show(ui, |ui| {
+                ui.horizontal_top(|ui| {
+                    self.show_text(ui, documents);
                 });
+            });
+    }
+
+    /// The rendered view of the text being typed on the other side of the
+    /// split — the same block renderer the Markdown tab uses, fed from this
+    /// view's buffer instead of from a file.
+    fn show_preview_pane(&mut self, ui: &mut egui::Ui, height: f32) {
+        let pane = self.preview.get_or_insert_with(|| {
+            MarkdownPreviewPane::new(preview_source(&self.origin_label), &self.buffer)
+        });
+        pane.sync(ui.ctx(), &self.buffer);
+        ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
+            ui.set_height(height);
+            pane.show(ui);
         });
     }
 
@@ -412,6 +548,16 @@ impl TextEditorTab {
             }
         }
     }
+}
+
+/// The identity the preview parses under. It only ever affects how relative
+/// links and images are resolved, so a path the loader will not accept
+/// degrades to a bare name rather than costing the user their preview.
+fn preview_source(origin_label: &str) -> MarkdownSource {
+    LocalMarkdownSource::new(PathBuf::from(origin_label))
+        .or_else(|_| LocalMarkdownSource::new(PathBuf::from("preview.md")))
+        .map(MarkdownSource::from)
+        .expect("a bare file name is a valid Markdown source")
 }
 
 /// Numbers are painted against the laid-out text rather than against a guess
@@ -556,9 +702,19 @@ fn hairline(ui: &mut egui::Ui) {
 /// Paths are read character by character, so they are set in the same
 /// monospace the Markdown viewer uses for them.
 fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(text.to_owned(), FontId::monospace(LABEL_TEXT_SIZE), colour);
+    let font = FontId::monospace(LABEL_TEXT_SIZE);
+    // A path is as long as somebody's directories are deep, and the mode
+    // control has already claimed its end of the row; elide in the middle so
+    // the file name survives rather than letting the path run through it.
+    let character = ui
+        .painter()
+        .layout_no_wrap("0".to_owned(), font.clone(), colour)
+        .size()
+        .x
+        .max(1.0);
+    let budget = (ui.available_width() / character).floor().max(8.0) as usize;
+    let text = &elide_middle(text, budget);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, colour);
     let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
     ui.painter().galley(rect.left_top(), galley, colour);
@@ -733,5 +889,81 @@ mod tests {
         harness.get_by_label("Save");
         harness.get_by_label("Refresh");
         harness.get_by_label("Auto-save");
+    }
+
+    #[test]
+    fn the_mode_control_is_offered_only_for_markdown() {
+        let directory = TemporaryDirectory::new("mode-offer");
+        let (_, markdown) = editor_for(&directory.file("NOTES.md", "# Title\n"));
+        let (_, plain) = editor_for(&directory.file("hosts.txt", "127.0.0.1\n"));
+
+        assert!(markdown.renders_markdown());
+        assert!(!plain.renders_markdown());
+    }
+
+    #[test]
+    fn a_markdown_editor_can_be_switched_between_its_three_modes() {
+        let directory = TemporaryDirectory::new("modes");
+        let path = directory.file("NOTES.md", "# Title\n\nProse.\n");
+        let (documents, editor) = editor_for(&path);
+        let tab_id = crate::tabs::TabId::next_for_test();
+
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                state.1.show(ui, tab_id, &state.0);
+            },
+            (documents, editor),
+        );
+        harness.run();
+        assert_eq!(harness.state().1.mode(), EditorMode::Edit);
+
+        harness.get_by_label("Split").click();
+        harness.run();
+        assert_eq!(harness.state().1.mode(), EditorMode::Split);
+        // The pane beside the editor is rendering this document's text, not
+        // a stale copy of a file. (Its blocks are painted rather than built
+        // from widgets, so the rendering itself is not in the a11y tree.)
+        let pane = harness.state().1.preview.as_ref().expect("split built a preview");
+        assert_eq!(pane.rendered_text(), "# Title\n\nProse.\n");
+
+        harness.get_by_label("Preview").click();
+        harness.run();
+        assert_eq!(harness.state().1.mode(), EditorMode::Preview);
+    }
+
+    #[test]
+    fn a_plain_text_view_stays_in_edit_mode_even_if_its_mode_is_set() {
+        let directory = TemporaryDirectory::new("plain-mode");
+        let path = directory.file("hosts.txt", "# not a heading\n");
+        let (documents, mut editor) = editor_for(&path);
+        editor.mode = EditorMode::Preview;
+        let tab_id = crate::tabs::TabId::next_for_test();
+
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                state.1.show(ui, tab_id, &state.0);
+            },
+            (documents, editor),
+        );
+        harness.run();
+
+        // The body fell back to the editor, so no preview pane was built.
+        assert!(harness.state().1.preview.is_none());
+    }
+
+    #[test]
+    fn the_preview_reparses_only_once_typing_settles() {
+        let source = MarkdownSource::from(
+            LocalMarkdownSource::new(PathBuf::from("NOTES.md")).unwrap(),
+        );
+        let mut pane = MarkdownPreviewPane::new(source, "# One\n");
+        let ctx = egui::Context::default();
+
+        pane.sync(&ctx, "# Two\n");
+        assert_eq!(pane.rendered_text(), "# One\n");
+
+        std::thread::sleep(crate::markdown_viewer::PREVIEW_DEBOUNCE);
+        pane.sync(&ctx, "# Two\n");
+        assert_eq!(pane.rendered_text(), "# Two\n");
     }
 }

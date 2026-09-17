@@ -50,12 +50,13 @@ same-process coordination, it cannot see a remote file over SFTP at all, and
 treating its events as authoritative content invites reload loops and false
 conflicts. Document identity and shared ownership have to come first.
 
-Thirteen reviewed mockups in `docs/images/gui-mockups/text-editor-*.png`
+Sixteen reviewed mockups in `docs/images/gui-mockups/text-editor-*.png`
 accompany the issue and are the visual reference for this decision: the saved,
 unsaved, auto-saving, find/replace, options, vi-mode, and Markdown-preview
-frames establish the surface, and the dirty-close, compare, save-as,
+frames establish the surface; the dirty-close, compare, save-as,
 external-conflict, remote-offline, and unavailable frames establish the
-recovery paths. Where this ADR and a mockup disagree, this ADR governs; where a
+recovery paths; and the vi command, search, and substitute frames establish the
+command area described in §10a. Where this ADR and a mockup disagree, this ADR governs; where a
 mockup shows detail this ADR does not name, the detail is illustrative.
 
 ## Decision
@@ -299,21 +300,94 @@ view never rearranges a sibling window.
 
 ### 10. vi compatibility is a bounded, honest subset
 
-vi mode is per-view and off by default. Its target subset — navigation, word and
-line motions, counts, operator-plus-motion editing, insert/append/open-line,
-delete/change/yank/put, undo/redo, character and line visual selection, search
-next/previous, line start/end, go-to-line, and the `:` write/quit equivalents —
-is specified in the design document before implementation, and anything outside
-it fails honestly rather than half-executing. fesTerm does not claim Vim plugin,
-macro, register, configuration-file, or scripting compatibility.
+vi mode is per-view and off by default. What it promises is written down as a
+fidelity matrix before a key is bound, and each row carries one of three honest
+labels:
 
-vi keys are live only while the editor owns focus: Find/Replace fields, dialogs,
-toolbar controls, IME composition, and accessibility navigation keep their
-ordinary behaviour, and `:` or `/` in the editor does not open the command
-palette. There is always a visible, non-vi way to turn it off. `:w`, `:w {path}`,
-`:q`, and `:e` converge on the ordinary Save, Save As, dirty-close, and Refresh
-commands — they are shortcuts to the same typed commands, not a parallel
-implementation.
+- **Full** — ordinary Vim behaviour within the supported buffer, counts
+  included.
+- **fesTerm-routed** — the keystroke is recognised and deliberately converges on
+  an existing application command and its safety policy.
+- **Partial** — only what the row states is promised.
+
+Anything outside the matrix shows a concise command-line error and has no side
+effect. Half-executing an unsupported command is worse than refusing it,
+because the user cannot tell what happened to their text.
+
+The initial matrix is: mode entry and exit (`i I a A o O R v V Esc`), motion
+(`h j k l w W b B e E 0 ^ $ gg G {count}G`), counts on motions, edits, and
+operator-motion pairs, operators and edits (`d c y` with supported motions,
+`dd cc yy x X r s D C J p P`), undo and repeat (`u`, `Ctrl-r`, `.`) through the
+**shared** undo history, and characterwise/linewise visual selection — all Full.
+Search (`/ ? n N * #`) and the `iw aw iW aW` text objects are Partial. The
+unnamed register plus ordinary platform copy and paste is Partial; named,
+numbered, expression, and black-hole registers are unsupported. Blockwise
+visual, marks and jump lists, macros, and the wider Ex environment (`:set`,
+mappings, ranges beyond those below, shell commands, plugins, vimrc) are
+unsupported initially, and say so when tried.
+
+The `:` commands are all fesTerm-routed, which is the whole point of them:
+`:w`/`:write` dispatch Save and report success only once the durable
+replacement completes; `:w {path}`/`:saveas` dispatch the reviewed Save As
+picker with no silent overwrite; `:q`/`:quit`, `:wq`, `:x`, and `ZZ` dispatch
+ordinary close, closing only after a save succeeds; `:q!` and `ZQ` open the
+normal final-view discard confirmation rather than silently discarding state
+other views can see; `:e`/`:e!` dispatch Refresh and its conflict rules and
+never replace a dirty shared buffer behind the user's back.
+
+The current state is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
+`REPLACE`, `COMMAND` — in the status bar. Cursor shape or colour alone is not
+an acceptable indicator: it is invisible to a screen reader, unreliable under
+high-contrast themes, and ambiguous the moment the caret is off screen.
+
+vi keys are live only while the editor owns focus: Find/Replace fields,
+dialogs, toolbar controls, IME composition, and accessibility navigation keep
+their ordinary behaviour, and `:` or `/` in the editor does not open the
+command palette. There is always a visible, non-vi way to turn it off.
+
+### 10a. One command area, and one regex dialect everywhere
+
+Typing `:` or `/` opens a single-line command area immediately **above** the
+persistent status bar, never in place of it: the document's mode, format,
+position, and save state stay readable while a command is being typed. The area
+shows its prompt and input, states `Enter to run · Esc to cancel`, swallows
+those keys rather than leaking them to global shortcuts, and replaces itself
+with a concise result — `3 matches`, or an error — after running. Command-line
+editing is Partial: text entry, Backspace/Delete, Left/Right, Esc, Enter, and a
+bounded history on Up/Down; completion offers only supported command names, so
+it cannot advertise something that will then fail.
+
+vi `/` and `?`, the toolbar's Find and Replace, and `:s` all use **one**
+dialect: Rust `regex`-crate syntax — Unicode-aware and bounded against
+catastrophic backtracking, without look-around or backreferences. It is not
+called "Vim regex", because it is not. Two dialects in one editor would mean
+the same expression finding different things in two boxes a centimetre apart.
+
+Matching is case-sensitive by default; inline `(?i)` is accepted and `\c`/`\C`
+are translated to the case-insensitivity they imply. `/` searches forward, `?`
+backward, `n` repeats and `N` reverses, and `*`/`#` search the word under the
+caret **escaped as a literal**, so punctuation in an identifier cannot turn into
+syntax. Every match is highlighted by bounded, cancellable work with the current
+match kept distinct; an invalid or half-typed expression shows an inline error,
+keeps the last valid results, and neither moves the caret nor touches text.
+Zero-width matches always advance.
+
+Substitution accepts three ranges — the current line (`:s`), the whole document
+(`:%s`), and the visual selection (`:'<,'>s`) — and fails without side effects
+on any other Ex address. The delimiter is `/`, with `\/` and `\\` as the
+escapes. Flags are `g`, `c`, `i`, `I`, and `n`; anything unknown or
+self-contradictory is an error raised *before* a single character changes.
+Replacements support literal text, `$0`/`$1`, `${name}`, and the `&` and
+`\1`–`\9` compatibility aliases; expression evaluation, case-conversion
+escapes, and shelling out are unsupported.
+
+Before mutating anything, a substitution builds a bounded replacement plan and
+shows its counts. Accepting it commits **one** undo transaction on the shared
+document. With `c`, the `y n a q l` keys drive confirmation and the accepted
+replacements still commit as one transaction; Esc cancels with nothing changed.
+Search state, direction, current match, and command history are per-view, while
+the committed substitution lands in the document once and is visible in every
+view immediately, under ordinary dirty, Auto-save, and conflict behaviour.
 
 ### 11. Documents are bounded, and refusal is honest
 
@@ -393,7 +467,11 @@ stats, all bounded and reference-counted.
 
 **Scope.** This is a large, staged feature. The registry, identity, write path,
 and conflict model are foundational and come first; vi compatibility, Compare,
-and Split are separable increments on top of them. Syntax highlighting beyond
+and Split are separable increments on top of them. vi itself arrives in three
+steps — modal editing against the shared undo history, the command area with
+the routed `:` commands, then regex search and substitution — because each is
+independently testable and the last one shares its engine with the toolbar's
+Find and Replace. Syntax highlighting beyond
 existing Markdown rendering stays out of scope.
 
 ## Validation impact

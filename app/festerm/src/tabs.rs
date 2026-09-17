@@ -53,7 +53,7 @@ use festerm_ui_egui::{
 
 use std::rc::Rc;
 
-use festerm_document::DocumentId;
+use festerm_document::{DocumentId, DocumentOrigin};
 
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::markdown_viewer::MarkdownViewerTab;
@@ -1632,6 +1632,9 @@ pub enum AppCommand {
     ReloadTextDocument,
     /// Dismisses a conflict banner without writing anything.
     KeepMyTextVersion,
+    /// Opens, or focuses, a Markdown preview tab bound to the active
+    /// editor's document, so it renders unsaved text too (ADR 0034 §3).
+    OpenTextDocumentInMarkdown,
     ReloadMarkdown,
     ToggleMarkdownPreviewSource,
     ToggleMarkdownOutline,
@@ -2823,6 +2826,9 @@ impl AppState {
                     registry.reload_from_source(id);
                 });
             }
+            AppCommand::OpenTextDocumentInMarkdown => {
+                self.open_active_document_in_markdown();
+            }
             AppCommand::KeepMyTextVersion => {
                 self.with_active_document(|registry, id| {
                     if let Some(open) = registry.get_mut(id) {
@@ -3217,6 +3223,51 @@ impl AppState {
             }
             Err(failure) => Some(failure),
         }
+    }
+
+    /// Opens a live Markdown preview of the document the active editor holds,
+    /// or focuses the one that is already open: a second preview tab of one
+    /// document would be two tabs saying the same thing.
+    fn open_active_document_in_markdown(&mut self) {
+        let Some(document) = self.active_document() else {
+            return;
+        };
+        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::MarkdownViewer(viewer) if viewer.live_document() == Some(document) => {
+                Some(tab.id)
+            }
+            _ => None,
+        }) {
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return;
+        }
+
+        let opened = {
+            let registry = self.documents.borrow();
+            registry.get(document).and_then(|open| match open.origin() {
+                DocumentOrigin::Local(local) => {
+                    Some((local.path().to_path_buf(), open.text().text().to_owned()))
+                }
+                // A remote document has no local path for the viewer to load
+                // from; the in-tab Preview covers it until the remote write
+                // path lands.
+                DocumentOrigin::Remote(_) => None,
+            })
+        };
+        let Some((path, text)) = opened else {
+            return;
+        };
+
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_live(
+                path, document, &text,
+            ))),
+        });
+        self.set_active(id);
+        self.workspace_dirty = true;
     }
 
     fn open_local_markdown(&mut self, path: PathBuf, replacing: Option<TabId>) {
@@ -4865,6 +4916,62 @@ mod tests {
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
         assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
         state.dispatch(AppCommand::CloseTab(state.active()), &context);
+    }
+
+    #[test]
+    fn open_in_markdown_previews_unsaved_text_and_opens_only_one_tab() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-open-in-markdown-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("NOTES.md");
+        std::fs::write(&path, "# Saved heading\n").unwrap();
+
+        assert!(state.open_text_editor(&path).is_none());
+        let document = state.active_document().unwrap();
+        state
+            .documents()
+            .borrow_mut()
+            .get_mut(document)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("# Typed heading\n")
+            .unwrap();
+
+        state.dispatch(AppCommand::OpenTextDocumentInMarkdown, &context);
+        let previews = state
+            .tabs
+            .iter()
+            .filter(|tab| {
+                matches!(&tab.content, TabContent::MarkdownViewer(viewer)
+                    if viewer.live_document() == Some(document))
+            })
+            .count();
+        assert_eq!(previews, 1);
+
+        // The preview renders what is being typed, not what is on disk.
+        let title = state.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::MarkdownViewer(viewer) if viewer.live_document() == Some(document) => {
+                Some(viewer.first_heading_for_test())
+            }
+            _ => None,
+        });
+        assert_eq!(title, Some(Some("Typed heading".to_owned())));
+
+        // Asking again focuses the preview that exists rather than opening a
+        // second tab saying the same thing.
+        let before = state.tabs.len();
+        state.dispatch(AppCommand::OpenTextDocumentInMarkdown, &context);
+        assert_eq!(state.tabs.len(), before);
+
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

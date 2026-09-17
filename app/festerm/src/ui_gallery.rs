@@ -318,6 +318,15 @@ fn scenarios() -> Vec<Scenario> {
                       status band all report one unsaved document rather than disagreeing.",
             capture: capture_text_editor_unsaved,
         },
+        Scenario {
+            id: "text-editor-split",
+            section: "editor",
+            title: "The editor split with its live preview",
+            caption: "One view, two panes: the text on the left and the same document \
+                      rendered on the right, so a Markdown change can be read as it is \
+                      typed.",
+            capture: capture_text_editor_split,
+        },
         // -- diagnostics --------------------------------------------------
         Scenario {
             id: "diagnostics-ssh-session",
@@ -1206,6 +1215,13 @@ fn synthetic_markdown_prose() -> String {
 /// directory of its own. The contents are the same invented project notes the
 /// Markdown scenarios use, so nothing here comes from the machine it runs on.
 fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
+    render_text_editor_in(typed, crate::text_editor::EditorMode::Edit)
+}
+
+fn render_text_editor_in(
+    typed: Option<&str>,
+    mode: crate::text_editor::EditorMode,
+) -> image::RgbaImage {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -1224,6 +1240,7 @@ fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
         .open_local(&path)
         .expect("the gallery fixture is an editable file");
     let mut editor = TextEditorTab::new(id, &documents);
+    editor.set_mode_for_gallery(mode);
     if let Some(typed) = typed {
         editor.type_for_gallery(&documents, typed);
     }
@@ -1244,6 +1261,10 @@ fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
 
 fn capture_text_editor_saved() -> image::RgbaImage {
     render_text_editor(None)
+}
+
+fn capture_text_editor_split() -> image::RgbaImage {
+    render_text_editor_in(None, crate::text_editor::EditorMode::Split)
 }
 
 fn capture_text_editor_unsaved() -> image::RgbaImage {

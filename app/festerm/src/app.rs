@@ -4987,6 +4987,18 @@ impl FesTermApp {
                 }
                 TabContent::MarkdownViewer(tab) => {
                     tab.set_status_bar_visible(status_bar_visible);
+                    // A preview opened from an editor follows the document
+                    // rather than the file; the viewer has no handle on the
+                    // registry, so the text is handed to it here.
+                    if let Some(document) = tab.live_document() {
+                        let text = documents
+                            .borrow()
+                            .get(document)
+                            .map(|open| open.text().text().to_owned());
+                        if let Some(text) = text {
+                            tab.sync_live(ui.ctx(), &text);
+                        }
+                    }
                     screen_command = tab.show(ui, active_tab_id);
                 }
                 TabContent::TextEditor(tab) => {

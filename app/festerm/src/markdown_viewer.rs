@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
+    time::{Duration, Instant},
 };
 
 use eframe::egui::{
@@ -17,6 +18,7 @@ use festerm_markdown::{
     RemoteMarkdownSource, ResourceReferenceClass, ResourceReferenceKind, SourceSpan,
     TableAlignment, TableBlock, TaskState, TextBlock, TextMatch,
 };
+use festerm_document::DocumentId;
 use festerm_ui_egui::{icon, icon::Icon, theme};
 
 use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
@@ -410,6 +412,17 @@ struct PendingImageLoad {
     receiver: Receiver<Result<egui::ColorImage, String>>,
 }
 
+/// Ties a viewer tab to a document somebody is editing, so the tab renders
+/// what is being typed rather than what was last written to disk (ADR 0034
+/// §3, "Open in Markdown"). Without this the two tabs would disagree about a
+/// file the moment a key was pressed.
+struct LiveBinding {
+    document: DocumentId,
+    parsed: String,
+    pending: Option<String>,
+    settling: Option<Instant>,
+}
+
 pub struct MarkdownViewerTab {
     source: MarkdownSource,
     title: String,
@@ -435,6 +448,7 @@ pub struct MarkdownViewerTab {
     line_heading_indices: Vec<Option<usize>>,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
+    live: Option<LiveBinding>,
 }
 
 impl MarkdownViewerTab {
@@ -475,6 +489,7 @@ impl MarkdownViewerTab {
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
+            live: None,
         };
         tab.reload();
         tab
@@ -539,10 +554,84 @@ impl MarkdownViewerTab {
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
+            live: None,
         };
         let result = load_remote_document(source, display_path, content);
         tab.apply_load_result(result);
         tab
+    }
+
+    /// Opens a viewer that follows an open document instead of a file. The
+    /// first rendering comes from the text the editor holds now, unsaved
+    /// changes included.
+    pub(crate) fn open_live(path: PathBuf, document: DocumentId, text: &str) -> Self {
+        let mut tab = Self::open_local(path);
+        tab.live = Some(LiveBinding {
+            document,
+            parsed: String::new(),
+            pending: None,
+            settling: None,
+        });
+        tab.reparse_live(text.to_owned());
+        tab
+    }
+
+    /// The document this viewer follows, if it follows one.
+    pub(crate) fn live_document(&self) -> Option<DocumentId> {
+        self.live.as_ref().map(|live| live.document)
+    }
+
+    /// Takes the document's current text. Called once a frame by the owner of
+    /// the registry, because the viewer has no handle on it of its own.
+    pub(crate) fn sync_live(&mut self, ctx: &egui::Context, text: &str) {
+        let Some(live) = &mut self.live else {
+            return;
+        };
+        if live.pending.as_deref().unwrap_or(&live.parsed) != text {
+            live.pending = Some(text.to_owned());
+            live.settling = Some(Instant::now());
+        }
+        let Some(started) = live.settling else {
+            return;
+        };
+        let waited = started.elapsed();
+        if waited < PREVIEW_DEBOUNCE {
+            ctx.request_repaint_after(PREVIEW_DEBOUNCE - waited);
+            return;
+        }
+        let pending = live.pending.take();
+        live.settling = None;
+        if let Some(text) = pending {
+            self.reparse_live(text);
+        }
+    }
+
+    fn reparse_live(&mut self, text: String) {
+        let bytes = text.as_bytes();
+        let result = MarkdownLoader::default()
+            .load(
+                self.source.clone(),
+                bytes.len(),
+                bytes,
+                &Default::default(),
+            )
+            .map(|document| (self.display_path.clone(), document))
+            .map_err(MarkdownViewerLoadFailure::Load);
+        self.apply_load_result(result);
+        if let Some(live) = &mut self.live {
+            live.parsed = text;
+        }
+    }
+
+    /// The first heading of what is currently rendered, so a test can tell
+    /// which text the viewer actually parsed.
+    #[cfg(test)]
+    pub(crate) fn first_heading_for_test(&self) -> Option<String> {
+        self.document
+            .as_ref()?
+            .headings()
+            .first()
+            .map(|heading| heading.text().to_owned())
     }
 
     pub fn title(&self) -> &str {
@@ -1148,6 +1237,16 @@ impl MarkdownViewerTab {
                     // ignored how much room the controls had actually left,
                     // so on a narrow window the path drew straight through
                     // the Preview/Source/Find buttons.
+                    if self.live.is_some() {
+                        ui.add(egui::Label::new(
+                            RichText::new("LIVE")
+                                .size(TOOLBAR_TEXT_SIZE)
+                                .color(theme::ACCENT_PRIMARY),
+                        ))
+                        .on_hover_text(
+                            "This preview follows an open editor, including unsaved changes.",
+                        );
+                    }
                     ui.add(
                         egui::Label::new(
                             RichText::new(elide_middle(self.display_path(), 72))
@@ -3190,6 +3289,187 @@ fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
 /// The icon and text are measured and laid out explicitly rather than handed
 /// to `Ui::button`, because egui sizes a button from its galley alone and
 /// leaves no room to paint a leading icon into.
+/// How long typing settles before the live preview reparses. Reparsing on
+/// every keystroke makes a large document stutter under the caret; a quarter
+/// of a second is below the threshold where a reader notices the preview
+/// lagging, and it coalesces a burst of typing into one parse (ADR 0034 §11).
+pub(crate) const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(250);
+
+/// A rendered Markdown view over text somebody else owns.
+///
+/// The viewer tab loads from a source and holds the result; this pane is
+/// handed the text on every frame and reparses when it settles. It exists so
+/// the editor's Preview and Split modes render through exactly the same block
+/// renderer as the Markdown tab, rather than growing a second, quietly
+/// divergent Markdown implementation.
+pub(crate) struct MarkdownPreviewPane {
+    source: MarkdownSource,
+    document: Option<MarkdownDocument>,
+    error: Option<String>,
+    /// The text the current parse was made from, so an unchanged frame costs
+    /// nothing.
+    parsed: String,
+    /// Set while typing is still settling.
+    settling: Option<Instant>,
+    pending_text: Option<String>,
+    outline_selected: Option<usize>,
+    find: MarkdownFindState,
+    resource_approvals: ResourceApprovalState,
+    loaded_images: BTreeMap<usize, LoadedImage>,
+    pending_image_loads: BTreeMap<usize, PendingImageLoad>,
+    image_errors: BTreeMap<usize, String>,
+    pending_scroll: Option<PendingScroll>,
+    line_heading_indices: Vec<Option<usize>>,
+    outline_keyboard_focus: bool,
+}
+
+impl MarkdownPreviewPane {
+    pub(crate) fn new(source: MarkdownSource, text: &str) -> Self {
+        let mut pane = Self {
+            source,
+            document: None,
+            error: None,
+            parsed: String::new(),
+            settling: None,
+            pending_text: None,
+            outline_selected: None,
+            find: MarkdownFindState::default(),
+            resource_approvals: ResourceApprovalState::default(),
+            loaded_images: BTreeMap::new(),
+            pending_image_loads: BTreeMap::new(),
+            image_errors: BTreeMap::new(),
+            pending_scroll: None,
+            line_heading_indices: Vec::new(),
+            outline_keyboard_focus: false,
+        };
+        pane.parse(text.to_owned());
+        pane
+    }
+
+    /// Takes this frame's text. Parsing is deferred until typing settles, and
+    /// a repaint is asked for so the deferred parse actually happens even if
+    /// nothing else moves.
+    pub(crate) fn sync(&mut self, ctx: &egui::Context, text: &str) {
+        if self.pending_text.as_deref().unwrap_or(&self.parsed) != text {
+            self.pending_text = Some(text.to_owned());
+            self.settling = Some(Instant::now());
+        }
+        let Some(started) = self.settling else {
+            return;
+        };
+        let waited = started.elapsed();
+        if waited >= PREVIEW_DEBOUNCE {
+            if let Some(text) = self.pending_text.take() {
+                self.parse(text);
+            }
+            self.settling = None;
+        } else {
+            ctx.request_repaint_after(PREVIEW_DEBOUNCE - waited);
+        }
+    }
+
+    /// The text the rendering on screen was made from, which is a parse
+    /// behind the buffer while typing settles.
+    #[cfg(test)]
+    pub(crate) fn rendered_text(&self) -> &str {
+        &self.parsed
+    }
+
+    fn parse(&mut self, text: String) {
+        let bytes = text.as_bytes();
+        match MarkdownLoader::default().load(
+            self.source.clone(),
+            bytes.len(),
+            bytes,
+            &Default::default(),
+        ) {
+            Ok(document) => {
+                self.line_heading_indices = build_line_heading_index_lookup(&document);
+                self.outline_selected = document.headings().first().map(|_| 0);
+                self.document = Some(document);
+                self.error = None;
+                self.resource_approvals.clear();
+                self.loaded_images.clear();
+                self.pending_image_loads.clear();
+                self.image_errors.clear();
+            }
+            Err(error) => {
+                // The text stays editable whatever the preview makes of it,
+                // so a failed parse leaves the last good rendering in place
+                // and says why it stopped moving.
+                self.error = Some(error.to_string());
+            }
+        }
+        self.parsed = text;
+    }
+
+    pub(crate) fn show(&mut self, ui: &mut egui::Ui) {
+        if let Some(error) = &self.error {
+            ui.vertical(|ui| {
+                ui.add_space(READING_COLUMN_TOP_PADDING);
+                ui.label(
+                    egui::RichText::new("This text cannot be rendered as Markdown")
+                        .size(TOOLBAR_TEXT_SIZE + 1.0)
+                        .color(theme::TEXT_PRIMARY),
+                );
+                ui.label(
+                    egui::RichText::new(error)
+                        .size(TOOLBAR_TEXT_SIZE)
+                        .color(theme::TEXT_SECONDARY),
+                );
+            });
+            return;
+        }
+        let Some(document) = self.document.take() else {
+            return;
+        };
+        let mut state = MarkdownRenderState {
+            mode: MarkdownViewerMode::Preview,
+            outline_open: false,
+            outline_selected: &mut self.outline_selected,
+            find: &self.find,
+            resource_approvals: &self.resource_approvals,
+            loaded_images: &self.loaded_images,
+            pending_image_loads: &self.pending_image_loads,
+            image_errors: &self.image_errors,
+            pending_scroll: &mut self.pending_scroll,
+            line_heading_indices: &self.line_heading_indices,
+            outline_keyboard_focus: &mut self.outline_keyboard_focus,
+        };
+        let viewport_height = ui.available_height().max(120.0);
+        egui::ScrollArea::vertical()
+            .id_salt("markdown-preview-pane")
+            .max_height(viewport_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let column_width = READING_WIDTH
+                    .min(ui.available_width() - READING_COLUMN_SIDE_GUTTER * 2.0)
+                    .max(160.0);
+                let leading = ((ui.available_width() - column_width) / 2.0).max(0.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.add_space(leading);
+                    ui.allocate_ui_with_layout(
+                        vec2(column_width, 0.0),
+                        egui::Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_max_width(column_width);
+                            ui.add_space(READING_COLUMN_TOP_PADDING);
+                            state.render_blocks(
+                                ui,
+                                document.blocks(),
+                                &document,
+                                InlineRenderStyle::body(),
+                            );
+                            ui.add_space(READING_COLUMN_BOTTOM_PADDING);
+                        },
+                    );
+                });
+            });
+        self.document = Some(document);
+    }
+}
+
 pub(crate) fn toolbar_button(
     ui: &mut egui::Ui,
     icon_name: Option<Icon>,
@@ -3287,7 +3567,7 @@ fn icon_label(ui: &mut egui::Ui, icon_name: Icon, text: RichText, color: Color32
     });
 }
 
-fn elide_middle(value: &str, max_chars: usize) -> String {
+pub(crate) fn elide_middle(value: &str, max_chars: usize) -> String {
     let total = value.chars().count();
     if total <= max_chars {
         return value.to_owned();

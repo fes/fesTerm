@@ -486,7 +486,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn a_settled_document_and_an_edited_one_accent_differently() {
         let clean = DocumentStatus::derive(&StatusInputs::default());
         let dirty = DocumentStatus::derive(&StatusInputs {
@@ -500,6 +499,7 @@ mod tests {
         assert_eq!(clean.severity(), dirty.severity());
     }
 
+    #[test]
     fn a_dirty_document_offers_save_and_names_auto_saves_state() {
         let status = DocumentStatus::derive(&StatusInputs {
             dirty: true,
