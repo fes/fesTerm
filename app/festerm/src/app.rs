@@ -1336,6 +1336,15 @@ impl FesTermApp {
         }
     }
 
+    /// This window's last reported size, used to size a window detached from
+    /// it like the one the tab left.
+    pub(crate) fn window_size(&self) -> Option<egui::Vec2> {
+        self.window_geometry.map(|geometry| {
+            let (width, height) = geometry.size();
+            egui::vec2(width, height)
+        })
+    }
+
     /// Moves one of this window's tabs out, with its live session intact.
     pub(crate) fn detach_tab(&mut self, id: crate::tabs::TabId) -> Option<crate::tabs::Tab> {
         self.state.detach_tab(id)

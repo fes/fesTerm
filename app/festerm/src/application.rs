@@ -261,10 +261,13 @@ impl FesTermApplication {
         let Some(tab) = self.windows[source_index].app.detach_tab(request.moved) else {
             return;
         };
-        let size = self.windows[source_index].placement.map_or(
-            egui::vec2(crate::DEFAULT_WINDOW_WIDTH, crate::DEFAULT_WINDOW_HEIGHT),
-            |placement| placement.size,
-        );
+        let size = self.windows[source_index]
+            .app
+            .window_size()
+            .unwrap_or(egui::vec2(
+                crate::DEFAULT_WINDOW_WIDTH,
+                crate::DEFAULT_WINDOW_HEIGHT,
+            ));
         // Offset so the new window's own chip row lands under the pointer
         // rather than starting at it.
         let position = request.screen_position - egui::vec2(DETACH_POINTER_INSET, 0.0);
@@ -723,6 +726,9 @@ mod tests {
         application
             .window_mut(0)
             .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application.window_mut(0).set_window_geometry_for_test(
+            festerm_config::WorkspaceWindowGeometry::new(0.0, 0.0, 640.0, 480.0),
+        );
         let moved = application.window_mut(0).active_tab_id_for_test();
 
         application.window_mut(0).dispatch_for_test(
@@ -750,6 +756,11 @@ mod tests {
             .expect("a detached window opens where it was dropped");
         assert_eq!(placement.position.y, 300.0);
         assert!(placement.position.x < 720.0);
+        assert_eq!(
+            placement.size,
+            egui::vec2(640.0, 480.0),
+            "a detached window is sized like the window the tab left"
+        );
     }
 
     /// Detaching the only tab of an additional window would replace that
