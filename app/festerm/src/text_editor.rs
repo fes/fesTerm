@@ -15,9 +15,11 @@ use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
 use crate::documents::SharedDocuments;
 use crate::markdown_viewer::{
-    elide_middle, toolbar_button, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
+    elide_middle, toolbar_button, toolbar_button_response, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP,
+    TOOLBAR_BUTTON_HEIGHT,
 };
 use crate::tabs::{AppCommand, TabId};
+use crate::text_compare::ComparePane;
 
 /// Width of the line-number gutter's digits area before padding.
 const GUTTER_PADDING_X: f32 = 12.0;
@@ -111,6 +113,9 @@ pub(crate) struct TextEditorTab {
     /// Built the first time a rendered mode is asked for, so a file nobody
     /// previews never pays for a parse.
     preview: Option<MarkdownPreviewPane>,
+    /// The Compare view, while it is open. Per-view: comparing is looking,
+    /// not changing, so another window goes on editing (ADR 0034 §6).
+    compare: Option<ComparePane>,
 }
 
 impl TextEditorTab {
@@ -130,6 +135,7 @@ impl TextEditorTab {
             status_bar_visible: true,
             mode: EditorMode::Edit,
             preview: None,
+            compare: None,
         }
     }
 
@@ -262,6 +268,7 @@ impl TextEditorTab {
             return Some(AppCommand::CloseTab(tab_id));
         };
         self.adopt_external_edits(documents);
+        self.sync_compare(documents);
 
         let mut command = None;
         egui::Frame::new()
@@ -275,13 +282,64 @@ impl TextEditorTab {
                         command = Some(bar_command);
                     }
                     hairline(ui);
-                    if let Some(banner_command) = show_banner(ui, &status) {
-                        command = Some(banner_command);
+                    // The banner stays pinned above Compare: the decision it
+                    // asks for is the reason Compare is open (ADR 0034 §6).
+                    if let Some(action) = show_banner(ui, &status, self.compare.is_some()) {
+                        match action {
+                            BannerAction::Compare => self.toggle_compare(documents),
+                            other => command = banner_command(other),
+                        }
                     }
                     self.show_body(ui, documents);
                 });
             });
         command
+    }
+
+    /// The version the source now holds, when a conflict captured one.
+    fn source_text(&self, documents: &SharedDocuments) -> Option<String> {
+        documents.borrow().get(self.document).and_then(|open| {
+            open.conflict()
+                .and_then(|conflict| conflict.source_text().map(str::to_owned))
+        })
+    }
+
+    /// Opens Compare, or closes it if it is already open — the banner button
+    /// is the way back out as well as the way in.
+    fn toggle_compare(&mut self, documents: &SharedDocuments) {
+        if self.compare.is_some() {
+            self.compare = None;
+            return;
+        }
+        if let Some(source) = self.source_text(documents) {
+            self.compare = Some(ComparePane::new(&self.buffer, &source, self.remote));
+        }
+    }
+
+    /// Keeps Compare true, and closes it when the conflict it was about is
+    /// resolved: a comparison against a version nobody is holding any more
+    /// would be a view of the past presented as the present.
+    fn sync_compare(&mut self, documents: &SharedDocuments) {
+        if self.compare.is_none() {
+            return;
+        }
+        let Some(source) = self.source_text(documents) else {
+            self.compare = None;
+            return;
+        };
+        if let Some(pane) = self.compare.as_mut() {
+            pane.sync(&self.buffer, &source);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn compare(&self) -> Option<&ComparePane> {
+        self.compare.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_compare_for_gallery(&mut self, documents: &SharedDocuments) {
+        self.toggle_compare(documents);
     }
 
     /// Puts the view in a mode for the headless screenshot gallery, which
@@ -428,6 +486,15 @@ impl TextEditorTab {
     fn show_body(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
         let footer = if self.status_bar_visible { 0.0 } else { 24.0 };
         let height = (ui.available_height() - footer).max(120.0);
+        if let Some(compare) = self.compare.as_mut() {
+            // Compare replaces the body rather than sitting beside it: two
+            // versions side by side already use the whole width.
+            ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
+                ui.set_height(height);
+                compare.show(ui, height);
+            });
+            return;
+        }
         let mode = if self.renders_markdown() {
             self.mode
         } else {
@@ -627,8 +694,15 @@ fn primary_button(ui: &mut egui::Ui, label_text: &str, enabled: bool) -> bool {
     response.clicked()
 }
 
-fn show_banner(ui: &mut egui::Ui, status: &DocumentStatus) -> Option<AppCommand> {
-    let mut command = None;
+/// Renders the banner and reports the action pressed. Compare is handled by
+/// the view rather than mapped to a command, because comparing changes what
+/// this view shows and nothing about the document.
+fn show_banner(
+    ui: &mut egui::Ui,
+    status: &DocumentStatus,
+    comparing: bool,
+) -> Option<BannerAction> {
+    let mut pressed = None;
     let accent = accent_colour(status.accent());
     egui::Frame::new()
         .fill(theme::SURFACE_PANEL)
@@ -650,8 +724,30 @@ fn show_banner(ui: &mut egui::Ui, status: &DocumentStatus) -> Option<AppCommand>
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_GAP;
                         for action in status.actions() {
-                            if toolbar_button(ui, None, action.label(), action.label(), false) {
-                                command = banner_command(*action);
+                            let compare = *action == BannerAction::Compare;
+                            // Compare without a source version to compare
+                            // against is offered disabled with the reason,
+                            // rather than opening two panes one of which is
+                            // empty (ADR 0034 §6).
+                            let enabled = !compare || status.can_compare();
+                            let response = ui
+                                .add_enabled_ui(enabled, |ui| {
+                                    toolbar_button_response(
+                                        ui,
+                                        None,
+                                        action.label(),
+                                        action.label(),
+                                        compare && comparing,
+                                    )
+                                })
+                                .inner;
+                            let response = if enabled {
+                                response
+                            } else {
+                                response.on_disabled_hover_text(status.compare_unavailable_reason())
+                            };
+                            if response.clicked() {
+                                pressed = Some(*action);
                             }
                         }
                     });
@@ -668,7 +764,7 @@ fn show_banner(ui: &mut egui::Ui, status: &DocumentStatus) -> Option<AppCommand>
                 accent,
             );
         });
-    command
+    pressed
 }
 
 const fn banner_command(action: BannerAction) -> Option<AppCommand> {
@@ -676,9 +772,9 @@ const fn banner_command(action: BannerAction) -> Option<AppCommand> {
         BannerAction::ReloadFromSource => Some(AppCommand::ReloadTextDocument),
         BannerAction::KeepMyVersion => Some(AppCommand::KeepMyTextVersion),
         BannerAction::Retry => Some(AppCommand::SaveTextDocument),
-        // Compare, Save As…, and Close without saving arrive with the views
-        // they open; offering them before they exist would be a button that
-        // does nothing.
+        // Compare is handled inside the view. Save As… and Close without
+        // saving arrive with the views they open; offering them before they
+        // exist would be a button that does nothing.
         _ => None,
     }
 }
@@ -1118,6 +1214,172 @@ mod tests {
 
         // The body fell back to the editor, so no preview pane was built.
         assert!(harness.state().1.preview.is_none());
+    }
+
+    /// Arranges an honest conflict: type into the document through the
+    /// keyboard, then change the file underneath it and let the refresh that
+    /// notices raise the banner.
+    fn conflicted_harness(
+        directory: &TemporaryDirectory,
+        mine: &str,
+        theirs: &str,
+    ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+        let path = directory.file("NOTES.md", "alpha\nbravo\ncharlie\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text(mine);
+        harness.run();
+
+        fs::write(&path, theirs).unwrap();
+        let id = harness.state().1.document();
+        harness.state_mut().0.borrow_mut().refresh(id);
+        harness.run();
+        harness
+    }
+
+    #[test]
+    fn pressing_compare_shows_both_versions_side_by_side() {
+        let directory = TemporaryDirectory::new("compare-open");
+        let mut harness =
+            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+
+        harness.get_by_label("This file changed on disk");
+        assert!(harness.state().1.compare().is_none());
+
+        harness.get_by_label("Compare").click();
+        harness.run();
+
+        let compare = harness.state().1.compare().expect("Compare is open");
+        let text = compare.as_text();
+        assert!(text.contains("-bravo"), "{text}");
+        assert!(text.contains("+BRAVO"), "{text}");
+        assert!(text.contains("-delta"), "the line only I have: {text}");
+
+        // The banner is still there: the decision Compare exists to inform is
+        // one click above the evidence.
+        harness.get_by_label("This file changed on disk");
+        harness.get_by_label("Keep my version");
+        // Both headings name where their version is.
+        harness.get_by_label("Your version · unsaved");
+        harness.get_by_label("On disk");
+        // And the editing body is gone, because Compare is read-only.
+        assert!(
+            harness
+                .query_by_role(egui::accesskit::Role::MultilineTextInput)
+                .is_none(),
+            "Compare must not leave an editable body behind"
+        );
+    }
+
+    #[test]
+    fn pressing_compare_again_closes_it() {
+        let directory = TemporaryDirectory::new("compare-toggle");
+        let mut harness =
+            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+
+        harness.get_by_label("Compare").click();
+        harness.run();
+        assert!(harness.state().1.compare().is_some());
+
+        harness.get_by_label("Compare").click();
+        harness.run();
+        assert!(harness.state().1.compare().is_none());
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    }
+
+    #[test]
+    fn next_change_walks_the_comparison() {
+        let directory = TemporaryDirectory::new("compare-navigate");
+        let mut harness =
+            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+
+        harness.get_by_label("Compare").click();
+        harness.run();
+        assert_eq!(harness.state().1.compare().unwrap().focused_change(), None);
+
+        harness.get_by_label("Next change").click();
+        harness.run();
+        assert_eq!(
+            harness.state().1.compare().unwrap().focused_change(),
+            Some(0)
+        );
+
+        harness.get_by_label("Previous change").click();
+        harness.run();
+        // Previous from the first change wraps to the last one.
+        let compare = harness.state().1.compare().unwrap();
+        assert_eq!(compare.focused_change(), Some(compare.change_count() - 1));
+    }
+
+    #[test]
+    fn resolving_the_conflict_closes_compare() {
+        let directory = TemporaryDirectory::new("compare-resolved");
+        let mut harness =
+            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+
+        harness.get_by_label("Compare").click();
+        harness.run();
+        assert!(harness.state().1.compare().is_some());
+
+        // Keep my version dismisses the conflict; a comparison against a
+        // version nobody is holding any more would be the past shown as the
+        // present.
+        harness.get_by_label("Keep my version").click();
+        harness.run();
+        let (documents, editor) = harness.state_mut();
+        let id = editor.document();
+        documents.borrow_mut().get_mut(id).unwrap().keep_my_version();
+        harness.run();
+
+        assert!(harness.state().1.compare().is_none());
+        harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+    }
+
+    #[test]
+    fn compare_follows_a_sibling_view_that_keeps_typing() {
+        let directory = TemporaryDirectory::new("compare-live");
+        let mut harness =
+            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+
+        harness.get_by_label("Compare").click();
+        harness.run();
+        let before = harness.state().1.compare().unwrap().change_count();
+
+        // Another view of the same document types on.
+        let (documents, editor) = harness.state_mut();
+        let id = editor.document();
+        let mut sibling = TextEditorTab::new(id, documents);
+        sibling.type_for_gallery(documents, "echo\n");
+        harness.run();
+
+        let after = harness.state().1.compare().unwrap();
+        assert!(
+            after.as_text().contains("echo"),
+            "Compare must show what the document now holds: {}",
+            after.as_text()
+        );
+        assert!(after.change_count() >= before);
+    }
+
+    #[test]
+    fn compare_is_disabled_with_a_reason_when_the_source_cannot_be_read() {
+        let status = DocumentStatus::derive(&festerm_document::StatusInputs {
+            dirty: true,
+            conflict: Some(festerm_document::ConflictState::new("it changed")),
+            ..Default::default()
+        });
+
+        assert!(status.actions().contains(&BannerAction::Compare));
+        assert!(
+            !status.can_compare(),
+            "a conflict with no source text has nothing to compare against"
+        );
+        assert_eq!(
+            status.compare_unavailable_reason(),
+            "The version on the source could not be read."
+        );
     }
 
     #[test]

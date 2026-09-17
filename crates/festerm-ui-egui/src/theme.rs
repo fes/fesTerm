@@ -48,6 +48,16 @@ pub const SURFACE_FIELD: Color32 = Color32::from_rgb(0x13, 0x1b, 0x24);
 /// from `ACCENT_PRIMARY`, which marks live session state.
 pub const ACCENT_ACTION: Color32 = Color32::from_rgb(0x1c, 0x7e, 0xf5);
 
+/// Compare's two-pane line comparison.
+///
+/// The tints are deliberately dark enough to read monospace text over, because
+/// they are a second signal only: every changed line also carries a `-` or `+`
+/// marker, so the comparison stays legible without colour (ADR 0034 §8).
+pub const DIFF_REMOVED_FILL: Color32 = Color32::from_rgb(0x39, 0x1e, 0x24);
+pub const DIFF_ADDED_FILL: Color32 = Color32::from_rgb(0x17, 0x30, 0x22);
+pub const DIFF_REMOVED_TEXT: Color32 = Color32::from_rgb(0xef, 0xa1, 0xa1);
+pub const DIFF_ADDED_TEXT: Color32 = Color32::from_rgb(0x8e, 0xd7, 0xaa);
+
 /// Session-type identity colors.
 ///
 /// `docs/gui-design.md` forbids tinting a chip by *connection state*; these

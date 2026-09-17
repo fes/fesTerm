@@ -257,6 +257,10 @@ pub struct DocumentStatus {
     /// The same state as a standalone phrase for the status bar, where it is
     /// read on its own rather than after a file name.
     short_label: &'static str,
+    /// Whether Compare has a source version to compare against. A conflict
+    /// whose source could not be read still offers the action, disabled with
+    /// a reason, rather than silently dropping it (ADR 0034 §6).
+    can_compare: bool,
 }
 
 impl DocumentStatus {
@@ -286,6 +290,7 @@ impl DocumentStatus {
                 accent: StatusAccent::Failing,
                 chip_state: "in conflict",
                 short_label: "Conflict",
+                can_compare: conflict.can_compare(),
             };
         }
 
@@ -317,6 +322,7 @@ impl DocumentStatus {
                 accent: StatusAccent::Warning,
                 chip_state: "source unavailable",
                 short_label: "Source unavailable",
+                can_compare: false,
             };
         }
 
@@ -333,6 +339,7 @@ impl DocumentStatus {
                 accent: StatusAccent::Warning,
                 chip_state: "offline",
             short_label: "Offline",
+            can_compare: false,
             };
         }
 
@@ -347,6 +354,7 @@ impl DocumentStatus {
                 accent: StatusAccent::Warning,
                 chip_state: "not saved",
                 short_label: "Not saved",
+                can_compare: false,
             };
         }
 
@@ -361,6 +369,7 @@ impl DocumentStatus {
                 accent: StatusAccent::Working,
                 chip_state: "saving",
                 short_label: "Saving",
+                can_compare: false,
             };
         }
 
@@ -380,6 +389,7 @@ impl DocumentStatus {
                 accent: StatusAccent::Working,
                 chip_state: "unsaved",
                 short_label: "Unsaved changes",
+                can_compare: false,
             };
         }
 
@@ -396,6 +406,7 @@ impl DocumentStatus {
                 auto_save: auto_save_idle(inputs.auto_save_requested),
                 chip_state: "reloaded",
                 short_label: "Reloaded",
+                can_compare: false,
             };
         }
 
@@ -411,6 +422,7 @@ impl DocumentStatus {
             auto_save: auto_save_idle(inputs.auto_save_requested),
             chip_state: "saved",
             short_label: "Saved",
+            can_compare: false,
         }
     }
 
@@ -436,6 +448,17 @@ impl DocumentStatus {
 
     pub const fn can_save(&self) -> bool {
         self.can_save
+    }
+
+    /// Whether Compare can actually show two versions.
+    pub const fn can_compare(&self) -> bool {
+        self.can_compare
+    }
+
+    /// Why Compare is disabled, for the button that cannot be pressed. Said
+    /// rather than left to be guessed at (ADR 0034 §8).
+    pub const fn compare_unavailable_reason(&self) -> &'static str {
+        "The version on the source could not be read."
     }
 
     pub const fn auto_save(&self) -> AutoSaveControl {

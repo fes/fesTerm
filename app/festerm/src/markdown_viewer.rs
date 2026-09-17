@@ -3481,8 +3481,8 @@ pub(crate) fn toolbar_button(
 }
 
 /// As `toolbar_button`, but hands back the `Response` so a caller can anchor
-/// a popup to it.
-fn toolbar_button_response(
+/// a popup to it, or attach a reason to a button it had to disable.
+pub(crate) fn toolbar_button_response(
     ui: &mut egui::Ui,
     icon_name: Option<Icon>,
     label: &str,

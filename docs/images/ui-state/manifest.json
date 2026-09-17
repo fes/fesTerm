@@ -90,6 +90,50 @@
       "sha256": "73c5b1557c52e5d666c910681cb85eff4d073ea12d89b69f5125d17b95eda93c"
     },
     {
+      "id": "text-editor-compare",
+      "section": "editor",
+      "title": "Compare, after the file changed underneath the editor",
+      "caption": "The conflict banner stays pinned above a read-only, line-oriented comparison of the unsaved version against the one the file now holds, so the choice is made with both versions in sight.",
+      "image": "text-editor-compare.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "80784bae0a96a3c1a66cd617286673b7b67edef8f3f00f1f84592b0af3a97a72"
+    },
+    {
+      "id": "text-editor-saved",
+      "section": "editor",
+      "title": "The native editor, everything saved",
+      "caption": "A fictional project's notes open for editing, with the origin, the commands, and the status band the editor reports through.",
+      "image": "text-editor-saved.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "b15b68f3e7774ff68c678753434e5faba93b53ccb53ba26d4e409c5470079f5c"
+    },
+    {
+      "id": "text-editor-split",
+      "section": "editor",
+      "title": "The editor split with its live preview",
+      "caption": "One view, two panes: the text on the left and the same document rendered on the right, so a Markdown change can be read as it is typed.",
+      "image": "text-editor-split.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "8c807211b2d0b034501c27db66298d11d5d63806159802bbaa19950d9f04efd0"
+    },
+    {
+      "id": "text-editor-unsaved",
+      "section": "editor",
+      "title": "The native editor holding unsaved changes",
+      "caption": "The same document after typing: the banner, the chip state, and the status band all report one unsaved document rather than disagreeing.",
+      "image": "text-editor-unsaved.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "dad0be7e49ddd245084309c9edfd661ea83da749831741defdd87c651dc98f0d"
+    },
+    {
       "id": "keyboard-editor-collapsed",
       "section": "keyboard",
       "title": "Keyboard bindings editor, collapsed",

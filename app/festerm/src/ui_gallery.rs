@@ -319,6 +319,15 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_unsaved,
         },
         Scenario {
+            id: "text-editor-compare",
+            section: "editor",
+            title: "Compare, after the file changed underneath the editor",
+            caption: "The conflict banner stays pinned above a read-only, line-oriented \
+                      comparison of the unsaved version against the one the file now holds, \
+                      so the choice is made with both versions in sight.",
+            capture: capture_text_editor_compare,
+        },
+        Scenario {
             id: "text-editor-split",
             section: "editor",
             title: "The editor split with its live preview",
@@ -1215,12 +1224,19 @@ fn synthetic_markdown_prose() -> String {
 /// directory of its own. The contents are the same invented project notes the
 /// Markdown scenarios use, so nothing here comes from the machine it runs on.
 fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
-    render_text_editor_in(typed, crate::text_editor::EditorMode::Edit)
+    render_text_editor_in(typed, crate::text_editor::EditorMode::Edit, None)
 }
+
+/// Arranges what happened *outside* fesTerm before the frame is drawn — a file
+/// changed underneath an open editor, say — with the document open and
+/// anything typed already in it.
+type PrepareEditor<'a> =
+    &'a dyn Fn(&crate::documents::SharedDocuments, &mut TextEditorTab, &std::path::Path);
 
 fn render_text_editor_in(
     typed: Option<&str>,
     mode: crate::text_editor::EditorMode,
+    prepare: Option<PrepareEditor<'_>>,
 ) -> image::RgbaImage {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -1244,6 +1260,9 @@ fn render_text_editor_in(
     if let Some(typed) = typed {
         editor.type_for_gallery(&documents, typed);
     }
+    if let Some(prepare) = prepare {
+        prepare(&documents, &mut editor, &path);
+    }
     let tab_id = AppState::for_test().active();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(900.0, 820.0))
@@ -1264,7 +1283,35 @@ fn capture_text_editor_saved() -> image::RgbaImage {
 }
 
 fn capture_text_editor_split() -> image::RgbaImage {
-    render_text_editor_in(None, crate::text_editor::EditorMode::Split)
+    render_text_editor_in(None, crate::text_editor::EditorMode::Split, None)
+}
+
+/// A real conflict, arranged the way one actually happens: the document is
+/// typed into, the file is then changed underneath it, and the refresh that
+/// notices refuses to overwrite either version.
+fn capture_text_editor_compare() -> image::RgbaImage {
+    render_text_editor_in(
+        Some("\n## Known Issues\n\n- The relay drops duplicate webhook deliveries silently.\n"),
+        crate::text_editor::EditorMode::Edit,
+        Some(&|documents, editor, path| {
+            let changed = synthetic_markdown_prose()
+                .replace(
+                    "Nimbus Relay is a small message-relay",
+                    "Nimbus Relay is a compact message-relay",
+                )
+                .replace(
+                    "overrides the default `info` log level",
+                    "overrides the default `debug` log level",
+                );
+            // The rewrite changes the file's length as well as its contents,
+            // so the generation differs whatever the filesystem's clock
+            // granularity is.
+            std::fs::write(path, changed).expect("the gallery can rewrite its fixture");
+            let id = editor.document();
+            documents.borrow_mut().refresh(id);
+            editor.open_compare_for_gallery(documents);
+        }),
+    )
 }
 
 fn capture_text_editor_unsaved() -> image::RgbaImage {
