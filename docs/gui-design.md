@@ -338,12 +338,22 @@ in [SSH session creation](#ssh-session-creation). Saved profiles, agents,
 key-file selection, and OpenSSH-config import controls appear only when their
 capabilities are implemented and available, never as disabled placeholders.
 
-Selecting SSH opens the **Connect with SSH** form: a **Connection** section
-led by a single **Quick connect** `user@host[:port]` field -- which takes the
-opening focus and stays two-way synchronised with the Username, Host and Port
-fields below it, so either notation can be used interchangeably -- then an
-**Authentication** section and an initially off **Durable remote session**
-control.
+Selecting SSH opens the **Connect with SSH** form: a **Connection** section,
+then an **Authentication** section and an initially off **Durable remote
+session** control.
+
+The Connection section shows the destination in one of two interchangeable
+notations, never both at once: separate **Username**, **Host** and **Port**
+fields (the SSH form's default, with Username taking the opening focus), or a
+single **Quick connect** `user@host[:port]` field (the SFTP form's default).
+A toggle on the section heading switches between them and carries the
+destination across, so neither notation is second-class and neither duplicates
+the other on screen. The SSH launcher, the SFTP launcher and the Profiles
+editor for SSH/SFTP profiles all render this same pane, so the notation
+toggle, field order and focus behave identically wherever a destination is
+edited; each surface adds only its own surrounding controls. The SSH and SFTP
+launchers likewise share one **Authentication** section, differing only in
+which command a stored credential starts.
 Enabling it exposes the shared provider (`tmux` or GNU screen), validated
 session-name, and per-launch automatic-recovery controls, allowing an ad-hoc
 connection to attach to or create a durable session without first saving a

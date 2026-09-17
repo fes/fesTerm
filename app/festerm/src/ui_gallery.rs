@@ -657,7 +657,7 @@ enum Prefill {
         username: &'static str,
         host: &'static str,
     },
-    /// Fills the single combined `user@host` Quick Connect field.
+    /// Fills the single combined `user@host:port` shorthand field.
     QuickConnect(&'static str),
     /// Fills the serial form's "Device" field, which (unlike the SSH/SFTP
     /// fields) has no accessible label to query directly, so it is reached
@@ -673,7 +673,7 @@ impl Prefill {
                 enter_text(harness, "Host", host);
             }
             Prefill::QuickConnect(value) => {
-                enter_text(harness, "user@host", value);
+                enter_text(harness, "Quick connect", value);
             }
             Prefill::SerialDevice(device) => {
                 let label_rect = harness.get_by_label("Device").rect();
