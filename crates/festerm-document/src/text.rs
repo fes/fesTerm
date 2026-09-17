@@ -327,6 +327,15 @@ impl TextDocument {
     /// The column counts characters rather than bytes, because a column that
     /// jumps by three when the caret passes an accented letter is wrong in the
     /// only way a user would notice.
+    /// Converts a character index — what a text widget reports its caret at —
+    /// into the byte offset every other method here speaks in.
+    pub fn byte_offset_of_char(&self, characters: usize) -> usize {
+        self.text
+            .char_indices()
+            .nth(characters)
+            .map_or(self.text.len(), |(offset, _)| offset)
+    }
+
     pub fn line_and_column(&self, offset: usize) -> (usize, usize) {
         let offset = offset.min(self.text.len());
         let before = &self.text[..offset];
@@ -700,6 +709,15 @@ mod tests {
         let mut doc = document("alpha\n");
         assert!(doc.reload_from(b"bad\0bytes").is_err());
         assert_eq!(doc.text(), "alpha\n");
+    }
+
+    #[test]
+    fn a_caret_measured_in_characters_maps_onto_bytes() {
+        let doc = document("bêta\n");
+        assert_eq!(doc.byte_offset_of_char(0), 0);
+        assert_eq!(doc.byte_offset_of_char(2), 3);
+        assert_eq!(doc.byte_offset_of_char(99), doc.text().len());
+        assert_eq!(doc.line_and_column(doc.byte_offset_of_char(2)), (1, 3));
     }
 
     #[test]

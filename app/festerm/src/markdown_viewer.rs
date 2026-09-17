@@ -80,9 +80,9 @@ const TABLE_MIN_COLUMN_WIDTH: f32 = 72.0;
 const MARKDOWN_PANEL_RADIUS: f32 = 6.0;
 /// Toolbar control metrics, from the mockup's `.fmd-tool` rule
 /// (`height: 30px; min-width: 30px; padding: 0 8px; border-radius: 5px`).
-const TOOLBAR_BUTTON_HEIGHT: f32 = 30.0;
+pub(crate) const TOOLBAR_BUTTON_HEIGHT: f32 = 30.0;
 const TOOLBAR_BUTTON_PADDING_X: f32 = 8.0;
-const TOOLBAR_BUTTON_GAP: f32 = 5.0;
+pub(crate) const TOOLBAR_BUTTON_GAP: f32 = 5.0;
 const TOOLBAR_BUTTON_RADIUS: f32 = 5.0;
 const TOOLBAR_ICON_SIZE: f32 = 15.0;
 /// Gap between a toolbar control's icon and its text, matching the
@@ -558,6 +558,16 @@ impl MarkdownViewerTab {
 
     pub fn display_path(&self) -> &str {
         &self.display_path
+    }
+
+    /// The local file this viewer is showing, if it is showing one. Editing
+    /// is only offered for local sources for now; a remote snapshot has no
+    /// write path yet (ADR 0034 §3).
+    pub(crate) fn local_path(&self) -> Option<&Path> {
+        match &self.source {
+            MarkdownSource::Local(local) => Some(local.path()),
+            MarkdownSource::Remote(_) => None,
+        }
     }
 
     pub fn matches_local_path(&self, path: &Path) -> bool {
@@ -1044,6 +1054,12 @@ impl MarkdownViewerTab {
                     if ui.button("Reload").clicked() {
                         command = Some(AppCommand::ReloadMarkdown);
                         ui.close();
+                    }
+                    if let Some(path) = self.local_path().map(Path::to_path_buf) {
+                        if ui.button("Edit").clicked() {
+                            command = Some(AppCommand::OpenTextEditor { path });
+                            ui.close();
+                        }
                     }
                     ui.separator();
                     if ui.button("Close viewer").clicked() {
@@ -3174,7 +3190,7 @@ fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
 /// The icon and text are measured and laid out explicitly rather than handed
 /// to `Ui::button`, because egui sizes a button from its galley alone and
 /// leaves no room to paint a leading icon into.
-fn toolbar_button(
+pub(crate) fn toolbar_button(
     ui: &mut egui::Ui,
     icon_name: Option<Icon>,
     label: &str,

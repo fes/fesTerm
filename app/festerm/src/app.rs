@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::documents::{DocumentRegistry, SharedDocuments};
+use crate::documents::SharedDocuments;
 use eframe::egui;
 use festerm_config::{
     Configuration, EmojiPresentationPreference, InterfaceSettings, PersistenceProviderKind,
@@ -372,11 +372,6 @@ pub struct FesTermApp {
     /// content-free status so local sessions and the rest of the app stay
     /// available.
     secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
-    /// Every open text document in the whole application (ADR 0034 §2). Held
-    /// by the window but owned by the process, so a file opened in two windows
-    /// is one buffer with one undo history rather than two that silently
-    /// overwrite each other.
-    documents: SharedDocuments,
     secure_storage_feedback: Option<&'static str>,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
@@ -634,7 +629,7 @@ impl FesTermApp {
         window.configuration_reloader = configuration_reloader;
         // The registry is application-scoped: a second window joins the one
         // that already exists rather than starting its own.
-        window.documents = documents;
+        window.state.adopt_documents(documents);
         window.role = WindowRole::Secondary;
         // The native menu bar, the wake monitor, and native-window smoke stay
         // with the primary window; a secondary window shares the process and
@@ -750,7 +745,6 @@ impl FesTermApp {
             configuration_status,
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store,
-            documents: DocumentRegistry::shared(),
             secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,
@@ -941,6 +935,7 @@ impl FesTermApp {
             TabContent::Settings => "Close Settings",
             TabContent::Profiles => "Close Profiles",
             TabContent::MarkdownViewer(_) => "Close Markdown Viewer",
+            TabContent::TextEditor(_) => "Close Editor",
             TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::SftpFileManagerAuthenticationRequired(_)
@@ -1236,7 +1231,7 @@ impl FesTermApp {
             self.configuration_status,
             self.configuration_reloader.clone(),
             self.secret_store.clone(),
-            Rc::clone(&self.documents),
+            Rc::clone(self.state.documents()),
         )
     }
 
@@ -2361,6 +2356,7 @@ impl FesTermApp {
                 TabContent::Settings => "Close Settings".to_owned(),
                 TabContent::Profiles => "Close Profiles".to_owned(),
                 TabContent::MarkdownViewer(_) => "Close Markdown Viewer".to_owned(),
+                TabContent::TextEditor(_) => "Close Editor".to_owned(),
                 TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
@@ -2380,6 +2376,9 @@ impl FesTermApp {
                     tab.title().to_owned(),
                     Some(tab.chip_secondary().to_owned()),
                 ),
+                TabContent::TextEditor(tab) => {
+                    (tab.title().to_owned(), Some(tab.origin_label().to_owned()))
+                }
                 TabContent::SshAuthenticationRequired(tab) => (
                     tab.profile.identifier().to_owned(),
                     Some(format!(
@@ -4082,6 +4081,14 @@ impl FesTermApp {
                         Some(tab.chip_secondary().to_owned()),
                         ChipStatus::Neutral,
                     ),
+                    // The chip is where an editor with unsaved changes is
+                    // noticed from another tab, so it carries the document's
+                    // severity rather than a flat neutral dot (ADR 0034 §8).
+                    TabContent::TextEditor(tab) => (
+                        tab.title().to_owned(),
+                        Some(tab.origin_label().to_owned()),
+                        tab.chip_status(self.state.documents()),
+                    ),
                     TabContent::SshAuthenticationRequired(tab) => (
                         tab.profile.identifier().to_owned(),
                         Some(format!(
@@ -4338,6 +4345,20 @@ impl FesTermApp {
                 // report, which is exactly what the mockup's `.fmd-status`
                 // shows. Reporting it here instead of in a viewer-owned
                 // footer keeps one status band in the window.
+                // The editor reports the same kinds of fact as the viewer,
+                // plus where the caret is and how large the buffer is, which
+                // is what the mockup's status band shows (ADR 0034 §8).
+                TabContent::TextEditor(tab) => (
+                    Some(tab.language_label()),
+                    Some(tab.status_bar_position()),
+                    Some(std::borrow::Cow::Owned(
+                        tab.status_bar_encoding(self.state.documents()),
+                    )),
+                    tab.chip_status(self.state.documents()),
+                    tab.status_bar_label(self.state.documents()),
+                    Some(tab.status_bar_size(self.state.documents())),
+                    None,
+                ),
                 TabContent::MarkdownViewer(tab) => (
                     Some(tab.status_bar_context()),
                     None,
@@ -4892,6 +4913,9 @@ impl FesTermApp {
         // Matches the guard used above when the bar is actually drawn.
         let status_bar_visible = self.state.status_bar_visible() && !self.focus_mode;
         self.state.update_running_sessions(ui.ctx());
+        // Taken before the active tab is borrowed mutably: an editor tab reads
+        // and writes the shared registry while it draws.
+        let documents = Rc::clone(self.state.documents());
         {
             let tab = self.state.active_tab_mut();
             match &mut tab.content {
@@ -4964,6 +4988,10 @@ impl FesTermApp {
                 TabContent::MarkdownViewer(tab) => {
                     tab.set_status_bar_visible(status_bar_visible);
                     screen_command = tab.show(ui, active_tab_id);
+                }
+                TabContent::TextEditor(tab) => {
+                    tab.set_status_bar_visible(status_bar_visible);
+                    screen_command = tab.show(ui, active_tab_id, &documents);
                 }
                 TabContent::SshAuthenticationRequired(tab) => {
                     screen_command = screens::show_ssh_authentication_required(
@@ -5449,8 +5477,8 @@ impl FesTermApp {
     }
 
     #[cfg(test)]
-    pub(crate) const fn documents_for_test(&self) -> &SharedDocuments {
-        &self.documents
+    pub(crate) fn documents_for_test(&self) -> &SharedDocuments {
+        self.state.documents()
     }
 
     pub(crate) const fn accept_window_close_for_test(&mut self) {
@@ -5468,7 +5496,6 @@ impl FesTermApp {
             configuration_status: ConfigurationStartupStatus::Missing,
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store: Ok(Arc::new(MemorySecretStore::new())),
-            documents: DocumentRegistry::shared(),
             secure_storage_feedback: None,
             inspector_restore_focus: None,
             rename_restore_focus: None,

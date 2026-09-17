@@ -59,6 +59,7 @@ use festerm_ui_egui::{
 use crate::{
     inspector::{self, InspectorContent, PersistentSessionFacts, TransportFacts},
     markdown_viewer::MarkdownViewerTab,
+    text_editor::TextEditorTab,
     multiplexer_sessions::MultiplexerSession,
     screens::{self, SettingsViewModel},
     sftp_file_manager::SftpFileManagerTab,
@@ -299,6 +300,23 @@ fn scenarios() -> Vec<Scenario> {
             caption: "The heading outline docked alongside the document, letting a reader \
                       jump straight to a section of a longer file.",
             capture: capture_markdown_outline,
+        },
+        // -- editor -----------------------------------------------------------
+        Scenario {
+            id: "text-editor-saved",
+            section: "editor",
+            title: "The native editor, everything saved",
+            caption: "A fictional project's notes open for editing, with the origin, the \
+                      commands, and the status band the editor reports through.",
+            capture: capture_text_editor_saved,
+        },
+        Scenario {
+            id: "text-editor-unsaved",
+            section: "editor",
+            title: "The native editor holding unsaved changes",
+            caption: "The same document after typing: the banner, the chip state, and the \
+                      status band all report one unsaved document rather than disagreeing.",
+            capture: capture_text_editor_unsaved,
         },
         // -- diagnostics --------------------------------------------------
         Scenario {
@@ -1180,6 +1198,58 @@ fn synthetic_markdown_prose() -> String {
      - Queue draining is slow under heavy backpressure.\n\
      - The `/health` endpoint does not yet report per-queue status.\n"
         .to_owned()
+}
+
+// -- editor -------------------------------------------------------------------
+
+/// The editor reads a real file, so the gallery writes one into a temporary
+/// directory of its own. The contents are the same invented project notes the
+/// Markdown scenarios use, so nothing here comes from the machine it runs on.
+fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let directory = std::env::temp_dir().join(format!(
+        "festerm-ui-gallery-editor-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
+    let path = directory.join("NOTES.md");
+    std::fs::write(&path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
+
+    let documents = crate::documents::DocumentRegistry::shared();
+    let id = documents
+        .borrow_mut()
+        .open_local(&path)
+        .expect("the gallery fixture is an editable file");
+    let mut editor = TextEditorTab::new(id, &documents);
+    if let Some(typed) = typed {
+        editor.type_for_gallery(&documents, typed);
+    }
+    let tab_id = AppState::for_test().active();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 820.0))
+        .build_ui_state(
+            move |ui, state: &mut (crate::documents::SharedDocuments, TextEditorTab)| {
+                let _ = state.1.show(ui, tab_id, &state.0);
+            },
+            (documents, editor),
+        );
+    harness.run();
+    let image = finish(&mut harness);
+    let _ = std::fs::remove_dir_all(&directory);
+    image
+}
+
+fn capture_text_editor_saved() -> image::RgbaImage {
+    render_text_editor(None)
+}
+
+fn capture_text_editor_unsaved() -> image::RgbaImage {
+    render_text_editor(Some(
+        "\n## Known Issues\n\n- The relay drops duplicate webhook deliveries silently.\n",
+    ))
 }
 
 fn synthetic_markdown_source() -> RemoteMarkdownSource {

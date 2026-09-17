@@ -51,11 +51,17 @@ use festerm_ui_egui::{
     TerminalView,
 };
 
+use std::rc::Rc;
+
+use festerm_document::DocumentId;
+
+use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::markdown_viewer::MarkdownViewerTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 use crate::sftp_file_manager::{
     SftpFileManagerAuthentication, SftpFileManagerLaunchTarget, SftpFileManagerTab,
 };
+use crate::text_editor::TextEditorTab;
 
 /// Stable application-level tab identifier.
 ///
@@ -66,6 +72,11 @@ use crate::sftp_file_manager::{
 pub struct TabId(u64);
 
 impl TabId {
+    #[cfg(test)]
+    pub(crate) fn next_for_test() -> Self {
+        Self::next()
+    }
+
     fn next() -> Self {
         static NEXT_TAB_ID: AtomicU64 = AtomicU64::new(1);
         Self(NEXT_TAB_ID.fetch_add(1, Ordering::Relaxed))
@@ -1366,6 +1377,7 @@ pub enum TabContent {
     SshAuthenticationRequired(SshAuthenticationRequiredTab),
     SftpAuthenticationRequired(SftpAuthenticationRequiredTab),
     MarkdownViewer(Box<MarkdownViewerTab>),
+    TextEditor(Box<TextEditorTab>),
     SftpFileManagerAuthenticationRequired(SftpFileManagerAuthenticationRequiredTab),
     SftpFileManager(Box<SftpFileManagerTab>),
     Session(Box<SessionTab>),
@@ -1606,6 +1618,20 @@ pub enum AppCommand {
     StartConfiguredSerialProfile {
         profile_id: String,
     },
+    /// Opens a local file in the native editor, binding to the document if it
+    /// is already open somewhere else (ADR 0034 §2).
+    OpenTextEditor {
+        path: PathBuf,
+    },
+    /// Writes the active editor's document back to its origin.
+    SaveTextDocument,
+    /// Re-checks the active editor's document against its source.
+    RefreshTextDocument,
+    /// Replaces the active editor's buffer with what the source holds,
+    /// discarding unsaved changes. Only reachable from a conflict banner.
+    ReloadTextDocument,
+    /// Dismisses a conflict banner without writing anything.
+    KeepMyTextVersion,
     ReloadMarkdown,
     ToggleMarkdownPreviewSource,
     ToggleMarkdownOutline,
@@ -1964,6 +1990,10 @@ pub struct AppState {
     pending_resume: Option<PendingResume>,
     tabs: Vec<Tab>,
     active: TabId,
+    /// Every text document open anywhere in the application (ADR 0034 §2).
+    /// Held here so tabs and command dispatch reach it, but owned by the
+    /// process: secondary windows are given the registry that already exists.
+    documents: SharedDocuments,
     configuration: Configuration,
     inspector_open: bool,
     input_ownership_epoch: u64,
@@ -2045,6 +2075,7 @@ impl AppState {
             pending_resume: None,
             tabs,
             active,
+            documents: DocumentRegistry::shared(),
             configuration,
             inspector_open: false,
             input_ownership_epoch: 0,
@@ -2343,7 +2374,9 @@ impl AppState {
                 TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
                 TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
                 TabContent::Profiles => Some(WorkspaceTab::profiles(identifier.clone())?),
-                TabContent::MarkdownViewer(_) => None,
+                // ADR 0034 §12: an editor tab is not restored, because the
+                // buffer it was showing is not persisted anywhere.
+                TabContent::MarkdownViewer(_) | TabContent::TextEditor(_) => None,
                 TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
                     identifier.clone(),
                     ssh.profile.identifier(),
@@ -2568,7 +2601,8 @@ impl AppState {
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::SftpFileManager(_)
-                | TabContent::MarkdownViewer(_) => None,
+                | TabContent::MarkdownViewer(_)
+                | TabContent::TextEditor(_) => None,
             })
     }
 
@@ -2582,6 +2616,7 @@ impl AppState {
                 | TabContent::Settings
                 | TabContent::Profiles
                 | TabContent::MarkdownViewer(_)
+                | TabContent::TextEditor(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
@@ -2599,6 +2634,7 @@ impl AppState {
                 | TabContent::Settings
                 | TabContent::Profiles
                 | TabContent::MarkdownViewer(_)
+                | TabContent::TextEditor(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
@@ -2631,6 +2667,7 @@ impl AppState {
             | TabContent::Settings
             | TabContent::Profiles
             | TabContent::MarkdownViewer(_)
+            | TabContent::TextEditor(_)
             | TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::SftpFileManagerAuthenticationRequired(_)
@@ -2651,6 +2688,7 @@ impl AppState {
                 | TabContent::Settings
                 | TabContent::Profiles
                 | TabContent::MarkdownViewer(_)
+                | TabContent::TextEditor(_)
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
@@ -2771,6 +2809,27 @@ impl AppState {
             | AppCommand::StoreProfilePrivateKey { .. }
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
+            AppCommand::OpenTextEditor { path } => {
+                self.open_text_editor(&path);
+            }
+            AppCommand::SaveTextDocument => self.save_active_text_document(),
+            AppCommand::RefreshTextDocument => {
+                self.with_active_document(|registry, id| {
+                    registry.refresh(id);
+                });
+            }
+            AppCommand::ReloadTextDocument => {
+                self.with_active_document(|registry, id| {
+                    registry.reload_from_source(id);
+                });
+            }
+            AppCommand::KeepMyTextVersion => {
+                self.with_active_document(|registry, id| {
+                    if let Some(open) = registry.get_mut(id) {
+                        open.keep_my_version();
+                    }
+                });
+            }
             AppCommand::ReloadMarkdown => {
                 self.with_active_markdown_viewer(|viewer| viewer.reload())
             }
@@ -3091,6 +3150,73 @@ impl AppState {
         });
         self.set_active(id);
         self.workspace_dirty = true;
+    }
+
+    /// The application-scoped document registry this window was given.
+    pub(crate) fn documents(&self) -> &SharedDocuments {
+        &self.documents
+    }
+
+    /// Joins the registry a sibling window already owns, so the two windows
+    /// share one document per file (ADR 0034 §2).
+    pub(crate) fn adopt_documents(&mut self, documents: SharedDocuments) {
+        self.documents = documents;
+    }
+
+    /// The document the active tab is a view of, if it is an editor.
+    pub(crate) fn active_document(&self) -> Option<DocumentId> {
+        match &self.active_tab().content {
+            TabContent::TextEditor(editor) => Some(editor.document()),
+            _ => None,
+        }
+    }
+
+    fn with_active_document(&mut self, action: impl FnOnce(&mut DocumentRegistry, DocumentId)) {
+        let Some(id) = self.active_document() else {
+            return;
+        };
+        let documents = Rc::clone(&self.documents);
+        let mut registry = documents.borrow_mut();
+        action(&mut registry, id);
+    }
+
+    fn save_active_text_document(&mut self) {
+        self.with_active_document(|registry, id| {
+            registry.save(id);
+        });
+    }
+
+    /// Opens a file in the editor. A second view of a file that is already
+    /// open shares its document rather than reading the file again, and a tab
+    /// already showing that document is raised instead of duplicated.
+    pub(crate) fn open_text_editor(&mut self, path: &Path) -> Option<OpenFailure> {
+        let already_open = self.documents.borrow().find_local(path);
+        if let Some(existing) = already_open.and_then(|id| {
+            self.tabs.iter().find_map(|tab| match &tab.content {
+                TabContent::TextEditor(editor) if editor.document() == id => Some(tab.id),
+                _ => None,
+            })
+        }) {
+            self.set_active(existing);
+            self.workspace_dirty = true;
+            return None;
+        }
+
+        let opened = self.documents.borrow_mut().open_local(path);
+        match opened {
+            Ok(document) => {
+                let id = TabId::next();
+                let editor = TextEditorTab::new(document, &self.documents);
+                self.tabs.push(Tab {
+                    id,
+                    content: TabContent::TextEditor(Box::new(editor)),
+                });
+                self.set_active(id);
+                self.workspace_dirty = true;
+                None
+            }
+            Err(failure) => Some(failure),
+        }
     }
 
     fn open_local_markdown(&mut self, path: PathBuf, replacing: Option<TabId>) {

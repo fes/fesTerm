@@ -221,10 +221,27 @@ impl Default for StatusInputs {
     }
 }
 
+/// What the banner's accent bar is saying at a glance, before a word is read.
+/// Severity cannot carry this on its own: a saved document and a document with
+/// unsaved changes are both merely informational, yet one is settled and the
+/// other is waiting on the user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StatusAccent {
+    /// Everything is where it belongs.
+    Settled,
+    /// Something is in hand: typed but unsaved, or a save in flight.
+    Working,
+    /// The document still stands, but something around it does not.
+    Warning,
+    /// The document cannot be saved as things are.
+    Failing,
+}
+
 /// The derived, presentable state of one document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentStatus {
     severity: Severity,
+    accent: StatusAccent,
     headline: String,
     detail: String,
     actions: Vec<BannerAction>,
@@ -232,6 +249,9 @@ pub struct DocumentStatus {
     auto_save: AutoSaveControl,
     /// The short phrase the tab chip's accessible name is suffixed with.
     chip_state: &'static str,
+    /// The same state as a standalone phrase for the status bar, where it is
+    /// read on its own rather than after a file name.
+    short_label: &'static str,
 }
 
 impl DocumentStatus {
@@ -258,7 +278,9 @@ impl DocumentStatus {
                 actions,
                 can_save: false,
                 auto_save: pause_or_keep(inputs.auto_save_requested),
+                accent: StatusAccent::Failing,
                 chip_state: "in conflict",
+                short_label: "Conflict",
             };
         }
 
@@ -287,7 +309,9 @@ impl DocumentStatus {
                 actions: vec![BannerAction::SaveAs, BannerAction::CloseWithoutSaving],
                 can_save: false,
                 auto_save: AutoSaveControl::Unavailable,
+                accent: StatusAccent::Warning,
                 chip_state: "source unavailable",
+                short_label: "Source unavailable",
             };
         }
 
@@ -301,7 +325,9 @@ impl DocumentStatus {
                 actions: vec![BannerAction::SaveAs],
                 can_save: false,
                 auto_save: pause_or_keep(inputs.auto_save_requested),
+                accent: StatusAccent::Warning,
                 chip_state: "offline",
+            short_label: "Offline",
             };
         }
 
@@ -313,7 +339,9 @@ impl DocumentStatus {
                 actions: vec![BannerAction::Retry, BannerAction::SaveAs],
                 can_save: true,
                 auto_save: pause_or_keep(inputs.auto_save_requested),
+                accent: StatusAccent::Warning,
                 chip_state: "not saved",
+                short_label: "Not saved",
             };
         }
 
@@ -325,7 +353,9 @@ impl DocumentStatus {
                 actions: Vec::new(),
                 can_save: false,
                 auto_save: auto_save_idle(inputs.auto_save_requested),
+                accent: StatusAccent::Working,
                 chip_state: "saving",
+                short_label: "Saving",
             };
         }
 
@@ -342,7 +372,9 @@ impl DocumentStatus {
                 actions: Vec::new(),
                 can_save: true,
                 auto_save: auto_save_idle(inputs.auto_save_requested),
+                accent: StatusAccent::Working,
                 chip_state: "unsaved",
+                short_label: "Unsaved changes",
             };
         }
 
@@ -355,12 +387,18 @@ impl DocumentStatus {
             // would make the file's modification time lie.
             can_save: false,
             auto_save: auto_save_idle(inputs.auto_save_requested),
-            chip_state: "saved",
+            accent: StatusAccent::Settled,
+                chip_state: "saved",
+            short_label: "Saved",
         }
     }
 
     pub const fn severity(&self) -> Severity {
         self.severity
+    }
+
+    pub const fn accent(&self) -> StatusAccent {
+        self.accent
     }
 
     pub fn headline(&self) -> &str {
@@ -393,6 +431,12 @@ impl DocumentStatus {
     /// without seeing the dot at all (ADR 0034 §8).
     pub const fn chip_state(&self) -> &'static str {
         self.chip_state
+    }
+
+    /// The same state as a standalone phrase, for the status bar, where it is
+    /// read on its own rather than after a file name.
+    pub const fn short_label(&self) -> &'static str {
+        self.short_label
     }
 }
 
@@ -432,6 +476,7 @@ mod tests {
         assert!(!status.can_save());
         assert!(status.actions().is_empty());
         assert_eq!(status.chip_state(), "saved");
+        assert_eq!(status.short_label(), "Saved");
     }
 
     #[test]
@@ -441,6 +486,20 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn a_settled_document_and_an_edited_one_accent_differently() {
+        let clean = DocumentStatus::derive(&StatusInputs::default());
+        let dirty = DocumentStatus::derive(&StatusInputs {
+            dirty: true,
+            ..StatusInputs::default()
+        });
+
+        assert_eq!(clean.accent(), StatusAccent::Settled);
+        assert_eq!(dirty.accent(), StatusAccent::Working);
+        // Severity alone cannot tell these apart, which is why accent exists.
+        assert_eq!(clean.severity(), dirty.severity());
+    }
+
     fn a_dirty_document_offers_save_and_names_auto_saves_state() {
         let status = DocumentStatus::derive(&StatusInputs {
             dirty: true,
@@ -454,6 +513,7 @@ mod tests {
         assert!(status.can_save());
         assert_eq!(status.auto_save(), AutoSaveControl::Off);
         assert_eq!(status.chip_state(), "unsaved");
+        assert_eq!(status.short_label(), "Unsaved changes");
     }
 
     #[test]
@@ -651,6 +711,7 @@ mod tests {
             assert!(!status.headline().is_empty());
             assert!(!status.detail().is_empty());
             assert!(!status.chip_state().is_empty());
+            assert!(!status.short_label().is_empty());
         }
     }
 }

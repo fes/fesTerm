@@ -24,7 +24,7 @@ pub use identity::{
     DocumentId, DocumentKey, DocumentOrigin, LocalOrigin, OriginError, RemoteOrigin, RemoteOwner,
 };
 pub use status::{
-    AutoSaveControl, Availability, BannerAction, ConflictState, DocumentStatus, SaveError,
+    AutoSaveControl, Availability, BannerAction, ConflictState, DocumentStatus, SaveError, StatusAccent,
     SaveOutcome, SaveProgress, Severity, StatusInputs, UnavailableReason,
 };
 pub use text::{Encoding, Indentation, LineEnding, TextDocument, TextEdit};
