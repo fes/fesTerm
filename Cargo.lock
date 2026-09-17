@@ -2108,6 +2108,9 @@ dependencies = [
 [[package]]
 name = "festerm-document"
 version = "0.1.14"
+dependencies = [
+ "regex",
+]
 
 [[package]]
 name = "festerm-linux-power"

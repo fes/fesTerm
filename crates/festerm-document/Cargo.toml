@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Shared mutable text documents for fesTerm's native editor."
 
 [dependencies]
+regex = "1.11"
 
 [lints]
 workspace = true

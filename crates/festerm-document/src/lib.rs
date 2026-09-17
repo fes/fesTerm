@@ -14,7 +14,9 @@
 mod bounds;
 mod diff;
 mod identity;
+mod search;
 mod status;
+mod substitute;
 mod text;
 mod undo;
 
@@ -23,9 +25,14 @@ pub use diff::{DiffLine, DiffSide, LineChange, LineComparison, LineComparisonRow
 pub use identity::{
     DocumentId, DocumentKey, DocumentOrigin, LocalOrigin, OriginError, RemoteOrigin, RemoteOwner,
 };
+pub use search::{literal_word_pattern, CompiledSearch, MatchRange, SearchError, SearchOutcome};
 pub use status::{
     AutoSaveControl, Availability, BannerAction, ConflictState, DocumentStatus, SaveError,
     SaveOutcome, SaveProgress, Severity, StatusAccent, StatusInputs, UnavailableReason,
+};
+pub use substitute::{
+    SubstituteCommand, SubstituteError, SubstituteFlags, SubstitutePlan, SubstituteRange,
+    SubstituteReplacement,
 };
 pub use text::{EditRefusal, Encoding, Indentation, LineEnding, TextDocument, TextEdit};
 pub use undo::UndoHistory;
