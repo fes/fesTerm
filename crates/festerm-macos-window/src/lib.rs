@@ -645,32 +645,54 @@ fn traffic_light_origin_y(
     superview_height - band_center_from_top - button_height / 2.0
 }
 
+/// Applies fesTerm's native window chrome to *every* window the process
+/// owns: the traffic lights are aligned with the chip band, and AppKit's
+/// own window dragging is disabled.
+///
+/// Every window is swept rather than one addressed by handle because only
+/// eframe's root viewport exposes a `raw-window-handle`; the additional
+/// windows fesTerm opens (ADR 0033) are egui viewports with no handle of
+/// their own, and leaving them out left AppKit dragging those windows
+/// whenever a tab chip in them was dragged - which made moving tabs out of
+/// any window but the first impossible. Windows without traffic lights
+/// (the tab-drag ghost) simply have nothing to align.
+///
+/// Callers are expected to call this every frame: it is idempotent (it
+/// only ever assigns the exact target position, and only disables movement
+/// that is still enabled) and windows opened later need the same treatment
+/// as soon as they exist.
+#[cfg(target_os = "macos")]
+pub fn sync_window_chrome(band_center_from_top: f64) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let application = NSApplication::sharedApplication(main_thread);
+    for window in application.windows() {
+        offset_traffic_lights(&window, band_center_from_top);
+        disable_native_window_movement(&window);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn sync_window_chrome(_: f64) {}
+
 /// Vertically places macOS's standard traffic lights so their center sits
 /// `band_center_from_top` points below the window's top edge, matching
 /// fesTerm's integrated chrome band (`festerm_ui_egui::chrome::
-/// chrome_band_center_from_top`). The view pointer originates from winit's
-/// AppKit window handle.
+/// chrome_band_center_from_top`).
 ///
 /// This computes an absolute position from the window's own current height
 /// rather than nudging AppKit's default placement by a fixed empirical
 /// delta: an assumed default titlebar height can drift across macOS
 /// versions, and a fixed one-time delta would go stale the moment the chip
-/// row's height itself becomes runtime-configurable. Callers are expected
-/// to call this every frame (safe/idempotent; it only assigns the exact
-/// target position) so a future runtime chip-height change is picked up
-/// automatically with no further wiring.
+/// row's height itself becomes runtime-configurable.
 #[cfg(target_os = "macos")]
-pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, band_center_from_top: f64) {
-    use objc2_app_kit::{NSView, NSWindowButton};
+fn offset_traffic_lights(ns_window: &objc2_app_kit::NSWindow, band_center_from_top: f64) {
+    use objc2_app_kit::NSWindowButton;
     use objc2_foundation::NSPoint;
-
-    // SAFETY: winit supplies a live NSView pointer for the root window
-    // handle; this function runs on the main thread while that window is
-    // alive.
-    let ns_view = unsafe { ns_view.cast::<NSView>().as_ref() };
-    let Some(ns_window) = ns_view.window() else {
-        return;
-    };
 
     for button_kind in [
         NSWindowButton::CloseButton,
@@ -700,9 +722,6 @@ pub fn offset_traffic_lights(ns_view: NonNull<std::ffi::c_void>, band_center_fro
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn offset_traffic_lights(_: (), _: f64) {}
-
 /// Disables AppKit's own default window-dragging behavior entirely (both
 /// from the native title bar and from clicking the window background),
 /// leaving 100% of window movement under fesTerm's own explicit
@@ -716,29 +735,17 @@ pub fn offset_traffic_lights(_: (), _: f64) {}
 /// press-drag anywhere in that strip by default, before the event ever
 /// reaches egui's own hit-testing. Since fesTerm's chip row paints its
 /// title text inside that same strip, a drag started on a chip's title
-/// used to move the whole window instead of reordering the chip,
-/// regardless of how egui's own widgets resolved the same gesture.
-/// Disabling native movement removes that OS-level shortcut entirely, so
-/// only the explicit drag regions fesTerm itself defines can ever move the
-/// window.
+/// used to move the whole window instead of reordering the chip - or
+/// dragging it to another window - regardless of how egui's own widgets
+/// resolved the same gesture. Disabling native movement removes that
+/// OS-level shortcut entirely, so only the explicit drag regions fesTerm
+/// itself defines can ever move the window.
 #[cfg(target_os = "macos")]
-pub fn disable_native_window_movement(ns_view: NonNull<std::ffi::c_void>) {
-    use objc2_app_kit::NSView;
-
-    // SAFETY: winit supplies a live NSView pointer for the root window
-    // handle; this function runs on the main thread while that window is
-    // alive.
-    let ns_view = unsafe { ns_view.cast::<NSView>().as_ref() };
-    let Some(ns_window) = ns_view.window() else {
-        return;
-    };
+fn disable_native_window_movement(ns_window: &objc2_app_kit::NSWindow) {
     if ns_window.isMovable() {
         ns_window.setMovable(false);
     }
 }
-
-#[cfg(not(target_os = "macos"))]
-pub fn disable_native_window_movement(_: ()) {}
 
 /// Forces winit's own content `NSView` back to first responder so key events
 /// resume being delivered after the OS window regains key/main status.

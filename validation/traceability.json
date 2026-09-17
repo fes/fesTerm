@@ -1063,7 +1063,14 @@
         "restoring_a_workspace_reopens_its_additional_windows",
         "restores_additional_windows_with_their_own_tabs_and_geometry",
         "a_workspace_without_additional_windows_still_restores_one_window",
-        "rejects_invalid_additional_windows"
+        "rejects_invalid_additional_windows",
+        "a_singleton_application_surface_never_moves_between_windows",
+        "a_singleton_application_surface_never_detaches_into_a_new_window",
+        "a_movable_chip_released_outside_its_window_moves",
+        "a_chip_that_cannot_leave_its_window_resolves_no_cross_window_move",
+        "closing_a_secondary_window_honours_the_close_confirmation_preference",
+        "closing_a_secondary_window_confirms_as_a_window_rather_than_a_quit",
+        "closing_the_primary_window_confirms_even_with_the_preference_off"
       ],
       "manual_scenarios": [
         "CP-13",

@@ -804,13 +804,15 @@ impl FesTermApp {
         let RawWindowHandle::AppKit(appkit_handle) = window_handle.as_raw() else {
             return;
         };
-        festerm_macos_window::offset_traffic_lights(
-            appkit_handle.ns_view,
-            f64::from(festerm_ui_egui::chrome::chrome_band_center_from_top(
-                self.state.show_session_details(),
-            )),
-        );
-        festerm_macos_window::disable_native_window_movement(appkit_handle.ns_view);
+        // Every window the process owns is swept, not just the one this
+        // handle addresses: only eframe's root viewport exposes a
+        // `raw-window-handle`, and the additional windows fesTerm opens
+        // (ADR 0033) need the very same chrome - without it AppKit drags
+        // *them* whenever one of their chips is dragged, so tabs could
+        // never be moved out of any window but the first.
+        festerm_macos_window::sync_window_chrome(f64::from(
+            festerm_ui_egui::chrome::chrome_band_center_from_top(self.state.show_session_details()),
+        ));
 
         // AppKit doesn't reliably hand first-responder status back to
         // winit's content view just because the window became key again -
@@ -4110,6 +4112,11 @@ impl FesTermApp {
                     }
                 };
                 let renamable = matches!(tab.content, TabContent::Session(_));
+                // ADR 0033: the singleton application surfaces stay in the
+                // window that opened them - every window can open its own
+                // Launcher/Settings/Profiles, so moving one between windows
+                // would only take a surface away from its source window.
+                let movable_across_windows = tab.content.movable_across_windows();
                 // Feature request #68: only a background session tab with
                 // unseen output pulses, and only when the preference is on.
                 // The active tab's own chip never pulses - there is nothing
@@ -4127,6 +4134,7 @@ impl FesTermApp {
                     status,
                     closable: true,
                     renamable,
+                    movable_across_windows,
                     quick_switch_number: crate::keyboard::QUICK_ACTIONS
                         .get(index)
                         .filter(|action| {
@@ -7123,6 +7131,58 @@ mod tests {
         assert_eq!(pending.counts.local, 1);
         assert_eq!(pending.counts.ssh, 0);
         assert_eq!(pending.counts.serial, 0);
+    }
+
+    /// Closing an additional window (ADR 0033) ends only that window's own
+    /// sessions, which is exactly what the "confirm before closing a live
+    /// session" preference governs - so with the preference off the window
+    /// closes without interrupting the user, the same way its tabs do.
+    #[test]
+    fn closing_a_secondary_window_honours_the_close_confirmation_preference() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.role = WindowRole::Secondary;
+        app.state
+            .dispatch(AppCommand::ToggleConfirmSessionClose, &context);
+
+        app.evaluate_close_request(&context);
+
+        assert!(app.overlays.pending_quit.is_none());
+    }
+
+    /// With the preference on, an additional window still confirms - but as
+    /// a window close, not as quitting the application, which would misstate
+    /// what the user is about to lose.
+    #[test]
+    fn closing_a_secondary_window_confirms_as_a_window_rather_than_a_quit() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.role = WindowRole::Secondary;
+
+        app.evaluate_close_request(&context);
+
+        assert!(app
+            .overlays
+            .pending_quit
+            .is_some_and(|pending| pending.purpose == QuitConfirmationPurpose::CloseWindow));
+    }
+
+    /// The primary window's close quits the application and discards every
+    /// window's work at once, which no per-session preference was asked
+    /// about, so it keeps confirming regardless.
+    #[test]
+    fn closing_the_primary_window_confirms_even_with_the_preference_off() {
+        let context = egui::Context::default();
+        let (mut app, _tab) = FesTermApp::for_test_with_live_session(&context);
+        app.state
+            .dispatch(AppCommand::ToggleConfirmSessionClose, &context);
+
+        app.evaluate_close_request(&context);
+
+        assert!(app
+            .overlays
+            .pending_quit
+            .is_some_and(|pending| pending.purpose == QuitConfirmationPurpose::Quit));
     }
 
     #[test]

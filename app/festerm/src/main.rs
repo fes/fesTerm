@@ -55,6 +55,30 @@ pub(crate) fn application_icon_data() -> eframe::egui::IconData {
         .expect("the committed fesTerm application icon must be a valid PNG")
 }
 
+/// The chrome every fesTerm window is built with, whether it is the first one
+/// or an additional one (ADR 0032).
+///
+/// On macOS the native titlebar is hidden but the window keeps its decorations,
+/// so the traffic lights stay while the chip row occupies the transparent
+/// titlebar's content area. Other platforms drop decorations entirely and use
+/// the integrated custom controls in that same row. Shared rather than
+/// duplicated, so a second window cannot come up wearing a native titlebar the
+/// first one does not have.
+pub(crate) fn window_viewport_builder(
+    title: &str,
+    size: eframe::egui::Vec2,
+) -> eframe::egui::ViewportBuilder {
+    eframe::egui::ViewportBuilder::default()
+        .with_decorations(cfg!(target_os = "macos"))
+        .with_fullsize_content_view(cfg!(target_os = "macos"))
+        .with_title_shown(!cfg!(target_os = "macos"))
+        .with_titlebar_shown(!cfg!(target_os = "macos"))
+        .with_title(title)
+        .with_icon(application_icon_data())
+        .with_inner_size(size)
+        .with_min_inner_size([360.0, 240.0])
+}
+
 fn main() -> eframe::Result<()> {
     diagnostics::init();
     tracing::info!(target: "festerm::app", "starting fesTerm");
@@ -72,15 +96,10 @@ fn main() -> eframe::Result<()> {
     let default_width = DEFAULT_WINDOW_WIDTH;
     let default_height = DEFAULT_WINDOW_HEIGHT;
 
-    let viewport = eframe::egui::ViewportBuilder::default()
-        .with_decorations(cfg!(target_os = "macos"))
-        .with_fullsize_content_view(cfg!(target_os = "macos"))
-        .with_title_shown(!cfg!(target_os = "macos"))
-        .with_titlebar_shown(!cfg!(target_os = "macos"))
-        .with_title(APPLICATION_TITLE)
-        .with_icon(application_icon_data())
-        .with_inner_size([default_width, default_height])
-        .with_min_inner_size([360.0, 240.0]);
+    let viewport = window_viewport_builder(
+        APPLICATION_TITLE,
+        eframe::egui::vec2(default_width, default_height),
+    );
     let options = eframe::NativeOptions {
         viewport,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {

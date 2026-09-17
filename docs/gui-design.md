@@ -1596,8 +1596,11 @@ not duplicated into a second window.
 Each window owns its own tab order, active tab, focus, scroll position,
 selection, and in-progress text entry. The first window additionally owns the
 macOS menu bar, workspace restore, and the application quit path: closing it
-quits fesTerm, with the same aggregate live-session confirmation as before,
-while closing a later window confirms and closes only that window.
+quits fesTerm, with the same aggregate live-session confirmation as before.
+Closing a later window ends only that window's sessions, so it follows the
+"confirm before closing a live session" preference: with that preference off
+it closes immediately, and with it on it asks whether to close *this window*
+rather than claiming fesTerm is about to quit.
 
 Configuration is shared. A setting, profile, or keyboard binding changed in
 one window applies in every window on its next frame, with no restart. That
@@ -1624,6 +1627,12 @@ A window that gives up its last tab collapses: a later window closes - which
 is how dragging a window's last tab into another window merges the two - and
 the first window returns to the Launcher, exactly as closing its last tab
 does. Nothing is confirmed, because nothing is closed: the session moved.
+
+The Launcher, Settings, and Profiles do not move between windows. Each window
+opens its own on demand and they all edit the same shared configuration, so
+carrying one across would move nothing while taking that surface away from the
+window it was dragged out of. Their chips still reorder inside their own
+window, they simply never leave it or detach into one of their own.
 
 On platforms that refuse to tell an application where its own windows are
 (Wayland), a drag stays an in-window reorder rather than guessing a

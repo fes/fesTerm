@@ -109,6 +109,10 @@ impl LivePortForwardManager {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum QuitConfirmationPurpose {
     Quit,
+    /// Closing one additional window (ADR 0033) rather than the application:
+    /// only that window's own sessions are at stake, so it gets its own
+    /// wording and leaves every other window running.
+    CloseWindow,
     InstallUpdate,
 }
 

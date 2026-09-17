@@ -223,6 +223,14 @@ pub struct ChipViewModel {
     /// real, storable label, while singleton application surfaces such as
     /// Launcher and Settings do not.
     pub renamable: bool,
+    /// Whether this chip's tab may be dragged out of its window - into
+    /// another window, or onto the desktop to detach (ADR 0033). Session
+    /// chips may; the singleton application surfaces (Launcher, Settings,
+    /// Profiles) may not, since every window opens its own copy of those on
+    /// demand and moving one would leave the source window without the
+    /// surface it is showing. Reordering inside the window stays allowed
+    /// either way.
+    pub movable_across_windows: bool,
     /// This chip's 1-based quick-switch position (`Cmd+1`..`Cmd+9` /
     /// `Ctrl+1`..`Ctrl+9`), or `None` if it's beyond the first
     /// `MAX_QUICK_SWITCH_TABS` chips and has no shortcut. Used to paint the
@@ -341,6 +349,7 @@ pub fn show(
                 status: chip.status,
                 closable: chip.closable,
                 renamable: chip.renamable,
+                movable_across_windows: chip.movable_across_windows,
                 quick_switch_number: chip.quick_switch_number,
                 pulse_new_output: chip.pulse_new_output,
             })
@@ -586,7 +595,8 @@ pub fn show(
         );
     });
     tab_drag::record_footprint(&ui.ctx().clone(), band_rect, &chip_footprints);
-    if let Some(action) = released_cross_window_drag(ui) {
+    show_escaped_drag_ghost(ui, chips);
+    if let Some(action) = released_cross_window_drag(ui, chips) {
         actions.push(action);
     }
     // Egui input events are global to the frame. The terminal view is painted
@@ -776,6 +786,35 @@ fn end_of_row_drop_target(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
     }
 }
 
+/// Carries the dragged chip's ghost in a window of its own once the drag
+/// leaves the window it started in (ADR 0033).
+///
+/// A window's painter is clipped to its own surface, so the in-row ghost
+/// disappears the moment the pointer crosses the window edge - exactly when
+/// the user most needs to see what they are carrying and where it will land.
+fn show_escaped_drag_ghost(ui: &Ui, chips: &[ChipViewModel]) {
+    let ctx = ui.ctx().clone();
+    let Some(dragged) = DragAndDrop::payload::<ChipId>(&ctx) else {
+        return;
+    };
+    if ctx.input(|input| input.pointer.any_released()) {
+        return;
+    }
+    let Some(pointer) = ctx.pointer_interact_pos() else {
+        return;
+    };
+    let Some(screen_position) = tab_drag::ghost_escapes_window(&ctx, pointer) else {
+        return;
+    };
+    let Some(chip) = chips
+        .iter()
+        .find(|chip| chip.id == *dragged && chip.movable_across_windows)
+    else {
+        return;
+    };
+    tab_drag::request_drag_ghost(&ctx, chip, screen_position);
+}
+
 /// Translates a chip released outside this window into a
 /// [`ChromeAction::MoveToWindow`] (ADR 0033).
 ///
@@ -784,9 +823,18 @@ fn end_of_row_drop_target(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
 /// only place a cross-window drop can be observed. A release over this
 /// window's own chips is left alone: that is an ordinary reorder, already
 /// settled live while the pointer moved.
-fn released_cross_window_drag(ui: &Ui) -> Option<ChromeAction> {
+fn released_cross_window_drag(ui: &Ui, chips: &[ChipViewModel]) -> Option<ChromeAction> {
     let ctx = ui.ctx().clone();
     let moved = *DragAndDrop::payload::<ChipId>(&ctx)?;
+    // A chip that cannot leave its window is still reorderable inside it,
+    // so the drag itself is allowed to run; only its cross-window outcome
+    // is dropped.
+    if !chips
+        .iter()
+        .any(|chip| chip.id == moved && chip.movable_across_windows)
+    {
+        return None;
+    }
     if !ctx.input(|input| input.pointer.any_released()) {
         return None;
     }
@@ -944,9 +992,103 @@ mod tests {
             status: ChipStatus::Connected,
             closable: true,
             renamable: true,
+            movable_across_windows: true,
             quick_switch_number: None,
             pulse_new_output: false,
         }
+    }
+
+    /// Drives one real pass with a window at `window`, a chip drag already in
+    /// flight, and the pointer released at `released` in screen coordinates,
+    /// returning whatever cross-window outcome the chrome resolved.
+    fn release_drag_outside_window(chip: &ChipViewModel, released: Pos2) -> Option<ChromeAction> {
+        let source = Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0));
+        let context = egui::Context::default();
+        let mut footprints = tab_drag::WindowFootprints::default();
+        footprints.insert(
+            context.viewport_id(),
+            tab_drag::WindowFootprint::for_test(
+                source,
+                Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 40.0)),
+                &[(
+                    chip.id,
+                    Rect::from_min_size(Pos2::ZERO, egui::vec2(100.0, 40.0)),
+                )],
+            ),
+        );
+        footprints.insert(
+            egui::ViewportId::from_hash_of("other-window"),
+            tab_drag::WindowFootprint::for_test(
+                Rect::from_min_size(Pos2::new(500.0, 0.0), egui::vec2(400.0, 300.0)),
+                Rect::from_min_size(Pos2::new(500.0, 0.0), egui::vec2(400.0, 40.0)),
+                &[],
+            ),
+        );
+        tab_drag::publish_footprints(&context, footprints);
+
+        let mut input = egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(released),
+                egui::Event::PointerButton {
+                    pos: released,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        input.viewports.insert(
+            context.viewport_id(),
+            egui::ViewportInfo {
+                inner_rect: Some(source),
+                ..Default::default()
+            },
+        );
+
+        let chips = std::slice::from_ref(chip);
+        let mut action = None;
+        let mut output = context.run_ui(input, |ui| {
+            DragAndDrop::set_payload(ui.ctx(), chip.id);
+            action = released_cross_window_drag(ui, chips);
+        });
+        // `TexturesDelta` panics if dropped with unapplied deltas, and this
+        // test has no painter to apply them.
+        output.textures_delta.clear();
+        action
+    }
+
+    /// The control for the test below: an ordinary session chip released
+    /// outside its window does detach into a window of its own (ADR 0033).
+    #[test]
+    fn a_movable_chip_released_outside_its_window_moves() {
+        let action = release_drag_outside_window(&chip(1, "one"), Pos2::new(450.0, 500.0));
+
+        assert!(
+            matches!(
+                action,
+                Some(ChromeAction::MoveToWindow {
+                    moved: ChipId(1),
+                    target: None,
+                    ..
+                })
+            ),
+            "resolved: {action:?}"
+        );
+    }
+
+    /// Launcher, Settings, and Profiles are per-window singletons, so they
+    /// stay where they are no matter where they are released (ADR 0033).
+    #[test]
+    fn a_chip_that_cannot_leave_its_window_resolves_no_cross_window_move() {
+        let singleton = ChipViewModel {
+            movable_across_windows: false,
+            ..chip(1, "Settings")
+        };
+
+        let action = release_drag_outside_window(&singleton, Pos2::new(450.0, 500.0));
+
+        assert_eq!(action, None);
     }
 
     /// Harness state for headless UI-level coverage of `show()`: the chip
@@ -2298,6 +2440,7 @@ mod tests {
                 status: ChipStatus::Neutral,
                 closable: false,
                 renamable: false,
+                movable_across_windows: false,
                 quick_switch_number: None,
                 pulse_new_output: false,
             }],
@@ -2379,6 +2522,7 @@ mod tests {
             status: ChipStatus::Neutral,
             closable: false,
             renamable: false,
+            movable_across_windows: false,
             quick_switch_number: Some(1),
             pulse_new_output: false,
         };
@@ -2393,6 +2537,7 @@ mod tests {
                     status: neutral_chip.status,
                     closable: neutral_chip.closable,
                     renamable: neutral_chip.renamable,
+                    movable_across_windows: neutral_chip.movable_across_windows,
                     quick_switch_number: neutral_chip.quick_switch_number,
                     pulse_new_output: neutral_chip.pulse_new_output,
                 };

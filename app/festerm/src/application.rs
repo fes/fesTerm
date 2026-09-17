@@ -22,7 +22,14 @@ impl WindowId {
     const PRIMARY: Self = Self(0);
 
     fn viewport_id(self) -> egui::ViewportId {
-        egui::ViewportId::from_hash_of(("festerm-window", self.0))
+        // The first window *is* eframe's root viewport; anything else here
+        // would leave it unable to publish a drop footprint or receive a
+        // viewport command (ADR 0033).
+        if self == Self::PRIMARY {
+            egui::ViewportId::ROOT
+        } else {
+            egui::ViewportId::from_hash_of(("festerm-window", self.0))
+        }
     }
 
     fn title(self) -> String {
@@ -120,18 +127,7 @@ impl FesTermApplication {
     /// PTYs, SSH transports, and texture handles mutably (ADR 0032).
     fn show_secondary_windows(&mut self, context: &egui::Context) {
         for window in self.windows.iter_mut().skip(1) {
-            let size = window.placement.map_or(
-                egui::vec2(crate::DEFAULT_WINDOW_WIDTH, crate::DEFAULT_WINDOW_HEIGHT),
-                |placement| placement.size,
-            );
-            let mut builder = egui::ViewportBuilder::default()
-                .with_title(window.id.title())
-                .with_icon(crate::application_icon_data())
-                .with_inner_size(size)
-                .with_min_inner_size([360.0, 240.0]);
-            if let Some(placement) = window.placement {
-                builder = builder.with_position(placement.position);
-            }
+            let builder = Self::viewport_builder(window);
             let app = &mut window.app;
             // The `Ui` egui hands back is the child viewport's root, already
             // free of margin and background - the same contract
@@ -142,6 +138,20 @@ impl FesTermApplication {
                 app.ui_content(ui);
             });
         }
+    }
+
+    /// Builds one additional window's viewport, with the chrome every fesTerm
+    /// window shares plus whatever placement it was detached or restored at.
+    fn viewport_builder(window: &Window) -> egui::ViewportBuilder {
+        let size = window.placement.map_or(
+            egui::vec2(crate::DEFAULT_WINDOW_WIDTH, crate::DEFAULT_WINDOW_HEIGHT),
+            |placement| placement.size,
+        );
+        let mut builder = crate::window_viewport_builder(&window.id.title(), size);
+        if let Some(placement) = window.placement {
+            builder = builder.with_position(placement.position);
+        }
+        builder
     }
 
     /// Applies each window's post-pass, Application-scoped effects: any
@@ -410,6 +420,7 @@ impl eframe::App for FesTermApplication {
         eframe::App::ui(self.primary_mut(), ui, frame);
         let context = ui.ctx().clone();
         self.show_secondary_windows(&context);
+        festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
         self.settle_windows(&context);
     }
 }
@@ -424,6 +435,42 @@ mod tests {
         let context = egui::Context::default();
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         (FesTermApplication::new(app), context)
+    }
+
+    /// The first window is eframe's root viewport. Anything else leaves it
+    /// unable to publish a footprint, so it can neither receive a dragged tab
+    /// nor detach one of its own (ADR 0033).
+    #[test]
+    fn the_first_window_is_the_root_viewport() {
+        assert_eq!(WindowId::PRIMARY.viewport_id(), egui::ViewportId::ROOT);
+        assert_ne!(WindowId(1).viewport_id(), egui::ViewportId::ROOT);
+    }
+
+    /// An additional window wears the same chrome as the first: on macOS the
+    /// native titlebar stays hidden so the chip row owns that band.
+    #[test]
+    fn an_additional_window_is_built_with_the_same_chrome_as_the_first() {
+        let (application, _context) = application();
+        let window = Window {
+            id: WindowId(1),
+            app: FesTermApp::for_test_with_configuration(Configuration::empty()),
+            placement: None,
+        };
+        drop(application);
+
+        let additional = FesTermApplication::viewport_builder(&window);
+        let first = crate::window_viewport_builder(
+            crate::APPLICATION_TITLE,
+            egui::vec2(crate::DEFAULT_WINDOW_WIDTH, crate::DEFAULT_WINDOW_HEIGHT),
+        );
+
+        assert_eq!(additional.decorations, first.decorations);
+        assert_eq!(additional.titlebar_shown, first.titlebar_shown);
+        assert_eq!(additional.title_shown, first.title_shown);
+        assert_eq!(
+            additional.fullsize_content_view,
+            first.fullsize_content_view
+        );
     }
 
     /// Window creation is Application-scoped, so a window may only *request*
@@ -608,20 +655,38 @@ mod tests {
         );
     }
 
+    /// Opens a tab that may legitimately move between windows (ADR 0033).
+    ///
+    /// Launcher, Settings, and Profiles are per-window singletons that stay
+    /// put, so a move test needs real per-tab content; a Markdown viewer is
+    /// the one such tab that needs neither a PTY nor a network.
+    fn open_movable_tab(
+        application: &mut FesTermApplication,
+        window: usize,
+        path: &str,
+        context: &egui::Context,
+    ) -> crate::tabs::TabId {
+        application.window_mut(window).dispatch_for_test(
+            AppCommand::OpenLocalMarkdownFile {
+                path: std::path::PathBuf::from(path),
+                replacing: None,
+            },
+            context,
+        );
+        application.window_mut(window).active_tab_id_for_test()
+    }
+
     /// The whole point of ADR 0033: the dragged tab itself - with whatever
     /// session it owns - ends up in the other window, rather than a new tab
     /// being opened there.
     #[test]
     fn a_tab_dropped_on_another_window_moves_into_it() {
         let (mut application, context) = application();
-        application
-            .window_mut(0)
-            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        let moved = open_movable_tab(&mut application, 0, "/docs/moved.md", &context);
         application
             .window_mut(0)
             .dispatch_for_test(AppCommand::OpenWindow, &context);
         application.settle_windows(&context);
-        let moved = application.window_mut(0).active_tab_id_for_test();
         let target = application.windows[1].id.viewport_id();
 
         application.window_mut(0).dispatch_for_test(
@@ -661,7 +726,11 @@ mod tests {
             .window_mut(0)
             .dispatch_for_test(AppCommand::OpenWindow, &context);
         application.settle_windows(&context);
-        let moved = application.window_mut(1).active_tab_id_for_test();
+        let launcher = application.window_mut(1).active_tab_id_for_test();
+        let moved = open_movable_tab(&mut application, 1, "/docs/only.md", &context);
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::CloseTab(launcher), &context);
         let primary = application.windows[0].id.viewport_id();
 
         application.window_mut(1).dispatch_for_test(
@@ -692,7 +761,11 @@ mod tests {
             .window_mut(0)
             .dispatch_for_test(AppCommand::OpenWindow, &context);
         application.settle_windows(&context);
-        let moved = application.window_mut(0).active_tab_id_for_test();
+        let launcher = application.window_mut(0).active_tab_id_for_test();
+        let moved = open_movable_tab(&mut application, 0, "/docs/last.md", &context);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::CloseTab(launcher), &context);
         let target = application.windows[1].id.viewport_id();
 
         application.window_mut(0).dispatch_for_test(
@@ -723,13 +796,10 @@ mod tests {
     #[test]
     fn a_tab_dropped_outside_every_window_detaches_into_a_new_one() {
         let (mut application, context) = application();
-        application
-            .window_mut(0)
-            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        let moved = open_movable_tab(&mut application, 0, "/docs/detached.md", &context);
         application.window_mut(0).set_window_geometry_for_test(
             festerm_config::WorkspaceWindowGeometry::new(0.0, 0.0, 640.0, 480.0),
         );
-        let moved = application.window_mut(0).active_tab_id_for_test();
 
         application.window_mut(0).dispatch_for_test(
             AppCommand::MoveTabToWindow {
@@ -773,7 +843,11 @@ mod tests {
             .window_mut(0)
             .dispatch_for_test(AppCommand::OpenWindow, &context);
         application.settle_windows(&context);
-        let moved = application.window_mut(1).active_tab_id_for_test();
+        let launcher = application.window_mut(1).active_tab_id_for_test();
+        let moved = open_movable_tab(&mut application, 1, "/docs/only.md", &context);
+        application
+            .window_mut(1)
+            .dispatch_for_test(AppCommand::CloseTab(launcher), &context);
 
         application.window_mut(1).dispatch_for_test(
             AppCommand::MoveTabToWindow {
@@ -793,15 +867,81 @@ mod tests {
             .contains(&moved));
     }
 
+    /// Launcher, Settings, and Profiles are per-window singletons every
+    /// window opens for itself (ADR 0033): moving one would only strip its
+    /// source window of the surface it was showing, so the move is refused
+    /// wherever it is requested from.
+    #[test]
+    fn a_singleton_application_surface_never_moves_between_windows() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenSettings, &context);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        let moved = application.window_mut(0).active_tab_id_for_test();
+        let target = application.windows[1].id.viewport_id();
+
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::MoveTabToWindow {
+                moved,
+                target: Some(target),
+                before: None,
+                screen_position: egui::pos2(900.0, 40.0),
+            },
+            &context,
+        );
+        application.settle_windows(&context);
+
+        assert_eq!(application.window_count(), 2);
+        assert!(
+            application
+                .window_mut(0)
+                .tab_ids_for_test()
+                .contains(&moved),
+            "Settings must stay in the window that opened it"
+        );
+        assert!(!application
+            .window_mut(1)
+            .tab_ids_for_test()
+            .contains(&moved));
+    }
+
+    /// The same refusal covers detaching one into a window of its own.
+    #[test]
+    fn a_singleton_application_surface_never_detaches_into_a_new_window() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenProfiles, &context);
+        let moved = application.window_mut(0).active_tab_id_for_test();
+
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::MoveTabToWindow {
+                moved,
+                target: None,
+                before: None,
+                screen_position: egui::pos2(720.0, 300.0),
+            },
+            &context,
+        );
+        application.settle_windows(&context);
+
+        assert_eq!(application.window_count(), 1);
+        assert!(application
+            .window_mut(0)
+            .tab_ids_for_test()
+            .contains(&moved));
+    }
+
     /// A window may only *request* a move, and only for a tab it owns; a
     /// stale or foreign identifier must not disturb anyone's tabs.
     #[test]
     fn a_move_to_a_window_that_no_longer_exists_keeps_the_tab_where_it_is() {
         let (mut application, context) = application();
-        application
-            .window_mut(0)
-            .dispatch_for_test(AppCommand::OpenSettings, &context);
-        let moved = application.window_mut(0).active_tab_id_for_test();
+        let moved = open_movable_tab(&mut application, 0, "/docs/stale.md", &context);
 
         application.window_mut(0).dispatch_for_test(
             AppCommand::MoveTabToWindow {

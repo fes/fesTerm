@@ -1371,6 +1371,20 @@ pub enum TabContent {
     Session(Box<SessionTab>),
 }
 
+impl TabContent {
+    /// Whether a tab holding this content may be moved into another window
+    /// or detached into a new one (ADR 0033).
+    ///
+    /// Launcher, Settings, and Profiles are per-window singletons that every
+    /// window opens for itself on demand, so moving one would only strip its
+    /// source window of the surface it was showing; everything else carries
+    /// per-tab state (a live session, a file being viewed) that exists in
+    /// exactly one place and therefore travels with the tab.
+    pub const fn movable_across_windows(&self) -> bool {
+        !matches!(self, Self::Launcher | Self::Settings | Self::Profiles)
+    }
+}
+
 pub struct Tab {
     pub id: TabId,
     pub content: TabContent,
@@ -2678,7 +2692,17 @@ impl AppState {
                 before,
                 screen_position,
             } => {
-                if self.tabs.iter().any(|tab| tab.id == moved) {
+                // ADR 0033: Launcher, Settings, and Profiles are per-window
+                // singletons every window opens for itself, so they never
+                // travel between windows. The chip row already refuses to
+                // start such a move; this is the state-level guard, so any
+                // other command source (keyboard, tests, a future menu
+                // item) cannot smuggle one through either.
+                if self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == moved && tab.content.movable_across_windows())
+                {
                     self.pending_tab_move = Some(TabMoveRequest {
                         moved,
                         target,

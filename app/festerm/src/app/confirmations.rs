@@ -102,11 +102,26 @@ impl FesTermApp {
             // Nothing would be lost: let the close proceed untouched.
             return;
         }
+        // Closing an additional window (ADR 0033) ends that window's own
+        // sessions and nothing else, which is the very action the
+        // "confirm before closing a live session" preference governs - so
+        // it is honoured here. Closing the primary window quits the
+        // application outright and keeps its unconditional confirmation:
+        // that discards every window's work at once, which no per-session
+        // preference was ever asked about.
+        let purpose = if self.role == crate::app::WindowRole::Secondary {
+            if !self.state.confirm_session_close() {
+                return;
+            }
+            QuitConfirmationPurpose::CloseWindow
+        } else {
+            QuitConfirmationPurpose::Quit
+        };
         context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         self.overlays.pending_quit = Some(PendingQuitConfirmation {
             counts,
             cancel_focus_requested: false,
-            purpose: QuitConfirmationPurpose::Quit,
+            purpose,
         });
     }
 
@@ -233,6 +248,11 @@ impl FesTermApp {
                         "Unsaved terminal history will be discarded.",
                         "Quit fesTerm",
                     ),
+                    QuitConfirmationPurpose::CloseWindow => (
+                        "Close this window?",
+                        "This window's unsaved terminal history will be discarded.",
+                        "Close Window",
+                    ),
                     QuitConfirmationPurpose::InstallUpdate => (
                         "Install update and restart fesTerm?",
                         "The update will close every session after installation succeeds.",
@@ -270,7 +290,7 @@ impl FesTermApp {
         } else if confirm {
             self.overlays.pending_quit = None;
             match pending.purpose {
-                QuitConfirmationPurpose::Quit => {
+                QuitConfirmationPurpose::Quit | QuitConfirmationPurpose::CloseWindow => {
                     self.quit_confirmed = true;
                     context.send_viewport_cmd(egui::ViewportCommand::Close);
                 }

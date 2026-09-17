@@ -109,7 +109,49 @@ A window that loses its last tab collapses:
 Live sessions are never confirmed on collapse. Nothing is being destroyed: the
 session moved, and the window that closes is empty by definition.
 
-### 5. The workspace schema grows windows, additively
+### 5. Only tabs that belong to one window move between windows
+
+The Launcher, Settings, and Profiles are per-window singletons: every window
+opens its own on demand, and each one edits the same shared configuration.
+Carrying one to another window would therefore move nothing of value while
+stripping the source window of the surface it was showing, so the rule is
+simply that they do not leave their window. In-window reordering is
+unaffected.
+
+The refusal is enforced twice, because the two layers can be reached
+independently: `ChipViewModel::movable_across_windows` suppresses the escaped
+drag ghost and the cross-window drop in the chrome, and
+`TabContent::movable_across_windows` rejects `AppCommand::MoveTabToWindow` in
+`AppState::dispatch`, which is also the path a future menu item or keyboard
+command would take.
+
+### 6. Closing a secondary window is a close, not a quit
+
+Closing the primary window quits fesTerm, so it keeps its unconditional
+confirmation. A secondary window only ends the sessions it owns, which is the
+case the `confirm_session_close` preference already describes: with that
+preference off its close is immediate, and with it on the dialog asks "Close
+this window?" (`QuitConfirmationPurpose::CloseWindow`) rather than claiming
+fesTerm is about to quit.
+
+### 7. macOS chrome is applied to every window, not just the root
+
+fesTerm's hidden-titlebar chrome leaves a real, invisible AppKit titlebar
+strip across the top of every window, and AppKit drags the window from a press
+there before egui ever sees it - which is exactly where the chip row lives.
+`NSWindow.setMovable(false)` disables that, but the previous call site reached
+the window through `eframe::Frame::window_handle()`, which only ever resolves
+to the root viewport; egui child viewports have no raw window handle, so
+secondary windows kept AppKit's drag and moved bodily whenever a chip was
+dragged in them.
+
+`festerm_macos_window::sync_window_chrome` therefore enumerates
+`NSApplication::sharedApplication().windows()` and applies both the
+traffic-light alignment and the movement lock to every window each pass. This
+is the only mechanism that reaches secondary windows, and it is what makes
+cross-window drag possible on macOS at all.
+
+### 8. The workspace schema grows windows, additively
 
 `WorkspaceConfiguration` keeps `tabs` and `focused_tab_id` as the *primary*
 window, and gains an optional `windows` list describing each **additional**
@@ -163,10 +205,14 @@ window), `WINDOW-05` (collapse an emptied window), and `WINDOW-06`
 Automated coverage drives real press/move/release gestures through the chip
 row against published foreign window footprints, asserts tab ownership
 transfer preserves the live session object, and round-trips a multi-window
-workspace including the single-window compatibility reading. The screen
+workspace including the single-window compatibility reading. The
+singleton-surface refusal is covered at both layers it is enforced in, and the
+secondary-window close confirmation is covered against the preference in both
+states and against the primary window's unconditional prompt. The screen
 geometry degradation path is covered by a footprint-free case rather than by a
 platform build, so it runs on every platform's CI.
 
-Real cross-window pointer capture, native window placement on detach, and
-Wayland's geometry refusal cannot be observed headlessly and remain manual
-scenario `CP-14` in `docs/manual-validation.md`.
+Real cross-window pointer capture, native window placement on detach, the
+macOS all-windows chrome sweep, and Wayland's geometry refusal cannot be
+observed headlessly and remain manual scenario `CP-14` in
+`docs/manual-validation.md`.

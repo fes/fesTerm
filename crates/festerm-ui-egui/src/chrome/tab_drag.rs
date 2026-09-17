@@ -133,6 +133,119 @@ fn published(context: &Context) -> Option<WindowFootprints> {
     context.data_mut(|data| data.get_temp::<WindowFootprints>(published_id()))
 }
 
+/// The id of the borderless window that carries a dragged chip's ghost.
+fn ghost_viewport_id() -> ViewportId {
+    ViewportId::from_hash_of("festerm-drag-ghost")
+}
+
+/// Whether a chip released at `pointer` would leave this window, and so needs
+/// a ghost the source window's own painter cannot draw.
+///
+/// A window's painter is clipped to its own surface, so a chip dragged past
+/// the window edge simply vanishes. When that happens the ghost is carried by
+/// a separate borderless window instead (ADR 0033).
+pub(super) fn ghost_escapes_window(context: &Context, pointer: Pos2) -> Option<Pos2> {
+    let pointer = to_screen(context, pointer)?;
+    let window = published(context)?
+        .get(context.viewport_id())
+        .and_then(|footprint| footprint.window)?;
+    (!window.contains(pointer)).then_some(pointer)
+}
+
+/// A chip ghost one window has asked the composition root to carry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DragGhost {
+    primary: String,
+    secondary: Option<String>,
+    /// The pointer position the ghost is centred on, in screen coordinates.
+    position: Pos2,
+}
+
+fn ghost_request_id() -> Id {
+    Id::new("festerm-drag-ghost-request")
+}
+
+/// Records that this window's drag has left it and needs a carried ghost.
+///
+/// The ghost is only *requested* here: showing it is the composition root's
+/// job, because a viewport opened from inside another window's pass is
+/// nested under that window, and its position commands end up moving the
+/// parent window instead of the ghost.
+pub(super) fn request_drag_ghost(context: &Context, chip: &super::ChipViewModel, position: Pos2) {
+    let ghost = DragGhost {
+        primary: chip.primary.clone(),
+        secondary: chip.secondary.clone(),
+        position,
+    };
+    context.data_mut(|data| data.insert_temp(ghost_request_id(), ghost));
+}
+
+/// Shows the carried ghost any window asked for this pass, and clears the
+/// request so the ghost disappears as soon as the drag ends or comes home.
+///
+/// Called by the composition root from the root viewport's own pass, so the
+/// ghost window is a sibling of the real windows rather than a child of one.
+pub fn show_requested_drag_ghost(context: &Context) {
+    let Some(ghost) = context.data_mut(|data| {
+        let ghost = data.get_temp::<DragGhost>(ghost_request_id());
+        data.remove::<DragGhost>(ghost_request_id());
+        ghost
+    }) else {
+        return;
+    };
+    let size = egui::vec2(GHOST_WIDTH, GHOST_HEIGHT);
+    let builder = egui::ViewportBuilder::default()
+        .with_title("fesTerm tab")
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_always_on_top()
+        .with_mouse_passthrough(true)
+        .with_resizable(false)
+        .with_taskbar(false)
+        .with_inner_size(size)
+        .with_position(ghost.position - size / 2.0);
+    context.show_viewport_immediate(ghost_viewport_id(), builder, move |ui, _class| {
+        paint_ghost(ui, &ghost);
+    });
+}
+
+fn paint_ghost(ui: &egui::Ui, ghost: &DragGhost) {
+    let rect =
+        Rect::from_min_size(Pos2::ZERO, egui::vec2(GHOST_WIDTH, GHOST_HEIGHT)).shrink(GHOST_MARGIN);
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6.0, super::CHIP_ACTIVE_FILL);
+    painter.rect_stroke(
+        rect,
+        6.0,
+        egui::Stroke::new(1.0, super::CHIP_ACTIVE_OUTLINE),
+        egui::StrokeKind::Inside,
+    );
+    let text_left = rect.left() + 10.0;
+    painter.text(
+        egui::pos2(
+            text_left,
+            rect.center().y - if ghost.secondary.is_some() { 7.0 } else { 0.0 },
+        ),
+        egui::Align2::LEFT_CENTER,
+        &ghost.primary,
+        egui::FontId::proportional(13.0),
+        super::CHIP_PRIMARY_TEXT,
+    );
+    if let Some(secondary) = &ghost.secondary {
+        painter.text(
+            egui::pos2(text_left, rect.center().y + 8.0),
+            egui::Align2::LEFT_CENTER,
+            secondary,
+            egui::FontId::proportional(10.0),
+            super::CHIP_SECONDARY_TEXT,
+        );
+    }
+}
+
+const GHOST_WIDTH: f32 = 180.0;
+const GHOST_HEIGHT: f32 = 44.0;
+const GHOST_MARGIN: f32 = 2.0;
+
 /// Resolves a chip released at `pointer` (this viewport's local coordinates)
 /// into a cross-window drop, or `None` when the gesture belongs to this
 /// window and its ordinary reorder handling.
