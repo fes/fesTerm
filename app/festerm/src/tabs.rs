@@ -76,6 +76,16 @@ impl TabId {
     pub const fn chip_id(self) -> u64 {
         self.0
     }
+
+    /// Reverses [`Self::chip_id`] for a chip belonging to a *different*
+    /// window, which this window cannot look up in its own tab list
+    /// (ADR 0033). Identifiers are process-wide unique, so the value is
+    /// meaningful in any window; a value naming no live tab is harmless,
+    /// because every consumer resolves it against a real tab list and falls
+    /// back when it finds none.
+    pub const fn from_chip_id(chip_id: u64) -> Self {
+        Self(chip_id)
+    }
 }
 
 /// Uses egui's thread-safe wake mechanism instead of polling for PTY output.
@@ -1366,6 +1376,21 @@ pub struct Tab {
     pub content: TabContent,
 }
 
+/// A pending request to move one tab into another window, or out to a new
+/// one (ADR 0033).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TabMoveRequest {
+    /// The tab to move, always owned by the window recording the request.
+    pub moved: TabId,
+    /// The destination window's viewport, or `None` to detach into a new one.
+    pub target: Option<egui::ViewportId>,
+    /// A tab in the *destination* window to insert before, resolved there.
+    pub before: Option<TabId>,
+    /// Where the drop happened, in screen coordinates, used to place a
+    /// detached window under the pointer that released it.
+    pub screen_position: egui::Pos2,
+}
+
 /// Which blank profile editor `AppCommand::CreateProfile` should open.
 ///
 /// The Launcher's New Profile control has to say *what* it is creating, so
@@ -1412,6 +1437,17 @@ pub enum AppCommand {
     OpenLauncher,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
+    /// Moves one tab into another window, or - with `target: None` - out to a
+    /// new window of its own at `screen_position` (ADR 0033).
+    ///
+    /// Like `OpenWindow`, this only records the request: the move mutates two
+    /// windows at once, and only the composition root can hold both.
+    MoveTabToWindow {
+        moved: TabId,
+        target: Option<egui::ViewportId>,
+        before: Option<TabId>,
+        screen_position: egui::Pos2,
+    },
     /// Requests one additional fesTerm window (ADR 0032). Window creation is
     /// an Application-scoped act, so this only records the request; the
     /// composition root drains it after this window's pass and spawns the
@@ -1948,6 +1984,9 @@ pub struct AppState {
     sftp_pane_order: SftpPaneOrderPreference,
     /// The default starting local directory for new SFTP sessions.
     default_sftp_local_directory: Option<PathBuf>,
+    /// Set by `AppCommand::MoveTabToWindow`, drained once by
+    /// `FesTermApplication` after this window's pass (ADR 0033).
+    pending_tab_move: Option<TabMoveRequest>,
     /// Set by `AppCommand::OpenWindow`, so the composition root can spawn an
     /// additional window after this window's pass has finished borrowing it
     /// (ADR 0032). Drained once by `FesTermApplication`.
@@ -2018,6 +2057,7 @@ impl AppState {
                 .map(Path::to_path_buf),
             pending_profile_edit: None,
             window_open_requested: false,
+            pending_tab_move: None,
             pending_profile_create: None,
             pending_profile_usage: None,
             workspace_dirty: false,
@@ -2074,12 +2114,29 @@ impl AppState {
         configuration: Configuration,
         workspace: &WorkspaceConfiguration,
     ) -> Self {
-        let mut restored = Vec::with_capacity(workspace.tabs().len());
+        Self::with_restored_window(
+            context,
+            configuration,
+            workspace.tabs(),
+            workspace.focused_tab_id(),
+        )
+    }
+
+    /// Restores one window's saved tabs. The primary window's are the
+    /// workspace's own `tabs`; each additional window's come from a
+    /// `WorkspaceWindow` (ADR 0033).
+    pub fn with_restored_window(
+        context: &egui::Context,
+        configuration: Configuration,
+        workspace_tabs: &[WorkspaceTab],
+        focused_tab_id: Option<&str>,
+    ) -> Self {
+        let mut restored = Vec::with_capacity(workspace_tabs.len());
         let mut focused = None;
 
-        for workspace_tab in workspace.tabs() {
+        for workspace_tab in workspace_tabs {
             let id = TabId::next();
-            if workspace.focused_tab_id() == Some(workspace_tab.identifier()) {
+            if focused_tab_id == Some(workspace_tab.identifier()) {
                 focused = Some(id);
             }
             let content = match workspace_tab {
@@ -2254,12 +2311,20 @@ impl AppState {
     /// never leave this application state. A session is represented only when
     /// it retained a configured local-profile identifier and that profile is
     /// still present in the document being replaced.
-    pub fn capture_workspace_configuration(&self) -> Result<Configuration, ConfigError> {
+    /// Captures this one window's restorable tabs and focus.
+    ///
+    /// Tab identifiers have to be unique across the whole workspace, not just
+    /// this window (ADR 0033), so the caller threads a counter through every
+    /// window in turn rather than each window numbering from one.
+    pub fn capture_window_workspace_tabs(
+        &self,
+        next_identifier: &mut usize,
+    ) -> Result<(Vec<WorkspaceTab>, Option<String>), ConfigError> {
         let mut tabs = Vec::new();
         let mut focused_tab_id = None;
 
         for tab in &self.tabs {
-            let identifier = format!("tab-{}", tabs.len() + 1);
+            let identifier = format!("tab-{}", *next_identifier);
             let workspace_tab = match &tab.content {
                 TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
                 TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
@@ -2316,16 +2381,37 @@ impl AppState {
                 if tab.id == self.active {
                     focused_tab_id = Some(workspace_tab.identifier().to_owned());
                 }
+                *next_identifier += 1;
                 tabs.push(workspace_tab);
             }
         }
 
-        if tabs.is_empty() {
-            tabs.push(WorkspaceTab::launcher("tab-1")?);
-        }
         let focused_tab_id =
             focused_tab_id.or_else(|| tabs.first().map(|tab| tab.identifier().to_owned()));
-        let workspace = WorkspaceConfiguration::new(tabs, focused_tab_id)?;
+        Ok((tabs, focused_tab_id))
+    }
+
+    /// Composes the whole workspace: this (primary) window's tabs, plus one
+    /// entry per additional window the Application captured (ADR 0033).
+    ///
+    /// A primary window with nothing restorable still saves a Launcher, so the
+    /// schema's "at least one tab" rule holds; an additional window with
+    /// nothing restorable is simply not saved, because inventing a Launcher
+    /// for it would resurrect an empty window on every restart.
+    pub fn capture_workspace_configuration(
+        &self,
+        additional_windows: Vec<festerm_config::WorkspaceWindow>,
+        next_identifier: &mut usize,
+    ) -> Result<Configuration, ConfigError> {
+        let (mut tabs, mut focused_tab_id) = self.capture_window_workspace_tabs(next_identifier)?;
+        if tabs.is_empty() {
+            let identifier = format!("tab-{}", *next_identifier);
+            *next_identifier += 1;
+            tabs.push(WorkspaceTab::launcher(identifier.clone())?);
+            focused_tab_id = Some(identifier);
+        }
+        let workspace =
+            WorkspaceConfiguration::with_windows(tabs, focused_tab_id, additional_windows)?;
         self.configuration.with_workspace(workspace)
     }
 
@@ -2586,6 +2672,21 @@ impl AppState {
         match command {
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenWindow => self.window_open_requested = true,
+            AppCommand::MoveTabToWindow {
+                moved,
+                target,
+                before,
+                screen_position,
+            } => {
+                if self.tabs.iter().any(|tab| tab.id == moved) {
+                    self.pending_tab_move = Some(TabMoveRequest {
+                        moved,
+                        target,
+                        before,
+                        screen_position,
+                    });
+                }
+            }
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::OpenProfiles => self.open_profiles(),
             AppCommand::CreateProfile { kind } => {
@@ -3071,6 +3172,82 @@ impl AppState {
     /// composition root owns the window list.
     pub fn take_window_open_request(&mut self) -> bool {
         std::mem::take(&mut self.window_open_requested)
+    }
+
+    /// One-shot consumption of a pending "move this tab to another window"
+    /// request (ADR 0033), for the same reason as
+    /// [`Self::take_window_open_request`]: it mutates two windows.
+    pub fn take_tab_move_request(&mut self) -> Option<TabMoveRequest> {
+        self.pending_tab_move.take()
+    }
+
+    /// Removes a tab and hands it to the caller with its live session intact.
+    ///
+    /// Unlike [`Self::close`] this never shuts the session down and never
+    /// replaces an emptied tab list with a Launcher: the tab is moving to
+    /// another window, and what an emptied window does about it is
+    /// Application policy (ADR 0033).
+    pub fn detach_tab(&mut self, id: TabId) -> Option<Tab> {
+        let index = self.tabs.iter().position(|tab| tab.id == id)?;
+        let tab = self.tabs.remove(index);
+        self.workspace_dirty = true;
+        if self.active == id {
+            if let Some(next) = self.tabs.get(index.min(self.tabs.len().saturating_sub(1))) {
+                let next = next.id;
+                self.set_active(next);
+            }
+        }
+        Some(tab)
+    }
+
+    /// Takes ownership of a tab detached from another window, placing it
+    /// before `before` (or at the end) and focusing it, because a tab arrives
+    /// here as the direct result of the user dropping it here.
+    pub fn adopt_tab(&mut self, tab: Tab, before: Option<TabId>) {
+        let id = tab.id;
+        let insert_at = before
+            .and_then(|before| self.tabs.iter().position(|tab| tab.id == before))
+            .unwrap_or(self.tabs.len());
+        self.tabs.insert(insert_at, tab);
+        self.set_active(id);
+        // The arriving tab's terminal must not inherit keystrokes aimed at
+        // whatever this window was showing a moment ago.
+        self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
+        self.workspace_dirty = true;
+    }
+
+    /// Replaces a brand-new window's placeholder Launcher with the tab that
+    /// was dragged out to create it (ADR 0033).
+    ///
+    /// Only ever called on a window created moments earlier, whose only tab
+    /// is the Launcher it started on, so nothing with a live session is
+    /// discarded here.
+    pub fn adopt_detached_tab(&mut self, tab: Tab) {
+        debug_assert!(
+            !self
+                .tabs
+                .iter()
+                .any(|tab| matches!(tab.content, TabContent::Session(_))),
+            "a detached tab may only replace a new window's placeholder Launcher",
+        );
+        self.tabs.clear();
+        self.adopt_tab(tab, None);
+    }
+
+    /// Whether this window has any tabs left, which only happens between a
+    /// [`Self::detach_tab`] and the Application deciding what the emptied
+    /// window does (ADR 0033).
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    /// Restores the "root state is never empty" invariant
+    /// (`docs/gui-design.md` "Root Application States") for a window that
+    /// cannot close, by returning it to the Launcher.
+    pub fn open_launcher_if_empty(&mut self, context: &egui::Context) {
+        if self.tabs.is_empty() {
+            self.dispatch(AppCommand::OpenLauncher, context);
+        }
     }
 
     /// One-shot consumption of a pending new-profile request set by
@@ -4503,7 +4680,9 @@ mod tests {
         });
         state.active = settings;
 
-        let captured = state.capture_workspace_configuration().unwrap();
+        let captured = state
+            .capture_workspace_configuration(Vec::new(), &mut 1)
+            .unwrap();
         let workspace = captured.workspace().unwrap();
 
         assert_eq!(
@@ -4528,7 +4707,9 @@ mod tests {
         let mut state = AppState::for_test();
         state.dispatch(AppCommand::StartLocalSession, &context);
 
-        let captured = state.capture_workspace_configuration().unwrap();
+        let captured = state
+            .capture_workspace_configuration(Vec::new(), &mut 1)
+            .unwrap();
         let workspace = captured.workspace().unwrap();
 
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
@@ -4547,7 +4728,9 @@ mod tests {
         });
         state.active = state.tabs[1].id;
 
-        let captured = state.capture_workspace_configuration().unwrap();
+        let captured = state
+            .capture_workspace_configuration(Vec::new(), &mut 1)
+            .unwrap();
         let workspace = captured.workspace().unwrap();
 
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));

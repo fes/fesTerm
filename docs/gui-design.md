@@ -1591,8 +1591,7 @@ Every window lives in one process and renders as its own OS window (ADR 0032).
 A new window opens on the Launcher with the current profiles and preferences.
 It never clones the originating window's tabs: a live local process, SSH
 connection, or serial device has exactly one owning session, and a session is
-not duplicated into a second window. Tabs cannot yet be dragged between
-windows or popped out into one.
+not duplicated into a second window.
 
 Each window owns its own tab order, active tab, focus, scroll position,
 selection, and in-progress text entry. The first window additionally owns the
@@ -1605,8 +1604,30 @@ one window applies in every window on its next frame, with no restart. That
 propagation happens only after the change has been written successfully, so a
 failed save never reaches another window, and it never disturbs another
 window's focus, scroll position, selection, open editor row, or in-progress
-text entry. Only the first window persists the workspace, because the saved
-workspace is still a single tab list.
+text entry. The first window performs the single workspace write, which now
+covers every window.
+
+### Moving tabs between windows
+
+A tab chip can be dragged out of its window's chip row and dropped on another
+window (ADR 0033). Dropping it on that window's chip row inserts it where the
+pointer is; dropping it anywhere else in that window appends it. The tab
+itself moves: its shell, SSH connection, or serial port keeps running, with
+its scrollback and its state, and is never restarted.
+
+Dropping a chip clear of every fesTerm window detaches it into a new window of
+its own, opened where it was dropped and sized like the window it left.
+Detaching the only tab of a later window does nothing, since that would only
+move the window. Dragging within a window's own chip row reorders as before.
+
+A window that gives up its last tab collapses: a later window closes - which
+is how dragging a window's last tab into another window merges the two - and
+the first window returns to the Launcher, exactly as closing its last tab
+does. Nothing is confirmed, because nothing is closed: the session moved.
+
+On platforms that refuse to tell an application where its own windows are
+(Wayland), a drag stays an in-window reorder rather than guessing a
+destination.
 
 ## Workspace Workflow
 
@@ -1619,6 +1640,11 @@ sessions are recreated. A workspace is a recipe for reopening sessions, not a
 snapshot of processes. Restore always launches new local processes, new SSH
 connections, and new serial-device opens; the UI never calls this process
 resumption.
+
+A restored workspace reopens every window it recorded, each with its own tabs,
+selected tab, and - where the platform reports it - its position and size.
+A window whose geometry was never reported reopens at the default size
+wherever the platform puts it.
 
 Workspace data may include profile references or validated launch definitions,
 tab order, stable names, selected tab, supported window geometry/state, and

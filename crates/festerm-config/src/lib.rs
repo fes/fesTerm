@@ -41,7 +41,8 @@ pub use settings::{
 };
 pub use workspace::{
     LauncherTabConfiguration, ProfilesTabConfiguration, SessionTabConfiguration,
-    SettingsTabConfiguration, WorkspaceConfiguration, WorkspaceTab,
+    SettingsTabConfiguration, WorkspaceConfiguration, WorkspaceTab, WorkspaceWindow,
+    WorkspaceWindowGeometry,
 };
 
 /// The only document schema accepted by this initial configuration slice.
@@ -1757,6 +1758,189 @@ profile_id = "remote"
         assert_eq!(
             wrong_kind.kind(),
             ConfigErrorKind::WorkspaceProfileKindMismatch
+        );
+    }
+
+    /// A workspace covering several windows (ADR 0033) keeps the primary
+    /// window's tabs where they have always been, so the file still restores
+    /// correctly, and lists only the additional windows separately.
+    #[test]
+    fn restores_additional_windows_with_their_own_tabs_and_geometry() {
+        let configuration = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+focused_tab_id = "primary-launcher"
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "primary-launcher"
+
+[[workspace.windows]]
+focused_tab_id = "second-settings"
+
+[workspace.windows.geometry]
+x = 120.0
+y = 64.0
+width = 900.0
+height = 600.0
+
+[[workspace.windows.tabs]]
+kind = "settings"
+id = "second-settings"
+"#,
+        )
+        .expect("a workspace with an additional window is valid");
+
+        let workspace = configuration.workspace().expect("a saved workspace");
+        assert_eq!(workspace.tabs().len(), 1);
+        assert_eq!(workspace.focused_tab_id(), Some("primary-launcher"));
+
+        let windows = workspace.windows();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].tabs().len(), 1);
+        assert_eq!(windows[0].tabs()[0].identifier(), "second-settings");
+        assert_eq!(windows[0].focused_tab_id(), Some("second-settings"));
+        let geometry = windows[0].geometry().expect("saved geometry");
+        assert_eq!(geometry.position(), (120.0, 64.0));
+        assert_eq!(geometry.size(), (900.0, 600.0));
+    }
+
+    /// A single-window workspace saved by an older build has no `windows`
+    /// key at all and must keep restoring exactly as it did.
+    #[test]
+    fn a_workspace_without_additional_windows_still_restores_one_window() {
+        let configuration = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "only"
+"#,
+        )
+        .expect("a single-window workspace is valid");
+
+        let workspace = configuration.workspace().expect("a saved workspace");
+        assert_eq!(workspace.tabs().len(), 1);
+        assert!(
+            workspace.windows().is_empty(),
+            "an absent windows key must mean no additional windows, not a parse failure"
+        );
+
+        let round_tripped = configuration.to_toml().expect("a workspace serialises");
+        assert!(
+            !round_tripped.contains("workspace.windows"),
+            "a single-window workspace must not gain a windows table: {round_tripped}"
+        );
+    }
+
+    /// Tab identifiers address tabs across the whole workspace, so a
+    /// collision between two windows is as invalid as one inside a window.
+    #[test]
+    fn rejects_invalid_additional_windows() {
+        let duplicate_across_windows = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "same"
+
+[[workspace.windows]]
+
+[[workspace.windows.tabs]]
+kind = "settings"
+id = "same"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate_across_windows.kind(),
+            ConfigErrorKind::DuplicateWorkspaceTabIdentifier
+        );
+
+        // A window with no tabs would restore as an empty frame nobody asked
+        // for; an emptied window collapses instead of being saved.
+        let empty_window = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "primary"
+
+[[workspace.windows]]
+tabs = []
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(empty_window.kind(), ConfigErrorKind::EmptyWorkspace);
+
+        let unknown_focus = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "primary"
+
+[[workspace.windows]]
+focused_tab_id = "nowhere"
+
+[[workspace.windows.tabs]]
+kind = "settings"
+id = "second"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            unknown_focus.kind(),
+            ConfigErrorKind::UnknownFocusedWorkspaceTab
+        );
+
+        let bad_geometry = Configuration::parse(
+            r#"
+schema_version = 1
+workspace_enabled = true
+
+[workspace]
+
+[[workspace.tabs]]
+kind = "launcher"
+id = "primary"
+
+[[workspace.windows]]
+
+[workspace.windows.geometry]
+x = 0.0
+y = 0.0
+width = 0.0
+height = 600.0
+
+[[workspace.windows.tabs]]
+kind = "settings"
+id = "second"
+"#,
+        )
+        .unwrap_err();
+        assert_eq!(
+            bad_geometry.kind(),
+            ConfigErrorKind::InvalidWorkspaceWindowGeometry
         );
     }
 

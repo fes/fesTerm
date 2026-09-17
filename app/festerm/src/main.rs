@@ -100,7 +100,9 @@ fn main() -> eframe::Result<()> {
             );
             app.install_native_menu(&creation_context.egui_ctx);
             app.install_wake_monitor(&creation_context.egui_ctx);
-            Ok(Box::new(FesTermApplication::new(app)))
+            let mut application = FesTermApplication::new(app);
+            application.restore_windows(&creation_context.egui_ctx);
+            Ok(Box::new(application))
         }),
     )
 }

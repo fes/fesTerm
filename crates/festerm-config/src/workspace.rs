@@ -6,12 +6,19 @@ use crate::{
     SshProfileConfiguration,
 };
 
-/// Metadata-only state used to restore one window's ordered tab surfaces.
+/// Metadata-only state used to restore every window's ordered tab surfaces.
 ///
 /// The workspace never contains terminal contents, processes, transport
 /// attempts, authentication, key material, host trust, or mutable ad-hoc
 /// launch definitions. A missing focus means restoration selects the first
 /// tab in document order.
+///
+/// `tabs` and `focused_tab_id` describe the **primary** window, and
+/// [`Self::windows`] describes each additional window (ADR 0033). Keeping the
+/// primary window in the original fields means a fesTerm build that predates
+/// multi-window restores it unchanged instead of failing or restoring an
+/// arbitrary window's tabs. Tab identifiers are unique across the whole
+/// workspace, so a focus reference is never ambiguous.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceConfiguration {
@@ -19,6 +26,8 @@ pub struct WorkspaceConfiguration {
     tabs: Vec<WorkspaceTab>,
     #[serde(default)]
     focused_tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    windows: Vec<WorkspaceWindow>,
 }
 
 impl WorkspaceConfiguration {
@@ -31,9 +40,20 @@ impl WorkspaceConfiguration {
         tabs: Vec<WorkspaceTab>,
         focused_tab_id: Option<String>,
     ) -> Result<Self, ConfigError> {
+        Self::with_windows(tabs, focused_tab_id, Vec::new())
+    }
+
+    /// Creates a validated workspace whose primary window holds `tabs` and
+    /// which reopens one further window per entry in `windows` (ADR 0033).
+    pub fn with_windows(
+        tabs: Vec<WorkspaceTab>,
+        focused_tab_id: Option<String>,
+        windows: Vec<WorkspaceWindow>,
+    ) -> Result<Self, ConfigError> {
         let workspace = Self {
             tabs,
             focused_tab_id,
+            windows,
         };
         workspace.validate_structure()?;
         Ok(workspace)
@@ -52,21 +72,37 @@ impl WorkspaceConfiguration {
         self.focused_tab_id.as_deref()
     }
 
+    /// Returns the additional windows to reopen beside the primary one, in
+    /// their saved order.
+    pub fn windows(&self) -> &[WorkspaceWindow] {
+        &self.windows
+    }
+
     pub(crate) fn validate(&self, profiles: &[Profile]) -> Result<(), ConfigError> {
         self.validate_structure()?;
-        for tab in &self.tabs {
+        for tab in self.all_tabs() {
             tab.validate_profile_reference(profiles)?;
         }
         Ok(())
     }
 
+    /// Every tab in the workspace, primary window first.
+    fn all_tabs(&self) -> impl Iterator<Item = &WorkspaceTab> {
+        self.tabs
+            .iter()
+            .chain(self.windows.iter().flat_map(|window| window.tabs.iter()))
+    }
+
     fn validate_structure(&self) -> Result<(), ConfigError> {
-        if self.tabs.is_empty() {
+        // An additional window with no tabs would restore as an empty window,
+        // which no application state can represent (ADR 0033: a window that
+        // loses its last tab collapses instead of persisting).
+        if self.tabs.is_empty() || self.windows.iter().any(|window| window.tabs.is_empty()) {
             return Err(ConfigError::new(ConfigErrorKind::EmptyWorkspace));
         }
 
-        let mut identifiers = HashSet::with_capacity(self.tabs.len());
-        for tab in &self.tabs {
+        let mut identifiers = HashSet::new();
+        for tab in self.all_tabs() {
             validate_tab_identifier(tab.identifier())?;
             if !identifiers.insert(tab.identifier()) {
                 return Err(ConfigError::new(
@@ -76,7 +112,10 @@ impl WorkspaceConfiguration {
             tab.validate_metadata()?;
         }
 
-        if let Some(focused_tab_id) = &self.focused_tab_id {
+        for focused_tab_id in std::iter::once(&self.focused_tab_id)
+            .chain(self.windows.iter().map(|window| &window.focused_tab_id))
+            .flatten()
+        {
             validate_tab_identifier(focused_tab_id)?;
             if !identifiers.contains(focused_tab_id.as_str()) {
                 return Err(ConfigError::new(
@@ -84,9 +123,124 @@ impl WorkspaceConfiguration {
                 ));
             }
         }
+
+        for window in &self.windows {
+            if let Some(geometry) = &window.geometry {
+                geometry.validate()?;
+            }
+        }
         Ok(())
     }
 }
+
+/// One additional window to reopen beside the primary one (ADR 0033).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceWindow {
+    tabs: Vec<WorkspaceTab>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    focused_tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    geometry: Option<WorkspaceWindowGeometry>,
+}
+
+impl WorkspaceWindow {
+    /// Creates one additional window's restorable state. Validation of the
+    /// whole workspace - identifier uniqueness across windows, focus
+    /// references, and geometry - happens in
+    /// [`WorkspaceConfiguration::with_windows`], which is the only place that
+    /// can see every window at once.
+    pub const fn new(
+        tabs: Vec<WorkspaceTab>,
+        focused_tab_id: Option<String>,
+        geometry: Option<WorkspaceWindowGeometry>,
+    ) -> Self {
+        Self {
+            tabs,
+            focused_tab_id,
+            geometry,
+        }
+    }
+
+    /// Returns this window's restorable tabs in their saved display order.
+    pub fn tabs(&self) -> &[WorkspaceTab] {
+        &self.tabs
+    }
+
+    /// Returns this window's saved focused tab identifier, if any.
+    pub fn focused_tab_id(&self) -> Option<&str> {
+        self.focused_tab_id.as_deref()
+    }
+
+    /// Returns this window's saved position and size, if the platform
+    /// reported them when it was saved.
+    pub const fn geometry(&self) -> Option<&WorkspaceWindowGeometry> {
+        self.geometry.as_ref()
+    }
+}
+
+/// A window's saved outer position and inner size, in logical points.
+///
+/// Optional at every level: a platform that refuses to report a window's own
+/// screen position (Wayland) simply saves no geometry, and restoration opens
+/// that window at the default size wherever the platform puts it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceWindowGeometry {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl WorkspaceWindowGeometry {
+    /// Creates saved geometry from a window's outer position and inner size.
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub const fn position(&self) -> (f32, f32) {
+        (self.x, self.y)
+    }
+
+    pub const fn size(&self) -> (f32, f32) {
+        (self.width, self.height)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let finite = self.x.is_finite()
+            && self.y.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite();
+        if finite && self.width > 0.0 && self.height > 0.0 {
+            Ok(())
+        } else {
+            Err(ConfigError::new(
+                ConfigErrorKind::InvalidWorkspaceWindowGeometry,
+            ))
+        }
+    }
+}
+
+/// Saved geometry compares by value: two windows restore identically when
+/// their numbers match. Derived `PartialEq` would be enough, but `Eq` lets
+/// the enclosing workspace types keep their `Eq` bound even though the fields
+/// are floats, and every stored value is validated finite above.
+impl PartialEq for WorkspaceWindowGeometry {
+    fn eq(&self, other: &Self) -> bool {
+        self.x.to_bits() == other.x.to_bits()
+            && self.y.to_bits() == other.y.to_bits()
+            && self.width.to_bits() == other.width.to_bits()
+            && self.height.to_bits() == other.height.to_bits()
+    }
+}
+
+impl Eq for WorkspaceWindowGeometry {}
 
 /// One stable, restorable workspace surface.
 ///

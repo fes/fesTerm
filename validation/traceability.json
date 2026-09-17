@@ -1029,7 +1029,8 @@
         "docs/gui-design.md#windows"
       ],
       "decisions": [
-        "ADR-0032"
+        "ADR-0032",
+        "ADR-0033"
       ],
       "automated_tests": [
         "opening_a_window_adds_one_window_to_the_application",
@@ -1043,15 +1044,35 @@
         "adopting_a_broadcast_does_not_re_broadcast_it",
         "a_secondary_window_does_not_persist_its_workspace",
         "the_native_menu_new_window_command_requests_a_window",
-        "an_additional_window_renders_its_own_content_in_a_real_pass"
+        "an_additional_window_renders_its_own_content_in_a_real_pass",
+        "a_release_over_another_windows_chip_names_that_window_and_chip",
+        "a_release_over_another_windows_body_appends_to_that_window",
+        "a_release_over_the_source_window_is_left_to_its_own_reorder",
+        "a_release_outside_every_window_detaches",
+        "a_platform_that_reports_no_window_geometry_resolves_no_cross_window_drop",
+        "dragging_a_chip_onto_another_windows_chip_row_emits_a_move_to_that_window",
+        "dragging_a_chip_clear_of_every_window_emits_a_detach",
+        "dragging_a_chip_within_its_own_window_never_emits_a_move_to_another_window",
+        "a_tab_dropped_on_another_window_moves_into_it",
+        "a_secondary_window_that_loses_its_last_tab_closes",
+        "the_primary_window_falls_back_to_the_launcher_instead_of_closing",
+        "a_tab_dropped_outside_every_window_detaches_into_a_new_one",
+        "detaching_the_only_tab_of_a_secondary_window_does_nothing",
+        "a_move_to_a_window_that_no_longer_exists_keeps_the_tab_where_it_is",
+        "a_saved_workspace_covers_every_window",
+        "restoring_a_workspace_reopens_its_additional_windows",
+        "restores_additional_windows_with_their_own_tabs_and_geometry",
+        "a_workspace_without_additional_windows_still_restores_one_window",
+        "rejects_invalid_additional_windows"
       ],
       "manual_scenarios": [
-        "CP-13"
+        "CP-13",
+        "CP-14"
       ],
       "status": "partial",
       "prerequisites": [
         "multi-viewport rendering and real OS window lifecycle are exercised interactively; automated coverage is headless and stops at the Application/Window model",
-        "tab drag between windows, pop-out/re-attach, per-window workspace restore, and per-window geometry persistence are deferred by ADR 0032"
+        "real cross-window pointer capture, native placement of a detached window, and Wayland geometry refusal are exercised interactively (ADR 0033)"
       ]
     },
     {

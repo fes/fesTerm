@@ -98,12 +98,15 @@ pub(super) struct ChipPresentation {
     pub(super) quick_switch_overlay_active: bool,
 }
 
+/// Paints one chip and returns the footprint it occupies in this window, which
+/// the row publishes so a sibling window's drag can resolve a drop onto this
+/// chip (ADR 0033).
 pub(super) fn show_chip(
     ui: &mut Ui,
     chip: &ChipViewModel,
     presentation: ChipPresentation,
     actions: &mut Vec<ChromeAction>,
-) {
+) -> Rect {
     let ChipPresentation {
         active,
         can_move_left,
@@ -162,7 +165,7 @@ pub(super) fn show_chip(
             let delta = pointer_pos - content_response.rect.center();
             ctx.transform_layer_shapes(layer_id, TSTransform::from_translation(delta));
         }
-        return;
+        return ghost_rect;
     }
 
     let (_, bg_rect) = ui.allocate_space(bg_size);
@@ -322,6 +325,8 @@ pub(super) fn show_chip(
             }
         }
     }
+
+    bg_rect
 }
 
 /// Paints one chip's content (status dot, label/rename field, secondary

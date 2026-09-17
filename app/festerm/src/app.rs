@@ -424,6 +424,16 @@ pub struct FesTermApp {
     /// composition root drains this and drops the window; the primary
     /// window's close is the ordinary application quit instead.
     window_close_accepted: bool,
+    /// This window's tab list changed and the workspace needs saving. The
+    /// save itself spans every window, so the composition root performs it
+    /// (ADR 0033).
+    workspace_save_requested: bool,
+    /// Where the platform last reported this window, saved with the
+    /// workspace so restore can reopen it in place (ADR 0033).
+    window_geometry: Option<festerm_config::WorkspaceWindowGeometry>,
+    /// Additional windows a restored workspace asks for, drained once by the
+    /// composition root at startup because only it can create windows.
+    pending_restored_windows: Vec<festerm_config::WorkspaceWindow>,
 }
 
 /// Distinguishes the one window that owns application-scoped host
@@ -623,6 +633,32 @@ impl FesTermApp {
         window
     }
 
+    /// Fills a freshly created window with the tabs a saved workspace
+    /// recorded for it (ADR 0033), in place of the Launcher it started on.
+    pub(crate) fn restore_window_tabs(
+        &mut self,
+        context: &egui::Context,
+        window: &festerm_config::WorkspaceWindow,
+    ) {
+        self.state = AppState::with_restored_window(
+            context,
+            self.state.configuration().clone().without_workspace(),
+            window.tabs(),
+            window.focused_tab_id(),
+        );
+        self.window_geometry = window.geometry().copied();
+    }
+
+    /// Fills a freshly created window with the tab dragged out to create it.
+    pub(crate) fn adopt_detached_tab(&mut self, tab: crate::tabs::Tab) {
+        self.state.adopt_detached_tab(tab);
+    }
+
+    /// Additional windows a restored workspace asked for, drained once.
+    pub(crate) fn take_restored_windows(&mut self) -> Vec<festerm_config::WorkspaceWindow> {
+        std::mem::take(&mut self.pending_restored_windows)
+    }
+
     fn with_configuration_status(
         context: &egui::Context,
         configuration: Configuration,
@@ -677,7 +713,12 @@ impl FesTermApp {
         let smoke_profile = native_smoke.as_ref().map(|smoke| {
             LocalProfile::new(smoke.test_child_path()).with_arguments(smoke.test_child_arguments())
         });
+        let mut pending_restored_windows = Vec::new();
         let (state, primary_tab) = if let Some(workspace) = configuration.workspace().cloned() {
+            // The saved workspace's own tabs are this, the primary, window;
+            // its additional windows are opened by the composition root once
+            // this one exists (ADR 0033).
+            pending_restored_windows = workspace.windows().to_vec();
             (
                 AppState::with_restored_workspace(context, configuration, &workspace),
                 None,
@@ -718,6 +759,9 @@ impl FesTermApp {
             role: WindowRole::Primary,
             pending_configuration_broadcast: None,
             window_close_accepted: false,
+            workspace_save_requested: false,
+            window_geometry: None,
+            pending_restored_windows,
         }
     }
 
@@ -1212,19 +1256,111 @@ impl FesTermApp {
     /// and the active tab autosave on every change - there is no manual
     /// Save action). The current configuration changes only after the
     /// atomic file replacement has succeeded.
-    fn save_workspace(&mut self) {
+    ///
+    /// Called only on the primary window and only by the composition root,
+    /// which alone can see every window's tabs; `additional_windows` carries
+    /// the siblings' already-captured state (ADR 0033).
+    pub(crate) fn save_workspace(
+        &mut self,
+        additional_windows: Vec<festerm_config::WorkspaceWindow>,
+        next_identifier: &mut usize,
+    ) {
         if self.role == WindowRole::Secondary {
-            // The persisted workspace is a single tab list. Until that schema
-            // generalises to several windows (ADR 0032, deferred), only the
-            // primary window writes it, so a second window's tabs cannot
-            // silently replace the restored set.
+            // Every window contributes its tabs, but exactly one write
+            // happens, through the same choke point as every other
+            // configuration write (ADR 0015).
             return;
         }
         self.apply_configuration_save(
-            self.state.capture_workspace_configuration(),
+            self.state
+                .capture_workspace_configuration(additional_windows, next_identifier),
             ConfigurationStartupStatus::WorkspaceSaveFailure,
             crate::configuration_startup::ConfigurationReloader::save_workspace,
         );
+    }
+
+    /// Captures this window's restorable tabs, focus, and geometry as one
+    /// additional-window entry, or `None` when it has nothing restorable.
+    pub(crate) fn capture_additional_window(
+        &self,
+        next_identifier: &mut usize,
+    ) -> Option<festerm_config::WorkspaceWindow> {
+        let (tabs, focused_tab_id) = self
+            .state
+            .capture_window_workspace_tabs(next_identifier)
+            .ok()?;
+        if tabs.is_empty() {
+            return None;
+        }
+        Some(festerm_config::WorkspaceWindow::new(
+            tabs,
+            focused_tab_id,
+            self.window_geometry,
+        ))
+    }
+
+    /// One-shot consumption of this window's "my tab list changed" flag, so
+    /// the composition root can save one workspace covering every window.
+    pub(crate) fn take_workspace_save_request(&mut self) -> bool {
+        std::mem::take(&mut self.workspace_save_requested)
+    }
+
+    /// Whether workspace restore is enabled, which is a configuration
+    /// preference and therefore identical in every window.
+    pub(crate) const fn restores_workspace(&self) -> bool {
+        self.state.restore_workspace()
+    }
+
+    /// Records where the platform says this window currently is, so a saved
+    /// workspace can reopen it there (ADR 0033). Platforms that refuse to
+    /// report a window's own position (Wayland) leave this `None`, and the
+    /// window restores at the default size wherever the platform puts it.
+    fn record_window_geometry(&mut self, context: &egui::Context) {
+        let (position, size) = context.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.outer_rect.or(viewport.inner_rect).map(|r| r.min),
+                viewport.inner_rect.map(|rect| rect.size()),
+            )
+        });
+        let (Some(position), Some(size)) = (position, size) else {
+            return;
+        };
+        let geometry =
+            festerm_config::WorkspaceWindowGeometry::new(position.x, position.y, size.x, size.y);
+        if self.window_geometry != Some(geometry) {
+            self.window_geometry = Some(geometry);
+            // Geometry is saved with the workspace rather than on its own, so
+            // a move or resize alone does not write the file; the next tab
+            // change carries the new position with it.
+        }
+    }
+
+    /// Moves one of this window's tabs out, with its live session intact.
+    pub(crate) fn detach_tab(&mut self, id: crate::tabs::TabId) -> Option<crate::tabs::Tab> {
+        self.state.detach_tab(id)
+    }
+
+    /// Takes ownership of a tab dropped onto this window.
+    pub(crate) fn adopt_tab(&mut self, tab: crate::tabs::Tab, before: Option<crate::tabs::TabId>) {
+        self.state.adopt_tab(tab, before);
+    }
+
+    pub(crate) fn tab_count(&self) -> usize {
+        self.state.tabs().len()
+    }
+
+    pub(crate) fn has_no_tabs(&self) -> bool {
+        self.state.is_empty()
+    }
+
+    pub(crate) fn open_launcher_if_empty(&mut self, context: &egui::Context) {
+        self.state.open_launcher_if_empty(context);
+    }
+
+    /// One-shot consumption of a pending cross-window tab move (ADR 0033).
+    pub(crate) fn take_tab_move_request(&mut self) -> Option<crate::tabs::TabMoveRequest> {
+        self.state.take_tab_move_request()
     }
 
     /// Stamps a saved profile's last-used time and writes it through, so the
@@ -1938,6 +2074,30 @@ impl FesTermApp {
                     let before = before.and_then(|chip_id| self.tab_id_for_chip(chip_id));
                     self.state
                         .dispatch(AppCommand::ReorderTab { moved, before }, context);
+                }
+                ChromeAction::MoveToWindow {
+                    moved,
+                    target,
+                    before,
+                    screen_position,
+                } => {
+                    let Some(moved) = self.tab_id_for_chip(moved) else {
+                        continue;
+                    };
+                    // `before` names a chip in the *destination* window, which
+                    // this window cannot look up; identifiers are
+                    // process-wide unique, so it is carried across and
+                    // resolved where it means something (ADR 0033).
+                    let before = before.map(|chip_id| TabId::from_chip_id(chip_id.0));
+                    self.state.dispatch(
+                        AppCommand::MoveTabToWindow {
+                            moved,
+                            target,
+                            before,
+                            screen_position,
+                        },
+                        context,
+                    );
                 }
                 ChromeAction::MoveLeft(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
@@ -4493,6 +4653,7 @@ impl FesTermApp {
         self.pump_all_sessions(context);
         self.state.reprompt_rejected_ssh_passwords(context);
         self.update_window_title(context);
+        self.record_window_geometry(context);
     }
 
     fn drive_native_smoke(&mut self, context: &egui::Context) {
@@ -5150,7 +5311,10 @@ impl FesTermApp {
         // every frame regardless, so the flag never piles up while the
         // preference is off.
         if self.state.take_workspace_dirty() && self.state.restore_workspace() {
-            self.save_workspace();
+            // One workspace covers every window (ADR 0033), so the window
+            // that changed only reports it; the composition root gathers the
+            // other windows' tabs and performs the single write.
+            self.workspace_save_requested = true;
         }
         if let Some(profile_id) = self.state.take_pending_profile_usage() {
             self.record_profile_launch(&profile_id);
@@ -5175,6 +5339,47 @@ impl FesTermApp {
 
     pub(crate) fn tab_count_for_test(&self) -> usize {
         self.state.tabs().len()
+    }
+
+    /// Builds a primary window from a configuration that carries a saved
+    /// workspace, including the additional windows the composition root then
+    /// reopens (ADR 0033).
+    pub(crate) fn with_restored_workspace_for_test(
+        context: &egui::Context,
+        configuration: Configuration,
+    ) -> Self {
+        let workspace = configuration
+            .workspace()
+            .cloned()
+            .expect("a configuration with a saved workspace");
+        let mut window = Self::for_test_with_configuration(configuration.clone());
+        window.pending_restored_windows = workspace.windows().to_vec();
+        window.state = AppState::with_restored_workspace(context, configuration, &workspace);
+        window
+    }
+
+    /// Stands in for the frame that notices a changed tab list, so a test
+    /// can drive the composition root's workspace save without rendering.
+    pub(crate) const fn request_workspace_save_for_test(&mut self) {
+        self.workspace_save_requested = true;
+    }
+
+    pub(crate) fn set_reloader_for_test(
+        &mut self,
+        reloader: crate::configuration_startup::ConfigurationReloader,
+    ) {
+        self.configuration_reloader = reloader;
+    }
+
+    pub(crate) fn set_window_geometry_for_test(
+        &mut self,
+        geometry: festerm_config::WorkspaceWindowGeometry,
+    ) {
+        self.window_geometry = Some(geometry);
+    }
+
+    pub(crate) fn tab_ids_for_test(&self) -> Vec<TabId> {
+        self.state.tabs().iter().map(|tab| tab.id).collect()
     }
 
     pub(crate) fn active_tab_id_for_test(&self) -> TabId {
@@ -5247,6 +5452,9 @@ impl FesTermApp {
             role: WindowRole::Primary,
             pending_configuration_broadcast: None,
             window_close_accepted: false,
+            workspace_save_requested: false,
+            window_geometry: None,
+            pending_restored_windows: Vec::new(),
         }
     }
 
@@ -7908,7 +8116,7 @@ mod tests {
         app.configuration_status = ConfigurationStartupStatus::Loaded;
         app.state.dispatch(AppCommand::OpenSettings, &context);
 
-        app.save_workspace();
+        app.save_workspace(Vec::new(), &mut 1);
 
         // A real save to that unwritable path would have recorded a failure
         // status and queued a broadcast; a skipped save records neither.
@@ -9270,7 +9478,7 @@ mod tests {
         let path = directory.join("config.toml");
         app.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
 
-        app.save_workspace();
+        app.save_workspace(Vec::new(), &mut 1);
 
         assert_eq!(
             app.configuration_status,
@@ -9333,8 +9541,17 @@ mod tests {
         harness.step();
         harness.step();
 
+        // The write itself spans every window, so the frame only *asks* for
+        // it and the composition root performs it (ADR 0033).
+        let app = harness.state_mut();
+        assert!(
+            app.take_workspace_save_request(),
+            "starting a session should request a workspace save with no manual Save action"
+        );
+        app.save_workspace(Vec::new(), &mut 1);
+
         assert_eq!(
-            harness.state().configuration_status,
+            app.configuration_status,
             ConfigurationStartupStatus::WorkspaceSaved
         );
         assert!(
@@ -9355,7 +9572,7 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         app.configuration_reloader = ConfigurationReloader::from_path_for_test(directory.clone());
 
-        app.save_workspace();
+        app.save_workspace(Vec::new(), &mut 1);
 
         let diagnostic = app.configuration_status.settings_message();
         assert!(matches!(

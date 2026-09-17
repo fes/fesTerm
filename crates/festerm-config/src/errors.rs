@@ -55,6 +55,7 @@ pub enum ConfigErrorKind {
     UnknownWorkspaceProfileReference,
     WorkspaceProfileKindMismatch,
     UnknownFocusedWorkspaceTab,
+    InvalidWorkspaceWindowGeometry,
     InvalidKnownHost,
     DuplicateKnownHost,
     InvalidInterfaceSettings,
@@ -173,6 +174,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::UnknownFocusedWorkspaceTab => {
                 formatter.write_str("workspace focus must reference a saved tab")
             }
+            ConfigErrorKind::InvalidWorkspaceWindowGeometry => formatter.write_str(
+                "workspace window geometry must be finite, with a positive size",
+            ),
             ConfigErrorKind::InvalidKnownHost => formatter.write_str(
                 "known_hosts[] entries must have a valid host, nonzero port, and a canonical SHA256: fingerprint",
             ),

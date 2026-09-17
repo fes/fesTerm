@@ -15,14 +15,15 @@
 use egui::viewport::ResizeDirection;
 use egui::{
     emath::TSTransform, vec2, Align, Align2, Color32, CursorIcon, DragAndDrop, Id, Key, LayerId,
-    Layout, Order, PointerButton, Popup, Rect, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui,
-    UiBuilder, WidgetInfo, WidgetType,
+    Layout, Order, PointerButton, Popup, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, TextEdit,
+    Ui, UiBuilder, WidgetInfo, WidgetType,
 };
 
 use crate::theme;
 
 mod chip;
 mod controls;
+pub mod tab_drag;
 
 /// Chip footprint bounds (`docs/gui-design.md` "Single-row allocation
 /// contract"). The focused chip keeps its ordinary minimum because it owns
@@ -240,7 +241,9 @@ pub struct ChipViewModel {
 
 /// A user gesture translated from the chip row. The application layer maps
 /// this to an `AppCommand`; this crate does not dispatch or interpret it.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+/// Carries a screen position for detach, so this is compared by value rather
+/// than hashed.
+#[derive(Clone, Debug, PartialEq)]
 pub enum ChromeAction {
     Activate(ChipId),
     Close(ChipId),
@@ -263,6 +266,19 @@ pub enum ChromeAction {
     Reorder {
         moved: ChipId,
         before: Option<ChipId>,
+    },
+    /// Emitted when a chip is released outside the window it was dragged
+    /// from (ADR 0033): either onto another window's chip row or body, or -
+    /// with `target: None` - outside every window, asking for the tab to be
+    /// detached into a window of its own at `screen_position`.
+    ///
+    /// Moving a tab between windows is Application-scoped, so this only names
+    /// the destination; this crate owns no window list and performs no move.
+    MoveToWindow {
+        moved: ChipId,
+        target: Option<egui::ViewportId>,
+        before: Option<ChipId>,
+        screen_position: Pos2,
     },
     /// Moves one chip exactly one place without activating it. These are
     /// semantic context-menu gestures; the application owns tab-order policy.
@@ -337,6 +353,11 @@ pub fn show(
     let active_just_changed = previous_active != Some(active);
     ui.data_mut(|data| data.insert_temp(active_chip_changed_id, active));
     let mut actions = Vec::new();
+    // Each chip's footprint in this window, published after the row is
+    // painted so a drag in a *sibling* window can resolve a drop onto one of
+    // these chips (ADR 0033): the dragged-over window receives no pointer
+    // events of its own while a button is held.
+    let mut chip_footprints: Vec<(ChipId, Rect)> = Vec::new();
     // Paint the full inset-inclusive row first. This uses the same surface as
     // the terminal below, making the frameless chrome and terminal one visual
     // well instead of stacking a separate colored title band above content.
@@ -469,7 +490,7 @@ pub fn show(
                 |ui: &mut Ui, forced_widths: Option<&[f32]>, include_new_session: bool| {
                     for (index, chip) in chips.iter().enumerate() {
                         let is_active = chip.id == active;
-                        chip::show_chip(
+                        let footprint = chip::show_chip(
                             ui,
                             chip,
                             chip::ChipPresentation {
@@ -483,6 +504,7 @@ pub fn show(
                             },
                             &mut actions,
                         );
+                        chip_footprints.push((chip.id, footprint));
                     }
                     if include_new_session {
                         controls::paint_new_chip_button(ui, chip_row_height, &mut actions);
@@ -563,6 +585,10 @@ pub fn show(
             },
         );
     });
+    tab_drag::record_footprint(&ui.ctx().clone(), band_rect, &chip_footprints);
+    if let Some(action) = released_cross_window_drag(ui) {
+        actions.push(action);
+    }
     // Egui input events are global to the frame. The terminal view is painted
     // after this band and must not encode mouse gestures already claimed by
     // chrome controls or the window-drag region.
@@ -748,6 +774,35 @@ fn end_of_row_drop_target(ui: &mut Ui, actions: &mut Vec<ChromeAction>) {
             });
         }
     }
+}
+
+/// Translates a chip released outside this window into a
+/// [`ChromeAction::MoveToWindow`] (ADR 0033).
+///
+/// Only the window a drag *started* in receives the release, because the
+/// platform holds pointer capture there for the whole gesture, so this is the
+/// only place a cross-window drop can be observed. A release over this
+/// window's own chips is left alone: that is an ordinary reorder, already
+/// settled live while the pointer moved.
+fn released_cross_window_drag(ui: &Ui) -> Option<ChromeAction> {
+    let ctx = ui.ctx().clone();
+    let moved = *DragAndDrop::payload::<ChipId>(&ctx)?;
+    if !ctx.input(|input| input.pointer.any_released()) {
+        return None;
+    }
+    let pointer = ctx.pointer_interact_pos()?;
+    let drop = tab_drag::resolve_drop(&ctx, pointer)?;
+    let screen_position = tab_drag::to_screen(&ctx, pointer)?;
+    let (target, before) = match drop {
+        tab_drag::TabDrop::Window { viewport, before } => (Some(viewport), before),
+        tab_drag::TabDrop::Detached => (None, None),
+    };
+    Some(ChromeAction::MoveToWindow {
+        moved,
+        target,
+        before,
+        screen_position,
+    })
 }
 
 /// Per-frame identity for a chip's interactive footprint, drag state, and
@@ -1936,6 +1991,175 @@ mod tests {
                     before: Some(ChipId(3)),
                 }
             )),
+            "observed actions: {:?}",
+            harness.state().observed
+        );
+    }
+
+    /// The screen position a platform would report for the harness window,
+    /// and a sibling window sitting directly below it. Drag tests need both
+    /// because a cross-window drop is resolved in screen coordinates
+    /// (ADR 0033), which only exist once a window knows where it is.
+    const HARNESS_WINDOW: egui::Rect =
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(900.0, 200.0));
+    const SIBLING_WINDOW: egui::Rect =
+        egui::Rect::from_min_max(egui::pos2(0.0, 300.0), egui::pos2(900.0, 500.0));
+
+    fn sibling_viewport() -> egui::ViewportId {
+        egui::ViewportId::from_hash_of("sibling-window")
+    }
+
+    /// Tells the harness where its window is, and publishes a sibling window
+    /// below it with two chips of its own, exactly as the composition root
+    /// does once per pass.
+    fn with_sibling_window(harness: &mut Harness<'static, ChromeHarnessState>) {
+        harness.input_mut().viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                inner_rect: Some(HARNESS_WINDOW),
+                ..Default::default()
+            },
+        );
+        let mut footprints = tab_drag::WindowFootprints::default();
+        footprints.insert(
+            egui::ViewportId::ROOT,
+            tab_drag::WindowFootprint::for_test(
+                HARNESS_WINDOW,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(900.0, 40.0)),
+                &[],
+            ),
+        );
+        footprints.insert(
+            sibling_viewport(),
+            tab_drag::WindowFootprint::for_test(
+                SIBLING_WINDOW,
+                egui::Rect::from_min_max(egui::pos2(0.0, 300.0), egui::pos2(900.0, 340.0)),
+                &[
+                    (
+                        ChipId(90),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 300.0), egui::pos2(100.0, 340.0)),
+                    ),
+                    (
+                        ChipId(91),
+                        egui::Rect::from_min_max(
+                            egui::pos2(100.0, 300.0),
+                            egui::pos2(200.0, 340.0),
+                        ),
+                    ),
+                ],
+            ),
+        );
+        tab_drag::publish_footprints(&harness.ctx, footprints);
+    }
+
+    /// Presses inside a chip's left padding strip - clear of its status dot,
+    /// label, and close button - then moves in steps past the drag threshold
+    /// and releases at `to`, the same real gesture
+    /// `dragging_one_chip_onto_another_emits_a_reorder_action` performs.
+    fn drag_chip(harness: &mut Harness<'static, ChromeHarnessState>, label: &str, to: egui::Pos2) {
+        let from = harness.get_by_label(label).rect().left_center() + egui::vec2(3.0, 0.0);
+        harness.drag_at(from);
+        harness.run();
+        let steps = 8;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            harness.hover_at(from + (to - from) * t);
+            harness.run();
+        }
+        harness.drop_at(to);
+        harness.run();
+    }
+
+    /// A drag that ends over another window's chip is a move into that
+    /// window, inserted where it was dropped - not a reorder, and not a
+    /// detach (ADR 0033).
+    #[test]
+    fn dragging_a_chip_onto_another_windows_chip_row_emits_a_move_to_that_window() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two"), chip(3, "three")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+        with_sibling_window(&mut harness);
+
+        // Over the sibling window's *second* chip.
+        drag_chip(&mut harness, "one chip", egui::pos2(150.0, 320.0));
+
+        assert!(
+            harness.state().observed.iter().any(|action| action
+                == &ChromeAction::MoveToWindow {
+                    moved: ChipId(1),
+                    target: Some(sibling_viewport()),
+                    before: Some(ChipId(91)),
+                    screen_position: egui::pos2(150.0, 320.0),
+                }),
+            "observed actions: {:?}",
+            harness.state().observed
+        );
+    }
+
+    /// Released past every window, the same gesture asks for a window of its
+    /// own instead.
+    #[test]
+    fn dragging_a_chip_clear_of_every_window_emits_a_detach() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+        with_sibling_window(&mut harness);
+
+        // Between the two windows: over neither.
+        drag_chip(&mut harness, "one chip", egui::pos2(400.0, 250.0));
+
+        assert!(
+            harness.state().observed.iter().any(|action| action
+                == &ChromeAction::MoveToWindow {
+                    moved: ChipId(1),
+                    target: None,
+                    before: None,
+                    screen_position: egui::pos2(400.0, 250.0),
+                }),
+            "observed actions: {:?}",
+            harness.state().observed
+        );
+    }
+
+    /// A drag that stays inside its own window remains a reorder, and must
+    /// not also be reported as a move out of the window.
+    #[test]
+    fn dragging_a_chip_within_its_own_window_never_emits_a_move_to_another_window() {
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![chip(1, "one"), chip(2, "two"), chip(3, "three")],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+        });
+        harness.run();
+        with_sibling_window(&mut harness);
+
+        let target = harness.get_by_label("three chip").rect().left_center() + egui::vec2(3.0, 0.0);
+        drag_chip(&mut harness, "one chip", target);
+
+        assert!(
+            harness
+                .state()
+                .observed
+                .iter()
+                .any(|action| matches!(action, ChromeAction::Reorder { .. })),
+            "observed actions: {:?}",
+            harness.state().observed
+        );
+        assert!(
+            !harness
+                .state()
+                .observed
+                .iter()
+                .any(|action| matches!(action, ChromeAction::MoveToWindow { .. })),
             "observed actions: {:?}",
             harness.state().observed
         );
