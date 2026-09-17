@@ -56,13 +56,13 @@ minimum needed to connect is visible immediately, and everything else is
 behind *Advanced settings*. The SSH form separates that minimum into a
 **Connection** section and an **Authentication** section (password,
 private-key or certificate), with the durable-session toggle on its own band
-beneath them; only port forwards remain folded away. Connection shows the destination in
-one of two notations -- a single squashed `user@host:port` field, or separate
-Username, Host and Port fields -- with a toggle on the section heading that
-switches between them and carries the value across. The squashed form is the
-fast path and the separate fields are the legible one; showing both at once,
-as an earlier pass did, only left the reader wondering which one the
-connection would actually use.
+beneath them; only port forwards remain folded away. Connection shows the
+destination in one of two notations -- a single squashed `user@host:port`
+field, or separate Username, Host and Port fields -- with a toggle on the
+section heading that switches between them and carries the value across. The
+squashed form is the fast path and the separate fields are the legible one;
+showing both at once, as an earlier pass did, only left the reader wondering
+which one the connection would actually use.
 A first-time SSH connection therefore needs a username and a host, and
 nothing else is in the way.
 
