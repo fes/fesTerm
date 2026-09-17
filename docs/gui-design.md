@@ -1628,6 +1628,10 @@ is how dragging a window's last tab into another window merges the two - and
 the first window returns to the Launcher, exactly as closing its last tab
 does. Nothing is confirmed, because nothing is closed: the session moved.
 
+While a chip is being dragged, terminals ignore the pointer: a drag on its way
+to another window crosses whatever is underneath it, and the press began on
+the chip row, so it never selects terminal text along the way.
+
 The Launcher, Settings, and Profiles do not move between windows. Each window
 opens its own on demand and they all edit the same shared configuration, so
 carrying one across would move nothing while taking that surface away from the

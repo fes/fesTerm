@@ -1107,7 +1107,9 @@ impl TerminalView {
             },
             sink,
             InputSuppression {
-                blackout: context_menu_open || !options.terminal_input_enabled,
+                blackout: context_menu_open
+                    || !options.terminal_input_enabled
+                    || chip_drag_in_flight(ui.ctx()),
                 keystrokes: !options.keyboard_input_enabled,
             },
         );
@@ -1262,6 +1264,16 @@ impl TerminalView {
             self.diagnostics.input_queue_depth,
         )
     }
+}
+
+/// Whether a tab chip is being dragged anywhere in this window (ADR 0033).
+///
+/// A chip drag routinely passes over a terminal on its way to another window,
+/// and a press that began on a chip is not a request to select terminal text,
+/// so the terminal ignores pointer input for the duration of the gesture
+/// rather than highlighting whatever the pointer swept across.
+fn chip_drag_in_flight(context: &egui::Context) -> bool {
+    egui::DragAndDrop::has_payload_of_type::<crate::chrome::ChipId>(context)
 }
 
 fn style_context_menu(ui: &mut Ui) {
@@ -1532,6 +1544,66 @@ mod tests {
                 sink: Sink::default(),
             }
         }
+    }
+
+    /// Drags the pointer across the terminal viewport and reports whether a
+    /// selection was made, optionally with a tab chip drag already in flight.
+    fn selection_after_drag_across_terminal(carrying_a_chip: bool) -> bool {
+        let mut state = HeadlessViewState::new();
+        state.terminal.ingest(b"select me please");
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                move |ui, state: &mut HeadlessViewState| {
+                    if carrying_a_chip {
+                        egui::DragAndDrop::set_payload(ui.ctx(), crate::chrome::ChipId(1));
+                    }
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                state,
+            );
+        harness.run();
+
+        let rect = harness.get_by_label("Terminal viewport").rect();
+        let start = rect.left_top() + Vec2::new(8.0, 8.0);
+        harness.event(egui::Event::PointerMoved(start));
+        harness.event(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        for step in 1..=4 {
+            let position = start + Vec2::new(30.0 * step as f32, 0.0);
+            harness.event(egui::Event::PointerMoved(position));
+            harness.run();
+        }
+        let end = start + Vec2::new(120.0, 0.0);
+        harness.event(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+
+        harness.state().view.selection().range().is_some()
+    }
+
+    /// The control for the test below: an ordinary drag across the terminal
+    /// still selects text.
+    #[test]
+    fn dragging_across_the_terminal_selects_text() {
+        assert!(selection_after_drag_across_terminal(false));
+    }
+
+    /// A tab chip dragged towards another window routinely passes over a
+    /// terminal, and the press that started it was aimed at the chip row, so
+    /// it must not leave a swathe of highlighted text behind (ADR 0033).
+    #[test]
+    fn dragging_a_tab_chip_over_the_terminal_selects_nothing() {
+        assert!(!selection_after_drag_across_terminal(true));
     }
 
     #[test]

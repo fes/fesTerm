@@ -1070,7 +1070,9 @@
         "a_chip_that_cannot_leave_its_window_resolves_no_cross_window_move",
         "closing_a_secondary_window_honours_the_close_confirmation_preference",
         "closing_a_secondary_window_confirms_as_a_window_rather_than_a_quit",
-        "closing_the_primary_window_confirms_even_with_the_preference_off"
+        "closing_the_primary_window_confirms_even_with_the_preference_off",
+        "dragging_across_the_terminal_selects_text",
+        "dragging_a_tab_chip_over_the_terminal_selects_nothing"
       ],
       "manual_scenarios": [
         "CP-13",
