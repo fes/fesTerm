@@ -30,9 +30,9 @@
       "caption": "Serial launches ask only for a device path and line settings; there is no host/credential concept for a local serial device.",
       "image": "serial-connect-form.png",
       "width": 363,
-      "height": 476,
+      "height": 503,
       "tier": "headless",
-      "sha256": "af5afa4939cd45f05f7f0565aa0a71e2b5937c21f88d9ac34795b5973dce1ab4"
+      "sha256": "f86bdede4b6b4a996a86bbda57087da5071386d2df5e554f06ac3d931742ec3e"
     },
     {
       "id": "sftp-connect-form",
@@ -41,9 +41,9 @@
       "caption": "The SFTP launch surface defaults to opening the graphical two-pane file manager once connected.",
       "image": "sftp-connect-form.png",
       "width": 424,
-      "height": 322,
+      "height": 349,
       "tier": "headless",
-      "sha256": "80417b685be3dd0ece8e0e9655710cbdbe82b83411b97817f1e164a200cfd00c"
+      "sha256": "b096d75233245c901086018f133902629206cb42431b5610a49a99e2faaac112"
     },
     {
       "id": "ssh-connect-advanced",
@@ -52,9 +52,9 @@
       "caption": "Expanding 'Advanced settings' reveals the port-forwarding controls beneath the always-visible connection, authentication and durable-session sections.",
       "image": "ssh-connect-advanced.png",
       "width": 804,
-      "height": 653,
+      "height": 680,
       "tier": "headless",
-      "sha256": "154a1a3d79a9f4c1f3ba75a36e7c802f64df442765a228e98e37ac708edfb3ac"
+      "sha256": "e98fbb9089d5743168673a9559f56996a6307bda00e58127039e942278230d55"
     },
     {
       "id": "ssh-connect-collapsed",
@@ -63,9 +63,9 @@
       "caption": "The default SSH launch surface: a Connection section led by the squashed user@host:port field and repeating it as Username, Host and Port, an Authentication section for the credential method, and the durable-remote-session toggle, with Advanced settings collapsed.",
       "image": "ssh-connect-collapsed.png",
       "width": 804,
-      "height": 562,
+      "height": 589,
       "tier": "headless",
-      "sha256": "4ffaddd9b97c4b2948e87cef14e10a69eb225c554ccb876383bd119b67bec88f"
+      "sha256": "5f615b93e8d07489f6894ea44d9e9fbb76d1bb02f645c8c0eecee3975248a0b8"
     },
     {
       "id": "diagnostics-durable-session",
@@ -216,10 +216,10 @@
       "title": "Profiles list",
       "caption": "Every saved local, SSH, SFTP, and serial profile in a single searchable table, each row carrying an overflow menu for connecting, editing, duplicating, and deleting.",
       "image": "profiles-list.png",
-      "width": 734,
-      "height": 721,
+      "width": 710,
+      "height": 748,
       "tier": "headless",
-      "sha256": "4de549974df5f6f20fa26cd825ea963b3c13edf19a2fea9dc24c44f2fa14f972"
+      "sha256": "290dd6da84b3904f9b661e75423b2f5902e537e0552ce2de45f66a0fef2ad75b"
     },
     {
       "id": "profiles-serial-editor",
@@ -228,9 +228,9 @@
       "caption": "Device path and line settings (baud, data bits, parity, stop bits, flow control) for a saved serial profile.",
       "image": "profiles-serial-editor.png",
       "width": 362,
-      "height": 264,
+      "height": 291,
       "tier": "headless",
-      "sha256": "42976089baaedb54b2f9f6a54b6bb838dcdc94eafa421dba82e96b4573e39e49"
+      "sha256": "a7e876f5aea0b92f40a34fae1b6717ea319161803cf6d46cee37f36c387b8fe8"
     },
     {
       "id": "profiles-sftp-editor",

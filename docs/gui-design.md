@@ -371,7 +371,12 @@ certificate -- into the Profiles editor
 The Launcher list, SSH connection surface, and profile editor use the same
 surface-owned scrollbar behavior as Settings: content reserves a right-side
 lane, the bar does not overlap controls, and ordinary content hover does not
-reveal it.
+reveal it. Anything laid out beside that scrolling content -- the Profiles
+search row and its New Profile button, for instance -- reserves the same lane,
+so a surface's controls end flush with the table or card they introduce rather
+than overhanging it. Scrolled fully down, content keeps a bottom gutter
+matching the inset it has at the top, instead of resting against the bottom of
+the window.
 Submitting with no password (from either surface) starts the session
 immediately with no credential attached (`SshAuthentication::Interactive`)
 rather than collecting one blind beforehand, mirroring `ssh`'s own ordering:

@@ -862,7 +862,13 @@ pub(crate) fn show_profiles(
                 ui.heading("Profiles");
                 ui.label("Reusable local, SSH, SFTP, and serial launch definitions.");
                 ui.add_space(42.0);
-                ui.horizontal(|ui| {
+                // The table below sits inside a bounded scroll, which holds
+                // back a lane for its scrollbar. This row is outside that
+                // scroll, so it has to hold back the same lane or it ends
+                // wider than the table it introduces.
+                ui.scope(|ui| {
+                    ui.set_max_width((ui.available_width() - CONTENT_SCROLLBAR_LANE).max(0.0));
+                    ui.horizontal(|ui| {
                     // Lay the button out from the trailing edge so the search
                     // field absorbs the remainder exactly and the row ends
                     // flush with the table below it, whatever the button
@@ -906,6 +912,7 @@ pub(crate) fn show_profiles(
                             }
                         }
                     });
+                });
                 });
                 ui.add_space(28.0);
 
@@ -1719,6 +1726,51 @@ mod tests {
             after < PANEL_HEIGHT,
             "scrolling must be able to bring the last profile into view, but it stopped \
              at {after} of {PANEL_HEIGHT}"
+        );
+
+        // Scrolled all the way down, the list must still end with the same
+        // breathing room it has at the top rather than butting against the
+        // bottom of the window.
+        // Without a gutter the table stops roughly 31px above the bottom of
+        // the window -- its own frame margin and footer row, and nothing
+        // more. The threshold is deliberately a literal rather than the
+        // gutter constant, so shrinking that constant fails the test instead
+        // of quietly relaxing it.
+        let bottom = harness.get_by_label(last).rect().bottom();
+        let gutter = PANEL_HEIGHT - bottom;
+        assert!(
+            gutter >= 48.0,
+            "fully scrolled content needs a bottom gutter, but the last profile ended \
+             {gutter} above the bottom of a {PANEL_HEIGHT} window"
+        );
+    }
+
+    #[test]
+    fn the_new_profile_row_ends_flush_with_the_table_below_it() {
+        const PROFILE_ROW_TRAILING_INSET: f32 = 24.0;
+
+        // The table reserves a lane for its scroll bar; the row above it is
+        // outside that scroll, so without the same reservation it overhangs
+        // the table by exactly the width of that lane.
+        let profiles: Vec<Profile> = (0..3)
+            .map(|index| {
+                Profile::local(format!("profile-{index}"), "/bin/zsh", Vec::new(), None).unwrap()
+            })
+            .collect();
+        let mut harness = profiles_harness(festerm_config::Configuration::new(profiles).unwrap());
+        harness.run();
+
+        let button = harness.get_by_label("New Profile").rect().right();
+        // The per-row overflow control is the right-most thing in the table,
+        // inset from the table's own edge by a fixed margin.
+        let row_control = harness
+            .get_by_label("More actions for profile-0")
+            .rect()
+            .right();
+        assert!(
+            button <= row_control + PROFILE_ROW_TRAILING_INSET,
+            "the New Profile button must not overhang the table: button ends at {button}, \
+             the last row control at {row_control}"
         );
     }
 

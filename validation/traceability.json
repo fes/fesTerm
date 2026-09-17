@@ -1230,6 +1230,7 @@
       "automated_tests": [
         "open_profiles_is_a_singleton_and_reactivates_the_existing_tab",
         "clicking_a_profiles_row_opens_its_editor_rather_than_connecting",
+        "the_new_profile_row_ends_flush_with_the_table_below_it",
         "editing_an_existing_ssh_profile_shows_its_destination_already_composed",
         "profiles_list_shows_no_profiles_saved_yet_when_empty",
         "profiles_new_local_profile_flow_returns_a_save_profile_command",
