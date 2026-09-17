@@ -793,6 +793,7 @@ mod tests {
         let cases = [
             (NativeMenuAction::Paste, NativeMenuCommand::Paste),
             (NativeMenuAction::NewSession, NativeMenuCommand::NewSession),
+            (NativeMenuAction::NewWindow, NativeMenuCommand::NewWindow),
             (
                 NativeMenuAction::StartLocalShell,
                 NativeMenuCommand::StartLocalShell,
