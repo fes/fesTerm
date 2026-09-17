@@ -307,10 +307,25 @@ impl Screen {
         let last_row = (end - 1) / columns;
         let first_column = start % columns;
         let last_column = end - last_row * columns;
-        let physical_start = self.logical_linear_to_physical(start);
-        let physical_end = physical_start + (end - start);
-        self.cells[physical_start..physical_end].fill(cell.clone());
-        self.occupied_cells[physical_start..physical_end].fill(!is_structural_blank(&cell));
+        // Successive logical rows are only contiguous in the cell array while
+        // the ring is unrotated, so each row's span is mapped through the ring
+        // on its own: a single mapped span would run off the end of the array
+        // the moment the fill crosses the wrap point.
+        for row in first_row..=last_row {
+            let row_start = if row == first_row { first_column } else { 0 };
+            let row_end = if row == last_row {
+                last_column
+            } else {
+                columns
+            };
+            if row_start >= row_end {
+                continue;
+            }
+            let physical_start = self.logical_linear_to_physical(row * columns + row_start);
+            let physical_end = physical_start + (row_end - row_start);
+            self.cells[physical_start..physical_end].fill(cell.clone());
+            self.occupied_cells[physical_start..physical_end].fill(!is_structural_blank(&cell));
+        }
         self.mark_dirty_range(first_row, last_row);
         // A contiguous fill can split a pair only at either range boundary.
         self.repair_neighborhood(first_row, first_column, &cell);

@@ -356,6 +356,29 @@ mod tests {
         assert_eq!(terminal.row_text(3).as_deref(), Some("     "));
     }
 
+    /// Erasing to the end of the screen after enough output to rotate the
+    /// ring buffer spans rows that are no longer contiguous in the cell
+    /// array. Mapping the whole span through the ring once ran off the end of
+    /// that array and panicked, taking the process with it.
+    #[test]
+    fn erasing_to_the_end_of_a_scrolled_screen_clears_every_row_without_panicking() {
+        let mut terminal = terminal(5, 4);
+        for line in 0..12 {
+            terminal.ingest(format!("row{line}\r\n").as_bytes());
+        }
+
+        // Home the cursor, then erase from there to the end of the screen.
+        terminal.ingest(b"\x1b[H\x1b[J");
+
+        for row in 0..4 {
+            assert_eq!(
+                terminal.row_text(row).as_deref(),
+                Some("     "),
+                "row {row} should be blank after erase-to-end-of-screen"
+            );
+        }
+    }
+
     #[test]
     fn origin_mode_and_scroll_region_bound_cursor_addressing_and_scrolling() {
         let mut terminal = terminal(4, 4);
