@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use festerm_document::{
     AutoSaveControl, Availability, DocumentBounds, DocumentId, DocumentKey, DocumentOrigin,
@@ -24,6 +25,16 @@ use festerm_document::{
 };
 
 use crate::document_store::{self, Freshness, Generation, LoadFailure, SaveFailure};
+
+/// How often an open local document is re-checked against its file. Short
+/// enough that a `git checkout` in the next window is noticed while the user
+/// is still looking at it, long enough that a handful of open files cost
+/// nothing measurable.
+const POLL_INTERVAL: Duration = Duration::from_millis(1_500);
+
+/// How long "Reloaded from disk" stays up. Long enough to read, short enough
+/// that it is gone before it becomes stale news.
+const RELOAD_NOTICE: Duration = Duration::from_secs(8);
 
 /// The application-scoped registry handle every window holds.
 pub(crate) type SharedDocuments = Rc<RefCell<DocumentRegistry>>;
@@ -41,6 +52,12 @@ pub(crate) struct OpenDocument {
     save: SaveProgress,
     auto_save_requested: bool,
     last_error: Option<SaveError>,
+    /// When this document's source was last checked, so a poll costs one stat
+    /// per document per interval rather than one per frame.
+    checked: Instant,
+    /// When an outside change was last taken up, so the notice can fade
+    /// instead of sitting there claiming news that is minutes old.
+    reloaded: Option<Instant>,
 }
 
 impl OpenDocument {
@@ -94,6 +111,9 @@ impl OpenDocument {
             auto_save_requested: self.auto_save_requested,
             last_error: self.last_error.clone(),
             remote: self.origin.is_remote(),
+            recently_reloaded: self
+                .reloaded
+                .is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
         })
     }
 
@@ -228,6 +248,8 @@ impl DocumentRegistry {
                 save: SaveProgress::Idle,
                 auto_save_requested: false,
                 last_error: None,
+                checked: Instant::now(),
+                reloaded: None,
             },
         );
         id
@@ -284,6 +306,10 @@ impl DocumentRegistry {
         self.documents.len()
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.documents.is_empty()
+    }
+
     /// Writes a local document back to its origin, revalidating first.
     ///
     /// A conflict is not an error the user has to interpret: the source's text
@@ -334,6 +360,66 @@ impl DocumentRegistry {
         Some(outcome)
     }
 
+    /// Re-checks every local document whose turn has come round, which is how
+    /// an outside change is noticed without the user pressing anything.
+    ///
+    /// fesTerm does not install a filesystem watcher for this. ADR 0034 §6
+    /// makes watcher events *hints* that must be re-stat'ed anyway — atomic
+    /// saves arrive as create/rename/replace storms, and watch services drop
+    /// events under load — so a watcher would buy earlier notice at the cost
+    /// of a platform-specific dependency and three sets of edge cases, while
+    /// the check it triggers is exactly the one below. A bounded poll of the
+    /// handful of files that are actually open behaves identically on every
+    /// platform, and Refresh remains there for anyone who will not wait.
+    pub(crate) fn poll(&mut self, now: Instant) -> Vec<(DocumentId, RefreshOutcome)> {
+        let due: Vec<DocumentId> = self
+            .documents
+            .iter()
+            .filter(|(_, document)| {
+                matches!(document.origin, DocumentOrigin::Local(_))
+                    && document.save == SaveProgress::Idle
+                    // A conflict is the user's to resolve; re-checking would
+                    // only replace their banner with the same banner.
+                    && document.conflict.is_none()
+                    && now.duration_since(document.checked) >= POLL_INTERVAL
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        let mut changed = Vec::new();
+        for id in due {
+            if let Some(outcome) = self.refresh(id) {
+                if outcome != RefreshOutcome::Unchanged {
+                    changed.push((id, outcome));
+                }
+            }
+        }
+        changed
+    }
+
+    /// Re-checks everything now, whatever the poll clock says. Used when a
+    /// window regains focus: the user has just come back from whatever
+    /// changed the file.
+    pub(crate) fn revalidate_all(&mut self) -> Vec<(DocumentId, RefreshOutcome)> {
+        let ids: Vec<DocumentId> = self
+            .documents
+            .iter()
+            .filter(|(_, document)| {
+                document.save == SaveProgress::Idle && document.conflict.is_none()
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        let mut changed = Vec::new();
+        for id in ids {
+            if let Some(outcome) = self.refresh(id) {
+                if outcome != RefreshOutcome::Unchanged {
+                    changed.push((id, outcome));
+                }
+            }
+        }
+        changed
+    }
+
     /// Re-checks a local document against its source and applies ADR 0034 §6's
     /// table: a clean buffer follows the file, a dirty one never does silently.
     pub(crate) fn refresh(&mut self, id: DocumentId) -> Option<RefreshOutcome> {
@@ -347,6 +433,7 @@ impl DocumentRegistry {
             return Some(RefreshOutcome::Unchanged);
         };
 
+        document.checked = Instant::now();
         let outcome = match document_store::freshness(&path, known) {
             Freshness::Unchanged => RefreshOutcome::Unchanged,
             Freshness::Changed(_) => match document_store::load(&path, bounds) {
@@ -356,6 +443,7 @@ impl DocumentRegistry {
                     document.read_only = loaded.read_only;
                     document.availability = Availability::Available;
                     document.conflict = None;
+                    document.reloaded = Some(Instant::now());
                     RefreshOutcome::Reloaded
                 }
                 Ok(loaded) => {
@@ -704,5 +792,149 @@ mod tests {
         let id = registry.open_local(&path).unwrap();
         assert_eq!(registry.find_local(&path), Some(id));
         assert_eq!(registry.get(id).unwrap().views(), 1);
+    }
+
+    /// Writes a file in a way an outside program would, and makes sure the
+    /// change is actually detectable: same-size writes inside one filesystem
+    /// timestamp tick are exactly the case `Generation` exists for, so the
+    /// tests must not accidentally depend on the clock.
+    fn change_outside(path: &std::path::Path, contents: &str) {
+        std::thread::sleep(Duration::from_millis(10));
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn a_clean_document_follows_a_change_made_outside_festerm() {
+        let directory = TemporaryDirectory::new("poll-clean");
+        let path = directory.file("notes.md", "first\n");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+
+        change_outside(&path, "second\n");
+        // Before the interval is up, nothing is even looked at.
+        assert!(documents.borrow_mut().poll(Instant::now()).is_empty());
+        assert_eq!(
+            documents.borrow().get(id).unwrap().text().text(),
+            "first\n"
+        );
+
+        let changed = documents
+            .borrow_mut()
+            .poll(Instant::now() + POLL_INTERVAL);
+        assert_eq!(changed, vec![(id, RefreshOutcome::Reloaded)]);
+        assert_eq!(
+            documents.borrow().get(id).unwrap().text().text(),
+            "second\n"
+        );
+        // And it says so, rather than the text changing under the reader in
+        // silence.
+        let status = documents.borrow().get(id).unwrap().status();
+        assert_eq!(status.headline(), "Reloaded from disk");
+        assert_eq!(status.severity(), Severity::Informational);
+    }
+
+    #[test]
+    fn a_dirty_document_never_follows_a_change_made_outside_festerm() {
+        let directory = TemporaryDirectory::new("poll-dirty");
+        let path = directory.file("notes.md", "first\n");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(id)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("mine\n")
+            .unwrap();
+
+        change_outside(&path, "theirs\n");
+        let changed = documents
+            .borrow_mut()
+            .poll(Instant::now() + POLL_INTERVAL);
+
+        assert_eq!(changed, vec![(id, RefreshOutcome::Conflict)]);
+        // The user's text is untouched and the other version is in hand for
+        // Compare, without a second read of the file.
+        let registry = documents.borrow();
+        let document = registry.get(id).unwrap();
+        assert_eq!(document.text().text(), "mine\n");
+        assert_eq!(
+            document.conflict().unwrap().source_text(),
+            Some("theirs\n")
+        );
+        assert_eq!(document.status().severity(), Severity::Blocking);
+    }
+
+    #[test]
+    fn a_conflict_is_left_alone_until_the_user_resolves_it() {
+        let directory = TemporaryDirectory::new("poll-conflicted");
+        let path = directory.file("notes.md", "first\n");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+        documents
+            .borrow_mut()
+            .get_mut(id)
+            .unwrap()
+            .text_mut()
+            .sync_from_view("mine\n")
+            .unwrap();
+        change_outside(&path, "theirs\n");
+        documents
+            .borrow_mut()
+            .poll(Instant::now() + POLL_INTERVAL);
+
+        change_outside(&path, "theirs again\n");
+        let changed = documents
+            .borrow_mut()
+            .poll(Instant::now() + POLL_INTERVAL * 4);
+
+        // Replacing a conflict banner with the same conflict banner tells the
+        // user nothing and would discard what Compare is already showing.
+        assert!(changed.is_empty());
+        assert_eq!(
+            documents
+                .borrow()
+                .get(id)
+                .unwrap()
+                .conflict()
+                .unwrap()
+                .source_text(),
+            Some("theirs\n")
+        );
+    }
+
+    #[test]
+    fn regaining_focus_re_checks_without_waiting_for_the_interval() {
+        let directory = TemporaryDirectory::new("focus-revalidate");
+        let path = directory.file("notes.md", "first\n");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+
+        change_outside(&path, "second\n");
+        let changed = documents.borrow_mut().revalidate_all();
+
+        assert_eq!(changed, vec![(id, RefreshOutcome::Reloaded)]);
+    }
+
+    #[test]
+    fn a_file_that_disappears_keeps_its_buffer_and_says_the_source_is_gone() {
+        let directory = TemporaryDirectory::new("poll-deleted");
+        let path = directory.file("notes.md", "first\n");
+        let documents = DocumentRegistry::shared();
+        let id = documents.borrow_mut().open_local(&path).unwrap();
+
+        fs::remove_file(&path).unwrap();
+        let changed = documents
+            .borrow_mut()
+            .poll(Instant::now() + POLL_INTERVAL);
+
+        assert_eq!(
+            changed,
+            vec![(id, RefreshOutcome::Unavailable(UnavailableReason::Missing))]
+        );
+        assert_eq!(
+            documents.borrow().get(id).unwrap().text().text(),
+            "first\n"
+        );
     }
 }

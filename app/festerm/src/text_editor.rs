@@ -891,6 +891,175 @@ mod tests {
         harness.get_by_label("Auto-save");
     }
 
+    /// Drives the editor the way a person does: real key events through the
+    /// harness, not a buffer assignment. Everything these tests assert is a
+    /// consequence of keystrokes.
+    fn typing_harness(
+        path: &std::path::Path,
+    ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+        let (documents, editor) = editor_for(path);
+        let tab_id = crate::tabs::TabId::next_for_test();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 420.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                    state.1.show(ui, tab_id, &state.0);
+                },
+                (documents, editor),
+            );
+        harness.run();
+        harness
+    }
+
+    fn document_text(harness: &Harness<'static, (SharedDocuments, TextEditorTab)>) -> String {
+        let (documents, editor) = harness.state();
+        documents
+            .borrow()
+            .get(editor.document())
+            .unwrap()
+            .text()
+            .text()
+            .to_owned()
+    }
+
+    #[test]
+    fn typing_into_the_body_reaches_the_shared_document_and_dirties_it() {
+        let directory = TemporaryDirectory::new("typing");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta");
+        harness.run();
+
+        // Focus puts the caret at the end of the buffer, so this is an append.
+        assert_eq!(document_text(&harness), "alpha\nbeta");
+        let (documents, editor) = harness.state();
+        assert!(documents
+            .borrow()
+            .get(editor.document())
+            .unwrap()
+            .text()
+            .is_dirty());
+        // Every surface agrees, because they all read one derived status.
+        harness.get_by_label("Unsaved changes");
+    }
+
+    #[test]
+    fn selecting_a_run_of_text_and_typing_replaces_it() {
+        let directory = TemporaryDirectory::new("replace-selection");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        harness.run();
+        // Select the whole buffer, then type over it — the ordinary way a
+        // person replaces a line.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .type_text("omega");
+        harness.run();
+
+        assert_eq!(document_text(&harness), "omega");
+    }
+
+    #[test]
+    fn backspacing_removes_what_was_typed_from_the_shared_document() {
+        let directory = TemporaryDirectory::new("backspace");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("x");
+        harness.run();
+        assert_eq!(document_text(&harness), "alpha\nx");
+        harness.get_by_label("Unsaved changes");
+
+        harness.key_press(egui::Key::Backspace);
+        harness.run();
+
+        assert_eq!(document_text(&harness), "alpha\n");
+        // Still unsaved: dirty tracks the undo token, and retyping your way
+        // back to the old text is two edits, not none. Undo — which *does*
+        // return the token — is keyboard-routed in the vi phase; egui's own
+        // undoer still owns Ctrl+Z here.
+        harness.get_by_label("Unsaved changes");
+    }
+
+    #[test]
+    fn typing_then_pressing_save_puts_the_typed_text_on_disk() {
+        let directory = TemporaryDirectory::new("type-and-save");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta ");
+        harness.run();
+
+        // Save is a command the tab reports rather than an action it takes,
+        // so the test dispatches it exactly as the application would.
+        harness.get_by_label("Save").click();
+        harness.run();
+        let (documents, editor) = harness.state();
+        let document = editor.document();
+        documents.borrow_mut().save(document);
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\nbeta ");
+        assert!(!documents
+            .borrow()
+            .get(document)
+            .unwrap()
+            .text()
+            .is_dirty());
+    }
+
+    #[test]
+    fn typing_in_one_view_appears_in_another_view_of_the_same_file() {
+        let directory = TemporaryDirectory::new("two-views-typing");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let (documents, first) = editor_for(&path);
+        let id = first.document();
+        let second = TextEditorTab::new(id, &documents);
+        let (first_id, second_id) = (
+            crate::tabs::TabId::next_for_test(),
+            crate::tabs::TabId::next_for_test(),
+        );
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 420.0))
+            .build_ui_state(
+                move |ui,
+                      state: &mut (SharedDocuments, TextEditorTab, TextEditorTab)| {
+                    ui.horizontal(|ui| {
+                        ui.push_id("first", |ui| {
+                            state.1.show(ui, first_id, &state.0);
+                        });
+                        ui.push_id("second", |ui| {
+                            state.2.show(ui, second_id, &state.0);
+                        });
+                    });
+                },
+                (documents, first, second),
+            );
+        harness.run();
+
+        let bodies = harness.get_all_by_role(egui::accesskit::Role::MultilineTextInput);
+        let first_body = bodies.into_iter().next().expect("the first view has a body");
+        first_body.focus();
+        first_body.type_text("typed ");
+        harness.run();
+        harness.run();
+
+        // The second view adopted the edit without being told about it.
+        assert_eq!(harness.state().2.buffer, "alpha\ntyped ");
+    }
+
     #[test]
     fn the_mode_control_is_offered_only_for_markdown() {
         let directory = TemporaryDirectory::new("mode-offer");

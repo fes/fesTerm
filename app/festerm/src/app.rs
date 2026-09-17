@@ -51,6 +51,11 @@ use crate::tabs::{
 };
 use crate::updates::{UpdateController, UpdateStatus};
 
+/// How often a window wakes purely to re-check the files it has open. Slower
+/// than the registry's own interval on purpose: waking is cheap, but waking
+/// more often than there is anything new to find is just heat.
+const DOCUMENT_POLL_REPAINT: Duration = Duration::from_millis(750);
+
 const APPLICATION_TITLE: &str = "fesTerm";
 const AI_AUTHORSHIP_SUMMARY: &str = "Entirely AI-written with human guidance.";
 const AI_AUTHORSHIP_DETAIL: &str =
@@ -396,6 +401,9 @@ pub struct FesTermApp {
     wake_requested: Arc<AtomicBool>,
     focus_mode: bool,
     terminal_fonts_installed: bool,
+    /// Whether this window had focus last frame, so regaining it can be told
+    /// from merely having it.
+    window_was_focused: bool,
     terminal_font_generation: TerminalFontGeneration,
     about_icon: Option<egui::TextureHandle>,
     updates: UpdateController,
@@ -739,6 +747,7 @@ impl FesTermApp {
         Self {
             state,
             primary_tab,
+            window_was_focused: true,
             window_title: APPLICATION_TITLE.to_owned(),
             native_smoke,
             palette: PaletteState::default(),
@@ -4706,6 +4715,33 @@ impl FesTermApp {
         self.state.reprompt_rejected_ssh_passwords(context);
         self.update_window_title(context);
         self.record_window_geometry(context);
+        self.check_open_documents(context);
+    }
+
+    /// Notices outside changes to open files without anybody pressing
+    /// Refresh. Every window runs this against the one shared registry; the
+    /// registry's own interval means the second window's call is a no-op
+    /// rather than a second stat.
+    fn check_open_documents(&mut self, context: &egui::Context) {
+        let documents = Rc::clone(self.state.documents());
+        if documents.borrow().is_empty() {
+            return;
+        }
+        let regained_focus = context.input(|i| i.viewport().focused).unwrap_or(true);
+        let changed = if regained_focus && !self.window_was_focused {
+            // The user has just come back from whatever changed the file.
+            documents.borrow_mut().revalidate_all()
+        } else {
+            documents.borrow_mut().poll(Instant::now())
+        };
+        self.window_was_focused = regained_focus;
+        if !changed.is_empty() {
+            context.request_repaint();
+        }
+        // Polling has to keep happening while the window sits idle, or an
+        // outside change would only be noticed the next time something else
+        // caused a repaint.
+        context.request_repaint_after(DOCUMENT_POLL_REPAINT);
     }
 
     fn drive_native_smoke(&mut self, context: &egui::Context) {
@@ -5519,6 +5555,7 @@ impl FesTermApp {
             wake_requested: Arc::new(AtomicBool::new(false)),
             focus_mode: false,
             terminal_fonts_installed: false,
+            window_was_focused: true,
             terminal_font_generation: TerminalFontGeneration::default(),
             about_icon: None,
             updates: UpdateController::unavailable_for_test(),

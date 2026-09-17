@@ -205,6 +205,10 @@ pub struct StatusInputs {
     pub last_error: Option<SaveError>,
     /// Whether the origin is remote, which only changes the wording.
     pub remote: bool,
+    /// Set briefly after an outside change was taken up by a clean document,
+    /// so every view says so instead of silently showing different text than
+    /// the reader last looked at (ADR 0034 §6).
+    pub recently_reloaded: bool,
 }
 
 impl Default for StatusInputs {
@@ -217,6 +221,7 @@ impl Default for StatusInputs {
             auto_save_requested: false,
             last_error: None,
             remote: false,
+            recently_reloaded: false,
         }
     }
 }
@@ -378,8 +383,25 @@ impl DocumentStatus {
             };
         }
 
+        if inputs.recently_reloaded {
+            return Self {
+                severity: Severity::Informational,
+                accent: StatusAccent::Working,
+                headline: format!("Reloaded from {where_it_is}"),
+                detail: "This file changed outside fesTerm. Every open view is showing the \
+                         new version."
+                    .to_owned(),
+                actions: Vec::new(),
+                can_save: false,
+                auto_save: auto_save_idle(inputs.auto_save_requested),
+                chip_state: "reloaded",
+                short_label: "Reloaded",
+            };
+        }
+
         Self {
             severity: Severity::Informational,
+            accent: StatusAccent::Settled,
             headline: "Saved".to_owned(),
             detail: format!("All changes are on {where_it_is}."),
             actions: Vec::new(),
@@ -387,8 +409,7 @@ impl DocumentStatus {
             // would make the file's modification time lie.
             can_save: false,
             auto_save: auto_save_idle(inputs.auto_save_requested),
-            accent: StatusAccent::Settled,
-                chip_state: "saved",
+            chip_state: "saved",
             short_label: "Saved",
         }
     }
