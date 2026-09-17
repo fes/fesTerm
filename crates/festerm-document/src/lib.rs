@@ -24,8 +24,8 @@ pub use identity::{
     DocumentId, DocumentKey, DocumentOrigin, LocalOrigin, OriginError, RemoteOrigin, RemoteOwner,
 };
 pub use status::{
-    AutoSaveControl, Availability, BannerAction, ConflictState, DocumentStatus, SaveError, StatusAccent,
-    SaveOutcome, SaveProgress, Severity, StatusInputs, UnavailableReason,
+    AutoSaveControl, Availability, BannerAction, ConflictState, DocumentStatus, SaveError,
+    SaveOutcome, SaveProgress, Severity, StatusAccent, StatusInputs, UnavailableReason,
 };
-pub use text::{Encoding, Indentation, LineEnding, TextDocument, TextEdit};
+pub use text::{EditRefusal, Encoding, Indentation, LineEnding, TextDocument, TextEdit};
 pub use undo::UndoHistory;

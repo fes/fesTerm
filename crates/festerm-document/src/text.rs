@@ -96,6 +96,34 @@ impl TextEdit {
     }
 }
 
+/// Why a prepared set of edits was not committed.
+///
+/// A refusal is always total: nothing is changed, so the caller can show what
+/// happened and leave the user's document exactly as they left it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EditRefusal {
+    /// The edits were not in ascending, non-overlapping order, which is the
+    /// only order whose offsets stay meaningful while they are applied.
+    OutOfOrder,
+    /// An edit reached past the end of the text, or fell inside a character.
+    OutOfBounds,
+    /// The text an edit expected to remove is not what is there any more, so
+    /// the plan was built against content that has since changed.
+    Stale,
+    /// The result would have breached a document bound.
+    Refused(RefusalReason),
+}
+
+impl EditRefusal {
+    pub fn headline(&self) -> &'static str {
+        match self {
+            Self::OutOfOrder | Self::OutOfBounds => "These changes could not be applied",
+            Self::Stale => "This file changed while the changes were being prepared",
+            Self::Refused(reason) => reason.headline(),
+        }
+    }
+}
+
 /// The text of one document, shared by every view of it.
 #[derive(Clone, Debug)]
 pub struct TextDocument {
@@ -304,12 +332,52 @@ impl TextDocument {
         Ok(count)
     }
 
+    /// Commits a prepared set of edits as **one** undo transaction.
+    ///
+    /// This is the seam a substitution lands through (ADR 0034 §10a): a
+    /// `:%s` that changes fifty lines must be one press of undo, not fifty.
+    /// The edits are validated against the text they were planned from before
+    /// anything is changed, so a plan built from a stale buffer — a sibling
+    /// view typed into it, or the file was reloaded — is refused rather than
+    /// applied at offsets that now mean something else.
+    pub fn apply_edits(&mut self, edits: Vec<TextEdit>) -> Result<usize, EditRefusal> {
+        if edits.is_empty() {
+            return Ok(0);
+        }
+        let mut previous_end = 0usize;
+        for edit in &edits {
+            let end = edit.end();
+            if edit.start < previous_end {
+                return Err(EditRefusal::OutOfOrder);
+            }
+            if end > self.text.len()
+                || !self.text.is_char_boundary(edit.start)
+                || !self.text.is_char_boundary(end)
+            {
+                return Err(EditRefusal::OutOfBounds);
+            }
+            if self.text[edit.start..end] != edit.removed {
+                return Err(EditRefusal::Stale);
+            }
+            previous_end = end;
+        }
+        let count = edits.len();
+        self.apply_transaction(edits, false)
+            .map_err(EditRefusal::Refused)?;
+        Ok(count)
+    }
+
     /// Undoes one transaction, returning whether anything changed.
     pub fn undo(&mut self) -> bool {
         let Some(transaction) = self.undo.step_back() else {
             return false;
         };
-        for edit in transaction.edits.iter().rev() {
+        // Forward order, deliberately: every edit's `start` is in the
+        // coordinates of the text *before* the transaction, so undoing the
+        // earliest one first restores those coordinates for the ones that
+        // follow. Walking backwards would apply each inverse at an offset the
+        // still-applied earlier edits have already moved.
+        for edit in &transaction.edits {
             let inverse = edit.inverse();
             splice(&mut self.text, &inverse);
         }
@@ -322,7 +390,9 @@ impl TextDocument {
         let Some(transaction) = self.undo.step_forward() else {
             return false;
         };
-        for edit in &transaction.edits {
+        // Reverse order, for the same reason applying does it: a later edit's
+        // offsets are only valid while the text before it is untouched.
+        for edit in transaction.edits.iter().rev() {
             splice(&mut self.text, edit);
         }
         self.revision = self.revision.wrapping_add(1);
@@ -523,6 +593,129 @@ fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+
+    /// Undo has to walk the opposite way round from apply, or a transaction
+    /// whose edits change length puts the earlier ones back in the wrong
+    /// place -- the failure a substitution across many lines would hit first.
+    #[test]
+    fn undoing_a_multi_edit_transaction_restores_the_original_exactly() {
+        let mut document = TextDocument::from_bytes(b"ab--ab", DocumentBounds::default()).unwrap();
+        let edits = vec![
+            TextEdit {
+                start: 0,
+                removed: "ab".to_owned(),
+                inserted: "LONGER".to_owned(),
+            },
+            TextEdit {
+                start: 4,
+                removed: "ab".to_owned(),
+                inserted: "X".to_owned(),
+            },
+        ];
+
+        assert_eq!(document.apply_edits(edits), Ok(2));
+        assert_eq!(document.text(), "LONGER--X");
+
+        assert!(document.undo());
+        assert_eq!(
+            document.text(),
+            "ab--ab",
+            "every edit goes back where it was"
+        );
+
+        assert!(document.redo());
+        assert_eq!(document.text(), "LONGER--X", "and comes back the same way");
+    }
+
+    #[test]
+    fn a_whole_substitution_is_one_press_of_undo() {
+        let mut document =
+            TextDocument::from_bytes(b"one\ntwo\nthree\n", DocumentBounds::default()).unwrap();
+        let edits = vec![
+            TextEdit {
+                start: 0,
+                removed: "one".to_owned(),
+                inserted: "1".to_owned(),
+            },
+            TextEdit {
+                start: 4,
+                removed: "two".to_owned(),
+                inserted: "2".to_owned(),
+            },
+            TextEdit {
+                start: 8,
+                removed: "three".to_owned(),
+                inserted: "3".to_owned(),
+            },
+        ];
+
+        assert_eq!(document.apply_edits(edits), Ok(3));
+        assert_eq!(document.text(), "1\n2\n3\n");
+
+        assert!(document.undo());
+        assert_eq!(document.text(), "one\ntwo\nthree\n");
+        assert!(!document.can_undo(), "three lines changed, one transaction");
+    }
+
+    #[test]
+    fn edits_planned_against_text_that_has_since_changed_are_refused_whole() {
+        let mut document =
+            TextDocument::from_bytes(b"alpha bravo", DocumentBounds::default()).unwrap();
+        let stale = vec![TextEdit {
+            start: 6,
+            removed: "charlie".to_owned(),
+            inserted: "x".to_owned(),
+        }];
+
+        assert_eq!(document.apply_edits(stale), Err(EditRefusal::OutOfBounds));
+
+        let wrong_content = vec![TextEdit {
+            start: 0,
+            removed: "delta".to_owned(),
+            inserted: "x".to_owned(),
+        }];
+        assert_eq!(document.apply_edits(wrong_content), Err(EditRefusal::Stale));
+        assert_eq!(document.text(), "alpha bravo", "a refusal changes nothing");
+        assert!(!document.can_undo());
+    }
+
+    #[test]
+    fn overlapping_edits_are_refused_rather_than_applied_at_drifting_offsets() {
+        let mut document = TextDocument::from_bytes(b"abcdef", DocumentBounds::default()).unwrap();
+        let overlapping = vec![
+            TextEdit {
+                start: 0,
+                removed: "abc".to_owned(),
+                inserted: "x".to_owned(),
+            },
+            TextEdit {
+                start: 2,
+                removed: "cd".to_owned(),
+                inserted: "y".to_owned(),
+            },
+        ];
+
+        assert_eq!(
+            document.apply_edits(overlapping),
+            Err(EditRefusal::OutOfOrder)
+        );
+        assert_eq!(document.text(), "abcdef");
+    }
+
+    #[test]
+    fn an_edit_landing_inside_a_character_is_refused() {
+        let mut document =
+            TextDocument::from_bytes("héllo".as_bytes(), DocumentBounds::default()).unwrap();
+        let split = vec![TextEdit {
+            start: 2,
+            removed: "\u{a9}".to_owned(),
+            inserted: "x".to_owned(),
+        }];
+
+        assert_eq!(document.apply_edits(split), Err(EditRefusal::OutOfBounds));
+        assert_eq!(document.text(), "héllo");
+    }
+
     use super::*;
 
     fn document(text: &str) -> TextDocument {

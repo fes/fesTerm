@@ -606,6 +606,51 @@ impl TextEditorTab {
         digit_width + GUTTER_PADDING_X * 2.0
     }
 
+    /// Takes Undo and Redo away from the text widget and gives them to the
+    /// document.
+    ///
+    /// `TextEdit` keeps a private undo history of the `String` it was handed,
+    /// which knows nothing of the other views of this file, of a reload, or of
+    /// a substitution committed as one transaction. Left alone it would undo
+    /// this view's keystrokes only, and would happily reinstate text the
+    /// document has since moved past. The events are consumed before the
+    /// widget is built, which is the only point at which they can be taken
+    /// from it (ADR 0034 §3).
+    fn route_undo_shortcuts(
+        &mut self,
+        ui: &mut egui::Ui,
+        documents: &SharedDocuments,
+        body_id: egui::Id,
+        read_only: bool,
+    ) {
+        if read_only || !ui.memory(|memory| memory.has_focus(body_id)) {
+            return;
+        }
+        let (undo, redo) = ui.ctx().input_mut(|input| {
+            // Redo first: `consume_key` ignores an extra Shift, so asking for
+            // Cmd+Z first would swallow Cmd+Shift+Z as an undo.
+            let redo = input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::Z)
+                | input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y);
+            let undo = input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z);
+            (undo, redo)
+        });
+        if !undo && !redo {
+            return;
+        }
+        let mut registry = documents.borrow_mut();
+        let Some(open) = registry.get_mut(self.document) else {
+            return;
+        };
+        let text = open.text_mut();
+        // A run of typing is still open as one transaction until something
+        // closes it, so undo would otherwise step past the word just typed.
+        text.close_transaction();
+        let moved = if undo { text.undo() } else { text.redo() };
+        if moved {
+            self.buffer = open.text().text().to_owned();
+        }
+    }
+
     fn show_text(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
         let read_only = documents
             .borrow()
@@ -615,7 +660,10 @@ impl TextEditorTab {
         let left = ui.min_rect().left();
         ui.add_space(gutter);
         let width = ui.available_width();
+        let body_id = ui.id().with("text-editor-text");
+        self.route_undo_shortcuts(ui, documents, body_id, read_only);
         let output = egui::TextEdit::multiline(&mut self.buffer)
+            .id(body_id)
             .font(FontId::monospace(EDITOR_TEXT_SIZE))
             .desired_width(width)
             .desired_rows(1)
@@ -1285,6 +1333,111 @@ mod tests {
 
         // The second view adopted the edit without being told about it.
         assert_eq!(harness.state().2.buffer, "alpha\ntyped ");
+    }
+
+    #[test]
+    fn undo_and_redo_go_through_the_documents_own_history() {
+        let directory = TemporaryDirectory::new("undo");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("beta");
+        harness.run();
+        assert_eq!(document_text(&harness), "alpha\nbeta");
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+
+        assert_eq!(
+            document_text(&harness),
+            "alpha\n",
+            "undo reaches the shared document, not just this view's widget"
+        );
+        assert_eq!(harness.state().1.buffer, "alpha\n");
+
+        harness.key_press_modifiers(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::Z,
+        );
+        harness.run();
+
+        assert_eq!(document_text(&harness), "alpha\nbeta", "and redo brings it back");
+    }
+
+    #[test]
+    fn undoing_in_one_view_undoes_the_document_for_every_view() {
+        let directory = TemporaryDirectory::new("undo-two-views");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let (documents, first) = editor_for(&path);
+        let id = first.document();
+        let second = TextEditorTab::new(id, &documents);
+        let (first_id, second_id) = (
+            crate::tabs::TabId::next_for_test(),
+            crate::tabs::TabId::next_for_test(),
+        );
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(700.0, 420.0))
+            .build_ui_state(
+                move |ui, state: &mut (SharedDocuments, TextEditorTab, TextEditorTab)| {
+                    ui.horizontal(|ui| {
+                        ui.push_id("first", |ui| {
+                            state.1.show(ui, first_id, &state.0);
+                        });
+                        ui.push_id("second", |ui| {
+                            state.2.show(ui, second_id, &state.0);
+                        });
+                    });
+                },
+                (documents, first, second),
+            );
+        harness.run();
+
+        let bodies = harness.get_all_by_role(egui::accesskit::Role::MultilineTextInput);
+        let first_body = bodies.into_iter().next().expect("the first view has a body");
+        first_body.focus();
+        first_body.type_text("typed");
+        harness.run();
+        harness.run();
+        assert_eq!(harness.state().2.buffer, "alpha\ntyped");
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        harness.run();
+
+        assert_eq!(
+            harness.state().1.buffer,
+            "alpha\n",
+            "the view that pressed it sees the undo"
+        );
+        assert_eq!(
+            harness.state().2.buffer,
+            "alpha\n",
+            "and so does the view that did not, because the history is the document's"
+        );
+    }
+
+    #[test]
+    fn a_whole_run_of_typing_is_one_undo_rather_than_one_per_keystroke() {
+        let directory = TemporaryDirectory::new("undo-run");
+        let path = directory.file("NOTES.md", "alpha\n");
+        let mut harness = typing_harness(&path);
+
+        let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
+        body.focus();
+        body.type_text("bravo");
+        harness.run();
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+
+        assert_eq!(
+            document_text(&harness),
+            "alpha\n",
+            "one press takes back the word, not its last letter"
+        );
     }
 
     #[test]
