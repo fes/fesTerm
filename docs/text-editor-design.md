@@ -53,7 +53,7 @@ when it is open, a state banner when there is something to say, the body with
 its line-number gutter, and the status bar.
 
 The command bar reads left to right as: **Save**, **Auto-save**, a separator,
-**Save As…**, **Find**, **Replace**, a separator, **Open in Markdown**,
+**Save As…**, **Find**, **Replace**, a separator, **Duplicate view**,
 **Refresh**, and — right-aligned — a summary of this view's options beside the
 **Editor options** menu that changes them.
 

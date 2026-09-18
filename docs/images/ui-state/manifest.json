@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "462a2639d3f1988239c502da34d8dcac86690f1499821bd6637ef16c6d136df4"
+      "sha256": "b2cbe5d168134e8e6421272c0bc78e578f3ffd0f23a11d1a1fcc96d9319c32bc"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "651157d23bc5119512e5489da0a937eac9fe9d0981c7f925d93a50886a3fb56d"
+      "sha256": "504c2fdc6bdc43024963e95b12d089feba1c7eddfd7d9588e24d3db1ae175b22"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "276da2af3d5ca0999bbcd083989bc5dff6612e9088c7cca35c7bb95379c9dad8"
+      "sha256": "70b012157cb66086f76c0303b9fb8053b640b4e11aae55f0945626af13752880"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "56409fb1f365d2da5355e15daab26d64b6664e550bade8a88c890e40d47a6cdb"
+      "sha256": "49cc6992bf182bd877b5e191e4024cd51401f7a8493a562a88bdc87e27ee174a"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "5e3fbcd93252079ea16f0457bbeb6a9a427e3ce27508ca73cd02373d1d9f3888"
+      "sha256": "eab09311e86e900f26f9953142beff4fe76ea8211785e0bdb2c8f97f57bfd4e6"
     },
     {
       "id": "text-editor-outline",
@@ -153,7 +153,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "6bbed7b56570d24869ee224bab22a8ea048632b0e46b94a345b335c72a158d33"
+      "sha256": "ca0d0d3f007d02ab440778760737ea442ee993c8cd04c7e19875052647f41253"
+    },
+    {
+      "id": "text-editor-preview",
+      "section": "editor",
+      "title": "A Markdown file as it opens",
+      "caption": "A Markdown document lands in Preview, reading as the finished thing; the mode control above it is the way back to the source.",
+      "image": "text-editor-preview.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "02e83757c384a8258915c1bb8b522eb1f8e43999f7b41dd8a90592282c77d336"
     },
     {
       "id": "text-editor-save-as",
@@ -164,7 +175,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "c05f93ce86817f5d2bdf85b76b9d94055ad43b5937e55c84adaafc33541ea43a"
+      "sha256": "e590fc67bd78bb814aed8d26062ab4aa0e6855a99ed19c12ac3e8a4dc2127686"
     },
     {
       "id": "text-editor-saved",
@@ -175,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "7af800a4cf4949a905d8949dfee8222f5551e54c2fb35e96e2f7333ed50c1c01"
+      "sha256": "149859cfd3907931b5550a07206d8a81c1a4ff93aa01806e51b070505efbfc2c"
     },
     {
       "id": "text-editor-split",
@@ -186,7 +197,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "379b9b811cf5dcc58f88e8cfe8bdfc7f713d259a621b784aa5cd4ed3ca34d4dc"
+      "sha256": "cfdc62da10c95fb3fa1b640159f8683f0bed5eb622683d2cc0579d6cba678998"
     },
     {
       "id": "text-editor-unsaved",
@@ -197,7 +208,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "7f3f66801d046f12efbef1df976484d9fcf605e356160c54a6e3f2bb8326312e"
+      "sha256": "ed0c321497beb96d3b40d2b5478e32a7cb82dcd186e2219ea5d318a3afbddde1"
     },
     {
       "id": "text-editor-vi-command",
@@ -208,7 +219,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "c46bb885fbd782fed5866f52e9001b87c9f3065edfaaa489bc126c87b6d1dd6a"
+      "sha256": "07faad9f188210145d8acedbdd1d77d66dc714e7e4625426e68fd035a34df608"
     },
     {
       "id": "text-editor-vi-mode",
@@ -219,7 +230,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "149fa093202435a46d6f6cb223bc648046210b8e2543401e6f6b48684a807646"
+      "sha256": "39abdc35e90c721573fa51e22391348328752bfc45608b7e30e5056e31a0d9e9"
     },
     {
       "id": "text-editor-vi-search",
@@ -230,7 +241,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "f9f5bee57c9285f34562ef893803813cf22ef42bee13c2cc7e3b811ea19ee4c5"
+      "sha256": "d45013ebf96388c986f025e01b17dc4191606eb8c7d28b2fc8bb9321337c2dc3"
     },
     {
       "id": "keyboard-editor-collapsed",

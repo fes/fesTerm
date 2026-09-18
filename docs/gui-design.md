@@ -693,10 +693,11 @@ The accepted shape is:
   Markdown Preview of the same file are two views, and Preview shows unsaved
   edits on the next frame without any disk or SFTP round trip.
 - **Editing surfaces.** A view is `Edit`, `Preview`, or `Split`; Split is one
-  view with two panes sharing that view's caret and settings. **Open in
-  Markdown** opens or focuses a separate Preview tab, which can be dragged to
-  another window like any other tab.
-- **Commands.** Save, Save As…, Find, Replace, Open in Markdown, and Refresh are
+  view with two panes sharing that view's caret and settings. A Markdown file
+  opens in `Preview` in its editor tab rather than in a viewer tab of its own.
+  **Duplicate view** opens a second view of the same document, which can be dragged
+  to another window like any other tab.
+- **Commands.** Save, Save As…, Find, Replace, Duplicate view, and Refresh are
   application commands shared by toolbar, menus, palette, keyboard bindings, and
   vi's `:` equivalents. A disabled command explains why. Refresh never discards
   a dirty buffer.

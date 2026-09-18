@@ -1169,7 +1169,9 @@
         "quitting_with_a_bang_throws_the_changes_away_without_asking",
         "the_next_editor_opens_the_way_the_last_one_was_set_up",
         "editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width",
-        "a_default_editor_block_is_not_written_at_all"
+        "a_default_editor_block_is_not_written_at_all",
+        "a_markdown_file_opens_in_the_editor_showing_its_preview_and_only_once",
+        "a_markdown_file_opens_in_preview_and_a_plain_one_opens_in_edit"
       ],
       "manual_scenarios": [
         "CP-15"
@@ -1819,9 +1821,6 @@
         "directory_scroll_history_resets_new_entries_and_keeps_the_filter",
         "directory_scroll_history_restores_direct_parent_and_discards_reentry",
         "directory_scroll_history_discards_every_skipped_descendant",
-        "ctrl_o_inside_a_markdown_viewer_replaces_that_viewers_document",
-        "opening_a_markdown_file_without_a_replacement_target_still_opens_a_new_tab",
-        "opening_a_markdown_file_falls_back_to_a_new_tab_when_the_replacement_target_is_gone",
         "the_markdown_file_picker_starts_at_home_and_then_resumes_the_last_directory",
         "the_markdown_file_picker_targets_the_active_viewer_only_from_a_viewer",
         "local_home_directory_resolves_to_a_real_directory",
@@ -1830,7 +1829,6 @@
         "absolute_url_images_are_never_loaded_automatically",
         "a_local_image_that_cannot_be_read_is_only_attempted_once",
         "automatic_image_loading_is_bounded_by_the_concurrency_cap",
-        "replacing_a_viewers_document_drops_the_previous_documents_approvals",
         "a_table_column_that_fits_is_not_wrapped_one_character_per_line",
         "a_table_too_wide_for_the_reading_column_still_wraps_on_words",
         "a_table_that_fits_keeps_its_natural_column_widths",
@@ -1838,7 +1836,10 @@
         "a_table_narrower_than_its_floor_falls_back_to_the_floor",
         "the_markdown_pickers_table_spans_the_same_width_as_its_filter_field",
         "an_inline_code_highlight_is_centred_on_its_own_glyphs",
-        "an_inline_code_span_does_not_tighten_the_row_it_sits_on"
+        "an_inline_code_span_does_not_tighten_the_row_it_sits_on",
+        "ctrl_o_inside_a_viewer_gives_the_tab_over_to_the_editor",
+        "opening_a_second_markdown_file_opens_a_second_editor_tab",
+        "opening_a_markdown_file_still_opens_it_when_the_replacement_target_is_gone"
       ],
       "manual_scenarios": [
         "CP-06"

@@ -53,7 +53,7 @@ use festerm_ui_egui::{
 
 use std::rc::Rc;
 
-use festerm_document::{DocumentId, DocumentOrigin, SaveOutcome};
+use festerm_document::{DocumentId, SaveOutcome};
 
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
 use crate::markdown_viewer::MarkdownViewerTab;
@@ -1405,12 +1405,11 @@ impl TabContent {
 }
 
 /// The document a tab is a view of, for the reference count that decides which
-/// close is the final one. A Markdown tab counts only when it is bound to a
-/// live document rather than reading a file of its own.
+/// close is the final one. Only the editor holds documents: the Markdown
+/// viewer reads files and remote snapshots of its own.
 fn view_document(content: &TabContent) -> Option<DocumentId> {
     match content {
         TabContent::TextEditor(editor) => Some(editor.document()),
-        TabContent::MarkdownViewer(viewer) => viewer.live_document(),
         _ => None,
     }
 }
@@ -1536,6 +1535,9 @@ pub enum AppCommand {
         /// and gets the focus-or-open-a-new-tab behaviour.
         replacing: Option<TabId>,
     },
+    /// Opens a second editor view of the document the active editor holds.
+    /// One document may have many views; this is how a reader asks for one.
+    OpenAnotherEditorView,
     /// Opens a Markdown file already fetched (in memory) from a remote SFTP
     /// session — e.g. from double-clicking a `.md` file in the SFTP file
     /// manager (issue #133). `source` pins the snapshot's verified remote
@@ -1671,7 +1673,6 @@ pub enum AppCommand {
     KeepMyTextVersion,
     /// Opens, or focuses, a Markdown preview tab bound to the active
     /// editor's document, so it renders unsaved text too (ADR 0034 §3).
-    OpenTextDocumentInMarkdown,
     ReloadMarkdown,
     ToggleMarkdownPreviewSource,
     ToggleMarkdownOutline,
@@ -2878,6 +2879,7 @@ impl AppState {
                     self.open_refusal = Some((path, failure));
                 }
             }
+            AppCommand::OpenAnotherEditorView => self.open_another_editor_view(),
             AppCommand::SaveTextDocument => self.save_active_text_document(),
             AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
             AppCommand::SaveTextDocumentTo { path } => self.save_active_text_document_to(&path),
@@ -2890,9 +2892,6 @@ impl AppState {
                 self.with_active_document(|registry, id| {
                     registry.reload_from_source(id);
                 });
-            }
-            AppCommand::OpenTextDocumentInMarkdown => {
-                self.open_active_document_in_markdown();
             }
             AppCommand::KeepMyTextVersion => {
                 self.with_active_document(|registry, id| {
@@ -3364,88 +3363,46 @@ impl AppState {
         }
     }
 
-    /// Opens a live Markdown preview of the document the active editor holds,
-    /// or focuses the one that is already open: a second preview tab of one
-    /// document would be two tabs saying the same thing.
-    fn open_active_document_in_markdown(&mut self) {
+    /// Opens a second view of the document the active editor holds. One
+    /// document may have many views (ADR 0034 §1); this is the way to ask for
+    /// one, now that Markdown previews in the tab it belongs to rather than
+    /// in a tab of its own.
+    fn open_another_editor_view(&mut self) {
         let Some(document) = self.active_document() else {
             return;
         };
-        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
-            TabContent::MarkdownViewer(viewer) if viewer.live_document() == Some(document) => {
-                Some(tab.id)
-            }
-            _ => None,
-        }) {
-            self.set_active(existing);
-            self.workspace_dirty = true;
-            return;
-        }
-
-        let opened = {
-            let registry = self.documents.borrow();
-            registry.get(document).and_then(|open| match open.origin() {
-                DocumentOrigin::Local(local) => {
-                    Some((local.path().to_path_buf(), open.text().text().to_owned()))
-                }
-                // A remote document has no local path for the viewer to load
-                // from; the in-tab Preview covers it until the remote write
-                // path lands.
-                DocumentOrigin::Remote(_) => None,
-            })
-        };
-        let Some((path, text)) = opened else {
-            return;
-        };
-
-        let id = TabId::next();
-        // The live preview is a view of the document, not a reader of a file,
-        // so it counts towards the reference count that keeps the document
-        // alive and decides which close is the final one (ADR 0034 §2).
         self.documents.borrow_mut().retain(document);
+        let id = TabId::next();
+        let editor = TextEditorTab::with_options(
+            document,
+            &self.documents,
+            crate::text_editor::EditorViewOptions::from_settings(self.editor),
+        );
         self.tabs.push(Tab {
             id,
-            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_live(
-                path, document, &text,
-            ))),
+            content: TabContent::TextEditor(Box::new(editor)),
         });
         self.set_active(id);
         self.workspace_dirty = true;
     }
 
+    /// Opens a local Markdown file. It goes to the editor like every other
+    /// text file: one document is one tab, and Preview is a mode that tab
+    /// starts in rather than a second tab saying the same thing (ADR 0034 §4).
     fn open_local_markdown(&mut self, path: PathBuf, replacing: Option<TabId>) {
-        // `Ctrl+O` inside a viewer retargets *that* viewer rather than
-        // opening a second tab. This runs before the
-        // already-open-somewhere-else lookup below on purpose: the user
-        // asked for the document in front of them to change, so honouring a
-        // duplicate tab elsewhere would leave the tab they were reading
-        // untouched and jump them somewhere unexpected.
+        // `Ctrl+O` inside a viewer asked for *that* surface to change. A
+        // viewer of a remote snapshot is still a viewer, but there is nothing
+        // local left for it to become, so it gives way to the editor.
         if let Some(target) = replacing {
-            if let Some(viewer) = self.tabs.iter_mut().find_map(|tab| match &mut tab.content {
-                TabContent::MarkdownViewer(viewer) if tab.id == target => Some(viewer),
-                _ => None,
+            if self.tabs.iter().any(|tab| {
+                tab.id == target && matches!(tab.content, TabContent::MarkdownViewer(_))
             }) {
-                viewer.open_local_replacing(path);
-                self.set_active(target);
-                self.workspace_dirty = true;
-                return;
+                self.close(target);
             }
         }
-        if let Some(existing) = self.tabs.iter().find_map(|tab| match &tab.content {
-            TabContent::MarkdownViewer(viewer) if viewer.matches_local_path(&path) => Some(tab.id),
-            _ => None,
-        }) {
-            self.set_active(existing);
-            self.workspace_dirty = true;
-            return;
+        if let Some(failure) = self.open_text_editor(&path) {
+            self.open_refusal = Some((path, failure));
         }
-        let id = TabId::next();
-        self.tabs.push(Tab {
-            id,
-            content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(path))),
-        });
-        self.set_active(id);
-        self.workspace_dirty = true;
     }
 
     /// Opens a Markdown snapshot already fetched from a remote SFTP session
@@ -5090,11 +5047,11 @@ mod tests {
     }
 
     #[test]
-    fn open_in_markdown_previews_unsaved_text_and_opens_only_one_tab() {
+    fn a_markdown_file_opens_in_the_editor_showing_its_preview_and_only_once() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
         let directory = std::env::temp_dir().join(format!(
-            "festerm-open-in-markdown-{}-{:?}",
+            "festerm-markdown-in-editor-{}-{:?}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -5105,41 +5062,50 @@ mod tests {
         let path = directory.join("NOTES.md");
         std::fs::write(&path, "# Saved heading\n").unwrap();
 
-        assert!(state.open_text_editor(&path).is_none());
-        let document = state.active_document().unwrap();
-        state
-            .documents()
-            .borrow_mut()
-            .get_mut(document)
-            .unwrap()
-            .text_mut()
-            .sync_from_view("# Typed heading\n")
-            .unwrap();
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path: path.clone(),
+                replacing: None,
+            },
+            &context,
+        );
 
-        state.dispatch(AppCommand::OpenTextDocumentInMarkdown, &context);
-        let previews = state
+        let editors = state
             .tabs
             .iter()
-            .filter(|tab| {
-                matches!(&tab.content, TabContent::MarkdownViewer(viewer)
-                    if viewer.live_document() == Some(document))
-            })
+            .filter(|tab| matches!(tab.content, TabContent::TextEditor(_)))
             .count();
-        assert_eq!(previews, 1);
-
-        // The preview renders what is being typed, not what is on disk.
-        let title = state.tabs.iter().find_map(|tab| match &tab.content {
-            TabContent::MarkdownViewer(viewer) if viewer.live_document() == Some(document) => {
-                Some(viewer.first_heading_for_test())
-            }
+        assert_eq!(editors, 1, "a Markdown file is a document, not a viewer tab");
+        assert!(
+            !state
+                .tabs
+                .iter()
+                .any(|tab| matches!(tab.content, TabContent::MarkdownViewer(_))),
+            "and no second tab is opened to say the same thing"
+        );
+        assert!(
+            state.active_editor_options().is_some(),
+            "the active tab is the editor"
+        );
+        let mode = state.tabs.iter().find_map(|tab| match &tab.content {
+            TabContent::TextEditor(editor) => Some(editor.mode()),
             _ => None,
         });
-        assert_eq!(title, Some(Some("Typed heading".to_owned())));
+        assert_eq!(
+            mode,
+            Some(crate::text_editor::EditorMode::Preview),
+            "Markdown is opened to be read first"
+        );
 
-        // Asking again focuses the preview that exists rather than opening a
-        // second tab saying the same thing.
+        // Asking again focuses what is open rather than opening a second tab.
         let before = state.tabs.len();
-        state.dispatch(AppCommand::OpenTextDocumentInMarkdown, &context);
+        state.dispatch(
+            AppCommand::OpenLocalMarkdownFile {
+                path,
+                replacing: None,
+            },
+            &context,
+        );
         assert_eq!(state.tabs.len(), before);
 
         let _ = std::fs::remove_dir_all(&directory);
@@ -5231,92 +5197,127 @@ mod tests {
         assert!(viewer.matches_remote_path("sftp.example.test", 22, "/srv/docs/guide.md"));
     }
 
+    /// A scratch directory with two Markdown files in it, for the routes that
+    /// open a local document.
+    fn two_markdown_files() -> (PathBuf, PathBuf, PathBuf) {
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-open-markdown-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let first = directory.join("first.md");
+        let second = directory.join("second.md");
+        std::fs::write(&first, "# First\n").unwrap();
+        std::fs::write(&second, "# Second\n").unwrap();
+        (directory, first, second)
+    }
+
     #[test]
-    fn ctrl_o_inside_a_markdown_viewer_replaces_that_viewers_document() {
+    fn ctrl_o_inside_a_viewer_gives_the_tab_over_to_the_editor() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
+        let (directory, _first, second) = two_markdown_files();
         state.dispatch(
-            AppCommand::OpenLocalMarkdownFile {
-                path: PathBuf::from("/docs/first.md"),
-                replacing: None,
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source: test_remote_markdown_source("/srv/docs/guide.md"),
+                display_path: "/srv/docs/guide.md".to_owned(),
+                content: b"# Guide\n".to_vec(),
             },
             &context,
         );
         let viewer_tab = state.active();
-        let tabs_after_first_open = state.tabs().len();
+        let tabs_with_the_viewer = state.tabs().len();
 
         state.dispatch(
             AppCommand::OpenLocalMarkdownFile {
-                path: PathBuf::from("/docs/second.md"),
+                path: second.clone(),
                 replacing: Some(viewer_tab),
             },
             &context,
         );
 
-        assert_eq!(state.tabs().len(), tabs_after_first_open);
-        assert_eq!(state.active(), viewer_tab);
-        let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
-            panic!("expected the retargeted tab to still be the Markdown viewer");
+        // The reader asked for the surface in front of them to change, so the
+        // viewer goes and the editor takes its place rather than both being
+        // left open.
+        assert_eq!(state.tabs().len(), tabs_with_the_viewer);
+        assert!(
+            !state
+                .tabs()
+                .iter()
+                .any(|tab| matches!(tab.content, TabContent::MarkdownViewer(_))),
+            "the viewer the reader was in has given way"
+        );
+        let TabContent::TextEditor(editor) = &state.active_tab_mut().content else {
+            panic!("expected the retargeted tab to be the editor");
         };
-        assert!(viewer.display_path().ends_with("second.md"));
+        assert_eq!(editor.title(), "second.md");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
-    fn opening_a_markdown_file_without_a_replacement_target_still_opens_a_new_tab() {
+    fn opening_a_second_markdown_file_opens_a_second_editor_tab() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
+        let (directory, first, second) = two_markdown_files();
         state.dispatch(
             AppCommand::OpenLocalMarkdownFile {
-                path: PathBuf::from("/docs/first.md"),
+                path: first,
                 replacing: None,
             },
             &context,
         );
-        let first_viewer = state.active();
+        let first_tab = state.active();
         let tabs_after_first_open = state.tabs().len();
 
         state.dispatch(
             AppCommand::OpenLocalMarkdownFile {
-                path: PathBuf::from("/docs/second.md"),
+                path: second,
                 replacing: None,
             },
             &context,
         );
 
         assert_eq!(state.tabs().len(), tabs_after_first_open + 1);
-        assert_ne!(state.active(), first_viewer);
+        assert_ne!(state.active(), first_tab);
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// A stale replacement target (its tab was closed while the picker was
     /// open) must not silently swallow the open.
     #[test]
-    fn opening_a_markdown_file_falls_back_to_a_new_tab_when_the_replacement_target_is_gone() {
+    fn opening_a_markdown_file_still_opens_it_when_the_replacement_target_is_gone() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
+        let (directory, first, second) = two_markdown_files();
         state.dispatch(
             AppCommand::OpenLocalMarkdownFile {
-                path: PathBuf::from("/docs/first.md"),
+                path: first,
                 replacing: None,
             },
             &context,
         );
-        let viewer_tab = state.active();
-        state.dispatch(AppCommand::CloseTab(viewer_tab), &context);
+        let stale = state.active();
+        state.dispatch(AppCommand::CloseTab(stale), &context);
         let tabs_before = state.tabs().len();
 
         state.dispatch(
             AppCommand::OpenLocalMarkdownFile {
-                path: PathBuf::from("/docs/second.md"),
-                replacing: Some(viewer_tab),
+                path: second,
+                replacing: Some(stale),
             },
             &context,
         );
 
         assert_eq!(state.tabs().len(), tabs_before + 1);
-        let TabContent::MarkdownViewer(viewer) = &state.active_tab_mut().content else {
-            panic!("expected a new Markdown viewer tab");
+        let TabContent::TextEditor(editor) = &state.active_tab_mut().content else {
+            panic!("expected a new editor tab");
         };
-        assert!(viewer.display_path().ends_with("second.md"));
+        assert_eq!(editor.title(), "second.md");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

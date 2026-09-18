@@ -11,7 +11,6 @@ use eframe::egui::{
     self, text::LayoutJob, text::TextFormat, vec2, Align, Color32, FontId, RichText, Sense,
     WidgetInfo, WidgetType,
 };
-use festerm_document::DocumentId;
 use festerm_markdown::{
     Block, CodeBlock, ContainerInline, HeadingBlock, HighlightStyle, HighlightedCodeLine,
     ImageInline, Inline, LinkInline, ListBlock, ListKind, LocalMarkdownSource, MarkdownDocument,
@@ -83,14 +82,14 @@ const MARKDOWN_PANEL_RADIUS: f32 = 6.0;
 /// Toolbar control metrics, from the mockup's `.fmd-tool` rule
 /// (`height: 30px; min-width: 30px; padding: 0 8px; border-radius: 5px`).
 pub(crate) const TOOLBAR_BUTTON_HEIGHT: f32 = 30.0;
-const TOOLBAR_BUTTON_PADDING_X: f32 = 8.0;
+pub(crate) const TOOLBAR_BUTTON_PADDING_X: f32 = 8.0;
 pub(crate) const TOOLBAR_BUTTON_GAP: f32 = 5.0;
-const TOOLBAR_BUTTON_RADIUS: f32 = 5.0;
+pub(crate) const TOOLBAR_BUTTON_RADIUS: f32 = 5.0;
 const TOOLBAR_ICON_SIZE: f32 = 15.0;
 /// Gap between a toolbar control's icon and its text, matching the
 /// mockup's `gap: 5px`.
 const TOOLBAR_ICON_TEXT_GAP: f32 = 5.0;
-const TOOLBAR_TEXT_SIZE: f32 = 11.0;
+pub(crate) const TOOLBAR_TEXT_SIZE: f32 = 11.0;
 /// `.fmd-outline { padding: 13px 9px }` plus the title's own `0 7px 10px`.
 const OUTLINE_PADDING_X: f32 = 9.0;
 const OUTLINE_PADDING_Y: f32 = 13.0;
@@ -421,17 +420,6 @@ struct PendingImageLoad {
     receiver: Receiver<Result<egui::ColorImage, String>>,
 }
 
-/// Ties a viewer tab to a document somebody is editing, so the tab renders
-/// what is being typed rather than what was last written to disk (ADR 0034
-/// §3, "Open in Markdown"). Without this the two tabs would disagree about a
-/// file the moment a key was pressed.
-struct LiveBinding {
-    document: DocumentId,
-    parsed: String,
-    pending: Option<String>,
-    settling: Option<Instant>,
-}
-
 pub struct MarkdownViewerTab {
     source: MarkdownSource,
     title: String,
@@ -457,10 +445,13 @@ pub struct MarkdownViewerTab {
     line_heading_indices: Vec<Option<usize>>,
     outline_keyboard_focus: bool,
     status_bar_visible: bool,
-    live: Option<LiveBinding>,
 }
 
 impl MarkdownViewerTab {
+    /// A viewer reading a local file. Local Markdown now opens in the editor,
+    /// which previews it in the same tab (ADR 0034 §4), so this remains only
+    /// for tests and gallery renders of the viewer's own chrome.
+    #[cfg(test)]
     pub fn open_local(path: PathBuf) -> Self {
         let display_path = display_local_path(&path);
         let title = path
@@ -498,7 +489,6 @@ impl MarkdownViewerTab {
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
-            live: None,
         };
         tab.reload();
         tab
@@ -515,17 +505,6 @@ impl MarkdownViewerTab {
     /// is granted for one document's resources and must never be inherited
     /// by a different document (`docs/adr/0030-native-markdown-viewer.md`,
     /// "Explicit, non-persisted resource approval only").
-    pub fn open_local_replacing(&mut self, path: PathBuf) {
-        let mode = self.mode;
-        let outline_open = self.outline_open;
-        let status_bar_visible = self.status_bar_visible;
-        let mut replacement = Self::open_local(path);
-        replacement.mode = mode;
-        replacement.outline_open = outline_open;
-        replacement.status_bar_visible = status_bar_visible;
-        *self = replacement;
-    }
-
     /// Opens a Markdown document already fetched from a remote SFTP
     /// session, holding its bytes in memory rather than writing them to a
     /// temp file (issue #133). `content` is the file's full bytes as read
@@ -563,80 +542,12 @@ impl MarkdownViewerTab {
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
             status_bar_visible: true,
-            live: None,
         };
         let result = load_remote_document(source, display_path, content);
         tab.apply_load_result(result);
         tab
     }
 
-    /// Opens a viewer that follows an open document instead of a file. The
-    /// first rendering comes from the text the editor holds now, unsaved
-    /// changes included.
-    pub(crate) fn open_live(path: PathBuf, document: DocumentId, text: &str) -> Self {
-        let mut tab = Self::open_local(path);
-        tab.live = Some(LiveBinding {
-            document,
-            parsed: String::new(),
-            pending: None,
-            settling: None,
-        });
-        tab.reparse_live(text.to_owned());
-        tab
-    }
-
-    /// The document this viewer follows, if it follows one.
-    pub(crate) fn live_document(&self) -> Option<DocumentId> {
-        self.live.as_ref().map(|live| live.document)
-    }
-
-    /// Takes the document's current text. Called once a frame by the owner of
-    /// the registry, because the viewer has no handle on it of its own.
-    pub(crate) fn sync_live(&mut self, ctx: &egui::Context, text: &str) {
-        let Some(live) = &mut self.live else {
-            return;
-        };
-        if live.pending.as_deref().unwrap_or(&live.parsed) != text {
-            live.pending = Some(text.to_owned());
-            live.settling = Some(Instant::now());
-        }
-        let Some(started) = live.settling else {
-            return;
-        };
-        let waited = started.elapsed();
-        if waited < PREVIEW_DEBOUNCE {
-            ctx.request_repaint_after(PREVIEW_DEBOUNCE - waited);
-            return;
-        }
-        let pending = live.pending.take();
-        live.settling = None;
-        if let Some(text) = pending {
-            self.reparse_live(text);
-        }
-    }
-
-    fn reparse_live(&mut self, text: String) {
-        let bytes = text.as_bytes();
-        let result = MarkdownLoader::default()
-            .load(self.source.clone(), bytes.len(), bytes, &Default::default())
-            .map(|document| (self.display_path.clone(), document))
-            .map_err(MarkdownViewerLoadFailure::Load);
-        self.apply_load_result(result);
-        if let Some(live) = &mut self.live {
-            live.parsed = text;
-        }
-    }
-
-    /// The first heading of what is currently rendered, so a test can tell
-    /// which text the viewer actually parsed.
-    #[cfg(test)]
-    pub(crate) fn first_heading_for_test(&self) -> Option<String> {
-        self.document
-            .as_ref()?
-            .headings()
-            .first()
-            .map(|heading| heading.text().to_owned())
-    }
 
     pub fn title(&self) -> &str {
         &self.title
@@ -661,13 +572,6 @@ impl MarkdownViewerTab {
             MarkdownSource::Local(local) => Some(local.path()),
             MarkdownSource::Remote(_) => None,
         }
-    }
-
-    pub fn matches_local_path(&self, path: &Path) -> bool {
-        let Ok(candidate) = fs::canonicalize(path) else {
-            return false;
-        };
-        matches!(&self.source, MarkdownSource::Local(local) if local.path() == &candidate)
     }
 
     /// Whether this tab already shows the remote file at `host:port` +
@@ -1243,16 +1147,6 @@ impl MarkdownViewerTab {
                     // ignored how much room the controls had actually left,
                     // so on a narrow window the path drew straight through
                     // the Preview/Source/Find buttons.
-                    if self.live.is_some() {
-                        ui.add(egui::Label::new(
-                            RichText::new("LIVE")
-                                .size(TOOLBAR_TEXT_SIZE)
-                                .color(theme::ACCENT_PRIMARY),
-                        ))
-                        .on_hover_text(
-                            "This preview follows an open editor, including unsaved changes.",
-                        );
-                    }
                     ui.add(
                         egui::Label::new(
                             RichText::new(elide_middle(self.display_path(), 72))
@@ -4338,37 +4232,6 @@ mod tests {
     /// `Ctrl+O` inside a viewer replaces the document but must not carry the
     /// previous document's resource approvals across
     /// (`docs/adr/0030-native-markdown-viewer.md`).
-    #[test]
-    fn replacing_a_viewers_document_drops_the_previous_documents_approvals() {
-        let directory = image_test_directory("replace");
-        let first = directory.join("first.md");
-        let second = directory.join("second.md");
-        fs::write(
-            &first,
-            b"# First\n\n![Remote](https://example.test/a.png)\n",
-        )
-        .unwrap();
-        fs::write(
-            &second,
-            b"# Second\n\n![Remote](https://example.test/b.png)\n",
-        )
-        .unwrap();
-
-        let mut viewer = MarkdownViewerTab::open_local(first);
-        viewer.resource_approvals.approve(0);
-        viewer.mode = MarkdownViewerMode::Source;
-        viewer.outline_open = false;
-
-        viewer.open_local_replacing(second);
-
-        assert!(!viewer.resource_approvals.is_approved(0));
-        assert!(viewer.display_path().ends_with("second.md"));
-        // View preferences are the reader's, not the document's.
-        assert!(matches!(viewer.mode, MarkdownViewerMode::Source));
-        assert!(!viewer.outline_open);
-        let _ = fs::remove_dir_all(&directory);
-    }
-
     #[test]
     fn outline_and_preview_keep_separate_vertical_viewports() {
         let document = document(

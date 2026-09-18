@@ -5138,18 +5138,6 @@ impl FesTermApp {
                 }
                 TabContent::MarkdownViewer(tab) => {
                     tab.set_status_bar_visible(status_bar_visible);
-                    // A preview opened from an editor follows the document
-                    // rather than the file; the viewer has no handle on the
-                    // registry, so the text is handed to it here.
-                    if let Some(document) = tab.live_document() {
-                        let text = documents
-                            .borrow()
-                            .get(document)
-                            .map(|open| open.text().text().to_owned());
-                        if let Some(text) = text {
-                            tab.sync_live(ui.ctx(), &text);
-                        }
-                    }
                     screen_command = tab.show(ui, active_tab_id);
                 }
                 TabContent::TextEditor(tab) => {
@@ -7572,9 +7560,29 @@ mod tests {
     /// way a test can be sure the path the user takes is the path that dirties
     /// the document.
     fn type_into_editor(harness: &mut Harness<'static, FesTermApp>, text: &str) {
+        switch_editor_to_edit(harness);
         let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
         body.focus();
         body.type_text(text);
+        harness.run();
+    }
+
+    /// Markdown opens in Preview, because it is opened to be read (ADR 0034
+    /// §4). A test that wants to type presses Edit first, the way a reader
+    /// does.
+    fn switch_editor_to_edit(harness: &mut Harness<'static, FesTermApp>) {
+        if harness
+            .query_all_by_role(egui::accesskit::Role::MultilineTextInput)
+            .next()
+            .is_some()
+        {
+            return;
+        }
+        harness
+            .query_all_by_label("Edit")
+            .next()
+            .expect("the Edit segment of the mode control")
+            .click();
         harness.run();
     }
 
@@ -7890,11 +7898,11 @@ mod tests {
         let mut harness = editor_harness(app);
         type_into_editor(&mut harness, "typed");
 
-        // A live Markdown preview is a second view of the same document.
+        // A second view of the same document, which is what Duplicate view opens.
         harness
             .state_mut()
             .state
-            .dispatch(AppCommand::OpenTextDocumentInMarkdown, &context);
+            .dispatch(AppCommand::OpenAnotherEditorView, &context);
         harness.run();
         let editor_tab = harness
             .state()
@@ -8918,17 +8926,33 @@ mod tests {
         }
     }
 
+    /// A Markdown viewer tab. Local Markdown opens in the editor now
+    /// (ADR 0034 §4), so a viewer is a remote snapshot.
+    fn open_remote_markdown_viewer(app: &mut FesTermApp, context: &egui::Context) {
+        let source = festerm_markdown::RemoteMarkdownSource::new(
+            "sftp.example.test",
+            22,
+            festerm_markdown::RemoteSourceOwner::username("deploy").unwrap(),
+            "SHA256:abc123",
+            "/srv/docs/readme.md",
+            1,
+        )
+        .expect("valid remote source fields");
+        app.state.dispatch(
+            AppCommand::OpenRemoteMarkdownSnapshot {
+                source,
+                display_path: "/srv/docs/readme.md".to_owned(),
+                content: b"# Readme\n".to_vec(),
+            },
+            context,
+        );
+    }
+
     #[test]
     fn markdown_viewer_palette_items_follow_the_active_viewer() {
         let context = egui::Context::default();
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
-        app.state.dispatch(
-            AppCommand::OpenLocalMarkdownFile {
-                path: std::path::PathBuf::from("/docs/readme.md"),
-                replacing: None,
-            },
-            &context,
-        );
+        open_remote_markdown_viewer(&mut app, &context);
 
         let items = app.palette_items();
         assert!(items.iter().any(|item| item.label == "Reload Markdown"));
@@ -8977,13 +9001,7 @@ mod tests {
         assert_eq!(app.overlays.markdown_file_picker_replaces, None);
         app.close_markdown_file_picker(&context);
 
-        app.state.dispatch(
-            AppCommand::OpenLocalMarkdownFile {
-                path: std::path::PathBuf::from("/docs/readme.md"),
-                replacing: None,
-            },
-            &context,
-        );
+        open_remote_markdown_viewer(&mut app, &context);
         let viewer = app.state.active();
 
         app.open_markdown_file_picker(&context);

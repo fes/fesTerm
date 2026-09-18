@@ -111,7 +111,7 @@ a Preview opened from an editor is a live view and says so.
 
 ### 3. Editor actions are typed application commands
 
-Save, Save As…, Find, Replace, Open in Markdown, and Refresh are `AppCommand`
+Save, Save As…, Find, Replace, Duplicate view, and Refresh are `AppCommand`
 variants. The toolbar, native menus, command palette, effective keyboard
 bindings, and vi's `:` commands all dispatch the same command through the
 existing keyboard-routing model, so none of them can drift apart, execute twice
@@ -137,19 +137,32 @@ terminal.
 - **Find/Replace** operate on the in-memory buffer including unsaved text.
   Replace-all is one undoable transaction, and both are bounded for large
   documents.
-- **Open in Markdown** opens or focuses a **separate Preview tab** bound to the
-  same document, which may then be dragged to another window. The in-tab
-  `Edit | Preview | Split` toggle is a distinct, per-view control.
+- **Duplicate view** opens a second editor view of the same document, which may then
+  be dragged to another window. It is how a reader asks for two independently
+  scrolled surfaces onto one file; `Edit | Preview | Split` remains the in-tab,
+  per-view control over what a single view shows.
 - **Refresh** revalidates the backing source. On a clean document it reloads and
   preserves each view's position where possible; on a dirty document it never
   discards edits — it either reports "unchanged" or enters Conflict (§6).
 
-### 4. Split is one view with two panes
+### 4. One tab is one document, and Preview is a mode of it
+
+A document opens in exactly one tab. Markdown opens in **Preview**, because
+Markdown is opened to be read; `Edit | Preview | Split` then moves between
+reading it, writing it, and both. A separate read-only Markdown viewer tab
+remains only for what the editor cannot hold: a remote snapshot or an HTTP
+document with no local file behind it.
+
+The alternative — a viewer tab and an editor tab for one file — was what
+fesTerm did, and it made a Markdown file two places that could disagree, each
+with its own outline, find state and scroll, each needing to be told about the
+other's unsaved text. One tab with a mode has none of that machinery and
+nothing to keep in step.
 
 `Split` shows editor and Preview panes inside a single view. They share that
-view's settings, Preview scroll follows the editor, and there is one caret, one
-find cursor, and one set of options. Two independently scrolled surfaces are
-expressed by opening a second view (a Preview tab or another editor tab), which
+view's settings, the panes follow each other by section, and there is one
+caret, one find cursor, and one set of options. Two independently scrolled
+surfaces are expressed by opening a second view with **Duplicate view**, which
 already has well-defined per-view state. This keeps "view" as the single unit of
 presentation state rather than introducing a half-view that sometimes owns two
 of everything.

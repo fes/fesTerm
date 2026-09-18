@@ -20,6 +20,7 @@ use crate::documents::SharedDocuments;
 use crate::markdown_viewer::{
     elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
     toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
+    TOOLBAR_BUTTON_PADDING_X, TOOLBAR_BUTTON_RADIUS, TOOLBAR_TEXT_SIZE,
 };
 use crate::tabs::{AppCommand, TabId};
 use crate::text_compare::ComparePane;
@@ -451,6 +452,76 @@ pub(crate) struct TextEditorTab {
     close_after_save: bool,
 }
 
+/// One segment of the `Edit | Preview | Split` control.
+///
+/// Drawn rather than reusing the ordinary toolbar button because this control
+/// carries more weight than the rest of the chrome: Markdown opens in Preview,
+/// so this is the only way in to editing it (ADR 0034 §4). Every segment keeps
+/// a resting outline so the group reads as a control at rest, and the chosen
+/// one is filled in the accent rather than distinguished by a hairline.
+fn mode_segment(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::proportional(TOOLBAR_TEXT_SIZE),
+        if selected {
+            theme::TEXT_ON_ACCENT
+        } else {
+            theme::TEXT_SECONDARY
+        },
+    );
+    let width =
+        (TOOLBAR_BUTTON_PADDING_X * 2.0 + galley.size().x).max(TOOLBAR_BUTTON_HEIGHT);
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(width, TOOLBAR_BUTTON_HEIGHT), Sense::click());
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, label));
+
+    let fill = if selected {
+        theme::ACCENT_ACTION
+    } else if response.hovered() {
+        theme::SURFACE_TAB_ACTIVE
+    } else {
+        theme::SURFACE_TAB_INACTIVE
+    };
+    ui.painter().rect_filled(rect, TOOLBAR_BUTTON_RADIUS, fill);
+    ui.painter().rect_stroke(
+        rect,
+        TOOLBAR_BUTTON_RADIUS,
+        egui::Stroke::new(
+            1.0,
+            if selected {
+                theme::ACCENT_ACTION
+            } else {
+                theme::BORDER_SUBTLE
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - galley.size().x / 2.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        theme::TEXT_SECONDARY,
+    );
+    response
+        .on_hover_text(match label {
+            "Edit" => "Edit the source",
+            "Preview" => "Read the rendered document",
+            _ => "Source and rendering side by side",
+        })
+        .clicked()
+}
+
+/// Whether a file name is one the editor renders as Markdown. Taken from the
+/// name rather than the content, for the same reason `language_label` is: a
+/// guess from content would move the toggle under the reader as they type.
+fn is_markdown_name(name: &str) -> bool {
+    name.rsplit_once('.').is_some_and(|(_, extension)| {
+        matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown")
+    })
+}
+
 impl TextEditorTab {
     /// A view with the built-in defaults, for tests and gallery renders that
     /// are not about what the reader last chose.
@@ -469,9 +540,18 @@ impl TextEditorTab {
         let open = registry
             .get(document)
             .expect("an editor tab is built for a document that is open");
+        let title = open.origin().file_name().to_owned();
+        // Markdown is opened to be read first. One tab is one document
+        // (ADR 0034 §4), so Preview is a mode this view starts in rather than
+        // a second tab someone has to go and find.
+        let mode = if is_markdown_name(&title) {
+            EditorMode::Preview
+        } else {
+            EditorMode::Edit
+        };
         Self {
             document,
-            title: open.origin().file_name().to_owned(),
+            title,
             origin_label: open.origin().qualified_label(),
             remote: open.origin().is_remote(),
             buffer: open.text().text().to_owned(),
@@ -480,7 +560,7 @@ impl TextEditorTab {
             options_pinned_open: false,
             caret: (1, 1),
             status_bar_visible: true,
-            mode: EditorMode::Edit,
+            mode,
             preview: None,
             compare: None,
             command: CommandArea::default(),
@@ -1390,7 +1470,7 @@ impl TextEditorTab {
             ui.spacing_mut().item_spacing.x = MODE_SEGMENT_GAP;
             for mode in [EditorMode::Split, EditorMode::Preview, EditorMode::Edit] {
                 let selected = self.mode == mode;
-                if toolbar_button(ui, None, mode.label(), mode.label(), selected) && !selected {
+                if mode_segment(ui, mode.label(), selected) && !selected {
                     self.mode = mode;
                 }
             }
@@ -1442,10 +1522,14 @@ impl TextEditorTab {
                     ui.add_space(TOOLBAR_GROUP_GAP);
                     ui.separator();
                     ui.add_space(TOOLBAR_GROUP_GAP);
-                    if self.renders_markdown()
-                        && toolbar_button(ui, None, "Open in Markdown", "Open in Markdown", false)
-                    {
-                        command = Some(AppCommand::OpenTextDocumentInMarkdown);
+                    if toolbar_button(
+                        ui,
+                        None,
+                        "Duplicate view",
+                        "Open another view of this document",
+                        false,
+                    ) {
+                        command = Some(AppCommand::OpenAnotherEditorView);
                     }
                     if toolbar_button(ui, Some(Icon::Refresh), "Refresh", "Refresh", false) {
                         command = Some(AppCommand::RefreshTextDocument);
@@ -2858,11 +2942,50 @@ mod tests {
         }
     }
 
+    /// A view of `path` in Edit mode. Markdown opens in Preview for a reader
+    /// (ADR 0034 §4); a test about editing starts where the reader would
+    /// after pressing Edit.
     fn editor_for(path: &std::path::Path) -> (SharedDocuments, TextEditorTab) {
+        let (documents, mut editor) = opened_editor_for(path);
+        editor.mode = EditorMode::Edit;
+        (documents, editor)
+    }
+
+    /// A second Edit-mode view of an already-open document, which is what
+    /// Duplicate view gives a reader who then presses Edit.
+    fn second_view_of(
+        document: DocumentId,
+        documents: &SharedDocuments,
+    ) -> TextEditorTab {
+        let mut editor = TextEditorTab::new(document, documents);
+        editor.mode = EditorMode::Edit;
+        editor
+    }
+
+    /// A view of `path` exactly as it opens, mode included.
+    fn opened_editor_for(path: &std::path::Path) -> (SharedDocuments, TextEditorTab) {
         let documents = DocumentRegistry::shared();
         let id = documents.borrow_mut().open_local(path).unwrap();
         let editor = TextEditorTab::new(id, &documents);
         (documents, editor)
+    }
+
+    #[test]
+    fn a_markdown_file_opens_in_preview_and_a_plain_one_opens_in_edit() {
+        let directory = TemporaryDirectory::new("opening-mode");
+        let markdown = directory.file("NOTES.md", "# alpha\n");
+        let plain = directory.file("notes.txt", "alpha\n");
+
+        assert_eq!(
+            opened_editor_for(&markdown).1.mode(),
+            EditorMode::Preview,
+            "Markdown is opened to be read first"
+        );
+        assert_eq!(
+            opened_editor_for(&plain).1.mode(),
+            EditorMode::Edit,
+            "and anything else is opened to be edited"
+        );
     }
 
     #[test]
@@ -2898,7 +3021,7 @@ mod tests {
         let path = directory.file("notes.md", "alpha\n");
         let (documents, mut first) = editor_for(&path);
         let id = documents.borrow_mut().open_local(&path).unwrap();
-        let mut second = TextEditorTab::new(id, &documents);
+        let mut second = second_view_of(id, &documents);
 
         first.buffer.push_str("typed\n");
         first.commit_buffer_for_test(&documents);
@@ -4214,7 +4337,7 @@ mod tests {
         let path = directory.file("NOTES.md", "alpha\n");
         let (documents, first) = editor_for(&path);
         let id = first.document();
-        let second = TextEditorTab::new(id, &documents);
+        let second = second_view_of(id, &documents);
         let (first_id, second_id) = (
             crate::tabs::TabId::next_for_test(),
             crate::tabs::TabId::next_for_test(),
@@ -4292,7 +4415,7 @@ mod tests {
         let path = directory.file("NOTES.md", "alpha\n");
         let (documents, first) = editor_for(&path);
         let id = first.document();
-        let second = TextEditorTab::new(id, &documents);
+        let second = second_view_of(id, &documents);
         let (first_id, second_id) = (
             crate::tabs::TabId::next_for_test(),
             crate::tabs::TabId::next_for_test(),
@@ -4561,7 +4684,7 @@ mod tests {
         // Another view of the same document types on.
         let (documents, editor) = harness.state_mut();
         let id = editor.document();
-        let mut sibling = TextEditorTab::new(id, documents);
+        let mut sibling = second_view_of(id, documents);
         sibling.type_for_gallery(documents, "echo\n");
         harness.run();
 

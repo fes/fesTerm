@@ -400,6 +400,14 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_vi_search,
         },
         Scenario {
+            id: "text-editor-preview",
+            section: "editor",
+            title: "A Markdown file as it opens",
+            caption: "A Markdown document lands in Preview, reading as the finished \
+                      thing; the mode control above it is the way back to the source.",
+            capture: capture_text_editor_preview,
+        },
+        Scenario {
             id: "text-editor-split",
             section: "editor",
             title: "The editor split with its live preview",
@@ -1416,6 +1424,10 @@ fn capture_text_editor_options() -> image::RgbaImage {
     )
 }
 
+fn capture_text_editor_preview() -> image::RgbaImage {
+    render_text_editor_in(None, crate::text_editor::EditorMode::Preview, None)
+}
+
 fn capture_text_editor_split() -> image::RgbaImage {
     render_text_editor_in(None, crate::text_editor::EditorMode::Split, None)
 }
@@ -1487,6 +1499,7 @@ fn capture_text_editor_dirty_close() -> image::RgbaImage {
             app,
         );
     harness.run();
+    press_edit_for_gallery(&mut harness);
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     body.focus();
     body.type_text(
@@ -1557,6 +1570,7 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
     // Both documents are typed into, because a file changed underneath a view
     // that has no unsaved edits of its own is simply adopted -- it is the
     // collision between the two versions that is a conflict.
+    press_edit_for_gallery(&mut harness);
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     body.focus();
     body.type_text("\n## Known Issues\n\n- The relay drops duplicate deliveries.\n");
@@ -1567,6 +1581,7 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
         &context,
     );
     harness.run();
+    press_edit_for_gallery(&mut harness);
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     body.focus();
     body.type_text("\n- Mine.\n");
@@ -2018,4 +2033,22 @@ fn capture_ui_state_gallery() {
             });
         }
     }
+}
+
+/// Markdown opens in Preview (ADR 0034 §4); a capture that needs the body
+/// presses Edit first, the way a reader does.
+fn press_edit_for_gallery(harness: &mut Harness<'_, crate::app::FesTermApp>) {
+    if harness
+        .query_all_by_role(egui::accesskit::Role::MultilineTextInput)
+        .next()
+        .is_some()
+    {
+        return;
+    }
+    harness
+        .query_all_by_label("Edit")
+        .next()
+        .expect("the Edit segment of the mode control")
+        .click();
+    harness.run();
 }

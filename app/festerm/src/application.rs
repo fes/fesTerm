@@ -705,22 +705,41 @@ mod tests {
     /// Opens a tab that may legitimately move between windows (ADR 0033).
     ///
     /// Launcher, Settings, and Profiles are per-window singletons that stay
-    /// put, so a move test needs real per-tab content; a Markdown viewer is
-    /// the one such tab that needs neither a PTY nor a network.
+    /// put, so a move test needs real per-tab content; a text document is the
+    /// one such tab that needs neither a PTY nor a network.
     fn open_movable_tab(
         application: &mut FesTermApplication,
         window: usize,
         path: &str,
         context: &egui::Context,
     ) -> crate::tabs::TabId {
+        let file = movable_tab_file(path);
         application.window_mut(window).dispatch_for_test(
-            AppCommand::OpenLocalMarkdownFile {
-                path: std::path::PathBuf::from(path),
-                replacing: None,
-            },
+            AppCommand::OpenTextEditor { path: file },
             context,
         );
         application.window_mut(window).active_tab_id_for_test()
+    }
+
+    /// A real file for `open_movable_tab`, because a document that cannot be
+    /// read opens no tab to move.
+    fn movable_tab_file(path: &str) -> std::path::PathBuf {
+        let name = std::path::Path::new(path)
+            .file_name()
+            .expect("a file name")
+            .to_owned();
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-movable-tab-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let file = directory.join(name);
+        std::fs::write(&file, "# Moved\n").unwrap();
+        file
     }
 
     /// The whole point of ADR 0033: the dragged tab itself - with whatever
