@@ -4416,6 +4416,10 @@ impl FesTermApp {
     /// Application surfaces keep the same 24 px geometry with empty content.
     fn show_status_bar(&self, ui: &mut egui::Ui) {
         let show_session_details = self.state.show_session_details();
+        let mode = match &self.state.active_tab().content {
+            TabContent::TextEditor(tab) => tab.vi_mode_label(),
+            _ => None,
+        };
         let show_durable_session = self.state.show_durable_session_in_status_bar();
         let mut durable_session = None;
         let (context, dimensions, system, status, status_label, detail, port_forwards) =
@@ -4514,6 +4518,7 @@ impl FesTermApp {
                 festerm_ui_egui::statusbar::show(
                     ui,
                     festerm_ui_egui::statusbar::StatusBarContent {
+                        mode,
                         context,
                         dimensions: dimensions.as_deref(),
                         system: system.as_deref(),

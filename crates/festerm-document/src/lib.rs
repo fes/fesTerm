@@ -19,6 +19,7 @@ mod status;
 mod substitute;
 mod text;
 mod undo;
+mod vi;
 
 pub use bounds::{DocumentBounds, RefusalReason};
 pub use diff::{DiffLine, DiffSide, LineChange, LineComparison, LineComparisonRow};
@@ -36,3 +37,4 @@ pub use substitute::{
 };
 pub use text::{EditRefusal, Encoding, Indentation, LineEnding, TextDocument, TextEdit};
 pub use undo::UndoHistory;
+pub use vi::{SearchIntent, ViAction, ViEngine, ViKey, ViMode, ViResponse};

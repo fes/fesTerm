@@ -23,8 +23,11 @@ use crate::markdown_viewer::{
 };
 use crate::tabs::{AppCommand, TabId};
 use crate::text_compare::ComparePane;
+use festerm_document::{SearchIntent, ViAction, ViEngine, ViKey, ViMode};
+
 use crate::vi_command::{
-    parse as parse_command, CommandArea, CommandAreaEvent, CommandOutcome, CommandPrompt, ViCommand,
+    normal_mode_command, parse as parse_command, CommandArea, CommandAreaEvent, CommandError,
+    CommandOutcome, CommandPrompt, ViCommand,
 };
 
 /// Width of the line-number gutter's digits area before padding.
@@ -362,6 +365,20 @@ pub(crate) struct TextEditorTab {
     /// Where the caret is in bytes, which is what `:s` needs in order to know
     /// which line "the current line" is.
     caret_offset: usize,
+    /// The vi state machine. Per-view, like the option that turns it on.
+    vi: ViEngine,
+    /// `ZZ` and `ZQ` are two keystrokes, so the first is held here.
+    vi_prefix: Option<char>,
+    /// A command a Normal-mode keystroke resolved to, dispatched on the way out
+    /// of `show` where an `AppCommand` can be returned.
+    vi_pending_command: Option<ViCommand>,
+    /// Whether the body held focus at the end of the last frame. egui
+    /// surrenders focus on Escape before a frame begins, so asking about focus
+    /// now would make Escape the one key vi mode could never see.
+    vi_focused: bool,
+    /// Where the engine wants the caret, applied to the widget on the next
+    /// frame because the widget owns its own cursor.
+    vi_caret: Option<usize>,
     /// Whether the matches on screen came from a vi search, which keeps them
     /// lit after the command area closes the way `n` and `N` will need.
     searching_with_vi: bool,
@@ -395,6 +412,11 @@ impl TextEditorTab {
             caret_offset: 0,
             close_after_save: false,
             searching_with_vi: false,
+            vi: ViEngine::new(),
+            vi_prefix: None,
+            vi_pending_command: None,
+            vi_caret: None,
+            vi_focused: false,
             tab: None,
             find: FindState::default(),
         }
@@ -555,6 +577,7 @@ impl TextEditorTab {
         self.sync_compare(documents);
         self.route_find_shortcuts(ui);
         self.route_command_area_keys(ui);
+        self.route_vi_keys(ui, documents);
         // Matches are collected wherever they are shown, because the Find bar
         // and a vi search are one search behind two surfaces.
         if self.highlighting_matches() {
@@ -589,6 +612,13 @@ impl TextEditorTab {
                             other => command = banner_command(other),
                         }
                     }
+                    // vi mode is a state the whole view is in, so it says so
+                    // once, in words, above the text rather than only in the
+                    // status bar's corner (ADR 0034 §10).
+                    if self.options.vi_keys {
+                        let banner = self.vi_banner_text(documents);
+                        show_vi_banner(ui, &banner.0, &banner.1);
+                    }
                     self.show_body(ui, documents);
                     // The area sits immediately above the persistent status
                     // bar and never in place of it, so mode, format, position
@@ -602,10 +632,221 @@ impl TextEditorTab {
                     }
                 });
             });
+        if let Some(pending) = self.vi_pending_command.take() {
+            command = self.dispatch_command(pending, tab_id, documents);
+        }
         if let Some(pending) = self.close_when_saved(tab_id, documents) {
             command = Some(pending);
         }
         command
+    }
+
+    /// The word the status bar shows, or nothing when this view is not in vi
+    /// mode. It is always a word: cursor shape and colour are invisible to a
+    /// screen reader and unreliable under a high-contrast theme (ADR 0034 §10).
+    pub(crate) fn vi_mode_label(&self) -> Option<&'static str> {
+        if !self.options.vi_keys {
+            return None;
+        }
+        match self.command.prompt() {
+            Some(CommandPrompt::Ex) => Some("COMMAND"),
+            Some(_) => Some("SEARCH"),
+            None => Some(self.vi.mode().label()),
+        }
+    }
+
+    /// The headline and detail the vi banner shows for the state the view is
+    /// actually in: a mode, a command being typed, or a search being typed.
+    fn vi_banner_text(&self, documents: &SharedDocuments) -> (String, String) {
+        match self.command.prompt() {
+            Some(CommandPrompt::Ex) => {
+                let input = self.command.input();
+                let detail = match crate::vi_command::parse(input) {
+                    Ok(command) => format!(":{input} {}", command.explanation()),
+                    Err(_) => {
+                        "Enter runs the command · :w saves · :q closes · :e refreshes.".to_owned()
+                    }
+                };
+                ("vi command-line mode".to_owned(), detail)
+            }
+            Some(_) => {
+                let matches = self.find.matches().len();
+                let detail = if self.command.input().is_empty() {
+                    "Rust-compatible Unicode regex · matching as it is typed.".to_owned()
+                } else if matches == 1 {
+                    "Rust-compatible Unicode regex · one match is highlighted in the current \
+                     buffer."
+                        .to_owned()
+                } else {
+                    format!(
+                        "Rust-compatible Unicode regex · {matches} matches are highlighted in the \
+                         current buffer."
+                    )
+                };
+                ("vi regex search".to_owned(), detail)
+            }
+            None => {
+                let _ = documents;
+                (
+                    "vi compatibility is active in this view".to_owned(),
+                    format!(
+                        "{} mode · {} · Use :w for the ordinary Save command.",
+                        self.vi.mode().label(),
+                        vi_mode_hint(self.vi.mode())
+                    ),
+                )
+            }
+        }
+    }
+
+    /// Feeds the body's keystrokes to the vi engine.
+    ///
+    /// Keys are taken out of the event queue rather than merely read, because
+    /// in Normal mode a letter is a command and must never also arrive in the
+    /// text. vi keys are live only while the body holds focus: a toolbar
+    /// control, the Find fields and the command area all keep their ordinary
+    /// behaviour (ADR 0034 §10).
+    fn route_vi_keys(&mut self, ui: &egui::Ui, documents: &SharedDocuments) {
+        if !self.options.vi_keys || self.command.is_open() {
+            return;
+        }
+        if !self.vi_focused && !ui.memory(|memory| memory.has_focus(self.body_id())) {
+            return;
+        }
+        let insert = matches!(self.vi.mode(), ViMode::Insert | ViMode::Replace);
+        let keys = take_vi_keys(ui, insert);
+        for key in keys {
+            self.feed_vi_key(key, documents);
+        }
+    }
+
+    fn feed_vi_key(&mut self, key: ViKey, documents: &SharedDocuments) {
+        // `ZZ` and `ZQ` are two keystrokes that mean an Ex command, so the
+        // pair is resolved before the engine sees a motion in the `Z`.
+        if self.vi.mode() == ViMode::Normal {
+            if let ViKey::Char(character) = key {
+                if let Some(prefix) = self.vi_prefix.take() {
+                    if let Some(command) = normal_mode_command(&format!("{prefix}{character}")) {
+                        self.vi_pending_command = Some(command);
+                        return;
+                    }
+                } else if character == 'Z' {
+                    self.vi_prefix = Some('Z');
+                    return;
+                }
+            }
+        }
+
+        let (text, caret) = {
+            let registry = documents.borrow();
+            let Some(open) = registry.get(self.document) else {
+                return;
+            };
+            (open.text().text().to_owned(), self.caret_offset)
+        };
+        let response = self.vi.on_key(key, &text, caret);
+        match response.action {
+            ViAction::None => {}
+            ViAction::Edit(edits) => self.apply_vi_edits(edits, documents),
+            ViAction::Undo | ViAction::Redo => {
+                let undo = matches!(response.action, ViAction::Undo);
+                let mut registry = documents.borrow_mut();
+                if let Some(open) = registry.get_mut(self.document) {
+                    let text = open.text_mut();
+                    text.close_transaction();
+                    if if undo { text.undo() } else { text.redo() } {
+                        self.buffer = open.text().text().to_owned();
+                    }
+                }
+            }
+            ViAction::Search(intent) => self.run_search_intent(intent, documents),
+            ViAction::Refused(error) => {
+                self.command
+                    .report(CommandOutcome::Failed(CommandError::new(
+                        error.headline(),
+                        error.detail(),
+                    )));
+            }
+        }
+        self.vi_caret = Some(response.caret);
+        self.caret_offset = response.caret;
+    }
+
+    fn apply_vi_edits(
+        &mut self,
+        edits: Vec<festerm_document::TextEdit>,
+        documents: &SharedDocuments,
+    ) {
+        if edits.is_empty() {
+            return;
+        }
+        let mut registry = documents.borrow_mut();
+        let Some(open) = registry.get_mut(self.document) else {
+            return;
+        };
+        match open.text_mut().apply_edits(edits) {
+            Ok(_) => {
+                self.buffer = open.text().text().to_owned();
+                self.find.searched = None;
+            }
+            Err(refusal) => {
+                let error = CommandError::new(refusal.headline(), refusal.detail());
+                drop(registry);
+                self.command.report(CommandOutcome::Failed(error));
+            }
+        }
+    }
+
+    /// `/ ? n N * #`, all of them landing on the same search the Find bar uses.
+    fn run_search_intent(&mut self, intent: SearchIntent, documents: &SharedDocuments) {
+        match intent {
+            SearchIntent::PromptForward => self.command.open(CommandPrompt::SearchForward),
+            SearchIntent::PromptBackward => self.command.open(CommandPrompt::SearchBackward),
+            SearchIntent::Next => self.step_match(1),
+            SearchIntent::Previous => self.step_match(-1),
+            SearchIntent::WordForward | SearchIntent::WordBackward => {
+                // The word is escaped as a literal, so punctuation inside an
+                // identifier cannot turn into pattern syntax (ADR 0034 §10a).
+                let Some(word) = word_under_caret(&self.buffer, self.caret_offset) else {
+                    return;
+                };
+                self.find.query = festerm_document::literal_word_pattern(word);
+                self.find.searched = None;
+                self.searching_with_vi = true;
+                let revision = documents
+                    .borrow()
+                    .get(self.document)
+                    .map_or(0, |open| open.text().revision());
+                self.find.refresh(&self.buffer, revision);
+                self.step_match(if intent == SearchIntent::WordForward {
+                    0
+                } else {
+                    -1
+                });
+            }
+        }
+    }
+
+    /// Moves to another match and takes the caret with it.
+    fn step_match(&mut self, direction: i32) {
+        let total = self.find.matches().len();
+        if total == 0 {
+            self.command
+                .report(CommandOutcome::Message("No matches".to_owned()));
+            return;
+        }
+        let current = self.find.current.unwrap_or(0);
+        let next = match direction {
+            0 => current,
+            step => (current as i64 + step as i64).rem_euclid(total as i64) as usize,
+        };
+        self.find.current = Some(next);
+        if let Some(found) = self.find.matches().get(next) {
+            self.vi_caret = Some(found.start);
+            self.caret_offset = found.start;
+        }
+        let summary = self.find.summary();
+        self.command.report(CommandOutcome::Message(summary));
     }
 
     /// Opens the command area on `:`, `/` and `?`.
@@ -839,6 +1080,13 @@ impl TextEditorTab {
     #[cfg(test)]
     /// Opens the command area with a line already typed, so the gallery can
     /// show it doing its job rather than empty.
+    /// Turns vi compatibility on for a gallery render, the way the options
+    /// menu does for a reader.
+    #[cfg(test)]
+    pub(crate) fn enable_vi_for_gallery(&mut self) {
+        self.options.vi_keys = true;
+    }
+
     #[cfg(test)]
     pub(crate) fn open_command_area_for_gallery(&mut self, prompt: CommandPrompt, line: &str) {
         self.options.vi_keys = true;
@@ -848,6 +1096,7 @@ impl TextEditorTab {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn open_find_for_gallery(&mut self, query: &str, replacement: Option<&str>) {
         self.find.open(replacement.is_some());
         self.find.query = query.to_owned();
@@ -1071,6 +1320,12 @@ impl TextEditorTab {
     /// Stable ids for the Find bar's two fields, anchored to the tab rather
     /// than to whichever nested `Ui` happens to be building them, so undo
     /// routing in the body can ask whether one of them holds focus.
+    /// Anchored to the tab rather than to a nested `Ui`, so key routing that
+    /// happens before the body is built can still ask whether it holds focus.
+    fn body_id(&self) -> egui::Id {
+        egui::Id::new(("text-editor-body", self.tab))
+    }
+
     fn find_field_id(&self, index: usize) -> egui::Id {
         egui::Id::new(("text-editor-find-field", self.tab, index))
     }
@@ -1686,7 +1941,7 @@ impl TextEditorTab {
         let left = ui.min_rect().left();
         ui.add_space(gutter);
         let width = self.body_width(ui, ui.available_width());
-        let body_id = ui.id().with("text-editor-text");
+        let body_id = self.body_id();
         self.route_undo_shortcuts(ui, documents, read_only);
         // Taken out of `self` before the widget borrows the buffer mutably.
         let highlights: Vec<(usize, usize, bool)> = if self.highlighting_matches() {
@@ -1749,6 +2004,23 @@ impl TextEditorTab {
             ui.ctx().memory_mut(|memory| memory.request_focus(body_id));
         }
 
+        self.vi_focused = self.options.vi_keys && output.response.has_focus();
+
+        // The engine decides where the caret is, but the widget owns its own
+        // cursor, so the move is handed over after the body has been built.
+        if let Some(offset) = self.vi_caret.take() {
+            let index = self.buffer[..offset.min(self.buffer.len())].chars().count();
+            let mut state = output.state.clone();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(index),
+                )));
+            state.store(ui.ctx(), body_id);
+            ui.ctx().memory_mut(|memory| memory.request_focus(body_id));
+            return;
+        }
+
         if let Some(range) = output.cursor_range {
             if let Some(open) = documents.borrow().get(self.document) {
                 let offset = open.text().byte_offset_of_char(range.primary.index.0);
@@ -1757,6 +2029,75 @@ impl TextEditorTab {
             }
         }
     }
+}
+
+/// Pulls the vi-relevant keystrokes out of the event queue.
+///
+/// In Insert and Replace mode only the keys the engine needs are taken, so
+/// arrows, selection and the platform's own editing keys keep working; in
+/// Normal and Visual mode every character is a command and none of them may
+/// reach the text.
+fn take_vi_keys(ui: &egui::Ui, insert: bool) -> Vec<ViKey> {
+    ui.input_mut(|input| {
+        let mut keys = Vec::new();
+        input.events.retain(|event| match event {
+            egui::Event::Text(text) => {
+                keys.extend(text.chars().map(ViKey::Char));
+                false
+            }
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => match key {
+                egui::Key::Escape => {
+                    keys.push(ViKey::Escape);
+                    false
+                }
+                egui::Key::Enter => {
+                    keys.push(ViKey::Enter);
+                    false
+                }
+                egui::Key::Backspace => {
+                    keys.push(ViKey::Backspace);
+                    false
+                }
+                _ if modifiers.ctrl && !insert => {
+                    match key.name().chars().next().map(|c| c.to_ascii_lowercase()) {
+                        Some(letter) => {
+                            keys.push(ViKey::Ctrl(letter));
+                            false
+                        }
+                        None => true,
+                    }
+                }
+                // Arrows and the rest are left alone even in Normal mode: they
+                // move the caret the way every other application moves it, and
+                // refusing them would be a bound the ADR does not ask for.
+                _ => true,
+            },
+            _ => true,
+        });
+        keys
+    })
+}
+
+/// The word the caret is inside, for `*` and `#`.
+fn word_under_caret(text: &str, caret: usize) -> Option<&str> {
+    let caret = caret.min(text.len());
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let start = text[..caret]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_word(*c))
+        .last()
+        .map_or(caret, |(index, _)| index);
+    let end = text[caret..]
+        .char_indices()
+        .find(|(_, c)| !is_word(*c))
+        .map_or(text.len(), |(index, _)| caret + index);
+    (start < end).then(|| &text[start..end])
 }
 
 /// `1 replacement` reads better than `1 replacements`, and the count is the
@@ -1844,6 +2185,49 @@ fn primary_button(ui: &mut egui::Ui, label_text: &str, enabled: bool) -> bool {
         colour,
     );
     response.clicked()
+}
+
+/// The hint that tells a reader in this mode what the next useful key is.
+fn vi_mode_hint(mode: ViMode) -> &'static str {
+    match mode {
+        ViMode::Normal => "Press i to insert",
+        ViMode::Insert => "Press Esc to return to NORMAL",
+        ViMode::Replace => "Press Esc to stop overwriting",
+        ViMode::Visual | ViMode::VisualLine => "Press Esc to drop the selection",
+    }
+}
+
+/// Says in words that this view is in vi mode, which mode that is, and how to
+/// get out of it. The status bar names the mode too, but a corner word is not
+/// an explanation for someone who did not expect a letter to be a command.
+fn show_vi_banner(ui: &mut egui::Ui, headline: &str, detail: &str) {
+    egui::Frame::new()
+        .fill(theme::SURFACE_PANEL)
+        .inner_margin(egui::Margin {
+            left: BANNER_PADDING_X,
+            right: BAR_PADDING_X,
+            top: BANNER_PADDING_Y,
+            bottom: BANNER_PADDING_Y,
+        })
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            let top = ui.min_rect().top();
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                label(ui, headline, theme::TEXT_PRIMARY, true);
+                label(ui, detail, theme::TEXT_SECONDARY, false);
+            });
+            let bottom = ui.min_rect().bottom();
+            let left = ui.min_rect().left() - f32::from(BANNER_PADDING_X);
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(left, top),
+                    egui::pos2(left + BANNER_ACCENT_WIDTH, bottom),
+                ),
+                0.0,
+                theme::ACCENT_PRIMARY,
+            );
+        });
 }
 
 /// Renders the banner and reports the action pressed. Compare is handled by
@@ -2524,6 +2908,184 @@ mod tests {
             .query_all_by_role(egui::accesskit::Role::TextInput)
             .next()
             .expect("the command area's field")
+    }
+
+    /// Types into the body with vi keys live, the way a user does.
+    fn vi_type(harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>, keys: &str) {
+        for character in keys.chars() {
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Text(character.to_string()));
+            harness.run();
+        }
+    }
+
+    fn focus_body(harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>) {
+        let id = harness.state().1.body_id();
+        harness.ctx.memory_mut(|memory| memory.request_focus(id));
+        // egui parks a freshly focused field's cursor at the end of the text.
+        // vi commands read from wherever the caret is, so the tests below pin
+        // it at the start the way a reader who has just opened a file sees it.
+        harness.state_mut().1.vi_caret = Some(0);
+        harness.run();
+    }
+
+    #[test]
+    fn in_normal_mode_a_letter_is_a_command_and_never_text() {
+        let directory = TemporaryDirectory::new("vi-normal");
+        let path = directory.file("notes.md", "alpha beta\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        vi_type(&mut harness, "dw");
+
+        assert_eq!(
+            document_text(&harness),
+            "beta\n",
+            "`dw` deletes a word rather than typing `d` and `w` into the file"
+        );
+    }
+
+    #[test]
+    fn the_status_bar_says_the_mode_in_words() {
+        let directory = TemporaryDirectory::new("vi-mode-label");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        assert_eq!(harness.state().1.vi_mode_label(), Some("NORMAL"));
+        vi_type(&mut harness, "i");
+        assert_eq!(harness.state().1.vi_mode_label(), Some("INSERT"));
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().1.vi_mode_label(), Some("NORMAL"));
+        vi_type(&mut harness, "v");
+        assert_eq!(harness.state().1.vi_mode_label(), Some("VISUAL"));
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+        vi_type(&mut harness, ":");
+        assert_eq!(
+            harness.state().1.vi_mode_label(),
+            Some("COMMAND"),
+            "the command area is a state the status bar has to name too"
+        );
+    }
+
+    #[test]
+    fn the_vi_banner_explains_the_state_the_view_is_actually_in() {
+        let directory = TemporaryDirectory::new("vi-banner");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        let state = harness.state();
+        let (headline, detail) = state.1.vi_banner_text(&state.0);
+        assert_eq!(headline, "vi compatibility is active in this view");
+        assert!(
+            detail.starts_with("NORMAL mode · Press i to insert"),
+            "the banner names the mode and the way out of it: {detail}"
+        );
+
+        vi_type(&mut harness, ":wq");
+        let state = harness.state();
+        let (headline, detail) = state.1.vi_banner_text(&state.0);
+        assert_eq!(headline, "vi command-line mode");
+        assert!(
+            detail.starts_with(":wq saves through the ordinary Save command"),
+            "the banner explains the command that has been typed: {detail}"
+        );
+    }
+
+    #[test]
+    fn a_view_without_vi_keys_shows_no_mode_at_all() {
+        let directory = TemporaryDirectory::new("vi-mode-absent");
+        let path = directory.file("notes.md", "alpha\n");
+        let harness = find_harness(&path);
+        assert_eq!(harness.state().1.vi_mode_label(), None);
+    }
+
+    #[test]
+    fn a_counted_operator_deletes_exactly_what_it_promised_in_one_undo() {
+        let directory = TemporaryDirectory::new("vi-count");
+        let path = directory.file("notes.md", "one two three four\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        vi_type(&mut harness, "2dw");
+        assert_eq!(document_text(&harness), "three four\n");
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(
+            document_text(&harness),
+            "one two three four\n",
+            "a counted operator comes back in a single press"
+        );
+    }
+
+    #[test]
+    fn a_key_outside_the_matrix_says_so_and_leaves_the_text_alone() {
+        let directory = TemporaryDirectory::new("vi-refusal");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        // A named register is recognised and deliberately declined rather
+        // than half-executed.
+        vi_type(&mut harness, "\"");
+
+        assert_eq!(document_text(&harness), "alpha\n");
+        assert!(
+            matches!(
+                harness.state().1.command.outcome(),
+                Some(CommandOutcome::Failed(_))
+            ),
+            "an unsupported key reports itself instead of doing nothing visible"
+        );
+    }
+
+    #[test]
+    fn a_vi_search_and_next_walk_the_document_without_changing_it() {
+        let directory = TemporaryDirectory::new("vi-search-next");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        vi_type(&mut harness, "/");
+        assert_eq!(
+            harness.state().1.command.prompt(),
+            Some(CommandPrompt::SearchForward),
+            "a slash opens the search prompt rather than reaching the text"
+        );
+        command_field(&harness).focus();
+        harness.run();
+        command_field(&harness).type_text("alpha");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+
+        focus_body(&mut harness);
+        vi_type(&mut harness, "n");
+        assert_eq!(harness.state().1.find.current, Some(1));
+        assert_eq!(document_text(&harness), "alpha\nbeta\nalpha\n");
+    }
+
+    #[test]
+    fn vi_keys_are_dead_while_something_else_holds_focus() {
+        let directory = TemporaryDirectory::new("vi-focus");
+        let path = directory.file("notes.md", "alpha beta\n");
+        let mut harness = vi_harness(&path);
+
+        open_find_and_type(&mut harness, false, "beta");
+        vi_type(&mut harness, "dw");
+
+        assert_eq!(
+            document_text(&harness),
+            "alpha beta\n",
+            "typing in the Find field must not run a vi operator on the document"
+        );
     }
 
     #[test]

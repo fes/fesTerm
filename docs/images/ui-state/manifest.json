@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "d02fe7151f21c459f09c996ebb77a79590c693de85846c12b7d4df6e023c9037"
+      "sha256": "4a14321ed3e50a54bf3684391d972e2267f76c318f0a4d7d5228f0aa27219c94"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "bee8aa2b3f6174762fd33a1128b232c3a2f5340f74bb4768c4d9a2010e9f8052"
+      "sha256": "2f579140a0ae48dc79495b321ca3d140aa525a7c5ba99c08e82ba6b30a7617d3"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "7867e6a7357d28710ed9e4e4d9165a480ffc6c4aa7622e147b53200cf623576b"
+      "sha256": "645fdc04f80b4c22e1ec91a27f1a6499ba8b68847e63554bdaef02b9d758a989"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "65c032511b6592860a6337cd3b8f6ac76c4df32ec5e010832464e0b381563d50"
+      "sha256": "5c77c7d37ae11e67046a20fac317ed8b81b36dc952d867c520e4bbac2767209e"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "a89e0b6578270a4186677c59e69ae819d798c9d0859c86a91e2c1b1e56810ae5"
+      "sha256": "824eee3df9e64422b7ada98356f41c77b9d1cca1b5267e976db7bc73b4494487"
     },
     {
       "id": "text-editor-save-as",
@@ -153,7 +153,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "365533c910f7ee6315bf6ef30956eb47b2466524bd4c1a51361399ba905b4a30"
+      "sha256": "cd86918669d7f82a723e8357cf8c7c976adb11d1f73ca3621433b2a416e2036a"
     },
     {
       "id": "text-editor-saved",
@@ -164,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "f5dd86e46f93d4cb62a57074ceaeacf5a9d6fed24f077a08fb5340461a8b9bab"
+      "sha256": "70b8a193a2769d0a0b146953e95dae4e4027c34962cc93bb8561d38d377887dd"
     },
     {
       "id": "text-editor-split",
@@ -175,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "cf19b3784ba062b99bf981e86a6e4365c6e55692eac1c4db1367bd6db2449e79"
+      "sha256": "c9c56b9a5c9d31bb22cfdce689ebe39ed8810ee5c05f633faff9018b827fefeb"
     },
     {
       "id": "text-editor-unsaved",
@@ -186,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "0b0106d47356a9be505b6df2fbf90f830ec48470d92a3d9cfc7d1015bcb90985"
+      "sha256": "008e9b58c6ddf487f97a5a6c3c575df5203c3e6c1e2e48e35fe945f39ba2c788"
     },
     {
       "id": "text-editor-vi-command",
@@ -197,7 +197,18 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "6b4e99342d5f855ee16bd6fd8a90ce8b534a7ac24ad07d3803792036c86ae463"
+      "sha256": "bd357a1ee016bad6c8087e0cc86f0a051f13316b8d453a137c9b3768f20c8ed4"
+    },
+    {
+      "id": "text-editor-vi-mode",
+      "section": "editor",
+      "title": "A view with vi compatibility switched on",
+      "caption": "The view says which mode it is in, in words, above the text as well as in the status bar, so a letter behaving as a command is never a surprise.",
+      "image": "text-editor-vi-mode.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "92e855870e917e4f3c6c2b8fbed6bd00822ec3a517b063730f23de47fff77f84"
     },
     {
       "id": "text-editor-vi-search",
@@ -208,7 +219,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "94462fe3a4bf076f0ff7adccbacb2635f4b1a4081692b632872e20ecdae9ed74"
+      "sha256": "3691319fb63dc4a4fa4ea6e90ebbfdce14bfe9b418480c8b96c76146c50425cb"
     },
     {
       "id": "keyboard-editor-collapsed",

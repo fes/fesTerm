@@ -373,6 +373,15 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_options,
         },
         Scenario {
+            id: "text-editor-vi-mode",
+            section: "editor",
+            title: "A view with vi compatibility switched on",
+            caption: "The view says which mode it is in, in words, above the text \
+                      as well as in the status bar, so a letter behaving as a \
+                      command is never a surprise.",
+            capture: capture_text_editor_vi_mode,
+        },
+        Scenario {
             id: "text-editor-vi-command",
             section: "editor",
             title: "The vi command area over the open document",
@@ -1343,6 +1352,16 @@ fn render_text_editor_in(
 
 fn capture_text_editor_saved() -> image::RgbaImage {
     render_text_editor(None)
+}
+
+fn capture_text_editor_vi_mode() -> image::RgbaImage {
+    render_text_editor_in(
+        None,
+        crate::text_editor::EditorMode::Edit,
+        Some(&|_documents, editor, _path| {
+            editor.enable_vi_for_gallery();
+        }),
+    )
 }
 
 fn capture_text_editor_vi_command() -> image::RgbaImage {

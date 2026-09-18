@@ -615,11 +615,8 @@ fn paint_status_dot(ui: &mut Ui, status: ChipStatus, pulse: bool) {
         // Hollow, not merely a different hue: an edited document has to be
         // distinguishable from a saved one with the colour taken away.
         ChipMarker::Hollow => {
-            ui.painter().circle_stroke(
-                rect.center(),
-                radius - 0.5,
-                egui::Stroke::new(1.5, color),
-            );
+            ui.painter()
+                .circle_stroke(rect.center(), radius - 0.5, egui::Stroke::new(1.5, color));
         }
         // Sized and placed by eye rather than by arithmetic. A triangle drawn
         // to a circle's radius covers barely half its area, so it reads as the

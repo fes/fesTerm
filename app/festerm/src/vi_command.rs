@@ -78,6 +78,35 @@ pub enum ViCommand {
     Substitute(Box<SubstituteCommand>),
 }
 
+impl ViCommand {
+    /// What this command will do, in the words the banner uses. The banner
+    /// explains the command that has actually been typed, so a reader learns
+    /// what Enter is about to do before pressing it.
+    pub fn explanation(&self) -> &'static str {
+        match self {
+            Self::Write => {
+                "saves through the ordinary Save command and reports only once the write lands."
+            }
+            Self::WriteAs { .. } => {
+                "opens the reviewed Save As sheet rather than overwriting a path typed on one line."
+            }
+            Self::WriteQuit => {
+                "saves through the ordinary Save command, then closes only after the save succeeds."
+            }
+            Self::Quit => {
+                "closes this view, with the ordinary prompt if there is anything unsaved."
+            }
+            Self::QuitDiscarding => {
+                "closes this view discarding changes, still asking before the last view goes."
+            }
+            Self::Refresh { .. } => "refreshes from disk under the ordinary conflict rules.",
+            Self::Substitute(_) => {
+                "replaces through the same engine and the same regex dialect the Find bar uses."
+            }
+        }
+    }
+}
+
 /// Every command name the area will accept, for completion.
 ///
 /// Completion offers only these, so it cannot advertise something that will
@@ -326,6 +355,7 @@ impl CommandArea {
         &self.input
     }
 
+    #[cfg(test)]
     pub fn outcome(&self) -> Option<&CommandOutcome> {
         self.result.as_ref()
     }
@@ -354,6 +384,13 @@ impl CommandArea {
         self.recall = None;
         self.focus_pending = false;
         self.was_focused = false;
+    }
+
+    /// Says something in the area without opening it, for keystrokes that
+    /// report a result without ever having had a command line — `n`, `*`, and
+    /// anything outside the matrix.
+    pub fn report(&mut self, outcome: CommandOutcome) {
+        self.result = Some(outcome);
     }
 
     /// Closes the area and leaves a message where the hint was.

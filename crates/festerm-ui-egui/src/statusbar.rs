@@ -38,6 +38,13 @@ const OPTICAL_VERTICAL_NUDGE: f32 = 1.0;
 /// supplied by the caller (this crate owns no session/tab state); `None`
 /// simply omits that segment rather than fabricating a placeholder.
 pub struct StatusBarContent<'a> {
+    /// The editor's vi state as a word — `NORMAL`, `INSERT`, `VISUAL`,
+    /// `REPLACE`, `COMMAND`, `SEARCH` — shown at the leading edge of the bar.
+    ///
+    /// It is a word rather than a cursor shape or a colour because a shape is
+    /// invisible to a screen reader, unreliable under a high-contrast theme,
+    /// and ambiguous the moment the caret scrolls off screen (ADR 0034 §10).
+    pub mode: Option<&'a str>,
     /// Leading context for surfaces that aren't a terminal session and so
     /// have no grid/locality to report — currently the SFTP file manager,
     /// which uses it for `"SFTP"` ahead of its `system` endpoints. Mirrors
@@ -103,6 +110,14 @@ pub fn show(ui: &mut Ui, content: StatusBarContent<'_>) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.add_space(STATUS_BAR_LEFT_INSET);
+            if let Some(mode) = content.mode {
+                ui.label(
+                    RichText::new(mode)
+                        .small()
+                        .strong()
+                        .color(theme::ACCENT_PRIMARY),
+                );
+            }
             if let Some(context) = content.context {
                 ui.label(RichText::new(context).small().color(STATUS_BAR_TEXT));
             }
@@ -175,6 +190,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        mode: None,
                         context: None,
                         dimensions: Some("80×24"),
                         system: Some("Local · Windows"),
@@ -200,6 +216,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        mode: None,
                         context: None,
                         dimensions: None,
                         system: None,
@@ -226,6 +243,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        mode: None,
                         context: Some("Local Markdown"),
                         dimensions: None,
                         system: Some("UTF-8"),
@@ -253,6 +271,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        mode: None,
                         context: None,
                         dimensions: Some("80×24"),
                         system: Some("Local · macOS"),
@@ -276,6 +295,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        mode: None,
                         context: None,
                         dimensions: Some("80×24"),
                         system: Some("Remote"),
@@ -302,6 +322,7 @@ mod tests {
                 show(
                     ui,
                     StatusBarContent {
+                        mode: None,
                         context: None,
                         dimensions: Some("80×24"),
                         system: Some("Local · macOS"),
