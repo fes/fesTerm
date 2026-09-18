@@ -208,7 +208,7 @@ pub(super) fn paint_overflow_menu(
     );
 
     Popup::menu(&response).show(|ui| {
-        if ui.button("Open Markdown File…").clicked() {
+        if ui.button("Open File…").clicked() {
             actions.push(ChromeAction::OpenMarkdownFile);
             ui.close();
         }

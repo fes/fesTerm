@@ -137,7 +137,7 @@ impl KeyboardAction {
             Self::MarkdownReload => "Markdown reload",
             Self::MarkdownPreviewSource => "Markdown preview / source",
             Self::MarkdownOutline => "Markdown outline",
-            Self::OpenMarkdownFile => "Open Markdown file",
+            Self::OpenMarkdownFile => "Open file",
             Self::Find => "Find in terminal",
             Self::Copy => "Copy terminal selection",
             Self::Paste => "Paste into terminal",

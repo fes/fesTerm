@@ -4863,6 +4863,72 @@ pub(crate) fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
 /// Whether double-clicking this item should open the Markdown viewer
 /// (issue #133), rather than being a no-op (or, for directories, handled
 /// separately in `open_item`).
+/// The extensions the file picker will open. A file with no extension, or one
+/// that is not on this list, is not offered: guessing at a `Makefile` and
+/// being wrong means showing a reader a screen of mojibake, and there is no
+/// second window here in which to take that back.
+const TEXT_FILE_EXTENSIONS: &[&str] = &[
+    "bash",
+    "c",
+    "cc",
+    "cfg",
+    "conf",
+    "cpp",
+    "css",
+    "csv",
+    "diff",
+    "go",
+    "h",
+    "hpp",
+    "htm",
+    "html",
+    "ini",
+    "java",
+    "js",
+    "json",
+    "jsx",
+    "kt",
+    "log",
+    "lua",
+    "markdown",
+    "md",
+    "patch",
+    "php",
+    "pl",
+    "properties",
+    "py",
+    "rb",
+    "rs",
+    "sh",
+    "sql",
+    "svg",
+    "swift",
+    "text",
+    "toml",
+    "ts",
+    "tsx",
+    "txt",
+    "xml",
+    "yaml",
+    "yml",
+    "zsh",
+];
+
+/// Whether the picker will open this item: a directory is navigated into, a
+/// recognised text or Markdown file is opened, anything else is listed as
+/// unavailable rather than silently ignored.
+pub(crate) fn is_openable_text_file(item: &SftpDirectoryItem) -> bool {
+    if item.file_type != SftpEntryType::File {
+        return false;
+    }
+    let extension = Path::new(item.name.as_str())
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    TEXT_FILE_EXTENSIONS.contains(&extension.as_str())
+}
+
 fn is_markdown_file(item: &SftpDirectoryItem) -> bool {
     if item.file_type != SftpEntryType::File {
         return false;
@@ -5841,14 +5907,14 @@ impl MarkdownFilePicker {
     }
 
     /// Opens `item`: navigates into it if it's a directory, or reports it as
-    /// picked if it's a recognized Markdown file. Any other file is a no-op,
-    /// same as the SFTP local pane's own double-click handling (#133).
+    /// picked if it's a file the editor can open. Which surface it opens in is
+    /// the caller's decision, not the picker's.
     fn open_item(&mut self, item: &SftpDirectoryItem) -> MarkdownPickerOutcome {
         if item.file_type == SftpEntryType::Directory {
             self.navigate_to_breadcrumb(item.path.clone());
             return MarkdownPickerOutcome::Pending;
         }
-        if !is_markdown_file(item) {
+        if !is_openable_text_file(item) {
             return MarkdownPickerOutcome::Pending;
         }
         match &item.path {
@@ -6004,7 +6070,7 @@ impl MarkdownFilePicker {
                     let key = path_key(&item.path);
                     let selected = self.pane.selected_paths.contains(&key);
                     let markdown_or_dir =
-                        item.file_type == SftpEntryType::Directory || is_markdown_file(item);
+                        item.file_type == SftpEntryType::Directory || is_openable_text_file(item);
                     let row = ui
                         .horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
@@ -6120,6 +6186,14 @@ impl MarkdownFilePicker {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("{} items", entries.len()))
+                    .font(font_for_text_role(SftpTextRole::Footer))
+                    .color(theme::TEXT_MUTED),
+            );
+            // The greyed rows are a signal, not an explanation. This says what
+            // the greying means, so a file that cannot be opened is not read
+            // as a file that failed to open.
+            ui.label(
+                RichText::new("· Text and Markdown files can be opened")
                     .font(font_for_text_role(SftpTextRole::Footer))
                     .color(theme::TEXT_MUTED),
             );
@@ -7040,6 +7114,10 @@ mod tests {
             .expect("notes.txt should be listed")
             .clone();
         assert!(!is_markdown_file(&notes));
+        assert!(
+            is_openable_text_file(&notes),
+            "a .txt file is something the editor can open"
+        );
         let subdir = entries
             .iter()
             .find(|item| item.name == "subdir")
@@ -7052,12 +7130,12 @@ mod tests {
             _ => panic!("expected picking a Markdown file to report MarkdownPickerOutcome::Open"),
         }
 
-        // ...a non-Markdown file is a no-op, matching the SFTP local pane's
-        // own double-click handling (issue #133)...
-        assert!(matches!(
-            picker.open_item(&notes),
-            MarkdownPickerOutcome::Pending
-        ));
+        // ...and so is a plain text file, which the caller opens in the
+        // editor rather than in a viewer with nothing to render...
+        match picker.open_item(&notes) {
+            MarkdownPickerOutcome::Open(path) => assert_eq!(path, dir.join("notes.txt")),
+            _ => panic!("expected picking a text file to report MarkdownPickerOutcome::Open"),
+        }
         // ...and a directory navigates into it instead of picking a file.
         assert!(matches!(
             picker.open_item(&subdir),

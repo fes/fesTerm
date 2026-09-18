@@ -520,6 +520,29 @@ fn secret_store_message(error: SecretStoreError) -> &'static str {
     }
 }
 
+/// Where a file picked in the Open File sheet should land.
+///
+/// Markdown has a reader worth landing in, and its Edit action is one press
+/// away. Anything else has nothing to render, so it opens in the editor
+/// rather than in a viewer that would only show it back as its own source.
+fn picked_file_command(path: std::path::PathBuf, replacing: Option<TabId>) -> AppCommand {
+    if is_markdown_path(&path) {
+        AppCommand::OpenLocalMarkdownFile { path, replacing }
+    } else {
+        AppCommand::OpenTextEditor { path }
+    }
+}
+
+/// Whether a picked path is Markdown, and so belongs in the viewer rather
+/// than straight in the editor.
+fn is_markdown_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown")
+        })
+}
+
 fn normalize_paste_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
@@ -3541,13 +3564,13 @@ impl FesTermApp {
         }
     }
 
-    /// Opens the "Open Markdown File…" picker (#132), reusing the SFTP
-    /// file manager's local-pane browsing widget instead of the OS-native
-    /// `rfd::FileDialog` previously used here.
+    /// Opens the "Open File…" picker (#132), reusing the SFTP file manager's
+    /// local-pane browsing widget instead of the OS-native `rfd::FileDialog`
+    /// previously used here.
     ///
-    /// When the active tab is already a Markdown viewer the picked file
-    /// replaces *that* document instead of opening another tab, so `Ctrl+O`
-    /// behaves the way it does in every other document viewer.
+    /// When the active tab is already a Markdown viewer a picked Markdown
+    /// file replaces *that* document instead of opening another tab, so
+    /// `Ctrl+O` behaves the way it does in every other document viewer.
     fn open_markdown_file_picker(&mut self, context: &egui::Context) {
         let active = self.state.active();
         self.overlays.markdown_file_picker_replaces = matches!(
@@ -3685,7 +3708,7 @@ impl FesTermApp {
                     ui.set_width(width);
                     ui.set_max_width(width);
                     ui.set_max_height(height);
-                    ui.heading("Open Markdown File");
+                    ui.heading("Open File");
                     ui.add_space(6.0);
                     outcome = Some(picker.ui(ui));
                 });
@@ -3697,7 +3720,7 @@ impl FesTermApp {
                 self.overlays.markdown_file_picker = None;
                 self.restore_active_terminal_focus();
                 self.state
-                    .dispatch(AppCommand::OpenLocalMarkdownFile { path, replacing }, ctx);
+                    .dispatch(picked_file_command(path, replacing), ctx);
             }
             Some(MarkdownPickerOutcome::Cancelled) => {
                 self.close_markdown_file_picker(ctx);
@@ -8554,7 +8577,7 @@ mod tests {
     fn command_palette_omits_open_markdown_file() {
         let app = FesTermApp::for_test_with_configuration(Configuration::empty());
         let items = app.palette_items();
-        assert!(!items.iter().any(|item| item.label == "Open Markdown File…"));
+        assert!(!items.iter().any(|item| item.label == "Open File…"));
     }
 
     #[test]
@@ -8629,17 +8652,39 @@ mod tests {
     }
 
     #[test]
+    fn a_picked_file_lands_in_the_surface_that_can_actually_show_it() {
+        assert!(matches!(
+            picked_file_command(std::path::PathBuf::from("/tmp/notes.md"), None),
+            AppCommand::OpenLocalMarkdownFile { .. }
+        ));
+        assert!(
+            matches!(
+                picked_file_command(std::path::PathBuf::from("/tmp/README.MARKDOWN"), None),
+                AppCommand::OpenLocalMarkdownFile { .. }
+            ),
+            "an extension is a spelling, not a case"
+        );
+        assert!(
+            matches!(
+                picked_file_command(std::path::PathBuf::from("/tmp/relay.toml"), None),
+                AppCommand::OpenTextEditor { .. }
+            ),
+            "a file the viewer cannot render opens in the editor instead"
+        );
+    }
+
+    #[test]
     fn more_actions_open_markdown_file_opens_the_local_file_picker() {
         let mut harness = harness();
         harness.run();
 
         harness.get_by_label("More actions").click();
         harness.run();
-        harness.get_by_label("Open Markdown File…").click();
+        harness.get_by_label("Open File…").click();
         harness.run();
 
         assert!(harness.state().overlays.markdown_file_picker.is_some());
-        harness.get_by_label("Open Markdown File");
+        harness.get_by_label("Open File");
     }
 
     #[test]

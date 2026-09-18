@@ -1138,7 +1138,9 @@
         "the_vi_banner_explains_the_state_the_view_is_actually_in",
         "a_colon_opens_the_command_area_instead_of_reaching_the_text",
         "a_substitution_without_a_pattern_is_told_what_is_missing",
-        "completion_never_offers_a_bare_substitution"
+        "completion_never_offers_a_bare_substitution",
+        "a_picked_file_lands_in_the_surface_that_can_actually_show_it",
+        "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files"
       ],
       "manual_scenarios": [
         "CP-15"

@@ -141,7 +141,7 @@ fixed fallback.
 | Copy / Paste alternate | None | Windows Ctrl+Insert / Shift+Insert; none on Linux | Terminal; separately configurable |
 | Markdown find / reload | Cmd+F / Cmd+R | Ctrl+F / Ctrl+R | Markdown |
 | Markdown preview/source / outline | Cmd+Shift+V / Cmd+Shift+O | Ctrl+Shift+V / Ctrl+Shift+O | Markdown |
-| Open Markdown file | Cmd+O | Ctrl+O | Global on macOS; non-terminal surfaces elsewhere |
+| Open file | Cmd+O | Ctrl+O | Global on macOS; non-terminal surfaces elsewhere |
 | Keyboard editor recovery | Ctrl+Shift+F12 | Same | Fixed recovery, not configurable |
 
 macOS also has OS/responder menu operations: Quit Cmd+Q, Hide Cmd+H,

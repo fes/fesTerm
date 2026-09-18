@@ -24,8 +24,9 @@ or take ownership of a terminal viewport.
 
 ## Entry routes and ownership
 
-- **Local:** More actions **Open Markdown File…** opens the native file
-  picker. An explicitly activated local `file:` link may offer **Preview
+- **Local:** More actions **Open File…** opens the native file picker, which
+  lists text and Markdown files. A Markdown file lands here; anything else
+  opens in the text editor, which has nothing to render it as. An explicitly activated local `file:` link may offer **Preview
   Markdown** when it resolves to a readable Markdown file.
 - **SFTP:** a selected `.md`/`.markdown` row offers **Preview Markdown**. The
   viewer receives a bounded read-only snapshot through the SFTP/application

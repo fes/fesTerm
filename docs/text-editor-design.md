@@ -215,6 +215,17 @@ bytes are durable, and says so when it has had to.
 - A control clipped out of the window is not merely unseen, it is unreachable —
   which is why the Find bar collapses rather than clips.
 
+## Getting into the editor
+
+**Open File…** in More actions, or `Cmd`/`Ctrl`+`O`, browses the local
+filesystem. A Markdown file opens in the Markdown viewer, whose **Edit**
+action is one press away; every other text file opens straight in the editor,
+because the viewer would only show it back as its own source. The picker lists
+text and Markdown files and says so: a file it cannot open is greyed rather
+than absent, so its name is still findable. A file with no extension, or an
+unrecognised one, is not offered — guessing at a binary and being wrong means
+a screen of mojibake and no way to take it back.
+
 ## What is not built yet
 
 - The remote half of the Save As sheet is present and disabled, and says

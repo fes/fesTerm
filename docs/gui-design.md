@@ -487,7 +487,7 @@ Global application actions and session-specific context are separate concerns.
 More actions owns infrequent global application actions without duplicating them
 in the command palette.
 
-Its primary entries are **Open Markdown File…**, **Open Profiles**, **Open
+Its primary entries are **Open File…**, **Open Profiles**, **Open
 Settings**, **Session inspector** (when a session is active), and **About
 fesTerm**. Terminal-only **Find in terminal** and **Focus mode** may appear
 when applicable; **Command palette** follows after a separator only in compact
