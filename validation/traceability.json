@@ -1097,7 +1097,21 @@
     {
       "id": "text-editing",
       "edges": [
-        "EDIT-*"
+        "EDIT-01",
+        "EDIT-02",
+        "EDIT-03",
+        "EDIT-04",
+        "EDIT-05",
+        "EDIT-06",
+        "EDIT-07",
+        "EDIT-08",
+        "EDIT-09",
+        "EDIT-10",
+        "EDIT-11",
+        "EDIT-12",
+        "EDIT-13",
+        "EDIT-14",
+        "EDIT-15"
       ],
       "requirements": [
         "docs/gui-design.md#approved-native-text-editing",
@@ -1832,6 +1846,24 @@
       "status": "partial",
       "prerequisites": [
         "Reloading a remote-opened Markdown tab after a disconnect/reconnect is not yet implemented (reports RemoteReloadUnsupported); relative resource fetch within a remote-sourced document is also unimplemented"
+      ]
+    },
+    {
+      "id": "syntax-highlighting",
+      "edges": [
+        "EDIT-16"
+      ],
+      "requirements": [
+        "docs/adr/0035-syntax-highlighting.md"
+      ],
+      "decisions": [
+        "ADR-0035"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [],
+      "status": "deferred",
+      "prerequisites": [
+        "tree-sitter grammars vendored and the highlighter implemented (ADR 0035)"
       ]
     }
   ]
