@@ -1129,7 +1129,16 @@
         "saving_onto_an_already_open_file_binds_to_that_document_rather_than_a_second_copy",
         "save_as_matching_an_existing_file_states_the_overwrite_and_still_saves",
         "save_as_matching_an_existing_directory_disables_save_and_says_why",
-        "save_as_remote_destination_is_present_but_refuses_and_explains"
+        "save_as_remote_destination_is_present_but_refuses_and_explains",
+        "in_normal_mode_a_letter_is_a_command_and_never_text",
+        "a_counted_operator_deletes_exactly_what_it_promised_in_one_undo",
+        "a_key_outside_the_matrix_says_so_and_leaves_the_text_alone",
+        "the_status_bar_says_the_mode_in_words",
+        "a_view_without_vi_keys_shows_no_mode_at_all",
+        "the_vi_banner_explains_the_state_the_view_is_actually_in",
+        "a_colon_opens_the_command_area_instead_of_reaching_the_text",
+        "a_substitution_without_a_pattern_is_told_what_is_missing",
+        "completion_never_offers_a_bare_substitution"
       ],
       "manual_scenarios": [
         "CP-15"
@@ -1138,7 +1147,7 @@
       "prerequisites": [
         "atomic replacement, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
         "remote documents are unimplemented, so the Save As remote destination refuses rather than connecting, and remote disconnect/reconnect has no coverage",
-        "vi compatibility is staged behind a per-view option and its fidelity matrix is not yet fully covered"
+        "vi compatibility ships behind a per-view option; the engine's own matrix is covered unit by unit in festerm-document, and the view covers routing, refusal and the mode indicator, but the matrix is not exercised end to end key by key"
       ]
     },
     {

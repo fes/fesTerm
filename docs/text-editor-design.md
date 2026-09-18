@@ -180,9 +180,18 @@ no silent overwrite. `:q!` and `ZQ` open the ordinary final-view discard
 confirmation rather than silently discarding state other views can see.
 
 The current mode is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
-`REPLACE`, `COMMAND` — in the status bar. Cursor shape or colour alone is not
-an acceptable indicator: it is invisible to a screen reader, unreliable under
-high-contrast themes, and ambiguous the moment the caret is off screen.
+`REPLACE`, `COMMAND`, `SEARCH` — in the status bar. Cursor shape or colour
+alone is not an acceptable indicator: it is invisible to a screen reader,
+unreliable under high-contrast themes, and ambiguous the moment the caret is
+off screen. A banner above the text says the same thing in a sentence, with
+the way out of the mode, because a word in a corner is not an explanation for
+someone who did not expect a letter to be a command. While a command is being
+typed the banner explains the command that has been typed, so Enter is never a
+guess.
+
+The engine behind all of this holds no text and does no IO: every keystroke is
+answered against the caller's string and caret, and an edit comes back as one
+set of replacements, so an operator with a count is one press of Undo.
 
 vi keys are live only while the editor owns focus. Find/Replace fields,
 dialogs, toolbar controls, IME composition and accessibility navigation keep
@@ -211,8 +220,10 @@ bytes are durable, and says so when it has had to.
 - The remote half of the Save As sheet is present and disabled, and says
   plainly that it needs a connected SFTP session. No remote document origin is
   wired into the editor yet.
-- vi compatibility and the `:` command area are staged behind the per-view
-  option.
+- vi compatibility and the `:` command area are shipped, but behind the
+  per-view option and off by default. The fidelity matrix in ADR 0034 §10 is
+  the whole of what is bound; named registers, macros, marks and Vim's
+  configuration commands are refused by name rather than ignored.
 
 ## Acceptance sequence
 
