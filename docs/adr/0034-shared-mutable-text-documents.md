@@ -311,8 +311,12 @@ single overflow menu rather than being clipped off the edge, and the control
 that closes the bar stays beside them. A control that cannot be reached is
 worse than one that has to be opened.
 
-A global preference may seed defaults for newly opened views, but changing one
-view never rearranges a sibling window.
+Changing one view never rearranges a sibling window, but the last arrangement
+a reader chose seeds the **next** view they open. How somebody likes to read is
+a property of the reader, not of the file, and making them switch the outline
+back on for every document is asking the same question over and over. The four
+options are stored together as an additive `InterfaceSettings.editor` block
+under ADR 0015 (§12); no document identity goes with them.
 
 ### 10. vi compatibility is a bounded, honest subset
 
@@ -346,9 +350,9 @@ The `:` commands are all fesTerm-routed, which is the whole point of them:
 `:w`/`:write` dispatch Save and report success only once the durable
 replacement completes; `:w {path}`/`:saveas` dispatch the reviewed Save As
 picker with no silent overwrite; `:q`/`:quit`, `:wq`, `:x`, and `ZZ` dispatch
-ordinary close, closing only after a save succeeds; `:q!` and `ZQ` open the
-normal final-view discard confirmation rather than silently discarding state
-other views can see; `:e`/`:e!` dispatch Refresh and its conflict rules and
+ordinary close, closing only after a save succeeds; `:q!` and `ZQ` discard and close without
+asking, because the exclamation mark **is** the confirmation and a prompt in
+front of it is a prompt the user has already answered; `:e`/`:e!` dispatch Refresh and its conflict rules and
 never replace a dirty shared buffer behind the user's back.
 
 The current state is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
@@ -410,7 +414,10 @@ view immediately, under ordinary dirty, Auto-save, and conflict behaviour.
 Editable size and line-count limits are explicit and tested. A document beyond
 them is refused for editing before an unsafe buffer is allocated, while
 remaining available for read-only inspection wherever the existing viewer can
-show it. Loading, reparsing, watching, comparing, and saving are bounded and
+show it. **A refusal is said out loud**: the file is named, the reason is given
+in the document layer's own words, and the path is shown. A refusal that only
+closes the picker is indistinguishable from a click that missed, and leaves the
+reader to guess whether the file, the application or their aim was at fault. Loading, reparsing, watching, comparing, and saving are bounded and
 cancellable, and Preview reparsing is debounced and coalesced so typing cannot
 starve terminal or session event handling.
 
@@ -419,7 +426,8 @@ starve terminal or session event handling.
 Editor tabs, documents, paths, buffers, caret positions, and find state stay
 runtime-only, exactly as ADR 0030 decided for viewer tabs: workspace state
 records no document identity. Any global default for Auto-save or view options
-is an ordinary additive `InterfaceSettings` field under ADR 0015; remembering a
+is an ordinary additive `InterfaceSettings` field under ADR 0015 — which is
+what `InterfaceSettings.editor` is (§9) — remembering a
 per-document choice would mean persisting a literal local or remote path, which
 this decision declines.
 

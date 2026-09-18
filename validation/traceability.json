@@ -1149,7 +1149,13 @@
         "a_caret_move_takes_the_viewport_with_it",
         "the_outline_is_offered_only_while_the_file_renders_as_markdown",
         "the_outline_rail_lists_the_headings_of_the_file_being_edited",
-        "scrolling_the_text_brings_the_preview_to_the_same_section"
+        "scrolling_the_text_brings_the_preview_to_the_same_section",
+        "the_dirty_close_prompt_keeps_the_size_it_opened_at",
+        "a_file_that_cannot_be_opened_says_so_instead_of_doing_nothing",
+        "quitting_with_a_bang_throws_the_changes_away_without_asking",
+        "the_next_editor_opens_the_way_the_last_one_was_set_up",
+        "editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width",
+        "a_default_editor_block_is_not_written_at_all"
       ],
       "manual_scenarios": [
         "CP-15"

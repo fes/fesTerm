@@ -18,6 +18,10 @@ use crate::tabs::{AppCommand, InspectorTransport, TabContent, TabId};
 
 use super::{bounded_paste_preview, confirmation_width, paste_line_count, FesTermApp};
 
+/// The height of a dialog's row of buttons. Stated rather than measured so a
+/// centred layout has something to centre against.
+const DIALOG_BUTTON_HEIGHT: f32 = 28.0;
+
 impl FesTermApp {
     /// Applies the one close policy shared by chrome, shortcuts, the command
     /// palette, native menus, and session overlays. Non-live surfaces close
@@ -312,64 +316,74 @@ impl FesTermApp {
                         .color(theme::TEXT_SECONDARY),
                 );
                 ui.add_space(24.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save_button = ui.add(
-                        egui::Button::new(
-                            egui::RichText::new("Save")
-                                .strong()
-                                .color(theme::TEXT_ON_ACCENT),
-                        )
-                        .fill(theme::ACCENT_ACTION)
-                        .min_size(egui::vec2(84.0, 28.0)),
-                    );
-                    if !pending.save_focus_requested {
-                        save_button.request_focus();
-                    }
-                    // Which action Return reaches is drawn as a ring, not as
-                    // a fill colour, so the default is still obvious to a
-                    // reader who cannot tell the two buttons apart by hue.
-                    if save_button.has_focus() {
-                        ui.painter().rect_stroke(
-                            save_button.rect.expand(2.0),
-                            6.0,
-                            egui::Stroke::new(2.0, theme::BORDER_ACTIVE),
-                            egui::StrokeKind::Outside,
-                        );
-                    }
-                    if save_button.clicked() {
-                        save = true;
-                    }
-                    ui.add_space(8.0);
-                    // Bordered rather than bare, so the destructive action is
-                    // as plainly a button as the one beside it. Its weight and
-                    // its heavier border, not its colour, are what mark it as
-                    // the one that throws work away.
-                    if ui
-                        .add(
+                // The row is given its height rather than asked for one. A
+                // vertically centred right-to-left layout inside a dialog
+                // that has no height of its own has nothing to centre
+                // against, and grows by a few points every frame: the prompt
+                // creeps taller until its question has scrolled off the top
+                // of the screen and only the buttons are left.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), DIALOG_BUTTON_HEIGHT),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let save_button = ui.add(
                             egui::Button::new(
-                                egui::RichText::new("Discard changes")
+                                egui::RichText::new("Save")
                                     .strong()
-                                    .color(theme::STATUS_ERROR),
+                                    .color(theme::TEXT_ON_ACCENT),
                             )
-                            .stroke(egui::Stroke::new(1.5, theme::STATUS_ERROR))
-                            .min_size(egui::vec2(132.0, 28.0)),
-                        )
-                        .clicked()
-                    {
-                        discard = true;
-                    }
-                    ui.add_space(8.0);
-                    if ui
-                        .add(
-                            egui::Button::new("Cancel")
-                                .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                                .min_size(egui::vec2(84.0, 28.0)),
-                        )
-                        .clicked()
-                    {
-                        cancel = true;
-                    }
-                });
+                            .fill(theme::ACCENT_ACTION)
+                            .min_size(egui::vec2(84.0, 28.0)),
+                        );
+                        if !pending.save_focus_requested {
+                            save_button.request_focus();
+                        }
+                        // Which action Return reaches is drawn as a ring, not as
+                        // a fill colour, so the default is still obvious to a
+                        // reader who cannot tell the two buttons apart by hue.
+                        if save_button.has_focus() {
+                            ui.painter().rect_stroke(
+                                save_button.rect.expand(2.0),
+                                6.0,
+                                egui::Stroke::new(2.0, theme::BORDER_ACTIVE),
+                                egui::StrokeKind::Outside,
+                            );
+                        }
+                        if save_button.clicked() {
+                            save = true;
+                        }
+                        ui.add_space(8.0);
+                        // Bordered rather than bare, so the destructive action is
+                        // as plainly a button as the one beside it. Its weight and
+                        // its heavier border, not its colour, are what mark it as
+                        // the one that throws work away.
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Discard changes")
+                                        .strong()
+                                        .color(theme::STATUS_ERROR),
+                                )
+                                .stroke(egui::Stroke::new(1.5, theme::STATUS_ERROR))
+                                .min_size(egui::vec2(132.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            discard = true;
+                        }
+                        ui.add_space(8.0);
+                        if ui
+                            .add(
+                                egui::Button::new("Cancel")
+                                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                                    .min_size(egui::vec2(84.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            cancel = true;
+                        }
+                    },
+                );
                 ui.add_space(4.0);
             });
         if let Some(current) = self.overlays.pending_document_close.as_mut() {
@@ -406,6 +420,72 @@ impl FesTermApp {
             self.state
                 .dispatch(AppCommand::CloseTab(pending.tab), context);
             self.continue_document_close(pending.then, context);
+        }
+    }
+
+    /// Says why a file the reader picked could not be opened. Without it the
+    /// picker simply closes on a binary or oversized file and the click looks
+    /// like it missed (ADR 0034 §2).
+    pub(super) fn show_open_refusal_notice(&mut self, context: &egui::Context, escape: bool) {
+        let Some(notice) = self.overlays.open_refusal.as_ref() else {
+            return;
+        };
+        let (name, path, headline, detail) = (
+            notice.name.clone(),
+            notice.path.clone(),
+            notice.headline.clone(),
+            notice.detail.clone(),
+        );
+        let mut dismiss = escape;
+        egui::Modal::new(egui::Id::new("open_refusal_notice"))
+            .backdrop_color(egui::Color32::from_black_alpha(160))
+            .show(context, |ui| {
+                ui.set_width(confirmation_width(context.content_rect().width(), 560.0));
+                ui.add_space(4.0);
+                ui.heading(format!("Cannot open {name}"));
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.label(headline);
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(detail).color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(14.0);
+                ui.label(
+                    egui::RichText::new(path)
+                        .monospace()
+                        .size(12.0)
+                        .color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(24.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), DIALOG_BUTTON_HEIGHT),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        let button = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new("OK")
+                                    .strong()
+                                    .color(theme::TEXT_ON_ACCENT),
+                            )
+                            .fill(theme::ACCENT_ACTION)
+                            .min_size(egui::vec2(84.0, DIALOG_BUTTON_HEIGHT)),
+                        );
+                        if !self.overlays.open_refusal_focused {
+                            button.request_focus();
+                        }
+                        if button.clicked() {
+                            dismiss = true;
+                        }
+                    },
+                );
+                ui.add_space(4.0);
+            });
+        self.overlays.open_refusal_focused = true;
+        if dismiss {
+            self.overlays.open_refusal = None;
+            self.overlays.open_refusal_focused = false;
         }
     }
 

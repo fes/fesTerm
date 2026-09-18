@@ -97,6 +97,26 @@ impl Default for EditorViewOptions {
 const DEFAULT_FIXED_COLUMNS: usize = 72;
 
 impl EditorViewOptions {
+    /// How a view starts out, from what the reader last chose.
+    pub(crate) fn from_settings(settings: festerm_config::EditorSettings) -> Self {
+        Self {
+            line_numbers: settings.line_numbers(),
+            fixed_columns: settings.fixed_columns().map(|columns| columns as usize),
+            vi_keys: settings.vi_keys(),
+            outline: settings.outline(),
+        }
+    }
+
+    /// What to remember for the next view.
+    pub(crate) fn to_settings(self) -> festerm_config::EditorSettings {
+        festerm_config::EditorSettings::new(
+            self.line_numbers,
+            self.fixed_columns.map(|columns| columns as u32),
+            self.vi_keys,
+            self.outline,
+        )
+    }
+
     /// The summary the command bar shows beside the options menu, so the
     /// current setup is readable without opening it.
     fn summary(self) -> String {
@@ -131,6 +151,18 @@ pub(crate) struct OptionsState {
 }
 
 impl OptionsState {
+    /// The menu opens showing the column count the view already has, so
+    /// turning the box off and on again does not lose it.
+    fn from_options(options: EditorViewOptions) -> Self {
+        Self {
+            columns_draft: options
+                .fixed_columns
+                .map(|columns| columns.to_string())
+                .unwrap_or_default(),
+            invalid: false,
+        }
+    }
+
     /// Reads the draft as a column count, or `None` if it cannot be applied.
     fn parsed(&self) -> Option<usize> {
         self.columns_draft
@@ -390,6 +422,9 @@ pub(crate) struct TextEditorTab {
     sync_heading: Option<usize>,
     /// A byte offset the text pane owes the reader a scroll to.
     pending_scroll_offset: Option<usize>,
+    /// Set for one frame when the options menu changed something, so the
+    /// choice can be remembered for the next view.
+    options_changed: bool,
     /// The byte offset of the first character visible in the text pane.
     top_visible_offset: usize,
     /// What that offset was last frame, so the pane the reader is actually
@@ -417,7 +452,19 @@ pub(crate) struct TextEditorTab {
 }
 
 impl TextEditorTab {
+    /// A view with the built-in defaults, for tests and gallery renders that
+    /// are not about what the reader last chose.
+    #[cfg(test)]
     pub(crate) fn new(document: DocumentId, documents: &SharedDocuments) -> Self {
+        Self::with_options(document, documents, EditorViewOptions::default())
+    }
+
+    /// A view that starts out the way the reader last left one.
+    pub(crate) fn with_options(
+        document: DocumentId,
+        documents: &SharedDocuments,
+        options: EditorViewOptions,
+    ) -> Self {
         let registry = documents.borrow();
         let open = registry
             .get(document)
@@ -428,8 +475,8 @@ impl TextEditorTab {
             origin_label: open.origin().qualified_label(),
             remote: open.origin().is_remote(),
             buffer: open.text().text().to_owned(),
-            options: EditorViewOptions::default(),
-            options_state: OptionsState::default(),
+            options,
+            options_state: OptionsState::from_options(options),
             options_pinned_open: false,
             caret: (1, 1),
             status_bar_visible: true,
@@ -447,6 +494,7 @@ impl TextEditorTab {
             vi_search_backward: false,
             sync_heading: None,
             pending_scroll_offset: None,
+            options_changed: false,
             top_visible_offset: 0,
             last_top_offset: 0,
             #[cfg(test)]
@@ -672,6 +720,10 @@ impl TextEditorTab {
         }
         if let Some(pending) = self.close_when_saved(tab_id, documents) {
             command = Some(pending);
+        }
+        if command.is_none() && self.options_changed {
+            self.options_changed = false;
+            command = Some(AppCommand::SetEditorSettings(self.options.to_settings()));
         }
         command
     }
@@ -1095,13 +1147,17 @@ impl TextEditorTab {
                     .finish(CommandOutcome::Message("Saving…".to_owned()));
                 Some(AppCommand::SaveTextDocument)
             }
-            ViCommand::Quit | ViCommand::QuitDiscarding => {
-                // Both reach the ordinary close, which raises the ordinary
-                // dirty-close confirmation. `:q!` does not discard behind the
-                // user's back, because other views can see what it would throw
-                // away (ADR 0034 §10).
+            ViCommand::Quit => {
+                // The ordinary close, with its ordinary dirty-close prompt.
                 self.command.close();
                 Some(AppCommand::CloseTab(tab_id))
+            }
+            ViCommand::QuitDiscarding => {
+                // `:q!` means it. Asking again turns the exclamation mark into
+                // decoration, and a reader who typed it has already said what
+                // a dialog would ask (ADR 0034 §10).
+                self.command.close();
+                Some(AppCommand::DiscardAndCloseTab(tab_id))
             }
             ViCommand::Refresh { .. } => {
                 self.command.close();
@@ -1229,6 +1285,11 @@ impl TextEditorTab {
         if let Some(columns) = fixed_columns {
             self.options_state.columns_draft = columns.to_string();
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn options_for_test(&self) -> EditorViewOptions {
+        self.options
     }
 
     #[cfg(test)]
@@ -2128,6 +2189,7 @@ impl TextEditorTab {
         if self.options_pinned_open {
             popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
         }
+        let before = self.options;
         popup.show(|ui| {
             ui.set_min_width(OPTIONS_MENU_WIDTH);
             ui.set_max_width(OPTIONS_MENU_WIDTH);
@@ -2161,6 +2223,11 @@ impl TextEditorTab {
                 ui.checkbox(&mut self.options.outline, "Show outline");
             }
         });
+        if self.options != before {
+            // The way a reader likes to work does not change between one file
+            // and the next, so the answer outlives the view that was asked.
+            self.options_changed = true;
+        }
     }
 
     /// The "Fixed column count" row: a box that turns wrapping at a column on

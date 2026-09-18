@@ -1745,6 +1745,11 @@ pub enum AppCommand {
     ActivateNextTab,
     ActivatePreviousTab,
     CloseTab(TabId),
+    /// `:q!` and `ZQ`: close this view and throw away what it has not saved,
+    /// without asking. The exclamation mark is the question, already answered
+    /// — a reader who typed it has said what they want more plainly than a
+    /// dialog could ask.
+    DiscardAndCloseTab(TabId),
     /// Reorders `moved` to sit immediately before `before` (or at the end of
     /// the row if `None`), preserving the moved tab's identity/state and the
     /// current active tab.
@@ -1802,6 +1807,9 @@ pub enum AppCommand {
     /// Selects a clickstop scaling how far one trackpad/wheel scroll step
     /// moves the scrollback viewport (feature request #67).
     SetScrollSpeed(festerm_config::ScrollSpeedPreference),
+    /// Remembers how a text editor view was last set up, so the next one opens
+    /// the way the reader works rather than the way the defaults do.
+    SetEditorSettings(festerm_config::EditorSettings),
     /// Selects the retained primary-history budget for sessions created
     /// after this preference changes.
     SetScrollbackLimit(ScrollbackLimitPreference),
@@ -2054,6 +2062,9 @@ pub struct AppState {
     emoji_presentation: EmojiPresentationPreference,
     scroll_speed: ScrollSpeedPreference,
     scrollback_limit: ScrollbackLimitPreference,
+    /// How the next text editor view starts out. Options stay per-view once a
+    /// view is open; this is only where a new one begins.
+    editor: festerm_config::EditorSettings,
     quick_switch_overlay: bool,
     compact_launcher_grid: bool,
     pulse_new_output_dot: bool,
@@ -2079,6 +2090,10 @@ pub struct AppState {
     /// application overlay rather than tab state, so the application takes
     /// this each frame and opens it.
     save_as_requested: bool,
+    /// The last file that could not be opened, waiting to be shown to the
+    /// reader. A refusal that nobody reports is indistinguishable from a
+    /// click that did nothing.
+    open_refusal: Option<(PathBuf, OpenFailure)>,
     /// Set by `AppCommand::OpenProfileEditor` so the just-(re)activated
     /// singleton Profiles tab opens directly into that profile's editor
     /// instead of the list. Consumed once by `FesTermApp::screen_command`
@@ -2134,6 +2149,7 @@ impl AppState {
             emoji_presentation: settings.emoji_presentation(),
             scroll_speed: settings.scroll_speed(),
             scrollback_limit: settings.scrollback_limit(),
+            editor: settings.editor(),
             quick_switch_overlay: settings.quick_switch_overlay(),
             compact_launcher_grid: settings.compact_launcher_grid(),
             pulse_new_output_dot: settings.pulse_new_output_dot(),
@@ -2147,6 +2163,7 @@ impl AppState {
             pending_profile_edit: None,
             window_open_requested: false,
             save_as_requested: false,
+            open_refusal: None,
             pending_tab_move: None,
             pending_profile_create: None,
             pending_profile_usage: None,
@@ -2382,6 +2399,7 @@ impl AppState {
         self.emoji_presentation = settings.emoji_presentation();
         self.scroll_speed = settings.scroll_speed();
         self.scrollback_limit = settings.scrollback_limit();
+        self.editor = settings.editor();
         self.quick_switch_overlay = settings.quick_switch_overlay();
         self.compact_launcher_grid = settings.compact_launcher_grid();
         self.pulse_new_output_dot = settings.pulse_new_output_dot();
@@ -2602,6 +2620,7 @@ impl AppState {
         .with_prefer_powershell(self.prefer_powershell)
         .with_emoji_presentation(self.emoji_presentation)
         .with_scroll_speed(self.scroll_speed)
+        .with_editor(self.editor)
         .with_scrollback_limit(self.scrollback_limit)
         .with_quick_switch_overlay(self.quick_switch_overlay)
         .with_compact_launcher_grid(self.compact_launcher_grid)
@@ -2855,7 +2874,9 @@ impl AppState {
             | AppCommand::StartConfiguredSshProfile { .. }
             | AppCommand::StartConfiguredSftpProfile { .. } => {}
             AppCommand::OpenTextEditor { path } => {
-                self.open_text_editor(&path);
+                if let Some(failure) = self.open_text_editor(&path) {
+                    self.open_refusal = Some((path, failure));
+                }
             }
             AppCommand::SaveTextDocument => self.save_active_text_document(),
             AppCommand::SaveTextDocumentAs => self.save_as_requested = true,
@@ -2918,7 +2939,7 @@ impl AppState {
             AppCommand::ActivateTab(id) => self.activate(id),
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
-            AppCommand::CloseTab(id) => self.close(id),
+            AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),
             AppCommand::ReorderTab { moved, before } => self.reorder(moved, before),
             AppCommand::MoveTabLeft(id) => self.move_tab(id, -1),
             AppCommand::MoveTabRight(id) => self.move_tab(id, 1),
@@ -2997,6 +3018,9 @@ impl AppState {
             }
             AppCommand::SetScrollSpeed(speed) => {
                 self.scroll_speed = speed;
+            }
+            AppCommand::SetEditorSettings(editor) => {
+                self.editor = editor;
             }
             AppCommand::SetScrollbackLimit(limit) => {
                 self.scrollback_limit = limit;
@@ -3103,6 +3127,7 @@ impl AppState {
                 self.emoji_presentation = InterfaceSettings::DEFAULT.emoji_presentation();
                 self.scroll_speed = InterfaceSettings::DEFAULT.scroll_speed();
                 self.scrollback_limit = InterfaceSettings::DEFAULT.scrollback_limit();
+                self.editor = InterfaceSettings::DEFAULT.editor();
                 self.quick_switch_overlay = InterfaceSettings::DEFAULT.quick_switch_overlay();
                 self.compact_launcher_grid = InterfaceSettings::DEFAULT.compact_launcher_grid();
                 self.pulse_new_output_dot = InterfaceSettings::DEFAULT.pulse_new_output_dot();
@@ -3322,7 +3347,11 @@ impl AppState {
         match opened {
             Ok(document) => {
                 let id = TabId::next();
-                let editor = TextEditorTab::new(document, &self.documents);
+                let editor = TextEditorTab::with_options(
+                    document,
+                    &self.documents,
+                    crate::text_editor::EditorViewOptions::from_settings(self.editor),
+                );
                 self.tabs.push(Tab {
                     id,
                     content: TabContent::TextEditor(Box::new(editor)),
@@ -3485,6 +3514,22 @@ impl AppState {
     /// One-shot consumption of a pending "open another window" request (ADR
     /// 0032). Only the composition root may act on it, because only the
     /// composition root owns the window list.
+    /// How the active text editor view is set up, for tests that check a new
+    /// view starts out the way the reader left the last one.
+    #[cfg(test)]
+    pub(crate) fn active_editor_options(&self) -> Option<crate::text_editor::EditorViewOptions> {
+        match &self.tabs.iter().find(|tab| tab.id == self.active)?.content {
+            TabContent::TextEditor(editor) => Some(editor.options_for_test()),
+            _ => None,
+        }
+    }
+
+    /// One-shot consumption of a file that could not be opened, so the
+    /// composition root can say why.
+    pub fn take_open_refusal(&mut self) -> Option<(PathBuf, OpenFailure)> {
+        self.open_refusal.take()
+    }
+
     /// Whether a Save As destination has been asked for since the last frame.
     pub fn take_save_as_request(&mut self) -> bool {
         std::mem::take(&mut self.save_as_requested)

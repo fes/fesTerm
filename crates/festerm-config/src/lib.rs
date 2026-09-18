@@ -36,7 +36,8 @@ pub use profiles::{
     SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
 };
 pub use settings::{
-    ChipLayoutPreference, EmojiPresentationPreference, InterfaceSettings, ScrollSpeedPreference,
+    ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
+    ScrollSpeedPreference,
     ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
 };
 pub use workspace::{

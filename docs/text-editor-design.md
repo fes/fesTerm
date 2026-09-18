@@ -122,6 +122,11 @@ text into a section and the preview comes with it; scroll the preview and the
 text follows. Whichever pane is moving leads, so the two never pull against
 each other.
 
+The four options are per-view, but they are also **remembered**: the way the
+last view was set up is how the next one opens. A reader who works with the
+outline showing and vi keys live should not have to say so again for every
+file. Changing a view still leaves every other open view exactly as it was.
+
 A fixed column count is a **soft visual width**. Long lines wrap visually at
 the chosen column; no newline is ever inserted into the document. A count that
 does not parse, or one below one, is not applied at all — a number still being
@@ -186,8 +191,9 @@ than refusing it: the user cannot tell what happened to their text.
 The `:` commands are all fesTerm-routed, which is the whole point of them.
 `:w` dispatches Save and reports success only once the durable replacement
 completes. `:w {path}` and `:saveas` dispatch the reviewed Save As sheet with
-no silent overwrite. `:q!` and `ZQ` open the ordinary final-view discard
-confirmation rather than silently discarding state other views can see.
+no silent overwrite. `:q!` and `ZQ` close the view and throw the changes away without a prompt: the
+exclamation mark is the confirmation. `:q` and `ZZ` still go through the
+ordinary final-view rules.
 
 Navigation takes the viewport with it. `G`, `gg`, `n`, a search and `:14` may
 all land pages away, and a caret the reader cannot see has not moved as far as
@@ -248,6 +254,11 @@ rather than merely unrecognised. What keeps that honest is the bounds check:
 a file that is not UTF-8 text, or that is too large, too many lines, or has a
 single line too long, is refused when it is read, with the limit stated and
 nothing shown in its place.
+
+The refusal is a dialog, not a silence. It names the file, says why in the
+document layer's own words — "This file appears to be binary", "This file is
+too large to edit" — and shows the path. A picker that simply closes on a
+`.png` looks exactly like a click that missed.
 
 ## What is not built yet
 

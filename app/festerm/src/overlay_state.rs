@@ -217,6 +217,16 @@ pub(crate) enum StoredCredentialLaunch {
     Sftp,
 }
 
+/// A file that could not be opened, named so the reader can tell which of
+/// several they picked was refused, with the reason in the words the document
+/// layer already uses.
+pub(crate) struct OpenRefusalNotice {
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) headline: String,
+    pub(crate) detail: String,
+}
+
 /// The confirmation prompts, in-flight secure-storage lookup, and transient
 /// notice banner that can be active at once. `FesTermApp` holds exactly one
 /// of these instead of five separate `Option` fields.
@@ -226,6 +236,12 @@ pub(crate) struct OverlayState {
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
+    /// A file the reader asked for that could not be opened, and the reason.
+    /// Kept so the refusal is said out loud rather than swallowed.
+    pub(crate) open_refusal: Option<OpenRefusalNotice>,
+    /// Whether the refusal's button has been given focus, so Return dismisses
+    /// it without the focus being taken back every frame.
+    pub(crate) open_refusal_focused: bool,
     /// The final-view dirty-close prompt for a text document (ADR 0034 §7).
     pub(crate) pending_document_close: Option<PendingDocumentCloseConfirmation>,
     pub(crate) port_forward_manager: Option<LivePortForwardManager>,

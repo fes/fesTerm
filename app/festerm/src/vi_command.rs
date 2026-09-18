@@ -67,9 +67,8 @@ pub enum ViCommand {
     WriteQuit,
     /// `:q`, `:quit` — the ordinary close, with its ordinary dirty prompt.
     Quit,
-    /// `:q!`, `ZQ` — close discarding changes, which still raises the normal
-    /// final-view confirmation rather than discarding state other views can
-    /// see without asking.
+    /// `:q!`, `ZQ` — close this view and discard what it has not saved,
+    /// without a confirmation: the exclamation mark is the confirmation.
     QuitDiscarding,
     /// `:e`, `:e!`, `:edit` — Refresh, under its ordinary conflict rules.
     Refresh { force: bool },
@@ -101,7 +100,7 @@ impl ViCommand {
                 "closes this view, with the ordinary prompt if there is anything unsaved."
             }
             Self::QuitDiscarding => {
-                "closes this view discarding changes, still asking before the last view goes."
+                "closes this view and throws away what it has not saved, without asking."
             }
             Self::Refresh { .. } => "refreshes from disk under the ordinary conflict rules.",
             Self::Substitute(_) => {

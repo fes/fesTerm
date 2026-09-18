@@ -5397,12 +5397,19 @@ impl FesTermApp {
                 AppCommand::CloseTab(id) => {
                     self.request_close_tab(id, &ui.ctx().clone());
                 }
+                AppCommand::DiscardAndCloseTab(id) => {
+                    // No prompt: `:q!` is the prompt, answered before it was
+                    // asked.
+                    let context = ui.ctx().clone();
+                    self.state.dispatch(AppCommand::CloseTab(id), &context);
+                }
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
                 | AppCommand::SetScrollSpeed(_)
+                | AppCommand::SetEditorSettings(_)
                 | AppCommand::SetScrollbackLimit(_)
                 | AppCommand::SetDefaultSftpLocalDirectory(_)
                 | AppCommand::SetSftpPaneOrder(_)) => {
@@ -5522,6 +5529,20 @@ impl FesTermApp {
         } else {
             self.show_markdown_file_picker(ui.ctx(), content_rect);
         }
+
+        if let Some((path, failure)) = self.state.take_open_refusal() {
+            self.overlays.open_refusal = Some(crate::overlay_state::OpenRefusalNotice {
+                name: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+                path: path.to_string_lossy().into_owned(),
+                headline: failure.headline(),
+                detail: failure.detail(),
+            });
+            self.overlays.open_refusal_focused = false;
+        }
+        self.show_open_refusal_notice(ui.ctx(), confirmation_escape);
 
         if self.state.take_save_as_request() {
             self.open_save_as_picker(ui.ctx());
@@ -7668,6 +7689,152 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 
+    /// Types into the editor body with vi keys live, the way a reader does:
+    /// a plain `Event::Text` per character, not a synthesised command.
+    fn vi_type_in_app(harness: &mut Harness<'static, FesTermApp>, keys: &str) {
+        for character in keys.chars() {
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::Text(character.to_string()));
+            harness.run();
+        }
+    }
+
+    /// Runs an ex command the long way round: `:` in the body, then the line
+    /// typed into the command area, then Return.
+    fn run_editor_command(harness: &mut Harness<'static, FesTermApp>, command: &str) {
+        vi_type_in_app(harness, ":");
+        let field = harness
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .expect("the command area's field");
+        field.focus();
+        harness.run();
+        harness
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .expect("the command area's field")
+            .type_text(command);
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_opened_says_so_instead_of_doing_nothing() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let binary = directory.join("image.bin");
+        std::fs::write(&binary, [0u8, 1, 2, 3, 0, 255]).unwrap();
+        let mut harness = editor_harness(app);
+
+        harness.state_mut().state.dispatch(
+            AppCommand::OpenTextEditor {
+                path: binary.clone(),
+            },
+            &context,
+        );
+        harness.run();
+
+        assert!(
+            harness.state().overlays.open_refusal.is_some(),
+            "a refusal the user never sees is the same as a click that missed"
+        );
+        assert!(
+            harness
+                .query_all_by_label_contains("image.bin")
+                .next()
+                .is_some(),
+            "and it has to name the file that was refused"
+        );
+        assert!(
+            harness
+                .query_by_label_contains("This file appears to be binary")
+                .is_some(),
+            "in the words the document layer already has for it"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn quitting_with_a_bang_throws_the_changes_away_without_asking() {
+        let context = egui::Context::default();
+        let (mut app, directory, path) = app_with_open_editor(&context, "alpha\n");
+        app.state.dispatch(
+            AppCommand::SetEditorSettings(festerm_config::EditorSettings::default().with_vi_keys(
+                true,
+            )),
+            &context,
+        );
+        // Reopened so the view picks up vi keys the way the next view a
+        // reader opens would.
+        let tab = app.state.active();
+        app.state.dispatch(AppCommand::CloseTab(tab), &context);
+        app.state
+            .dispatch(AppCommand::OpenTextEditor { path: path.clone() }, &context);
+        let mut harness = editor_harness(app);
+        type_into_editor(&mut harness, "typed");
+
+        run_editor_command(&mut harness, "q!");
+
+        assert!(
+            harness.state().overlays.pending_document_close.is_none(),
+            "the exclamation mark is the confirmation; asking again ignores it"
+        );
+        assert!(
+            harness.query_by_label_contains("NOTES.md").is_none(),
+            "the view has to be gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\n",
+            "and the typing must not have reached the file"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn the_next_editor_opens_the_way_the_last_one_was_set_up() {
+        let context = egui::Context::default();
+        let (mut app, directory, path) = app_with_open_editor(&context, "# Title\n\nalpha\n");
+        app.state.dispatch(
+            AppCommand::SetEditorSettings(
+                festerm_config::EditorSettings::default()
+                    .with_outline(true)
+                    .with_line_numbers(false),
+            ),
+            &context,
+        );
+        assert!(
+            app.state.interface_settings().editor().outline(),
+            "the choice has to reach the settings that get written out"
+        );
+
+        let second = directory.join("OTHER.md");
+        std::fs::write(&second, "# Other\n").unwrap();
+        app.state
+            .dispatch(AppCommand::OpenTextEditor { path: second }, &context);
+        let harness = editor_harness(app);
+
+        let options = harness
+            .state()
+            .state
+            .active_editor_options()
+            .expect("the new editor view");
+        assert!(
+            options.outline && !options.line_numbers,
+            "a new view starts out the way the reader last left one"
+        );
+        assert!(
+            harness.query_all_by_label_contains("Other").count() >= 1,
+            "and the outline rail is actually on screen beside the text"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+        let _ = path;
+    }
+
     #[test]
     fn closing_a_clean_editor_asks_nothing_and_forgets_the_document() {
         let context = egui::Context::default();
@@ -7822,6 +7989,43 @@ mod tests {
             "the tab closes once the write succeeded"
         );
         assert!(harness.state().state.documents().borrow().is_empty());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A dialog that creeps taller every frame ends with its question off the
+    /// top of the screen and only its buttons left, which is how this one was
+    /// found.
+    #[test]
+    fn the_dirty_close_prompt_keeps_the_size_it_opened_at() {
+        let context = egui::Context::default();
+        let (app, directory, _path) = app_with_open_editor(&context, "alpha\n");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1850.0, 1270.0))
+            .with_max_steps(16)
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        type_into_editor(&mut harness, "typed");
+        let tab = harness.state().state.active();
+        harness.state_mut().request_close_tab(tab, &context);
+        harness.step();
+        harness.step();
+
+        let settled = harness
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("document_close_confirmation")))
+            .expect("the prompt is on screen");
+        for _ in 0..10 {
+            harness.step();
+        }
+        let later = harness
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("document_close_confirmation")))
+            .expect("the prompt is still on screen");
+
+        assert_eq!(
+            settled, later,
+            "the prompt is the same size ten frames after it opened"
+        );
         let _ = std::fs::remove_dir_all(&directory);
     }
 

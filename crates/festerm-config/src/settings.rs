@@ -104,6 +104,12 @@ pub struct InterfaceSettings {
     /// never start with a broken `lpwd` baseline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default_sftp_local_directory: Option<String>,
+    /// How a text editor view starts out. These are per-view settings while
+    /// the view is open (ADR 0034 §9), but the way a reader likes to work does
+    /// not change between one file and the next, so the last answer is the
+    /// next view's starting point.
+    #[serde(default, skip_serializing_if = "EditorSettings::is_default")]
+    editor: EditorSettings,
 }
 
 impl InterfaceSettings {
@@ -129,6 +135,7 @@ impl InterfaceSettings {
         show_durable_session_in_status_bar: false,
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
         default_sftp_local_directory: None,
+        editor: EditorSettings::DEFAULT,
     };
 
     pub fn new(
@@ -314,6 +321,16 @@ impl InterfaceSettings {
 
     pub(crate) fn is_default(&self) -> bool {
         *self == Self::DEFAULT
+    }
+
+    /// Sets how a text editor view starts out.
+    pub const fn with_editor(mut self, editor: EditorSettings) -> Self {
+        self.editor = editor;
+        self
+    }
+
+    pub const fn editor(&self) -> EditorSettings {
+        self.editor
     }
 
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
@@ -569,6 +586,39 @@ mod tests {
     }
 
     #[test]
+    fn editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width() {
+        let settings = InterfaceSettings::DEFAULT.with_editor(
+            EditorSettings::new(false, Some(80), true, true),
+        );
+        let written = toml::to_string(&settings).unwrap();
+        let read: InterfaceSettings = toml::from_str(&written).unwrap();
+
+        assert_eq!(read.editor(), settings.editor());
+        assert!(
+            written.contains("[editor]"),
+            "the block has to be written where it can be read back: {written}"
+        );
+
+        let zero: InterfaceSettings =
+            toml::from_str("[editor]\nfixed_columns = 0\n").unwrap();
+        assert_eq!(
+            zero.editor().fixed_columns(),
+            None,
+            "a settings file is not a place to argue with the reader"
+        );
+    }
+
+    #[test]
+    fn a_default_editor_block_is_not_written_at_all() {
+        let written = toml::to_string(&InterfaceSettings::DEFAULT).unwrap();
+
+        assert!(
+            !written.contains("[editor]"),
+            "settings nobody changed do not belong in the file: {written}"
+        );
+    }
+
+    #[test]
     fn scrollback_limit_clickstops_have_stable_labels_and_byte_values() {
         assert_eq!(
             ScrollbackLimitPreference::ALL.map(ScrollbackLimitPreference::label),
@@ -578,5 +628,102 @@ mod tests {
             ScrollbackLimitPreference::ALL.map(ScrollbackLimitPreference::bytes),
             [0, 16 * 1024 * 1024, 64 * 1024 * 1024, 256 * 1024 * 1024]
         );
+    }
+}
+
+/// How a text editor view starts out: the presentation options the reader last
+/// chose (`docs/text-editor-design.md` "Per-view options").
+///
+/// A fixed column count of `None` is a fluid width. Zero is not a column
+/// count, so a stored zero is read as no fixed width at all rather than
+/// refused: a settings file is not a place to argue with the reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditorSettings {
+    #[serde(default = "default_line_numbers", skip_serializing_if = "is_true")]
+    line_numbers: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fixed_columns: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    vi_keys: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    outline: bool,
+}
+
+const fn default_line_numbers() -> bool {
+    true
+}
+
+impl EditorSettings {
+    pub const DEFAULT: Self = Self {
+        line_numbers: true,
+        fixed_columns: None,
+        vi_keys: false,
+        outline: false,
+    };
+
+    pub const fn new(
+        line_numbers: bool,
+        fixed_columns: Option<u32>,
+        vi_keys: bool,
+        outline: bool,
+    ) -> Self {
+        Self {
+            line_numbers,
+            fixed_columns,
+            vi_keys,
+            outline,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_line_numbers(mut self, line_numbers: bool) -> Self {
+        self.line_numbers = line_numbers;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_vi_keys(mut self, vi_keys: bool) -> Self {
+        self.vi_keys = vi_keys;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_outline(mut self, outline: bool) -> Self {
+        self.outline = outline;
+        self
+    }
+
+    pub const fn line_numbers(&self) -> bool {
+        self.line_numbers
+    }
+
+    /// The stored column count, with zero read as a fluid width.
+    pub const fn fixed_columns(&self) -> Option<u32> {
+        match self.fixed_columns {
+            Some(0) | None => None,
+            Some(columns) => Some(columns),
+        }
+    }
+
+    pub const fn vi_keys(&self) -> bool {
+        self.vi_keys
+    }
+
+    pub const fn outline(&self) -> bool {
+        self.outline
+    }
+
+    const fn is_default(&self) -> bool {
+        self.line_numbers == Self::DEFAULT.line_numbers
+            && self.fixed_columns.is_none()
+            && !self.vi_keys
+            && !self.outline
+    }
+}
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }
