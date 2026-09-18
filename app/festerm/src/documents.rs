@@ -1102,6 +1102,21 @@ mod tests {
     }
 
     #[test]
+    fn a_file_that_is_not_text_is_refused_by_name_rather_than_shown_as_rubble() {
+        // The Open File sheet lists every file, because an extension cannot
+        // tell a `Makefile` from a `.png`. What keeps that honest is this: a
+        // file that is not text is refused when it is read, in words.
+        let directory = TemporaryDirectory::new("binary");
+        let path = directory.file("image.bin", "PNG\u{0}\u{0}\u{1}rubble");
+        let mut registry = DocumentRegistry::new();
+
+        let failure = registry.open_local(&path).unwrap_err();
+
+        assert_eq!(failure.headline(), "This file appears to be binary");
+        assert_eq!(registry.len(), 0, "a refused file opens no document");
+    }
+
+    #[test]
     fn an_already_open_path_can_be_found_without_reading_the_file() {
         let directory = TemporaryDirectory::new("find");
         let path = directory.file("notes.md", "alpha\n");

@@ -183,11 +183,12 @@ The current mode is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
 `REPLACE`, `COMMAND`, `SEARCH` — in the status bar. Cursor shape or colour
 alone is not an acceptable indicator: it is invisible to a screen reader,
 unreliable under high-contrast themes, and ambiguous the moment the caret is
-off screen. A banner above the text says the same thing in a sentence, with
-the way out of the mode, because a word in a corner is not an explanation for
-someone who did not expect a letter to be a command. While a command is being
-typed the banner explains the command that has been typed, so Enter is never a
-guess.
+off screen. A compact `vi · NORMAL` marker sits in the command bar beside the
+view options, and carries the sentence — which mode, the way out of it, and
+what `:w` does — in its tooltip. While a command is being typed the marker
+explains the command that has been typed, so Enter is never a guess. The
+explanation is not a banner: a paragraph above the text is a paragraph the
+reader has to look past every time they look at the file.
 
 The engine behind all of this holds no text and does no IO: every keystroke is
 answered against the caller's string and caret, and an edit comes back as one
@@ -221,10 +222,12 @@ bytes are durable, and says so when it has had to.
 filesystem. A Markdown file opens in the Markdown viewer, whose **Edit**
 action is one press away; every other text file opens straight in the editor,
 because the viewer would only show it back as its own source. The picker lists
-text and Markdown files and says so: a file it cannot open is greyed rather
-than absent, so its name is still findable. A file with no extension, or an
-unrecognised one, is not offered — guessing at a binary and being wrong means
-a screen of mojibake and no way to take it back.
+every file. An extension cannot tell a `Makefile`, a `.service` or a `.hpp`
+from a `.png`, and hiding a file because of its name makes it unopenable
+rather than merely unrecognised. What keeps that honest is the bounds check:
+a file that is not UTF-8 text, or that is too large, too many lines, or has a
+single line too long, is refused when it is read, with the limit stated and
+nothing shown in its place.
 
 ## What is not built yet
 

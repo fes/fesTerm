@@ -100,12 +100,12 @@ impl EditorViewOptions {
             Some(columns) => format!("{columns} columns"),
             None => "Fluid width".to_owned(),
         };
-        let keys = if self.vi_keys {
-            "vi keys"
-        } else {
-            "Standard keys"
-        };
-        format!("{lines} · {width} · {keys}")
+        // With vi on, the marker beside this summary says so and says which
+        // mode, so repeating it here would be two answers to one question.
+        if self.vi_keys {
+            return format!("{lines} · {width}");
+        }
+        format!("{lines} · {width} · Standard keys")
     }
 }
 
@@ -372,6 +372,9 @@ pub(crate) struct TextEditorTab {
     /// A command a Normal-mode keystroke resolved to, dispatched on the way out
     /// of `show` where an `AppCommand` can be returned.
     vi_pending_command: Option<ViCommand>,
+    /// Which way the last vi search was going, so `n` repeats it and `N`
+    /// reverses it rather than both meaning "forwards".
+    vi_search_backward: bool,
     /// Whether the body held focus at the end of the last frame. egui
     /// surrenders focus on Escape before a frame begins, so asking about focus
     /// now would make Escape the one key vi mode could never see.
@@ -416,6 +419,7 @@ impl TextEditorTab {
             vi_prefix: None,
             vi_pending_command: None,
             vi_caret: None,
+            vi_search_backward: false,
             vi_focused: false,
             tab: None,
             find: FindState::default(),
@@ -612,13 +616,6 @@ impl TextEditorTab {
                             other => command = banner_command(other),
                         }
                     }
-                    // vi mode is a state the whole view is in, so it says so
-                    // once, in words, above the text rather than only in the
-                    // status bar's corner (ADR 0034 §10).
-                    if self.options.vi_keys {
-                        let banner = self.vi_banner_text(documents);
-                        show_vi_banner(ui, &banner.0, &banner.1);
-                    }
                     self.show_body(ui, documents);
                     // The area sits immediately above the persistent status
                     // bar and never in place of it, so mode, format, position
@@ -657,7 +654,7 @@ impl TextEditorTab {
 
     /// The headline and detail the vi banner shows for the state the view is
     /// actually in: a mode, a command being typed, or a search being typed.
-    fn vi_banner_text(&self, documents: &SharedDocuments) -> (String, String) {
+    fn vi_status_text(&self) -> (String, String) {
         match self.command.prompt() {
             Some(CommandPrompt::Ex) => {
                 let input = self.command.input();
@@ -685,18 +682,36 @@ impl TextEditorTab {
                 };
                 ("vi regex search".to_owned(), detail)
             }
-            None => {
-                let _ = documents;
-                (
-                    "vi compatibility is active in this view".to_owned(),
-                    format!(
-                        "{} mode · {} · Use :w for the ordinary Save command.",
-                        self.vi.mode().label(),
-                        vi_mode_hint(self.vi.mode())
-                    ),
-                )
-            }
+            None => (
+                "vi compatibility is active in this view".to_owned(),
+                format!(
+                    "{} mode · {} · Use :w for the ordinary Save command.",
+                    self.vi.mode().label(),
+                    vi_mode_hint(self.vi.mode())
+                ),
+            ),
         }
+    }
+
+    /// The compact marker that says this view is modal, with the sentence a
+    /// banner used to carry moved into its tooltip.
+    fn show_vi_marker(&self, ui: &mut egui::Ui) {
+        let (headline, detail) = self.vi_status_text();
+        let mode = self.vi_mode_label().unwrap_or("NORMAL");
+        egui::Frame::new()
+            .fill(theme::SURFACE_CARD)
+            .inner_margin(egui::Margin::symmetric(6, 2))
+            .corner_radius(3)
+            .show(ui, |ui| {
+                ui.add(egui::Label::new(
+                    egui::RichText::new(format!("vi · {mode}"))
+                        .size(LABEL_TEXT_SIZE)
+                        .strong()
+                        .color(theme::ACCENT_PRIMARY),
+                ))
+            })
+            .inner
+            .on_hover_text(format!("{headline}\n{detail}"));
     }
 
     /// Feeds the body's keystrokes to the vi engine.
@@ -759,7 +774,14 @@ impl TextEditorTab {
                     }
                 }
             }
-            ViAction::Search(intent) => self.run_search_intent(intent, documents),
+            ViAction::Search(intent) => {
+                // A search decides where the caret lands, and the engine does
+                // not know where the match was. Writing its caret back here
+                // would drag the view straight back off the match it just
+                // found.
+                self.run_search_intent(intent, documents);
+                return;
+            }
             ViAction::Refused(error) => {
                 self.command
                     .report(CommandOutcome::Failed(CommandError::new(
@@ -802,8 +824,8 @@ impl TextEditorTab {
         match intent {
             SearchIntent::PromptForward => self.command.open(CommandPrompt::SearchForward),
             SearchIntent::PromptBackward => self.command.open(CommandPrompt::SearchBackward),
-            SearchIntent::Next => self.step_match(1),
-            SearchIntent::Previous => self.step_match(-1),
+            SearchIntent::Next => self.step_match(if self.vi_search_backward { -1 } else { 1 }),
+            SearchIntent::Previous => self.step_match(if self.vi_search_backward { 1 } else { -1 }),
             SearchIntent::WordForward | SearchIntent::WordBackward => {
                 // The word is escaped as a literal, so punctuation inside an
                 // identifier cannot turn into pattern syntax (ADR 0034 §10a).
@@ -824,6 +846,41 @@ impl TextEditorTab {
                     -1
                 });
             }
+        }
+    }
+
+    /// Takes the match a search should land on: the first one past the caret
+    /// going forwards, the last one before it going backwards, wrapping the
+    /// way vi wraps. Without this a search would always jump to the top of the
+    /// file, which is not what the reader asked for from where they were.
+    fn select_match_from_caret(&mut self) {
+        let caret = self.caret_offset;
+        let index = if self.vi_search_backward {
+            self.find
+                .matches()
+                .iter()
+                .rposition(|found| found.start < caret)
+                .or_else(|| self.find.matches().len().checked_sub(1))
+        } else {
+            self.find
+                .matches()
+                .iter()
+                .position(|found| found.start > caret)
+                .or(Some(0))
+        };
+        if let Some(index) = index {
+            self.find.current = Some(index);
+        }
+        self.step_match(0);
+    }
+
+    /// Gives the body its focus back after the command area has had it.
+    ///
+    /// Without this the caret is left in a field that is no longer on screen,
+    /// and the next key — `n` most of all — reaches nothing at all.
+    fn return_focus_to_body(&mut self) {
+        if self.options.vi_keys {
+            self.vi_caret = Some(self.caret_offset);
         }
     }
 
@@ -905,10 +962,13 @@ impl TextEditorTab {
                     self.find.searched = None;
                     self.searching_with_vi = false;
                 }
+                self.return_focus_to_body();
                 None
             }
             CommandAreaEvent::Run { prompt, line } => {
-                self.run_command_line(prompt, &line, tab_id, documents)
+                let command = self.run_command_line(prompt, &line, tab_id, documents);
+                self.return_focus_to_body();
+                command
             }
         }
     }
@@ -954,6 +1014,8 @@ impl TextEditorTab {
         if prompt != CommandPrompt::Ex {
             self.preview_search(documents);
             self.searching_with_vi = true;
+            self.vi_search_backward = prompt == CommandPrompt::SearchBackward;
+            self.select_match_from_caret();
             let summary = self.find.summary();
             self.command.finish(CommandOutcome::Message(summary));
             return None;
@@ -1278,6 +1340,13 @@ impl TextEditorTab {
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         self.show_options_menu(ui);
                         label(ui, &self.options.summary(), theme::TEXT_MUTED, false);
+                        // vi mode is marked rather than explained: the status
+                        // bar already names the mode, and a paragraph above
+                        // the text is a paragraph a reader has to scroll past
+                        // every time they look at the file.
+                        if self.options.vi_keys {
+                            self.show_vi_marker(ui);
+                        }
                     });
                 });
             });
@@ -2197,39 +2266,6 @@ fn vi_mode_hint(mode: ViMode) -> &'static str {
     }
 }
 
-/// Says in words that this view is in vi mode, which mode that is, and how to
-/// get out of it. The status bar names the mode too, but a corner word is not
-/// an explanation for someone who did not expect a letter to be a command.
-fn show_vi_banner(ui: &mut egui::Ui, headline: &str, detail: &str) {
-    egui::Frame::new()
-        .fill(theme::SURFACE_PANEL)
-        .inner_margin(egui::Margin {
-            left: BANNER_PADDING_X,
-            right: BAR_PADDING_X,
-            top: BANNER_PADDING_Y,
-            bottom: BANNER_PADDING_Y,
-        })
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let top = ui.min_rect().top();
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                label(ui, headline, theme::TEXT_PRIMARY, true);
-                label(ui, detail, theme::TEXT_SECONDARY, false);
-            });
-            let bottom = ui.min_rect().bottom();
-            let left = ui.min_rect().left() - f32::from(BANNER_PADDING_X);
-            ui.painter().rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(left, top),
-                    egui::pos2(left + BANNER_ACCENT_WIDTH, bottom),
-                ),
-                0.0,
-                theme::ACCENT_PRIMARY,
-            );
-        });
-}
-
 /// Renders the banner and reports the action pressed. Compare is handled by
 /// the view rather than mapped to a command, because comparing changes what
 /// this view shows and nothing about the document.
@@ -2990,27 +3026,27 @@ mod tests {
     }
 
     #[test]
-    fn the_vi_banner_explains_the_state_the_view_is_actually_in() {
+    fn the_vi_marker_explains_the_state_the_view_is_actually_in() {
         let directory = TemporaryDirectory::new("vi-banner");
         let path = directory.file("notes.md", "alpha\n");
         let mut harness = vi_harness(&path);
         focus_body(&mut harness);
 
         let state = harness.state();
-        let (headline, detail) = state.1.vi_banner_text(&state.0);
+        let (headline, detail) = state.1.vi_status_text();
         assert_eq!(headline, "vi compatibility is active in this view");
         assert!(
             detail.starts_with("NORMAL mode · Press i to insert"),
-            "the banner names the mode and the way out of it: {detail}"
+            "the marker names the mode and the way out of it: {detail}"
         );
 
         vi_type(&mut harness, ":wq");
         let state = harness.state();
-        let (headline, detail) = state.1.vi_banner_text(&state.0);
+        let (headline, detail) = state.1.vi_status_text();
         assert_eq!(headline, "vi command-line mode");
         assert!(
             detail.starts_with(":wq saves through the ordinary Save command"),
-            "the banner explains the command that has been typed: {detail}"
+            "the marker explains the command that has been typed: {detail}"
         );
     }
 
@@ -3083,10 +3119,70 @@ mod tests {
         harness.run();
         harness.run();
 
-        focus_body(&mut harness);
+        // A search lands on the match after the caret, not at the top of the
+        // file, and hands the body its focus back: without that the next key
+        // reaches a field that is no longer on screen.
+        assert_eq!(
+            harness.state().1.find.current,
+            Some(1),
+            "a forward search takes the match after the caret"
+        );
+        assert_eq!(harness.state().1.caret_offset, 11);
+        let body = harness.state().1.body_id();
+        assert!(
+            harness.ctx.memory(|memory| memory.has_focus(body)),
+            "running a search gives the text its focus back"
+        );
+
+        // `n` now reaches the engine without anything else being clicked.
         vi_type(&mut harness, "n");
-        assert_eq!(harness.state().1.find.current, Some(1));
+
+        assert_eq!(
+            harness.state().1.find.current,
+            Some(0),
+            "`n` steps to the next match and wraps"
+        );
+        assert_eq!(harness.state().1.caret_offset, 0);
         assert_eq!(document_text(&harness), "alpha\nbeta\nalpha\n");
+
+        // `N` goes back the other way.
+        vi_type(&mut harness, "N");
+        assert_eq!(harness.state().1.find.current, Some(1));
+    }
+
+    #[test]
+    fn a_backward_search_walks_backwards_and_so_does_n() {
+        let directory = TemporaryDirectory::new("vi-search-back");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+        harness.state_mut().1.vi_caret = Some(11);
+        harness.run();
+
+        vi_type(&mut harness, "?");
+        assert_eq!(
+            harness.state().1.command.prompt(),
+            Some(CommandPrompt::SearchBackward)
+        );
+        command_field(&harness).focus();
+        harness.run();
+        command_field(&harness).type_text("alpha");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+
+        assert_eq!(
+            harness.state().1.find.current,
+            Some(0),
+            "a backward search takes the match before the caret"
+        );
+        vi_type(&mut harness, "n");
+        assert_eq!(
+            harness.state().1.find.current,
+            Some(1),
+            "`n` repeats a backward search backwards, wrapping to the end"
+        );
     }
 
     #[test]

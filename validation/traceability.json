@@ -1135,12 +1135,15 @@
         "a_key_outside_the_matrix_says_so_and_leaves_the_text_alone",
         "the_status_bar_says_the_mode_in_words",
         "a_view_without_vi_keys_shows_no_mode_at_all",
-        "the_vi_banner_explains_the_state_the_view_is_actually_in",
+        "the_vi_marker_explains_the_state_the_view_is_actually_in",
         "a_colon_opens_the_command_area_instead_of_reaching_the_text",
         "a_substitution_without_a_pattern_is_told_what_is_missing",
         "completion_never_offers_a_bare_substitution",
         "a_picked_file_lands_in_the_surface_that_can_actually_show_it",
-        "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files"
+        "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files",
+        "a_file_that_is_not_text_is_refused_by_name_rather_than_shown_as_rubble",
+        "a_vi_search_and_next_walk_the_document_without_changing_it",
+        "a_backward_search_walks_backwards_and_so_does_n"
       ],
       "manual_scenarios": [
         "CP-15"

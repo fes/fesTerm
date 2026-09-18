@@ -4863,70 +4863,13 @@ pub(crate) fn item_type_label(item: &SftpDirectoryItem) -> &'static str {
 /// Whether double-clicking this item should open the Markdown viewer
 /// (issue #133), rather than being a no-op (or, for directories, handled
 /// separately in `open_item`).
-/// The extensions the file picker will open. A file with no extension, or one
-/// that is not on this list, is not offered: guessing at a `Makefile` and
-/// being wrong means showing a reader a screen of mojibake, and there is no
-/// second window here in which to take that back.
-const TEXT_FILE_EXTENSIONS: &[&str] = &[
-    "bash",
-    "c",
-    "cc",
-    "cfg",
-    "conf",
-    "cpp",
-    "css",
-    "csv",
-    "diff",
-    "go",
-    "h",
-    "hpp",
-    "htm",
-    "html",
-    "ini",
-    "java",
-    "js",
-    "json",
-    "jsx",
-    "kt",
-    "log",
-    "lua",
-    "markdown",
-    "md",
-    "patch",
-    "php",
-    "pl",
-    "properties",
-    "py",
-    "rb",
-    "rs",
-    "sh",
-    "sql",
-    "svg",
-    "swift",
-    "text",
-    "toml",
-    "ts",
-    "tsx",
-    "txt",
-    "xml",
-    "yaml",
-    "yml",
-    "zsh",
-];
-
-/// Whether the picker will open this item: a directory is navigated into, a
-/// recognised text or Markdown file is opened, anything else is listed as
-/// unavailable rather than silently ignored.
+/// Whether the picker will open this item. Every file is: fesTerm cannot
+/// tell a `Makefile`, a `.service` or a `.hpp` from a `.txt` by its name, and
+/// hiding a file because of its extension makes it unopenable rather than
+/// merely unrecognised. A file that turns out not to be text is refused when
+/// it is read, in words, by `festerm_document`'s bounds check.
 pub(crate) fn is_openable_text_file(item: &SftpDirectoryItem) -> bool {
-    if item.file_type != SftpEntryType::File {
-        return false;
-    }
-    let extension = Path::new(item.name.as_str())
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    TEXT_FILE_EXTENSIONS.contains(&extension.as_str())
+    item.file_type == SftpEntryType::File
 }
 
 fn is_markdown_file(item: &SftpDirectoryItem) -> bool {
@@ -6069,14 +6012,14 @@ impl MarkdownFilePicker {
                 for item in &entries {
                     let key = path_key(&item.path);
                     let selected = self.pane.selected_paths.contains(&key);
-                    let markdown_or_dir =
+                    let openable =
                         item.file_type == SftpEntryType::Directory || is_openable_text_file(item);
                     let row = ui
                         .horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             ui.set_min_height(SFTP_TABLE_ROW_HEIGHT);
                             ui.set_max_height(SFTP_TABLE_ROW_HEIGHT);
-                            let name_color = if !markdown_or_dir {
+                            let name_color = if !openable {
                                 theme::TEXT_MUTED
                             } else if selected {
                                 theme::TEXT_PRIMARY
@@ -6107,7 +6050,7 @@ impl MarkdownFilePicker {
                                         ui.painter(),
                                         item_glyph(item),
                                         icon_rect,
-                                        if markdown_or_dir {
+                                        if openable {
                                             theme::TEXT_SECONDARY
                                         } else {
                                             theme::TEXT_MUTED
@@ -6186,14 +6129,6 @@ impl MarkdownFilePicker {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("{} items", entries.len()))
-                    .font(font_for_text_role(SftpTextRole::Footer))
-                    .color(theme::TEXT_MUTED),
-            );
-            // The greyed rows are a signal, not an explanation. This says what
-            // the greying means, so a file that cannot be opened is not read
-            // as a file that failed to open.
-            ui.label(
-                RichText::new("· Text and Markdown files can be opened")
                     .font(font_for_text_role(SftpTextRole::Footer))
                     .color(theme::TEXT_MUTED),
             );
