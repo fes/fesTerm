@@ -1815,3 +1815,148 @@ single do-everything entry point. Work an agent performs by issuing twenty
 tool calls is work it pays for every time; the same work behind a script is
 one call. That is the cheapest available saving, and unlike model selection it
 does not trade anything away.
+
+## September 2026: a text editor in fourteen hours, and what it cost
+
+The native text editor went from an empty ADR to syntax-highlighted,
+vi-capable, shared-document editing in a single sitting: **13 h 45 m of wall
+clock**, 30 commits, **+23,163 / −560 lines** across 94 files, ending with
+1,589 workspace tests green. It is the largest single feature the project has
+absorbed in one stretch, and because the whole of it happened inside one
+session it is also the cleanest cost measurement the project has.
+
+The shape of the work was deliberately conventional: an ADR first
+(0034, one open file is one shared document), then a UI-free crate that could
+be tested without a window (`festerm-document` — text, undo, search,
+substitute, status, vi), then the view, then the awkward parts (Save As,
+auto-save, external change), then the parts only a human could find, then a
+second ADR (0035, syntax highlighting) bolted onto a now-stable base.
+
+### The phases, and where the money went
+
+AIU is the billing unit the session store records. "Model minutes" is time
+spent waiting on inference, which is the part of the wall clock that is
+actually being paid for.
+
+| Phase | Commits | Wall | AIU | Sub-agent AIU | Model min |
+| --- | --- | --- | --- | --- | --- |
+| A — ADR 0034 and the document crate | 8 | 1 h 36 m | 3,288 | 138 | 73 |
+| B — Editor view, Find/`:s`, split views | 6 | 3 h 32 m | 3,483 | 625 | 66 |
+| C — Save As, auto-save, undo, change watch | 5 | 1 h 23 m | 3,785 | 1,452 | 73 |
+| D — One vi command area, one dialect | 4 | 0 h 56 m | 2,085 | 876 | 49 |
+| E — Defect rounds from hands-on use | 4 | 4 h 50 m | 3,488 | 80 | 41 |
+| F — Viewer/editor merge + ADR 0035 | 3 | 1 h 28 m | 2,537 | 251 | 40 |
+| **Total** | **30** | **13 h 45 m** | **18,666** | **3,421** | **343** |
+
+Two things are visible immediately. First, the phases cost remarkably
+similar amounts — between 2,000 and 3,800 AIU each — despite being wildly
+different in size. Phase A produced 6,300 lines of crate and tests for 3,288
+AIU; phase E produced a few hundred lines of fixes for 3,488. **Cost tracked
+the number of round trips, not the volume of code.** Writing new code into an
+empty file is the cheapest thing an agent does. Changing behaviour inside a
+4,000-line file that must be re-read to be changed safely is the expensive
+thing, and that is what every later phase was.
+
+Second, only **25% of the wall clock was inference**. The rest was
+compilation, a 6–13 minute test suite, a 46-second gallery capture, and the
+reviewer reading and replying. Wall clock is not a proxy for spend here.
+
+### The models, and what delegation actually bought
+
+| Model | Role | Calls | AIU | AIU/call | Output tok |
+| --- | --- | --- | --- | --- | --- |
+| Claude Opus 5 | base agent | 1,658 | 15,357 | 9.19 | 1.12 M |
+| Claude Opus 4.8 | UI review, rubber-duck | 339 | 2,762 | 8.15 | 340 K |
+| GPT-5.5 | build/test runners | 63 | 558 | 8.86 | 60 K |
+| GPT-5.6 Sol | targeted exploration | 20 | 98 | 4.88 | 20 K |
+| GPT-5.6 Luna | one-off checks | 10 | 3 | 0.34 | 14 K |
+| Search | code search | 7 | 0 | 0 | 3 K |
+
+This contradicts the lesson recorded from the keyboard-editor session, and
+the contradiction is instructive. There, routing delegated work to cheaper
+models was the single largest available saving. Here, delegation was routed
+carefully *and the per-call cost barely moved*: a GPT-5.5 sub-agent call cost
+8.86 AIU against the base agent's 9.19.
+
+The reason is cache. **97.5% of the base agent's input tokens were cache
+reads**, billed at a tenth of fresh input. Its nominal 249 M input tokens were
+only about 6.2 M tokens of genuinely new context. A sub-agent has no such
+history: every call it makes pays full price for a context it had to
+assemble from scratch. Per million input tokens the base agent cost 62 AIU;
+the sub-agents cost 102–154.
+
+So the correct statement is narrower than "delegate to cheap models":
+
+- **Delegate for context, not for price.** The 63 build/test calls were worth
+  every AIU, not because GPT-5.5 is cheap but because 13 minutes of `cargo
+  test` output never entered the base agent's window — and the base agent
+  pays for its window on *every subsequent call* for the rest of the session.
+  Preventing one page of noise from entering the cache is worth more than
+  discounting the call that produced it.
+- **A long-lived, well-cached base agent is not the expensive thing it looks
+  like.** Against the earlier measurement of Opus 5 at 76 AIU per million
+  input tokens, this session ran at 62 with a *more* expensive configuration,
+  purely because the conversation stayed coherent enough to keep its cache
+  warm. Restarting a session to "clean up" throws that away.
+
+### Where model selection paid, and where it did not
+
+**It paid on review.** The Opus 4.8 reviewer cost 2,762 AIU — 15% of the
+total — across two rounds and caught things that would otherwise have shipped
+to the reviewer's eyes: `boolean` coloured as if it were a number, the
+Markdown viewer's Source pane left flat while the editor's identical content
+was coloured, and the word *view* being used for two different things in one
+toolbar. Zero must-fix defects reached the human in either UI round. Review
+by a second, differently-weighted model is the best-value line in the table.
+
+**It paid on the hostile API.** Phase F ran into tree-sitter 0.27 having moved
+four things at once — a private `captures` field, timeouts replaced by a
+progress callback, a streaming-iterator requirement, and a borrow lifetime
+that rejects a temporary callback. None of these are searchable; all four were
+solved by reading types. A cheaper base model would have thrashed.
+
+**It did not pay in phase D.** The vi work began with a lightweight
+exploration agent mapping how keys were handled. It returned a partial
+picture, and on that picture the editor grew *two* command dialects — a Find
+bar and a vi command line with separate parsing. The project owner rejected
+it in one sentence ("one command area and no second dialect"), and unwinding
+it cost roughly 45 minutes and a visible spike in phase D's sub-agent share
+(42% of the phase). **An exploration that will determine an interface's shape
+is design work, and should be priced as design work.** The saving on that one
+agent was a few tens of AIU; the rework was several hundred.
+
+### What the human found that the tests did not
+
+Phase E exists because the editor was handed over and used. Six defects came
+back in one message: `G` and `n` moved the cursor without moving the viewport;
+`:14` was never implemented despite line numbers being right there; normal and
+insert mode shared a cursor shape; the file picker showed an I-beam over a
+list; the Markdown preview and its source scrolled independently; the outline
+the mockup showed was missing. Two more followed: `:q!` still prompting to
+save, and a save dialog that grew every frame until its text scrolled out of
+the window.
+
+Every one of these passed the automated suite, because the suite asserted
+*state* — cursor position, match index, dirty flag — and each defect was about
+what a person could *see*. This is the same lesson the SFTP layout rounds
+produced, arriving through a different door: a test that checks the model is
+not a test that checks the view. The editor's keystroke tests were genuinely
+useful for the document crate and genuinely blind above it.
+
+### Honest caveats
+
+- **One session, one feature, no control.** No part of this was run twice with
+  a different configuration, so every comparison is observational.
+- **The cache argument is configuration-specific.** It holds for a long
+  single-session effort with a stable working set. A session that jumps
+  between unrelated areas would show a much worse cache ratio and the
+  delegation economics would invert back.
+- **Phase boundaries are drawn from commit timestamps**, so review gaps and
+  the owner's own testing time land inside whichever phase they interrupt —
+  phase E's 4 h 50 m is mostly not inference.
+- **The retrospective itself cost 140 AIU** and is excluded from the totals.
+
+The one change with the clearest expected return is not a model choice at all:
+`app/festerm/src/text_editor.rs` is 4,000 lines, and every phase after B paid
+to re-read it. Splitting it would reduce the cost of the next comparable
+effort more than any routing decision available.
