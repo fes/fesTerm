@@ -22,15 +22,37 @@ use festerm_ui_egui::theme;
 
 use crate::sftp_file_manager::{
     breadcrumb_segments, font_for_text_role, format_modified, format_size, item_glyph,
-    item_type_label, local_home_directory, paint_sftp_glyph, path_key, sftp_table_columns,
-    show_table_header_cell, show_table_text_cell, toolbar_icon_button, CellAlign,
-    LocalDirectoryLoadRequest, LocalDirectoryLoader, SftpGlyph, SftpPaneState, SftpSortColumn,
-    SftpTextRole, SFTP_TABLE_CELL_PADDING, SFTP_TABLE_ROW_HEIGHT, SFTP_TOOLBAR_NAV_GAP,
+    local_home_directory, paint_sftp_glyph, path_key, show_table_header_cell, show_table_text_cell,
+    toolbar_icon_button, CellAlign, LocalDirectoryLoadRequest, LocalDirectoryLoader, SftpGlyph,
+    SftpPaneState, SftpSortColumn, SftpTextRole, SFTP_TABLE_CELL_PADDING, SFTP_TABLE_ROW_HEIGHT,
+    SFTP_TOOLBAR_NAV_GAP,
 };
 
 /// Stated verbatim per ADR 0034 §3: an existing target is described in words
 /// before the fact, and the press still saves in one go.
 const OVERWRITE_NOTICE: &str = "A file with this name already exists here. Saving will replace it.";
+/// A directory cannot be replaced by a document, so this is a hard block.
+const DIRECTORY_COLLISION_MESSAGE: &str =
+    "A folder with this name already exists here, so it can't be saved over.";
+const SEPARATOR_HINT: &str = "A file name cannot contain a path separator.";
+const EMPTY_NAME_HINT: &str = "Enter a file name.";
+
+/// Minimum widths for the metadata columns so "965 B" and "Yesterday 09:14"
+/// stay legible; whatever is left goes to Name, the column that matters when
+/// choosing a save target.
+const SIZE_COLUMN_MIN_WIDTH: f32 = 72.0;
+const MODIFIED_COLUMN_MIN_WIDTH: f32 = 130.0;
+
+/// The Save As listing is Name/Size/Modified only (ADR 0034 §3). The SFTP
+/// panes keep their four-column Name/Size/Modified/Type layout; this is a
+/// separate three-column split so dropping Type here does not change them.
+fn save_as_columns(available_width: f32) -> [f32; 3] {
+    let width = available_width.max(0.0);
+    let size = (width * 0.14).max(SIZE_COLUMN_MIN_WIDTH);
+    let modified = (width * 0.26).max(MODIFIED_COLUMN_MIN_WIDTH);
+    let name = (width - size - modified).max(0.0);
+    [name, size, modified]
+}
 
 const SAVE_BUTTON_HEIGHT: f32 = 30.0;
 const SAVE_BUTTON_PADDING_X: f32 = 16.0;
@@ -184,7 +206,7 @@ impl SaveAsPicker {
 
         self.show_destination_switch(ui, width);
         ui.add_space(8.0);
-        self.show_toolbar(ui);
+        self.show_toolbar(ui, width);
         ui.add_space(6.0);
 
         if let Some(summary) = self.pane.error.clone() {
@@ -192,12 +214,26 @@ impl SaveAsPicker {
             ui.add_space(6.0);
         }
 
-        self.show_table_header(ui, width);
         let entries = self.pane.visible_entries().to_vec();
-        self.show_rows(ui, width, &entries);
 
-        ui.add_space(10.0);
-        outcome = self.show_footer(ui, &entries).or(outcome);
+        // The listing is the elastic element: the file-name field, notice and
+        // button row are pinned to the bottom of the sheet, and the table
+        // grows into whatever height is left rather than the buttons floating
+        // in dead space above a short list.
+        egui::Panel::bottom(egui::Id::new("save_as_footer"))
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(egui::Frame::new())
+            .show(ui, |ui| {
+                ui.add_space(8.0);
+                outcome = self.show_footer(ui, &entries);
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new())
+            .show(ui, |ui| {
+                self.show_table_header(ui, width);
+                self.show_rows(ui, width, &entries);
+            });
 
         if ui.input(|input| input.key_pressed(Key::Escape)) {
             outcome = SaveAsOutcome::Cancelled;
@@ -212,8 +248,9 @@ impl SaveAsPicker {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             // The local segment is the only reachable origin, so it renders as
-            // the selected half. It is still a button (not a bare label) so it
-            // carries a button role and an accessible name.
+            // the selected half: a solid fill, no accent stroke. The stroke
+            // read as a focused text field and competed with Save, which is
+            // the real primary action and stays the loudest thing here.
             ui.add(
                 egui::Button::new(
                     RichText::new("This host (local)")
@@ -221,16 +258,19 @@ impl SaveAsPicker {
                         .color(theme::TEXT_PRIMARY),
                 )
                 .fill(theme::SURFACE_TAB_ACTIVE)
-                .stroke(egui::Stroke::new(1.0, theme::ACCENT_PRIMARY))
+                .stroke(egui::Stroke::NONE)
                 .corner_radius(5.0)
                 .min_size(egui::vec2(segment_width, 30.0)),
             );
-            // No remote document origin exists yet, so this half is present
-            // but refuses, and says why on hover rather than pretending.
+            // No remote document origin exists yet, so this half is present but
+            // refuses. The label states the reason at a glance for keyboard and
+            // touch users; the hover carries the fuller explanation. It stays
+            // muted on the inactive fill -- nothing red, which would read as
+            // broken rather than simply unavailable.
             ui.add_enabled(
                 false,
                 egui::Button::new(
-                    RichText::new("Remote host")
+                    RichText::new("Remote host — none connected")
                         .font(font_for_text_role(SftpTextRole::PaneLabel))
                         .color(theme::TEXT_MUTED),
                 )
@@ -244,7 +284,7 @@ impl SaveAsPicker {
         });
     }
 
-    fn show_toolbar(&mut self, ui: &mut Ui) {
+    fn show_toolbar(&mut self, ui: &mut Ui, width: f32) {
         ui.horizontal(|ui| {
             if toolbar_icon_button(ui, SftpGlyph::Up, "Up one level").clicked() {
                 self.navigate_up();
@@ -256,49 +296,14 @@ impl SaveAsPicker {
                 self.refresh();
             }
             ui.add_space(SFTP_TOOLBAR_NAV_GAP);
-            let mut breadcrumb_target = None;
-            ui.horizontal_wrapped(|ui| {
-                for (index, segment) in breadcrumb_segments(&self.pane.current_path)
-                    .into_iter()
-                    .enumerate()
-                {
-                    if index > 0 && segment.label != "/" {
-                        ui.label(
-                            RichText::new("/")
-                                .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                                .color(theme::TEXT_MUTED),
-                        );
-                    }
-                    let text = RichText::new(segment.label.clone())
-                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
-                        .color(if segment.current {
-                            theme::TEXT_PRIMARY
-                        } else {
-                            theme::TEXT_SECONDARY
-                        });
-                    if segment.current {
-                        ui.label(text);
-                    } else if ui
-                        .add(
-                            egui::Button::new(text)
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(egui::Stroke::NONE)
-                                .min_size(egui::vec2(0.0, 18.0)),
-                        )
-                        .clicked()
-                    {
-                        breadcrumb_target = Some(segment.path);
-                    }
-                }
-            });
-            if let Some(path) = breadcrumb_target {
+            if let Some(path) = show_breadcrumb(ui, &self.pane.current_path, width) {
                 self.load(path);
             }
         });
     }
 
     fn show_table_header(&mut self, ui: &mut Ui, width: f32) {
-        let columns = sftp_table_columns(width);
+        let columns = save_as_columns(width);
         let mut sort_clicked = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -306,7 +311,6 @@ impl SaveAsPicker {
                 (CellAlign::Left, "Name", SftpSortColumn::Name),
                 (CellAlign::Right, "Size", SftpSortColumn::Size),
                 (CellAlign::Left, "Modified", SftpSortColumn::Modified),
-                (CellAlign::Left, "Type", SftpSortColumn::Type),
             ];
             for (index, (align, title, column)) in headers.into_iter().enumerate() {
                 if show_table_header_cell(
@@ -329,12 +333,12 @@ impl SaveAsPicker {
     }
 
     fn show_rows(&mut self, ui: &mut Ui, width: f32, entries: &[SftpDirectoryItem]) {
-        let columns = sftp_table_columns(width);
+        let columns = save_as_columns(width);
         let mut navigate_into = None;
         let mut chosen_name = None;
         let scroll_output = ScrollArea::vertical()
             .id_salt("save_as_picker_rows")
-            .max_height(260.0)
+            .auto_shrink([false, false])
             .vertical_scroll_offset(self.pane.scroll_offset)
             .show(ui, |ui| {
                 for item in entries {
@@ -370,12 +374,15 @@ impl SaveAsPicker {
                                         theme::TEXT_SECONDARY,
                                     );
                                     ui.add_space(5.0);
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(item.name.clone()).color(name_color),
-                                        )
-                                        .truncate(),
-                                    );
+                                    // Selection is carried by weight as well as
+                                    // the band behind it, so it survives without
+                                    // colour (ADR 0034 §8).
+                                    let mut name =
+                                        RichText::new(item.name.clone()).color(name_color);
+                                    if selected {
+                                        name = name.strong();
+                                    }
+                                    ui.add(egui::Label::new(name).truncate());
                                 },
                             );
                             show_table_text_cell(
@@ -391,12 +398,6 @@ impl SaveAsPicker {
                                 RichText::new(format_modified(item.modified_at))
                                     .color(theme::TEXT_MUTED),
                             );
-                            show_table_text_cell(
-                                ui,
-                                columns[3],
-                                CellAlign::Left,
-                                RichText::new(item_type_label(item)).color(theme::TEXT_MUTED),
-                            );
                         })
                         .response;
                     let row_rect = row.rect;
@@ -411,6 +412,13 @@ impl SaveAsPicker {
                             0.0,
                             theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.6),
                         );
+                        // A left marker bar so the selected row is legible at a
+                        // glance and not by hue alone.
+                        let marker = egui::Rect::from_min_size(
+                            row_rect.min,
+                            egui::vec2(3.0, row_rect.height()),
+                        );
+                        ui.painter().rect_filled(marker, 0.0, theme::ACCENT_PRIMARY);
                     }
                     if row_response.clicked() {
                         self.pane.select_single(&item.path);
@@ -438,19 +446,25 @@ impl SaveAsPicker {
     fn show_footer(&mut self, ui: &mut Ui, entries: &[SftpDirectoryItem]) -> SaveAsOutcome {
         let mut outcome = SaveAsOutcome::Pending;
 
-        let name_label = ui.label(
-            RichText::new("File name")
-                .font(font_for_text_role(SftpTextRole::PaneLabel))
-                .color(theme::TEXT_SECONDARY),
-        );
+        // Label inline to the left of the field, per the mockup: it ties the
+        // caption to the control and costs no vertical space.
         let name_response = ui
-            .add(
-                TextEdit::singleline(&mut self.file_name)
-                    .id(egui::Id::new("save_as_file_name"))
-                    .desired_width(f32::INFINITY)
-                    .hint_text("File name"),
-            )
-            .labelled_by(name_label.id);
+            .horizontal(|ui| {
+                let name_label = ui.label(
+                    RichText::new("File name")
+                        .font(font_for_text_role(SftpTextRole::PaneLabel))
+                        .color(theme::TEXT_SECONDARY),
+                );
+                ui.add_space(8.0);
+                ui.add(
+                    TextEdit::singleline(&mut self.file_name)
+                        .id(egui::Id::new("save_as_file_name"))
+                        .desired_width(f32::INFINITY)
+                        .hint_text("File name"),
+                )
+                .labelled_by(name_label.id)
+            })
+            .inner;
 
         let trimmed = self.file_name.trim().to_owned();
         let collision = entries
@@ -465,30 +479,45 @@ impl SaveAsPicker {
         let has_separator = trimmed.chars().any(std::path::is_separator);
         let save_enabled = !trimmed.is_empty() && !has_separator && !directory_collision;
 
-        if file_collision {
-            ui.add_space(4.0);
+        // One message line below the field. It doubles as the inline blocker
+        // hint so a disabled Save always states its reason without a hover:
+        // the directory collision is a hard block (red), the separator and
+        // empty-name cases are the blockers the notices did not otherwise
+        // cover, and the overwrite notice is a permitted-action statement in a
+        // legible weight -- never red, which is reserved for the block.
+        ui.add_space(4.0);
+        if directory_collision {
+            ui.label(
+                RichText::new(DIRECTORY_COLLISION_MESSAGE)
+                    .font(font_for_text_role(SftpTextRole::DialogBody))
+                    .color(theme::STATUS_ERROR),
+            );
+        } else if has_separator {
+            ui.label(
+                RichText::new(SEPARATOR_HINT)
+                    .font(font_for_text_role(SftpTextRole::DialogBody))
+                    .color(theme::TEXT_SECONDARY),
+            );
+        } else if trimmed.is_empty() {
+            ui.label(
+                RichText::new(EMPTY_NAME_HINT)
+                    .font(font_for_text_role(SftpTextRole::DialogBody))
+                    .color(theme::TEXT_SECONDARY),
+            );
+        } else if file_collision {
             ui.label(
                 RichText::new(OVERWRITE_NOTICE)
                     .font(font_for_text_role(SftpTextRole::DialogBody))
-                    .color(theme::TEXT_MUTED),
-            );
-        } else if directory_collision {
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "A folder with this name already exists here, so it can't be saved over.",
-                )
-                .font(font_for_text_role(SftpTextRole::DialogBody))
-                .color(theme::STATUS_ERROR),
+                    .color(theme::TEXT_SECONDARY),
             );
         }
 
         let disabled_reason = if trimmed.is_empty() {
-            "Enter a file name to save."
+            EMPTY_NAME_HINT
         } else if has_separator {
-            "The file name can't contain a path separator."
+            SEPARATOR_HINT
         } else {
-            "A folder with this name already exists here, so it can't be saved over."
+            DIRECTORY_COLLISION_MESSAGE
         };
 
         let enter_saves = name_response.lost_focus()
@@ -517,15 +546,74 @@ impl SaveAsPicker {
     }
 }
 
-impl SaveAsOutcome {
-    /// Keeps a decided outcome (Save/Cancelled) over a still-`Pending` one,
-    /// so a later stage of the same frame can't erase an earlier decision.
-    fn or(self, fallback: SaveAsOutcome) -> SaveAsOutcome {
-        match self {
-            SaveAsOutcome::Pending => fallback,
-            decided => decided,
-        }
-    }
+/// Renders the breadcrumb on a single line, collapsing from the front with a
+/// leading "…" when the path is deep, so a long real path keeps its last
+/// segments and the current directory visible instead of wrapping and
+/// orphaning the current directory on a second line. Returns a navigation
+/// target if a segment was clicked.
+fn show_breadcrumb(ui: &mut Ui, path: &SftpPath, width: f32) -> Option<SftpPath> {
+    let segments = breadcrumb_segments(path);
+    // Keep the deepest few segments plus the current directory; anything
+    // before them collapses to a single leading ellipsis.
+    let keep = 3usize;
+    let start = segments.len().saturating_sub(keep);
+    let mut target = None;
+
+    let separator = |ui: &mut Ui| {
+        ui.label(
+            RichText::new("/")
+                .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                .color(theme::TEXT_MUTED),
+        );
+    };
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 24.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            if start > 0 {
+                ui.label(
+                    RichText::new("…")
+                        .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                        .color(theme::TEXT_MUTED),
+                );
+                separator(ui);
+            }
+            for (offset, segment) in segments[start..].iter().enumerate() {
+                let global_index = start + offset;
+                let needs_separator = if offset == 0 {
+                    start == 0 && global_index > 0 && segment.label != "/"
+                } else {
+                    segment.label != "/"
+                };
+                if needs_separator {
+                    separator(ui);
+                }
+                let text = RichText::new(segment.label.clone())
+                    .font(font_for_text_role(SftpTextRole::Breadcrumb))
+                    .color(if segment.current {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_SECONDARY
+                    });
+                if segment.current {
+                    ui.add(egui::Label::new(text).truncate());
+                } else if ui
+                    .add(
+                        egui::Button::new(text)
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .min_size(egui::vec2(0.0, 24.0)),
+                    )
+                    .clicked()
+                {
+                    target = Some(segment.path.clone());
+                }
+            }
+        },
+    );
+
+    target
 }
 
 /// A primary (accent-filled) button. `text_editor::primary_button` is the
@@ -733,9 +821,14 @@ mod tests {
     }
 
     #[test]
-    fn save_as_an_empty_name_disables_save() {
+    fn save_as_an_empty_name_disables_save_and_hints_to_enter_one() {
         let directory = TemporaryDirectory::new("empty");
         let mut harness = harness_for(&directory, "");
+
+        assert!(
+            harness.query_by_label(EMPTY_NAME_HINT).is_some(),
+            "an empty name has to state the blocker inline, not only on hover"
+        );
 
         harness.get_by_label("Save").click();
         harness.run();
@@ -747,11 +840,32 @@ mod tests {
     }
 
     #[test]
+    fn save_as_a_name_with_a_separator_disables_save_and_says_so_inline() {
+        let directory = TemporaryDirectory::new("separator");
+        let mut harness = harness_for(&directory, "");
+
+        type_name(&mut harness, "sub/dir.md");
+
+        assert!(
+            harness.query_by_label(SEPARATOR_HINT).is_some(),
+            "a path separator in the name has to be explained inline"
+        );
+
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert!(
+            harness.state().1.is_none(),
+            "a name with a separator is not a single destination and must not save"
+        );
+    }
+
+    #[test]
     fn save_as_remote_destination_is_present_but_refuses_and_explains() {
         let directory = TemporaryDirectory::new("remote");
         let harness = harness_for(&directory, "notes.md");
 
-        let remote = harness.get_by_label("Remote host");
+        let remote = harness.get_by_label("Remote host — none connected");
         assert!(
             remote.accesskit_node().is_disabled(),
             "there is no connected SFTP session, so remote must be disabled"

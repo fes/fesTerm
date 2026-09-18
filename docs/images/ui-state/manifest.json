@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "d248b7aac4dc8669dae178ac0900d03a00ba8e3992dc658265956d693dda0cb4"
+      "sha256": "3bab80e8d165a2db73c18fae89f162cb7a07d1d0d6ba08ee63a945c114917151"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "2a8cf090a735627b3aaefca1f3c86197d64d250511f0beab60b3a5bafaf073e1"
+      "sha256": "b0179655ff577bebf420ee7dc2b178feafb6608b3880d443865b8a750a300bd5"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "6997efe1998903f9af10586cd816626ca54f7c947d508b413b37cac909de580f"
+      "sha256": "f1e58082cccacb2895847a06283b452c2e0600764c9b89f6a1838feadfaf256c"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "2a462cb14a1ab8122e05b9814bd90ccfdf4127c0babc69f314632250dd0ad531"
+      "sha256": "99abe1373b4414112c84c6ffeff1bf75fd5e6e49361dbba7cf46e24ea2b882eb"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "2487d61144bbe2cb88f3c17be12d4a369650bb26ce4cd6b388ae76997a24e9d1"
+      "sha256": "1037f71600792400f09fad4020896fe24fed36361af76bff932ddd521eed26bc"
     },
     {
       "id": "text-editor-save-as",
@@ -153,7 +153,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "627c6d4fb72bccb1e6285eee183e3ca2436641146df8b9e4b1cc2edb634b6291"
+      "sha256": "fb8e7298ae2f85ef7194e5ccff1e9492072cdb9ac8e83248902be67d00015f84"
     },
     {
       "id": "text-editor-saved",
@@ -164,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "d7b2fb5bda1688058ea4a84dd3c77be85ea58d7a4dcd3cb557b6f58f5296123a"
+      "sha256": "f6238be387398f82f1b4d0fc22080d3b0d7310bf2bf4f70a63aeadef952afb5e"
     },
     {
       "id": "text-editor-split",
@@ -175,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "ea4c36a1e3d6fb969d340cfb6e1ec61c53fa324d2f19a493a93a1b7e3bc80f42"
+      "sha256": "4bfdc7cbf0f6bdeb50badce4f23b340dd960bced046a219bcdfe05e013e0bd14"
     },
     {
       "id": "text-editor-unsaved",
@@ -186,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "5537f375451bf4e80b1041b559b3c86fc28be3e1d7747e79b386e841794383a6"
+      "sha256": "a4eba0d07e15da7dbe7b44d7fd24c387efc1cebb573b1fc90849f1a1b2ab81d9"
     },
     {
       "id": "keyboard-editor-collapsed",
