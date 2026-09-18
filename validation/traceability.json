@@ -1143,7 +1143,13 @@
         "markdown_file_picker_loads_its_starting_directory_and_identifies_markdown_files",
         "a_file_that_is_not_text_is_refused_by_name_rather_than_shown_as_rubble",
         "a_vi_search_and_next_walk_the_document_without_changing_it",
-        "a_backward_search_walks_backwards_and_so_does_n"
+        "a_backward_search_walks_backwards_and_so_does_n",
+        "a_bare_number_is_a_line_address_and_the_view_goes_with_it",
+        "a_dollar_is_the_last_line_and_a_number_past_the_end_is_too",
+        "a_caret_move_takes_the_viewport_with_it",
+        "the_outline_is_offered_only_while_the_file_renders_as_markdown",
+        "the_outline_rail_lists_the_headings_of_the_file_being_edited",
+        "scrolling_the_text_brings_the_preview_to_the_same_section"
       ],
       "manual_scenarios": [
         "CP-15"

@@ -408,6 +408,15 @@ fn scenarios() -> Vec<Scenario> {
                       typed.",
             capture: capture_text_editor_split,
         },
+        Scenario {
+            id: "text-editor-outline",
+            section: "editor",
+            title: "The editor with the Markdown outline beside it",
+            caption: "The same rail the Markdown viewer has, offered while the file \
+                      renders as Markdown: the headings stay in reach without \
+                      scrolling to find out where you are.",
+            capture: capture_text_editor_outline,
+        },
         // -- diagnostics --------------------------------------------------
         Scenario {
             id: "diagnostics-ssh-session",
@@ -1409,6 +1418,16 @@ fn capture_text_editor_options() -> image::RgbaImage {
 
 fn capture_text_editor_split() -> image::RgbaImage {
     render_text_editor_in(None, crate::text_editor::EditorMode::Split, None)
+}
+
+fn capture_text_editor_outline() -> image::RgbaImage {
+    render_text_editor_in(
+        None,
+        crate::text_editor::EditorMode::Edit,
+        Some(&|_documents, editor, _path| {
+            editor.set_outline_for_gallery(true);
+        }),
+    )
 }
 
 /// A real conflict, arranged the way one actually happens: the document is

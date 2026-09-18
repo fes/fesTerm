@@ -76,6 +76,10 @@ pub enum ViCommand {
     /// `:s`, `:%s`, `:'<,'>s` — parsed by the shared substitution engine so the
     /// command area and the Find bar cannot drift apart.
     Substitute(Box<SubstituteCommand>),
+    /// `:14`, `:0`, `:$` — put the caret on a line and take the view with it.
+    /// A number on its own is a line address in every vi there has ever been,
+    /// and this editor numbers its lines in the gutter already.
+    GoToLine { line: GoToLine },
 }
 
 impl ViCommand {
@@ -103,8 +107,20 @@ impl ViCommand {
             Self::Substitute(_) => {
                 "replaces through the same engine and the same regex dialect the Find bar uses."
             }
+            Self::GoToLine { .. } => "puts the caret on that line and scrolls it into view.",
         }
     }
+}
+
+/// Which line `:14` or `:$` is asking for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GoToLine {
+    /// A one-based line number, clamped to the end of the file when it is past
+    /// it — the same thing vi does, rather than refusing a number that is only
+    /// a little too big.
+    Number(usize),
+    /// `:$`.
+    Last,
 }
 
 /// Every command name the area will accept, for completion.
@@ -121,6 +137,26 @@ pub fn parse(line: &str) -> Result<ViCommand, CommandError> {
             "Empty command",
             "Type a command name after the colon, or press Esc to cancel.",
         ));
+    }
+
+    // A line address is a command in its own right: `:14` is the shortest way
+    // there is to reach line 14, and the gutter beside the text is already
+    // counting in the same units.
+    if trimmed == "$" {
+        return Ok(ViCommand::GoToLine {
+            line: GoToLine::Last,
+        });
+    }
+    if trimmed.chars().all(|character| character.is_ascii_digit()) {
+        return match trimmed.parse::<usize>() {
+            Ok(number) => Ok(ViCommand::GoToLine {
+                line: GoToLine::Number(number.max(1)),
+            }),
+            Err(_) => Err(CommandError::new(
+                "That line number is too large",
+                "Type a line number the file could actually have, or `:$` for the last line.",
+            )),
+        };
     }
 
     // A substitution carries its own range prefix and its own delimiter rules,

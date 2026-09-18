@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "1ffeb165a7e56bdebcc83e02fd37a30e0058180c6298036d13d7d99ed1a15f97"
+      "sha256": "462a2639d3f1988239c502da34d8dcac86690f1499821bd6637ef16c6d136df4"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "90e0b48d5d58a6da3a95ce1ee2168bf7700017b310d805bf491d632d8fcaa692"
+      "sha256": "651157d23bc5119512e5489da0a937eac9fe9d0981c7f925d93a50886a3fb56d"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "dcce42ed0fec05d180814d97f3a2f8e8a94950edefb03e67d3356695ce098a0c"
+      "sha256": "276da2af3d5ca0999bbcd083989bc5dff6612e9088c7cca35c7bb95379c9dad8"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "c97c95429f4a44fc986a191307ea4dc46963cd8e1d93ee84e27ae7ff553db856"
+      "sha256": "56409fb1f365d2da5355e15daab26d64b6664e550bade8a88c890e40d47a6cdb"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "6ed70ca406b8734b842b498dc38683e26109915e69631df536bc7195885982cf"
+      "sha256": "5e3fbcd93252079ea16f0457bbeb6a9a427e3ce27508ca73cd02373d1d9f3888"
+    },
+    {
+      "id": "text-editor-outline",
+      "section": "editor",
+      "title": "The editor with the Markdown outline beside it",
+      "caption": "The same rail the Markdown viewer has, offered while the file renders as Markdown: the headings stay in reach without scrolling to find out where you are.",
+      "image": "text-editor-outline.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "6bbed7b56570d24869ee224bab22a8ea048632b0e46b94a345b335c72a158d33"
     },
     {
       "id": "text-editor-save-as",
@@ -153,7 +164,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "2118cf593c9ca90a93066eede1228e16f841c5bff039c223802267647c755318"
+      "sha256": "c05f93ce86817f5d2bdf85b76b9d94055ad43b5937e55c84adaafc33541ea43a"
     },
     {
       "id": "text-editor-saved",
@@ -164,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "f06cdbf34bb2028ec1b43f390e1e640f4b42454a0f93631be73e9f9c97864a6f"
+      "sha256": "7af800a4cf4949a905d8949dfee8222f5551e54c2fb35e96e2f7333ed50c1c01"
     },
     {
       "id": "text-editor-split",
@@ -175,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "5f1d41f445c80388e229e64c6909e6ec8083154a97964bb63d8131f6fc519d90"
+      "sha256": "379b9b811cf5dcc58f88e8cfe8bdfc7f713d259a621b784aa5cd4ed3ca34d4dc"
     },
     {
       "id": "text-editor-unsaved",
@@ -186,7 +197,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "cc02e0530162551530f9d516d77b83173495bdd775f0a84e986870770389e724"
+      "sha256": "7f3f66801d046f12efbef1df976484d9fcf605e356160c54a6e3f2bb8326312e"
     },
     {
       "id": "text-editor-vi-command",
@@ -197,7 +208,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "5c97a6336fdfcc9b1381c13d9545349abf9481896b636bdbda4b405a1bf204f0"
+      "sha256": "c46bb885fbd782fed5866f52e9001b87c9f3065edfaaa489bc126c87b6d1dd6a"
     },
     {
       "id": "text-editor-vi-mode",
@@ -208,7 +219,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4fbfefc13e5ba5d387cf2c674e08539cf8ebc3ceccabffdc47ed39549fdbf849"
+      "sha256": "149fa093202435a46d6f6cb223bc648046210b8e2543401e6f6b48684a807646"
     },
     {
       "id": "text-editor-vi-search",
@@ -219,7 +230,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "5c8ca7aa516c5e89abc5a37e2cee301d7d807e42de86e6074cc36f1b8f7480e1"
+      "sha256": "f9f5bee57c9285f34562ef893803813cf22ef42bee13c2cc7e3b811ea19ee4c5"
     },
     {
       "id": "keyboard-editor-collapsed",

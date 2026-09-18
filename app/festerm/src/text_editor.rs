@@ -32,6 +32,10 @@ use crate::vi_command::{
 
 /// Width of the line-number gutter's digits area before padding.
 const GUTTER_PADDING_X: f32 = 12.0;
+/// How much of the text around the caret is dragged into view with it, so a
+/// caret lands in the middle of something rather than hard against an edge.
+const CARET_SCROLL_MARGIN: f32 = 48.0;
+
 const GUTTER_MIN_DIGITS: usize = 2;
 /// The tighter gap inside one group of related toolbar controls.
 const TOOLBAR_GROUP_GAP: f32 = 6.0;
@@ -71,6 +75,10 @@ pub(crate) struct EditorViewOptions {
     /// (ADR 0034 §9). `None` lets the body use the width it is given.
     pub(crate) fixed_columns: Option<usize>,
     pub(crate) vi_keys: bool,
+    /// Shows the Markdown outline beside the text. Offered only while the file
+    /// renders as Markdown, because a heading list of a shell script would be
+    /// an empty rail taking 216 pixels from the text.
+    pub(crate) outline: bool,
 }
 
 impl Default for EditorViewOptions {
@@ -79,6 +87,7 @@ impl Default for EditorViewOptions {
             line_numbers: true,
             fixed_columns: None,
             vi_keys: false,
+            outline: false,
         }
     }
 }
@@ -375,6 +384,22 @@ pub(crate) struct TextEditorTab {
     /// Which way the last vi search was going, so `n` repeats it and `N`
     /// reverses it rather than both meaning "forwards".
     vi_search_backward: bool,
+    /// The section both halves of a split are currently showing. Whichever
+    /// pane the reader scrolls, the other is brought to this heading; holding
+    /// one value for both is what keeps them from chasing each other.
+    sync_heading: Option<usize>,
+    /// A byte offset the text pane owes the reader a scroll to.
+    pending_scroll_offset: Option<usize>,
+    /// The byte offset of the first character visible in the text pane.
+    top_visible_offset: usize,
+    /// What that offset was last frame, so the pane the reader is actually
+    /// moving is the one that leads.
+    last_top_offset: usize,
+    /// The last rectangle the body was asked to scroll into view, so a test
+    /// can assert that a caret move took the viewport with it rather than
+    /// only moving the caret.
+    #[cfg(test)]
+    last_scroll_target: Option<egui::Rect>,
     /// Whether the body held focus at the end of the last frame. egui
     /// surrenders focus on Escape before a frame begins, so asking about focus
     /// now would make Escape the one key vi mode could never see.
@@ -420,6 +445,12 @@ impl TextEditorTab {
             vi_pending_command: None,
             vi_caret: None,
             vi_search_backward: false,
+            sync_heading: None,
+            pending_scroll_offset: None,
+            top_visible_offset: 0,
+            last_top_offset: 0,
+            #[cfg(test)]
+            last_scroll_target: None,
             vi_focused: false,
             tab: None,
             find: FindState::default(),
@@ -429,6 +460,13 @@ impl TextEditorTab {
     /// Only Markdown is rendered, and the file name is the only honest way to
     /// decide: guessing from content would move the toggle under the user as
     /// they type.
+    /// Turns the outline on for a gallery capture, the way the options menu
+    /// does for a reader.
+    #[cfg(test)]
+    pub(crate) fn set_outline_for_gallery(&mut self, outline: bool) {
+        self.options.outline = outline;
+    }
+
     pub(crate) fn renders_markdown(&self) -> bool {
         self.language_label() == "Markdown"
     }
@@ -1073,6 +1111,10 @@ impl TextEditorTab {
                 self.run_substitution(*command, documents);
                 None
             }
+            ViCommand::GoToLine { line } => {
+                self.go_to_line(line);
+                None
+            }
         }
     }
 
@@ -1147,6 +1189,16 @@ impl TextEditorTab {
     #[cfg(test)]
     pub(crate) fn enable_vi_for_gallery(&mut self) {
         self.options.vi_keys = true;
+        // A capture of NORMAL mode that does not show the block caret is a
+        // capture of the claim rather than of the thing, so the body is given
+        // its focus and its caret is put on a glyph in the prose.
+        let offset = self
+            .buffer
+            .find("message-relay")
+            .unwrap_or(0)
+            .min(self.buffer.len());
+        self.caret_offset = offset;
+        self.vi_caret = Some(offset);
     }
 
     #[cfg(test)]
@@ -1688,6 +1740,34 @@ impl TextEditorTab {
 
     /// The byte range of the line the caret is on, which is what `:s` without a
     /// range addresses.
+    /// Puts the caret at the start of a line and reports where it landed.
+    ///
+    /// A number past the end of the file is the last line rather than a
+    /// refusal: the reader asked to go as far as that, and vi has always taken
+    /// them as far as there is.
+    fn go_to_line(&mut self, line: crate::vi_command::GoToLine) {
+        let starts = std::iter::once(0)
+            .chain(
+                self.buffer
+                    .char_indices()
+                    .filter(|(_, character)| *character == '\n')
+                    .map(|(index, _)| index + 1),
+            )
+            .filter(|start| *start < self.buffer.len() || *start == 0)
+            .collect::<Vec<_>>();
+        let index = match line {
+            crate::vi_command::GoToLine::Last => starts.len().saturating_sub(1),
+            crate::vi_command::GoToLine::Number(number) => {
+                (number.saturating_sub(1)).min(starts.len().saturating_sub(1))
+            }
+        };
+        let offset = starts.get(index).copied().unwrap_or(0);
+        self.caret_offset = offset;
+        self.vi_caret = Some(offset);
+        self.command
+            .finish(CommandOutcome::Message(format!("Line {}", index + 1)));
+    }
+
     fn current_line_range(&self) -> std::ops::Range<usize> {
         let offset = self.caret_offset.min(self.buffer.len());
         let start = self.buffer[..offset]
@@ -1749,8 +1829,71 @@ impl TextEditorTab {
             // is what would happen to a Markdown file renamed to .txt.
             EditorMode::Edit
         };
+        let outline = self.renders_markdown() && self.options.outline;
         ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
             ui.set_height(height);
+            if outline {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.set_height(height);
+                    self.show_outline_rail(ui, height);
+                    ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
+                        ui.set_height(height);
+                        self.show_panes(ui, documents, mode, height);
+                    });
+                });
+                return;
+            }
+            self.show_panes(ui, documents, mode, height);
+        });
+    }
+
+    /// The optional outline beside the text (ADR 0034 §9).
+    ///
+    /// Editing a long Markdown file without one means scrolling to find out
+    /// where you are; the viewer has had this rail since it shipped and the
+    /// editor is looking at the same headings. Clicking one puts the caret at
+    /// the start of that section and takes the viewport with it.
+    fn show_outline_rail(&mut self, ui: &mut egui::Ui, height: f32) {
+        let pane = self.preview.get_or_insert_with(|| {
+            MarkdownPreviewPane::new(preview_source(&self.origin_label), &self.buffer)
+        });
+        pane.sync(ui.ctx(), &self.buffer);
+        let headings = pane.headings().to_vec();
+        let selected = self
+            .sync_heading
+            .or_else(|| pane.heading_at_byte(self.caret_offset));
+        let clicked = crate::markdown_viewer::show_markdown_outline(
+            ui,
+            &headings,
+            selected,
+            height,
+            "text-editor-outline",
+        );
+        if let Some(index) = clicked {
+            if let Some(offset) = self
+                .preview
+                .as_ref()
+                .and_then(|pane| pane.heading_byte(index))
+            {
+                self.caret_offset = offset;
+                self.vi_caret = Some(offset);
+                self.sync_heading = Some(index);
+                if let Some(pane) = self.preview.as_mut() {
+                    pane.scroll_to_heading(index);
+                }
+            }
+        }
+    }
+
+    fn show_panes(
+        &mut self,
+        ui: &mut egui::Ui,
+        documents: &SharedDocuments,
+        mode: EditorMode,
+        height: f32,
+    ) {
+        {
             match mode {
                 EditorMode::Edit => self.show_edit_pane(ui, documents, ui.available_width()),
                 EditorMode::Preview => self.show_preview_pane(ui, height),
@@ -1774,9 +1917,10 @@ impl TextEditorTab {
                             self.show_preview_pane(ui, height);
                         });
                     });
+                    self.sync_split_scroll();
                 }
             }
-        });
+        }
     }
 
     fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
@@ -1803,6 +1947,91 @@ impl TextEditorTab {
             ui.set_height(height);
             pane.show(ui);
         });
+    }
+
+    /// Keeps the two halves of a split looking at the same section.
+    ///
+    /// Reading and editing the same document side by side is only useful while
+    /// the two sides agree about where they are; a preview that stays at the
+    /// top while the text is three sections down is a second document. The
+    /// section is the unit because it is the one both panes can name: a line
+    /// of source has no height in the rendering, but a heading has a place in
+    /// both.
+    fn sync_split_scroll(&mut self) {
+        let top_offset = self.top_visible_offset;
+        // Whichever pane moved this frame is the one being read; without that
+        // test the two panes pull against each other at every section
+        // boundary and the scroll stops dead.
+        let text_moved = top_offset != self.last_top_offset;
+        self.last_top_offset = top_offset;
+        let previous = self.sync_heading;
+        let Some(pane) = self.preview.as_mut() else {
+            return;
+        };
+        if text_moved {
+            if let Some(index) = pane.heading_at_byte(top_offset) {
+                if Some(index) != previous {
+                    pane.scroll_to_heading(index);
+                    self.sync_heading = Some(index);
+                }
+            }
+            return;
+        }
+        if let Some(index) = pane.visible_heading() {
+            if Some(index) != previous {
+                self.pending_scroll_offset = pane.heading_byte(index);
+                self.sync_heading = Some(index);
+            }
+        }
+    }
+
+    /// Paints the block caret Normal and Visual mode are owed.
+    ///
+    /// A modal editor whose caret looks the same in both modes is asking the
+    /// reader to remember which one they are in; the shape is the one signal
+    /// that is always where they are already looking. Insert and Replace keep
+    /// the widget's own bar, which is the one the platform draws.
+    fn paint_mode_caret(
+        &self,
+        ui: &egui::Ui,
+        output: &egui::text_edit::TextEditOutput,
+        index: usize,
+    ) {
+        if !self.options.vi_keys || !output.response.has_focus() {
+            return;
+        }
+        if !matches!(
+            self.vi.mode(),
+            ViMode::Normal | ViMode::Visual | ViMode::VisualLine
+        ) {
+            return;
+        }
+        let offset = output.galley_pos.to_vec2();
+        let here = output
+            .galley
+            .pos_from_cursor(egui::text::CCursor::new(index))
+            .translate(offset);
+        // As wide as the character it covers, which for a monospaced body is
+        // the width of the next caret position along.
+        let next = output
+            .galley
+            .pos_from_cursor(egui::text::CCursor::new(index + 1))
+            .translate(offset);
+        let width = if next.left() > here.left() {
+            next.left() - here.left()
+        } else {
+            ui.painter()
+                .layout_no_wrap(
+                    "0".to_owned(),
+                    FontId::monospace(EDITOR_TEXT_SIZE),
+                    theme::TEXT_PRIMARY,
+                )
+                .size()
+                .x
+        };
+        let block = egui::Rect::from_min_size(here.min, vec2(width, here.height()));
+        ui.painter()
+            .rect_filled(block, 1.0, theme::ACCENT_PRIMARY.gamma_multiply(0.45));
     }
 
     /// The width the line-number column needs for the document it is beside.
@@ -1907,9 +2136,9 @@ impl TextEditorTab {
             ui.checkbox(&mut self.options.line_numbers, "Show line numbers");
             ui.add_space(OPTIONS_MENU_GAP);
             self.show_fixed_columns_control(ui);
-            ui.add_space(OPTIONS_MENU_GAP);
-            ui.checkbox(&mut self.options.vi_keys, "vi compatibility");
-            ui.add_space(OPTIONS_MENU_GAP);
+            // The caption belongs under the control it explains: with other
+            // rows between them it reads as the description of whichever
+            // checkbox happens to sit above it.
             let explanation = if self.options_state.invalid {
                 "A fixed column count must be a whole number of at least one."
             } else {
@@ -1925,6 +2154,12 @@ impl TextEditorTab {
                 color,
                 egui::RichText::new(explanation).size(LABEL_TEXT_SIZE),
             );
+            ui.add_space(OPTIONS_MENU_GAP);
+            ui.checkbox(&mut self.options.vi_keys, "vi compatibility");
+            if self.renders_markdown() {
+                ui.add_space(OPTIONS_MENU_GAP);
+                ui.checkbox(&mut self.options.outline, "Show outline");
+            }
         });
     }
 
@@ -2073,6 +2308,33 @@ impl TextEditorTab {
             ui.ctx().memory_mut(|memory| memory.request_focus(body_id));
         }
 
+        // Where the reader's eye is, in the text's own units, so the preview
+        // can be asked for the same section.
+        let visible_top = ui.clip_rect().top() - output.galley_pos.y;
+        let top_cursor = output
+            .galley
+            .cursor_from_pos(egui::vec2(0.0, visible_top.max(0.0)));
+        self.top_visible_offset = self
+            .buffer
+            .char_indices()
+            .nth(top_cursor.index.0)
+            .map_or(self.buffer.len(), |(offset, _)| offset);
+
+        if self.vi_caret.is_none() {
+            if let Some(offset) = self.pending_scroll_offset.take() {
+                let index = self.buffer[..offset.min(self.buffer.len())].chars().count();
+                let target = output
+                    .galley
+                    .pos_from_cursor(egui::text::CCursor::new(index))
+                    .translate(output.galley_pos.to_vec2());
+                ui.scroll_to_rect(target, Some(egui::Align::TOP));
+                #[cfg(test)]
+                {
+                    self.last_scroll_target = Some(target);
+                }
+            }
+        }
+
         self.vi_focused = self.options.vi_keys && output.response.has_focus();
 
         // The engine decides where the caret is, but the widget owns its own
@@ -2087,8 +2349,28 @@ impl TextEditorTab {
                 )));
             state.store(ui.ctx(), body_id);
             ui.ctx().memory_mut(|memory| memory.request_focus(body_id));
+            // A caret the reader cannot see has not moved as far as they are
+            // concerned. `G`, `gg`, `n` and `:14` all land somewhere that may
+            // be pages away, so the view goes with them.
+            let caret = output
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(index))
+                .translate(output.galley_pos.to_vec2());
+            ui.scroll_to_rect(caret.expand(CARET_SCROLL_MARGIN), None);
+            #[cfg(test)]
+            {
+                self.last_scroll_target = Some(caret);
+            }
+            self.paint_mode_caret(ui, &output, index);
             return;
         }
+
+        let cursor_index = output
+            .state
+            .cursor
+            .char_range()
+            .map_or(0, |range| range.primary.index.0);
+        self.paint_mode_caret(ui, &output, cursor_index);
 
         if let Some(range) = output.cursor_range {
             if let Some(open) = documents.borrow().get(self.document) {
@@ -3198,6 +3480,199 @@ mod tests {
             document_text(&harness),
             "alpha beta\n",
             "typing in the Find field must not run a vi operator on the document"
+        );
+    }
+
+    /// Types a `:` command the way a reader does: the colon opens the area,
+    /// the field takes the rest, Enter runs it.
+    fn run_command(
+        harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>,
+        command: &str,
+    ) {
+        vi_type(harness, ":");
+        command_field(harness).focus();
+        harness.run();
+        command_field(harness).type_text(command);
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+    }
+
+    fn numbered_lines(count: usize) -> String {
+        (1..=count)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>()
+    }
+
+    #[test]
+    fn a_bare_number_is_a_line_address_and_the_view_goes_with_it() {
+        let directory = TemporaryDirectory::new("vi-goto-line");
+        let path = directory.file("notes.md", &numbered_lines(200));
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        run_command(&mut harness, "14");
+
+        // "line 1\n" through "line 9\n" are 7 bytes each, then two digits.
+        let expected = 9 * 7 + 4 * 8;
+        assert_eq!(
+            harness.state().1.caret_offset,
+            expected,
+            "`:14` puts the caret at the start of line 14"
+        );
+        assert!(
+            harness.state().1.last_scroll_target.is_some(),
+            "a jump the reader cannot see has not happened as far as they are concerned"
+        );
+    }
+
+    #[test]
+    fn a_dollar_is_the_last_line_and_a_number_past_the_end_is_too() {
+        let directory = TemporaryDirectory::new("vi-goto-last");
+        let path = directory.file("notes.md", "one\ntwo\nthree\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        run_command(&mut harness, "$");
+        assert_eq!(harness.state().1.caret_offset, 8, "`:$` is the last line");
+
+        focus_body(&mut harness);
+        run_command(&mut harness, "900");
+        assert_eq!(
+            harness.state().1.caret_offset,
+            8,
+            "a line number past the end goes as far as the file goes rather than refusing"
+        );
+    }
+
+    #[test]
+    fn a_caret_move_takes_the_viewport_with_it() {
+        let directory = TemporaryDirectory::new("vi-caret-visible");
+        let path = directory.file("notes.md", &numbered_lines(400));
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+        harness.state_mut().1.last_scroll_target = None;
+
+        vi_type(&mut harness, "G");
+
+        let target = harness
+            .state()
+            .1
+            .last_scroll_target
+            .expect("`G` scrolls the body to the caret it just moved");
+        let top = harness
+            .state()
+            .1
+            .last_scroll_target
+            .map(|rect| rect.top())
+            .unwrap_or_default();
+        assert!(
+            target.height() > 0.0 && top > 0.0,
+            "the scroll target is the caret's own line, a long way down a 400-line file"
+        );
+    }
+
+    #[test]
+    fn the_outline_is_offered_only_while_the_file_renders_as_markdown() {
+        let directory = TemporaryDirectory::new("editor-outline-offer");
+        let markdown = directory.file("notes.md", "# Title\n\n## Section\n\nbody\n");
+        let plain = directory.file("notes.txt", "# Title\n\n## Section\n\nbody\n");
+        let (_, markdown_tab) = editor_for(&markdown);
+        let (_, plain_tab) = editor_for(&plain);
+
+        assert!(markdown_tab.renders_markdown());
+        assert!(!plain_tab.renders_markdown());
+    }
+
+    #[test]
+    fn the_outline_rail_lists_the_headings_of_the_file_being_edited() {
+        let directory = TemporaryDirectory::new("editor-outline-rail");
+        let path = directory.file(
+            "notes.md",
+            "# Title\n\nintro\n\n## Beginnings\n\nbody\n\n## Endings\n\nmore\n",
+        );
+        let mut harness = find_harness(&path);
+        harness.state_mut().1.options.outline = true;
+        harness.run();
+        harness.run();
+        harness.run();
+
+        let headings = harness
+            .state()
+            .1
+            .preview
+            .as_ref()
+            .expect("the outline parses the buffer it is editing")
+            .headings()
+            .iter()
+            .map(|heading| heading.text().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(headings, ["Title", "Beginnings", "Endings"]);
+        assert!(
+            harness
+                .query_all_by_label("Heading level 2: Endings")
+                .next()
+                .is_some(),
+            "every heading is a row the reader can click"
+        );
+    }
+
+    #[test]
+    fn scrolling_the_text_brings_the_preview_to_the_same_section() {
+        let directory = TemporaryDirectory::new("editor-scroll-sync");
+        let mut text = String::from("# Title\n\nintro\n\n");
+        text.push_str("## Beginnings\n\n");
+        for line in 0..80 {
+            text.push_str(&format!("beginning line {line}\n"));
+        }
+        text.push_str("\n## Endings\n\n");
+        for line in 0..80 {
+            text.push_str(&format!("ending line {line}\n"));
+        }
+        let path = directory.file("notes.md", &text);
+        let mut harness = find_harness(&path);
+        harness.state_mut().1.mode = EditorMode::Split;
+        for _ in 0..3 {
+            harness.run();
+        }
+        assert_eq!(harness.state().1.sync_heading, Some(0));
+
+        // The reader spins the wheel over the text pane, which is the left
+        // half of the split.
+        for _ in 0..80 {
+            harness
+                .input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(300.0, 250.0)));
+            harness.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -400.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            // Stepped rather than run: the scroll animates, so a `run` that
+            // waits for the frames to settle would wait for ever.
+            harness.step();
+        }
+
+        assert!(
+            harness.state().1.top_visible_offset > 0,
+            "the wheel moved the text pane"
+        );
+        assert_eq!(
+            harness.state().1.sync_heading,
+            Some(2),
+            "the preview follows the text into the section being edited"
+        );
+        assert_eq!(
+            harness
+                .state()
+                .1
+                .preview
+                .as_ref()
+                .and_then(|pane| pane.visible_heading()),
+            Some(2),
         );
     }
 

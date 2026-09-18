@@ -119,6 +119,15 @@ pub enum MarkdownViewerMode {
     Source,
 }
 
+/// How far above the top of the preview a heading may have scrolled and still
+/// count as the section being read. A heading sitting just above the fold is
+/// the one the paragraphs on screen belong to.
+const PREVIEW_SECTION_TOLERANCE: f32 = 8.0;
+
+/// How many frames a requested section has to arrive in before the pane goes
+/// back to reporting what it can actually see.
+const PREVIEW_SCROLL_FRAMES: u32 = 30;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingScroll {
     Heading(usize),
@@ -766,6 +775,7 @@ impl MarkdownViewerTab {
                     };
                     let body_height = (ui.available_height() - footer_height).max(120.0);
                     let mut document_rect = None;
+                    let mut heading_tops = Vec::new();
                     ui.allocate_ui(vec2(ui.available_width(), body_height), |ui| {
                         ui.set_height(body_height);
                         if let Some(document) = self.document.as_ref() {
@@ -787,6 +797,7 @@ impl MarkdownViewerTab {
                                     pending_scroll: &mut self.pending_scroll,
                                     line_heading_indices: &self.line_heading_indices,
                                     outline_keyboard_focus: &mut self.outline_keyboard_focus,
+                                    heading_tops: &mut heading_tops,
                                 };
                                 document_rect =
                                     Some(render_state.show_document(ui, document).document_rect);
@@ -1462,6 +1473,10 @@ struct MarkdownRenderState<'a> {
     pending_scroll: &'a mut Option<PendingScroll>,
     line_heading_indices: &'a [Option<usize>],
     outline_keyboard_focus: &'a mut bool,
+    /// Where each heading was painted this frame, so a caller that wants to
+    /// know which section the reader is looking at can ask the rendering
+    /// rather than guess from a scroll offset.
+    heading_tops: &'a mut Vec<(usize, f32)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1650,71 +1665,7 @@ impl MarkdownRenderState<'_> {
         heading: &festerm_markdown::Heading,
     ) {
         let selected = *self.outline_selected == Some(index);
-        // `.fmd-outline-item` gives H1 and H2 the same inset and only steps
-        // in from `.fmd-depth2` onward: in a document whose H1 is the title,
-        // the H2 sections read as its peers in the outline, and indenting
-        // every level spent sidebar width the 216px pane does not have.
-        let indent = (heading.level().saturating_sub(2) as f32) * OUTLINE_ITEM_INDENT;
-        let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
-        let text_color = if selected {
-            theme::TEXT_PRIMARY
-        } else if heading.level() > 2 {
-            theme::TEXT_SECONDARY
-        } else {
-            theme::TEXT_PRIMARY.gamma_multiply(0.86)
-        };
-        let width = ui.available_width();
-        let text_left =
-            OUTLINE_ITEM_PADDING_X + OUTLINE_ITEM_ACCENT_WIDTH + OUTLINE_ITEM_PADDING_X + indent;
-        let galley = ui.painter().layout(
-            heading.text().to_owned(),
-            font,
-            text_color,
-            (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
-        );
-        let height = galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0;
-        let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-        response.widget_info(|| {
-            WidgetInfo::selected(
-                WidgetType::Button,
-                true,
-                selected,
-                format!("Heading level {}: {}", heading.level(), heading.text()),
-            )
-        });
-
-        if selected || response.hovered() {
-            ui.painter().rect_filled(
-                rect,
-                OUTLINE_ITEM_RADIUS,
-                if selected {
-                    // The mockup's current outline item is a muted slate
-                    // wash (#1a303f), not the full-strength text-selection
-                    // blue, which read as a stray text selection in the
-                    // sidebar rather than a navigation state.
-                    theme::SURFACE_SELECTION.gamma_multiply(0.6)
-                } else {
-                    theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.5)
-                },
-            );
-        }
-        if selected {
-            ui.painter().rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(rect.left(), rect.top()),
-                    egui::pos2(rect.left() + OUTLINE_ITEM_ACCENT_WIDTH, rect.bottom()),
-                ),
-                0.0,
-                theme::ACCENT_PRIMARY,
-            );
-        }
-        ui.painter().galley(
-            egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
-            galley,
-            text_color,
-        );
-
-        if response.clicked() {
+        if outline_item(ui, heading, selected).clicked() {
             *self.outline_selected = Some(index);
             *self.pending_scroll = Some(PendingScroll::Heading(index));
             *self.outline_keyboard_focus = true;
@@ -1727,44 +1678,7 @@ impl MarkdownRenderState<'_> {
         document: &MarkdownDocument,
         viewport_height: f32,
     ) -> egui::Rect {
-        // A full-height panel divided from the document by a single hairline,
-        // not a floating card: the mockup's `.fmd-outline` uses only
-        // `border-right`, and a bordered card left an obvious gap above the
-        // status bar where the card stopped short.
-        let (panel_rect, _) =
-            ui.allocate_exact_size(vec2(OUTLINE_WIDTH, viewport_height), Sense::hover());
-        // `.fmd-outline { background: #0f151c }` is only a couple of levels
-        // above the body; the tab surface was a far bigger jump and made the
-        // outline read as a floating card.
-        ui.painter()
-            .rect_filled(panel_rect, 0.0, theme::SURFACE_TERMINAL);
-        ui.painter().line_segment(
-            [panel_rect.right_top(), panel_rect.right_bottom()],
-            egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-        );
-
-        let content_rect = panel_rect
-            .shrink2(vec2(OUTLINE_PADDING_X, OUTLINE_PADDING_Y))
-            // Keep the hairline clear of the content.
-            .translate(vec2(-0.5, 0.0));
-        let mut content = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(content_rect)
-                .layout(egui::Layout::top_down(Align::Min)),
-        );
-        content.spacing_mut().item_spacing.y = 0.0;
-        content.horizontal(|ui| {
-            ui.add_space(OUTLINE_TITLE_INSET_X);
-            icon_label(
-                ui,
-                Icon::Outline,
-                RichText::new("OUTLINE")
-                    .size(10.0)
-                    .color(theme::TEXT_SECONDARY),
-                theme::TEXT_SECONDARY,
-            );
-        });
-        content.add_space(OUTLINE_TITLE_GAP_BELOW);
+        let (panel_rect, mut content) = outline_panel(ui, viewport_height);
         egui::ScrollArea::vertical()
             .id_salt("markdown-outline")
             .max_height(content.available_height())
@@ -1956,6 +1870,7 @@ impl MarkdownRenderState<'_> {
                 egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
             );
         }
+        self.heading_tops.push((heading_index, response.rect.top()));
         if matches!(*self.pending_scroll, Some(PendingScroll::Heading(index)) if index == heading_index)
         {
             response.scroll_to_me(Some(Align::Center));
@@ -3316,6 +3231,15 @@ pub(crate) struct MarkdownPreviewPane {
     pending_scroll: Option<PendingScroll>,
     line_heading_indices: Vec<Option<usize>>,
     outline_keyboard_focus: bool,
+    heading_tops: Vec<(usize, f32)>,
+    visible_heading: Option<usize>,
+    /// A section this pane has been sent to and has not arrived at yet. While
+    /// it is in flight the pane reports where it is going rather than where it
+    /// currently is: a scroll takes several frames to animate, and a caller
+    /// syncing two panes would otherwise read the frames in between as the
+    /// reader scrolling back.
+    requested_heading: Option<usize>,
+    frames_in_flight: u32,
 }
 
 impl MarkdownPreviewPane {
@@ -3336,6 +3260,10 @@ impl MarkdownPreviewPane {
             pending_scroll: None,
             line_heading_indices: Vec::new(),
             outline_keyboard_focus: false,
+            heading_tops: Vec::new(),
+            visible_heading: None,
+            requested_heading: None,
+            frames_in_flight: 0,
         };
         pane.parse(text.to_owned());
         pane
@@ -3418,6 +3346,7 @@ impl MarkdownPreviewPane {
         let Some(document) = self.document.take() else {
             return;
         };
+        let mut heading_tops = Vec::new();
         let mut state = MarkdownRenderState {
             mode: MarkdownViewerMode::Preview,
             outline_open: false,
@@ -3430,8 +3359,10 @@ impl MarkdownPreviewPane {
             pending_scroll: &mut self.pending_scroll,
             line_heading_indices: &self.line_heading_indices,
             outline_keyboard_focus: &mut self.outline_keyboard_focus,
+            heading_tops: &mut heading_tops,
         };
         let viewport_height = ui.available_height().max(120.0);
+        let viewport_top = ui.cursor().top();
         egui::ScrollArea::vertical()
             .id_salt("markdown-preview-pane")
             .max_height(viewport_height)
@@ -3461,8 +3392,211 @@ impl MarkdownPreviewPane {
                     );
                 });
             });
+        // Which section the reader is actually looking at, taken from where
+        // the headings landed rather than from a scroll offset that means
+        // nothing without the rendered heights.
+        let measured = heading_tops
+            .iter()
+            .rfind(|(_, top)| *top <= viewport_top + PREVIEW_SECTION_TOLERANCE)
+            .map(|(index, _)| *index)
+            .or_else(|| heading_tops.first().map(|(index, _)| *index));
+        if let Some(requested) = self.requested_heading {
+            self.frames_in_flight += 1;
+            // A section short enough that it cannot reach the top of the pane
+            // would never arrive, so the flight is given a budget rather than
+            // being waited on for ever.
+            if measured == Some(requested) || self.frames_in_flight > PREVIEW_SCROLL_FRAMES {
+                self.requested_heading = None;
+                self.frames_in_flight = 0;
+            }
+        }
+        self.visible_heading = self.requested_heading.or(measured);
+        self.heading_tops = heading_tops;
         self.document = Some(document);
     }
+
+    /// The heading whose section fills the top of the preview, if the
+    /// document has any headings at all.
+    pub(crate) fn visible_heading(&self) -> Option<usize> {
+        self.visible_heading
+    }
+
+    /// Scrolls the preview so a section is at the top of the pane.
+    pub(crate) fn scroll_to_heading(&mut self, index: usize) {
+        self.pending_scroll = Some(PendingScroll::Heading(index));
+        self.visible_heading = Some(index);
+        self.requested_heading = Some(index);
+        self.frames_in_flight = 0;
+    }
+
+    /// The headings the current parse found, for a caller drawing its own
+    /// outline beside the text.
+    pub(crate) fn headings(&self) -> &[festerm_markdown::Heading] {
+        self.document
+            .as_ref()
+            .map(|document| document.headings())
+            .unwrap_or(&[])
+    }
+
+    /// The heading whose section covers a byte offset in the source.
+    pub(crate) fn heading_at_byte(&self, offset: usize) -> Option<usize> {
+        self.document
+            .as_ref()
+            .and_then(|document| document.nearest_heading_index_at_byte(offset))
+    }
+
+    /// Where a heading starts in the source, so the other pane can put its
+    /// caret and its viewport on the same words.
+    pub(crate) fn heading_byte(&self, index: usize) -> Option<usize> {
+        self.document
+            .as_ref()
+            .and_then(|document| document.headings().get(index))
+            .map(|heading| heading.section_start_byte())
+    }
+}
+
+/// One row of a Markdown outline, painted the way the mockup's
+/// `.fmd-outline-item` is. Shared rather than copied so the editor's optional
+/// outline and the viewer's cannot drift into two different sidebars.
+fn outline_item(
+    ui: &mut egui::Ui,
+    heading: &festerm_markdown::Heading,
+    selected: bool,
+) -> egui::Response {
+    // `.fmd-outline-item` gives H1 and H2 the same inset and only steps in
+    // from `.fmd-depth2` onward: in a document whose H1 is the title, the H2
+    // sections read as its peers in the outline, and indenting every level
+    // spent sidebar width the 216px pane does not have.
+    let indent = (heading.level().saturating_sub(2) as f32) * OUTLINE_ITEM_INDENT;
+    let font = FontId::proportional(TOOLBAR_TEXT_SIZE);
+    let text_color = if selected {
+        theme::TEXT_PRIMARY
+    } else if heading.level() > 2 {
+        theme::TEXT_SECONDARY
+    } else {
+        theme::TEXT_PRIMARY.gamma_multiply(0.86)
+    };
+    let width = ui.available_width();
+    let text_left =
+        OUTLINE_ITEM_PADDING_X + OUTLINE_ITEM_ACCENT_WIDTH + OUTLINE_ITEM_PADDING_X + indent;
+    let galley = ui.painter().layout(
+        heading.text().to_owned(),
+        font,
+        text_color,
+        (width - text_left - OUTLINE_ITEM_PADDING_X).max(24.0),
+    );
+    let height = galley.size().y + OUTLINE_ITEM_PADDING_Y * 2.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::Button,
+            true,
+            selected,
+            format!("Heading level {}: {}", heading.level(), heading.text()),
+        )
+    });
+
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            OUTLINE_ITEM_RADIUS,
+            if selected {
+                // The mockup's current outline item is a muted slate wash
+                // (#1a303f), not the full-strength text-selection blue, which
+                // read as a stray text selection in the sidebar rather than a
+                // navigation state.
+                theme::SURFACE_SELECTION.gamma_multiply(0.6)
+            } else {
+                theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.5)
+            },
+        );
+    }
+    if selected {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.top()),
+                egui::pos2(rect.left() + OUTLINE_ITEM_ACCENT_WIDTH, rect.bottom()),
+            ),
+            0.0,
+            theme::ACCENT_PRIMARY,
+        );
+    }
+    ui.painter().galley(
+        egui::pos2(rect.left() + text_left, rect.top() + OUTLINE_ITEM_PADDING_Y),
+        galley,
+        text_color,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The outline panel's chrome and its titled content area.
+fn outline_panel(ui: &mut egui::Ui, viewport_height: f32) -> (egui::Rect, egui::Ui) {
+    // A full-height panel divided from the document by a single hairline, not
+    // a floating card: the mockup's `.fmd-outline` uses only `border-right`,
+    // and a bordered card left an obvious gap above the status bar where the
+    // card stopped short.
+    let (panel_rect, _) =
+        ui.allocate_exact_size(vec2(OUTLINE_WIDTH, viewport_height), Sense::hover());
+    // `.fmd-outline { background: #0f151c }` is only a couple of levels above
+    // the body; the tab surface was a far bigger jump and made the outline
+    // read as a floating card.
+    ui.painter()
+        .rect_filled(panel_rect, 0.0, theme::SURFACE_TERMINAL);
+    ui.painter().line_segment(
+        [panel_rect.right_top(), panel_rect.right_bottom()],
+        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+    );
+
+    let content_rect = panel_rect
+        .shrink2(vec2(OUTLINE_PADDING_X, OUTLINE_PADDING_Y))
+        // Keep the hairline clear of the content.
+        .translate(vec2(-0.5, 0.0));
+    let mut content = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(content_rect)
+            .layout(egui::Layout::top_down(Align::Min)),
+    );
+    content.spacing_mut().item_spacing.y = 0.0;
+    content.horizontal(|ui| {
+        ui.add_space(OUTLINE_TITLE_INSET_X);
+        icon_label(
+            ui,
+            Icon::Outline,
+            RichText::new("OUTLINE")
+                .size(10.0)
+                .color(theme::TEXT_SECONDARY),
+            theme::TEXT_SECONDARY,
+        );
+    });
+    content.add_space(OUTLINE_TITLE_GAP_BELOW);
+    (panel_rect, content)
+}
+
+/// The outline a view other than the Markdown tab can hang beside its body.
+///
+/// Returns the heading the reader clicked, if any; the caller decides what
+/// "go there" means in its own pane.
+pub(crate) fn show_markdown_outline(
+    ui: &mut egui::Ui,
+    headings: &[festerm_markdown::Heading],
+    selected: Option<usize>,
+    viewport_height: f32,
+    id_salt: &str,
+) -> Option<usize> {
+    let (_, mut content) = outline_panel(ui, viewport_height);
+    let mut clicked = None;
+    egui::ScrollArea::vertical()
+        .id_salt(id_salt)
+        .max_height(content.available_height())
+        .show(&mut content, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (index, heading) in headings.iter().enumerate() {
+                if outline_item(ui, heading, selected == Some(index)).clicked() {
+                    clicked = Some(index);
+                }
+            }
+        });
+    clicked
 }
 
 pub(crate) fn toolbar_button(
@@ -3822,6 +3956,7 @@ mod tests {
         let mut outline_selected = None;
         let mut pending_scroll = None;
         let mut outline_keyboard_focus = false;
+        let mut heading_tops = Vec::new();
         Harness::builder().build_ui_state(
             move |ui, _state: &mut ()| {
                 let mut state = MarkdownRenderState {
@@ -3836,6 +3971,7 @@ mod tests {
                     pending_scroll: &mut pending_scroll,
                     line_heading_indices: &[],
                     outline_keyboard_focus: &mut outline_keyboard_focus,
+                    heading_tops: &mut heading_tops,
                 };
                 state.render_blocks(ui, parsed.blocks(), &parsed, InlineRenderStyle::body());
             },
@@ -4247,6 +4383,7 @@ mod tests {
         let image_errors = BTreeMap::new();
         let mut pending_scroll = None;
         let mut outline_keyboard_focus = false;
+        let mut heading_tops = Vec::new();
         let mut layout = None;
 
         let mut output = context.run_ui(
@@ -4271,6 +4408,7 @@ mod tests {
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
                         outline_keyboard_focus: &mut outline_keyboard_focus,
+                        heading_tops: &mut heading_tops,
                     };
                     layout = Some(render_state.show_document(ui, &document));
                 });
@@ -4310,6 +4448,7 @@ mod tests {
         let image_errors = BTreeMap::new();
         let mut pending_scroll = None;
         let mut outline_keyboard_focus = false;
+        let mut heading_tops = Vec::new();
         let mut layout = None;
 
         let mut output = context.run_ui(
@@ -4336,6 +4475,7 @@ mod tests {
                         pending_scroll: &mut pending_scroll,
                         line_heading_indices: &[],
                         outline_keyboard_focus: &mut outline_keyboard_focus,
+                        heading_tops: &mut heading_tops,
                     };
                     layout = Some(render_state.show_document(ui, &document));
                 });

@@ -287,7 +287,16 @@ memory`).
 
 ### 9. Per-view presentation never touches document bytes
 
-Line numbers, fixed columns, and vi compatibility are per-view. Fixed columns is
+Line numbers, fixed columns, vi compatibility, and the Markdown outline are
+per-view. The outline is offered only while the file renders as Markdown: a
+heading rail beside a shell script is an empty column taking width from the
+text. It is the viewer's own rail, not a second one, and clicking a heading
+puts the caret at the start of that section and takes the viewport with it.
+
+In Split the two panes follow each other by **section**. Whichever pane the
+reader is moving leads, and the other is brought to the same heading; a section
+is the unit because it is the one both panes can name, where a line of source
+has no height in the rendering. Fixed columns is
 a **soft visual width**: long lines wrap visually at the chosen column, the
 boundary is marked unobtrusively, and no newline is ever inserted. Its value is
 a validated positive integer; an invalid or zero value cannot apply, and

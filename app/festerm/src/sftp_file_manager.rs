@@ -5872,6 +5872,10 @@ impl MarkdownFilePicker {
     pub(crate) fn ui(&mut self, ui: &mut Ui) -> MarkdownPickerOutcome {
         let mut outcome = MarkdownPickerOutcome::Pending;
         let width = ui.available_width();
+        // These rows are a list to be clicked, not prose to be selected. Left
+        // selectable, every label under the pointer turns the cursor into an
+        // I-beam and the sheet reads as a document rather than as a chooser.
+        ui.style_mut().interaction.selectable_labels = false;
 
         ui.horizontal(|ui| {
             if toolbar_icon_button(ui, SftpGlyph::Back, "Back").clicked() {
@@ -6099,6 +6103,7 @@ impl MarkdownFilePicker {
                             theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.6),
                         );
                     }
+                    let row_response = row_response.on_hover_cursor(egui::CursorIcon::Default);
                     if row_response.clicked() {
                         self.pane.select_single(&item.path);
                     }

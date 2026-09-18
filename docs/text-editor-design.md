@@ -108,9 +108,19 @@ no local watcher at all.
 
 ## Per-view options
 
-Line numbers, a fixed column count, and vi compatibility belong to the view.
-Two windows on one file may be set up differently without disagreeing about the
-text.
+Line numbers, a fixed column count, vi compatibility, and the Markdown outline
+belong to the view. Two windows on one file may be set up differently without
+disagreeing about the text.
+
+**Show outline** appears in the options menu only while the file renders as
+Markdown, and draws the Markdown viewer's own rail beside the text: the same
+headings, the same widths, the same current-section accent. Clicking a heading
+puts the caret at the start of that section and scrolls to it.
+
+In Split, the text and the preview follow each other by section. Scroll the
+text into a section and the preview comes with it; scroll the preview and the
+text follows. Whichever pane is moving leads, so the two never pull against
+each other.
 
 A fixed column count is a **soft visual width**. Long lines wrap visually at
 the chosen column; no newline is ever inserted into the document. A count that
@@ -178,6 +188,16 @@ The `:` commands are all fesTerm-routed, which is the whole point of them.
 completes. `:w {path}` and `:saveas` dispatch the reviewed Save As sheet with
 no silent overwrite. `:q!` and `ZQ` open the ordinary final-view discard
 confirmation rather than silently discarding state other views can see.
+
+Navigation takes the viewport with it. `G`, `gg`, `n`, a search and `:14` may
+all land pages away, and a caret the reader cannot see has not moved as far as
+they are concerned. `:14` is a bare line number — the gutter beside the text is
+already counting in the same units — `:$` is the last line, and a number past
+the end of the file goes as far as the file goes rather than refusing.
+
+Normal and Visual paint a **block** caret over the character under it; Insert
+and Replace keep the platform's own bar. The shape is a second signal, never
+the only one:
 
 The current mode is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
 `REPLACE`, `COMMAND`, `SEARCH` — in the status bar. Cursor shape or colour
