@@ -68,10 +68,11 @@ ADR 0032 already threads through every window, keyed by a canonical
 `DocumentId`:
 
 - **Local:** the resolved file identity where the platform reports one (device
-  plus inode on Unix, file index on Windows), falling back to the canonicalized
-  path. Symlinks resolve to their target, so a file reached by two paths is one
-  document. Path comparison respects the volume's case sensitivity rather than
-  assuming the platform's default.
+  plus inode on Unix; on Windows the file index is behind an unstable standard
+  library feature, so creation time stands in for it), falling back to the
+  canonicalized path. Symlinks resolve to their target, so a file reached by
+  two paths is one document. Path comparison respects the volume's case
+  sensitivity rather than assuming the platform's default.
 - **Remote:** the existing `HostIdentity` of the authenticated SFTP origin plus
   the normalized absolute remote path. A remote path is never canonicalized
   against the local filesystem, preserving ADR 0030's rule that a remote path

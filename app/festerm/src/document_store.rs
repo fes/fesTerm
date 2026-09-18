@@ -41,7 +41,13 @@ pub struct Generation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileIdentity {
+    /// Which storage the file lives on: `st_dev` on Unix. Windows reports
+    /// this only through an API that is still unstable, so it stays zero
+    /// there and the file component carries the whole signal.
     volume: u64,
+    /// Which file this is: the inode on Unix. On Windows the file index is
+    /// unstable too, so this is the creation time — which a file replaced by
+    /// an atomic save does not keep, and a file edited in place does.
     file: u64,
 }
 
@@ -78,13 +84,16 @@ fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
 #[cfg(windows)]
 fn file_identity(metadata: &Metadata) -> Option<FileIdentity> {
     use std::os::windows::fs::MetadataExt;
-    match (metadata.volume_serial_number(), metadata.file_index()) {
-        (Some(volume), Some(file)) => Some(FileIdentity {
-            volume: u64::from(volume),
-            file,
-        }),
-        _ => None,
-    }
+    // `volume_serial_number`/`file_index` are the exact answer, but both are
+    // behind the unstable `windows_by_handle` feature and so cannot be used
+    // on a released compiler. Creation time is stable, is recorded per file,
+    // and changes when a file is replaced rather than written through, which
+    // is the distinction this identity exists to draw. It can only ever add
+    // detection: a generation also carries the size and modification time.
+    Some(FileIdentity {
+        volume: 0,
+        file: metadata.creation_time(),
+    })
 }
 
 #[cfg(not(any(unix, windows)))]
