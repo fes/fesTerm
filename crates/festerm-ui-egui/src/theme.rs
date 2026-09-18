@@ -55,6 +55,24 @@ pub const SURFACE_FIELD: Color32 = Color32::from_rgb(0x13, 0x1b, 0x24);
 /// from `ACCENT_PRIMARY`, which marks live session state.
 pub const ACCENT_ACTION: Color32 = Color32::from_rgb(0x1c, 0x7e, 0xf5);
 
+/// Syntax highlighting roles (ADR 0035 §5).
+///
+/// Colour here carries syntax and nothing else: no document or application
+/// state is ever expressed through one of these, so dirty, conflicted and
+/// read-only stay legible in words and shape (ADR 0034 §8). Roles are named
+/// for what they mean rather than for a language, so one theme change
+/// recolours every grammar, and every one of them is contrast-checked against
+/// the editor's own background.
+pub const SYNTAX_KEYWORD: Color32 = Color32::from_rgb(0xc2, 0x92, 0xe8);
+pub const SYNTAX_STRING: Color32 = Color32::from_rgb(0x8e, 0xd7, 0xaa);
+pub const SYNTAX_NUMBER: Color32 = Color32::from_rgb(0xe8, 0xb5, 0x7d);
+pub const SYNTAX_COMMENT: Color32 = Color32::from_rgb(0x8d, 0x9a, 0xa6);
+pub const SYNTAX_TYPE: Color32 = Color32::from_rgb(0x6f, 0xd2, 0xe2);
+pub const SYNTAX_FUNCTION: Color32 = Color32::from_rgb(0x7f, 0xb4, 0xff);
+pub const SYNTAX_PUNCTUATION: Color32 = Color32::from_rgb(0xb4, 0xc0, 0xcc);
+pub const SYNTAX_VARIABLE: Color32 = TEXT_PRIMARY;
+pub const SYNTAX_CONSTANT: Color32 = Color32::from_rgb(0xe6, 0xa5, 0xc0);
+
 /// Compare's two-pane line comparison.
 ///
 /// The tints are deliberately dark enough to read monospace text over, because
@@ -194,6 +212,26 @@ mod tests {
         for surface in [SURFACE_WINDOW, SURFACE_TERMINAL, SURFACE_CHROME] {
             assert!(contrast_ratio(TEXT_PRIMARY, surface) >= 4.5);
             assert!(contrast_ratio(TEXT_SECONDARY, surface) >= 4.5);
+        }
+    }
+
+    #[test]
+    fn every_syntax_role_is_readable_on_the_editor_background() {
+        for role in [
+            SYNTAX_KEYWORD,
+            SYNTAX_STRING,
+            SYNTAX_NUMBER,
+            SYNTAX_COMMENT,
+            SYNTAX_TYPE,
+            SYNTAX_FUNCTION,
+            SYNTAX_PUNCTUATION,
+            SYNTAX_VARIABLE,
+            SYNTAX_CONSTANT,
+        ] {
+            assert!(
+                contrast_ratio(role, SURFACE_WINDOW) >= 4.5,
+                "a syntax colour nobody can read is worse than no colour: {role:?}"
+            );
         }
     }
 

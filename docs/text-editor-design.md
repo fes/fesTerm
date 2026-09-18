@@ -108,8 +108,8 @@ no local watcher at all.
 
 ## Per-view options
 
-Line numbers, a fixed column count, vi compatibility, and the Markdown outline
-belong to the view. Two windows on one file may be set up differently without
+Line numbers, a fixed column count, vi compatibility, syntax highlighting, and
+the Markdown outline belong to the view. Two windows on one file may be set up differently without
 disagreeing about the text.
 
 **Show outline** appears in the options menu only while the file renders as
@@ -122,7 +122,16 @@ text into a section and the preview comes with it; scroll the preview and the
 text follows. Whichever pane is moving leads, so the two never pull against
 each other.
 
-The four options are per-view, but they are also **remembered**: the way the
+**Syntax highlighting** is on by default and colours source by what it means —
+keyword, string, comment, type — from the same engine and the same palette the
+Markdown preview's fenced code uses (ADR 0035). Colour is presentation only: it
+never touches the document's bytes, its dirty state, or its undo history, and
+no document or application state is ever expressed through a syntax colour. A
+language fesTerm has no grammar for simply opens in plain monospace; a file
+past the parsing bound, or one whose parse fails, says so in the status bar
+beside the language rather than differing silently from the file next to it.
+
+The options are per-view, but they are also **remembered**: the way the
 last view was set up is how the next one opens. A reader who works with the
 outline showing and vi keys live should not have to say so again for every
 file. Changing a view still leaves every other open view exactly as it was.

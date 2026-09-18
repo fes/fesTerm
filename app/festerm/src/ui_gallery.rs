@@ -400,6 +400,15 @@ fn scenarios() -> Vec<Scenario> {
             capture: capture_text_editor_vi_search,
         },
         Scenario {
+            id: "text-editor-syntax",
+            section: "editor",
+            title: "Source coloured by what it means",
+            caption: "Keywords, strings, numbers, types and comments are told apart by \
+                      role rather than by language, from the same palette the \
+                      Markdown preview's fenced code uses.",
+            capture: capture_text_editor_syntax,
+        },
+        Scenario {
             id: "text-editor-preview",
             section: "editor",
             title: "A Markdown file as it opens",
@@ -1322,7 +1331,60 @@ fn render_text_editor(typed: Option<&str>) -> image::RgbaImage {
 type PrepareEditor<'a> =
     &'a dyn Fn(&crate::documents::SharedDocuments, &mut TextEditorTab, &std::path::Path);
 
+/// A small, synthetic Rust file with one of everything the palette names.
+fn synthetic_rust_source() -> &'static str {
+    r#"//! Nimbus Relay: a small message-relay service.
+
+use std::collections::HashMap;
+
+/// How many events one flush may carry.
+const BATCH_LIMIT: usize = 256;
+
+#[derive(Debug, Default)]
+pub struct Relay {
+    queue: Vec<Event>,
+    seen: HashMap<String, u64>,
+    draining: bool,
+}
+
+impl Relay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Accepts one webhook event, refusing anything past the batch limit.
+    pub fn accept(&mut self, event: Event) -> Result<(), RelayError> {
+        if self.queue.len() >= BATCH_LIMIT {
+            return Err(RelayError::Full { limit: BATCH_LIMIT });
+        }
+        // A repeated delivery is not an error: the sender is retrying.
+        let count = self.seen.entry(event.id.clone()).or_insert(0);
+        *count += 1;
+        self.queue.push(event);
+        Ok(())
+    }
+
+    pub fn drain(&mut self) -> Vec<Event> {
+        self.draining = true;
+        std::mem::take(&mut self.queue)
+    }
+}
+"#
+}
+
 fn render_text_editor_in(
+    typed: Option<&str>,
+    mode: crate::text_editor::EditorMode,
+    prepare: Option<PrepareEditor<'_>>,
+) -> image::RgbaImage {
+    render_editor_over("NOTES.md", &synthetic_markdown_prose(), typed, mode, prepare)
+}
+
+/// The same editor, over a named fixture, so a source file can be shown being
+/// coloured rather than only prose.
+fn render_editor_over(
+    file_name: &str,
+    contents: &str,
     typed: Option<&str>,
     mode: crate::text_editor::EditorMode,
     prepare: Option<PrepareEditor<'_>>,
@@ -1336,8 +1398,8 @@ fn render_text_editor_in(
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
-    let path = directory.join("NOTES.md");
-    std::fs::write(&path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
+    let path = directory.join(file_name);
+    std::fs::write(&path, contents).expect("the gallery can write its fixture");
 
     let documents = crate::documents::DocumentRegistry::shared();
     let id = documents
@@ -1421,6 +1483,16 @@ fn capture_text_editor_options() -> image::RgbaImage {
         Some(&|_documents, editor, _path| {
             editor.open_options_for_gallery(Some(72));
         }),
+    )
+}
+
+fn capture_text_editor_syntax() -> image::RgbaImage {
+    render_editor_over(
+        "relay.rs",
+        synthetic_rust_source(),
+        None,
+        crate::text_editor::EditorMode::Edit,
+        None,
     )
 }
 

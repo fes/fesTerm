@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "b2cbe5d168134e8e6421272c0bc78e578f3ffd0f23a11d1a1fcc96d9319c32bc"
+      "sha256": "251dd20837036d1a4e4820661bae32237884de2a0febe8eacb91159129685aab"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "504c2fdc6bdc43024963e95b12d089feba1c7eddfd7d9588e24d3db1ae175b22"
+      "sha256": "d9f270c9bcbb249458ab90b2bc399f27d9f83b08a64142beda20563fbd174964"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "70b012157cb66086f76c0303b9fb8053b640b4e11aae55f0945626af13752880"
+      "sha256": "da6cf7182dd4b0dc88a66f3812bb74826f5420f3256a97f211df92bad7f00620"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "49cc6992bf182bd877b5e191e4024cd51401f7a8493a562a88bdc87e27ee174a"
+      "sha256": "b4bc6ebce22b2420e839657115b0ff133d05d660f9ccca341d80cf4af6caa034"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "eab09311e86e900f26f9953142beff4fe76ea8211785e0bdb2c8f97f57bfd4e6"
+      "sha256": "5b39be214dedcb7856df496a7c5bb445634748d03f18079dc69e8de2d85b64c4"
     },
     {
       "id": "text-editor-outline",
@@ -153,7 +153,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "ca0d0d3f007d02ab440778760737ea442ee993c8cd04c7e19875052647f41253"
+      "sha256": "d8dc5ff9fa9db045e777dd0a56e9ced985393fbea355e53af6dde65d6b13a358"
     },
     {
       "id": "text-editor-preview",
@@ -164,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "02e83757c384a8258915c1bb8b522eb1f8e43999f7b41dd8a90592282c77d336"
+      "sha256": "d8b6c9d2d59ce877842b778bd80fa1c9c4d8f2b5c2625e833a4a0a370363c038"
     },
     {
       "id": "text-editor-save-as",
@@ -175,7 +175,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "e590fc67bd78bb814aed8d26062ab4aa0e6855a99ed19c12ac3e8a4dc2127686"
+      "sha256": "a581e84d93555e65e81c802c3d1c2fd9d85dd826836d4accd7e031cbecfb83a0"
     },
     {
       "id": "text-editor-saved",
@@ -186,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "149859cfd3907931b5550a07206d8a81c1a4ff93aa01806e51b070505efbfc2c"
+      "sha256": "e74fdaa3c268cdaea8733083cb14ea201cfcb564873589d4d113fb7480026c22"
     },
     {
       "id": "text-editor-split",
@@ -197,7 +197,18 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "cfdc62da10c95fb3fa1b640159f8683f0bed5eb622683d2cc0579d6cba678998"
+      "sha256": "2cfd8eec174c062e15e5946dbc80c32b70111549ec7580cbd3902f28f994f2a7"
+    },
+    {
+      "id": "text-editor-syntax",
+      "section": "editor",
+      "title": "Source coloured by what it means",
+      "caption": "Keywords, strings, numbers, types and comments are told apart by role rather than by language, from the same palette the Markdown preview's fenced code uses.",
+      "image": "text-editor-syntax.png",
+      "width": 900,
+      "height": 820,
+      "tier": "headless",
+      "sha256": "502436781f364224068313c3e57b9c7e9bf5f81552471bc335ae70e318443e40"
     },
     {
       "id": "text-editor-unsaved",
@@ -208,7 +219,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "ed0c321497beb96d3b40d2b5478e32a7cb82dcd186e2219ea5d318a3afbddde1"
+      "sha256": "e2e9d525793b3d1ec4097da1787164f38db514c07391fe6eed6acc66ea4428c3"
     },
     {
       "id": "text-editor-vi-command",
@@ -219,7 +230,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "07faad9f188210145d8acedbdd1d77d66dc714e7e4625426e68fd035a34df608"
+      "sha256": "3435a8d8510604bec663448a0f4ebc8e350956eb8cc3f2fcb7d0aaabb536ba1e"
     },
     {
       "id": "text-editor-vi-mode",
@@ -230,7 +241,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "39abdc35e90c721573fa51e22391348328752bfc45608b7e30e5056e31a0d9e9"
+      "sha256": "ee696ceb0e14ac742072197b696b31aef9525dd273a323421f1e777840218c6b"
     },
     {
       "id": "text-editor-vi-search",
@@ -241,7 +252,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "d45013ebf96388c986f025e01b17dc4191606eb8c7d28b2fc8bb9321337c2dc3"
+      "sha256": "69923adee037fa7e5605c7e0431c0be293a5b854274b8af795aa6b6866c8ded4"
     },
     {
       "id": "keyboard-editor-collapsed",
@@ -296,7 +307,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "c0f752bcb260ee0e65b339a42a1209ffa80069ee63531ba14ed034f311c76524"
+      "sha256": "4718998fa305c24e983acb5ad8c8650abb27b063c5d50732ac37805a374edd7b"
     },
     {
       "id": "markdown-preview",
@@ -307,7 +318,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "3e1b11303d4a5911a6272861af44cfcda5677a045da7faf17e9389835a6f2e88"
+      "sha256": "189f1ad843f158d00e496f6440478abbd561c4861458292b52da4e5ff582f20c"
     },
     {
       "id": "markdown-source",
@@ -318,7 +329,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "efcda8d878c87235237bea15bb987a8be7077dc802d5974abeb1aa53f0cd1eb8"
+      "sha256": "d451b47ef76b9ed80003451fd21ce1e795466fce2b6cb8fb0ca973cbc037c56f"
     },
     {
       "id": "launcher-compact",

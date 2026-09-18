@@ -12,7 +12,7 @@ use eframe::egui::{
     WidgetInfo, WidgetType,
 };
 use festerm_markdown::{
-    Block, CodeBlock, ContainerInline, HeadingBlock, HighlightStyle, HighlightedCodeLine,
+    Block, CodeBlock, ContainerInline, HeadingBlock, HighlightedCodeLine,
     ImageInline, Inline, LinkInline, ListBlock, ListKind, LocalMarkdownSource, MarkdownDocument,
     MarkdownLoadError, MarkdownLoader, MarkdownSource, MarkdownSourceError, RawHtmlBlock,
     RemoteMarkdownSource, ResourceReferenceClass, ResourceReferenceKind, SourceSpan,
@@ -2104,13 +2104,23 @@ impl MarkdownRenderState<'_> {
                 // - the container default double-spaced every line.
                 ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
+                // Source is source: the viewer colours it with the same
+                // Markdown grammar the editor uses, so one window does not
+                // show the same file coloured on one surface and flat on the
+                // other (ADR 0035 §8).
+                let syntax = source_syntax_spans(ui, document.source_text());
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let span = document
                         .source_span(line_start..line_start + line.len())
                         .unwrap_or_else(|| document.source_span(0..0).expect("empty span"));
                     let response = ui.add(
-                        egui::Label::new(source_line_job(line, span, self.find))
+                        egui::Label::new(source_line_job(
+                            line,
+                            span,
+                            self.find,
+                            roles_within(&syntax, line_start..line_start + line.len()),
+                        ))
                             .selectable(true)
                             .wrap(),
                     );
@@ -2874,7 +2884,100 @@ fn render_text_run(
     ui.add(egui::Label::new(job).selectable(true).wrap());
 }
 
-fn source_line_job(line: &str, span: SourceSpan, find: &MarkdownFindState) -> LayoutJob {
+/// The document's Markdown spans, parsed once and kept for as long as the
+/// snapshot they describe.
+///
+/// A snapshot never changes, so this is a parse per document rather than a
+/// parse per frame; the key includes the text's length and ends so a second
+/// document cannot inherit the first one's colour.
+fn source_syntax_spans(ui: &egui::Ui, source: &str) -> std::sync::Arc<Vec<festerm_syntax::Span>> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.len().hash(&mut hasher);
+    let head = source.len().min(512);
+    source[..head].hash(&mut hasher);
+    source[source.len() - head..].hash(&mut hasher);
+    let key = egui::Id::new(("markdown-source-syntax", hasher.finish()));
+    if let Some(cached) = ui
+        .data(|data| data.get_temp::<std::sync::Arc<Vec<festerm_syntax::Span>>>(key))
+    {
+        return cached;
+    }
+    let mut syntax = festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
+    let spans = std::sync::Arc::new(syntax.spans(source, 0, 0..source.len()).to_vec());
+    ui.data_mut(|data| data.insert_temp(key, std::sync::Arc::clone(&spans)));
+    spans
+}
+
+/// The spans covering one line, rebased onto that line's own bytes.
+fn roles_within(
+    spans: &[festerm_syntax::Span],
+    line: std::ops::Range<usize>,
+) -> Vec<festerm_syntax::Span> {
+    spans
+        .iter()
+        .filter(|span| span.start < line.end && span.end > line.start)
+        .map(|span| festerm_syntax::Span {
+            start: span.start.max(line.start) - line.start,
+            end: span.end.min(line.end) - line.start,
+            role: span.role,
+        })
+        .collect()
+}
+
+/// Recolours a laid-out line by role, splitting any run a role starts or ends
+/// inside. The existing formats are kept otherwise, so a Find match keeps its
+/// background while the text under it keeps its syntax.
+fn recolour_by_roles(job: &mut LayoutJob, roles: &[festerm_syntax::Span]) {
+    if roles.is_empty() {
+        return;
+    }
+    fn push(
+        sections: &mut Vec<egui::text::LayoutSection>,
+        range: std::ops::Range<usize>,
+        format: TextFormat,
+    ) {
+        if range.start < range.end {
+            sections.push(egui::text::LayoutSection {
+                leading_space: 0.0,
+                byte_range: range.start.into()..range.end.into(),
+                format,
+            });
+        }
+    }
+
+    let mut sections = Vec::with_capacity(job.sections.len());
+    for section in job.sections.drain(..) {
+        let start = usize::from(section.byte_range.start);
+        let end = usize::from(section.byte_range.end);
+        let mut cursor = start;
+        for role in roles
+            .iter()
+            .filter(|role| role.start < end && role.end > start)
+        {
+            let role_start = role.start.max(start);
+            let role_end = role.end.min(end);
+            push(&mut sections, cursor..role_start, section.format.clone());
+            let mut coloured = section.format.clone();
+            coloured.color = crate::text_editor::role_colour(role.role);
+            push(&mut sections, role_start..role_end, coloured);
+            cursor = role_end;
+        }
+        let leading = section.leading_space;
+        push(&mut sections, cursor..end, section.format);
+        if let (Some(first), true) = (sections.first_mut(), leading != 0.0) {
+            first.leading_space = leading;
+        }
+    }
+    job.sections = sections;
+}
+
+fn source_line_job(
+    line: &str,
+    span: SourceSpan,
+    find: &MarkdownFindState,
+    roles: Vec<festerm_syntax::Span>,
+) -> LayoutJob {
     let mut job = LayoutJob::default();
     let format = base_text_format(FontId::monospace(CODE_TEXT_SIZE), InlineRenderStyle::body());
     append_text_segments(
@@ -2885,6 +2988,7 @@ fn source_line_job(line: &str, span: SourceSpan, find: &MarkdownFindState) -> La
         FontId::monospace(CODE_TEXT_SIZE),
         InlineRenderStyle::body(),
     );
+    recolour_by_roles(&mut job, &roles);
     ensure_code_line_body(&mut job, format);
     apply_code_line_height(&mut job);
     job
@@ -2978,7 +3082,7 @@ fn highlighted_line_job(line: &HighlightedCodeLine) -> LayoutJob {
             job.append(
                 trim_line_ending(span.text()),
                 0.0,
-                text_format_from_highlight(span.style()),
+                text_format_from_highlight(span),
             );
         }
     }
@@ -3011,33 +3115,21 @@ fn apply_code_line_height(job: &mut LayoutJob) {
     }
 }
 
-fn text_format_from_highlight(style: HighlightStyle) -> TextFormat {
-    let mut format = TextFormat {
+fn text_format_from_highlight(span: &festerm_markdown::HighlightedSpan) -> TextFormat {
+    TextFormat {
         font_id: FontId::monospace(CODE_TEXT_SIZE),
-        color: Color32::from_rgba_unmultiplied(
-            style.foreground().red(),
-            style.foreground().green(),
-            style.foreground().blue(),
-            style.foreground().alpha(),
-        ),
+        color: span
+            .role()
+            .map_or(theme::TEXT_PRIMARY, crate::text_editor::role_colour),
         // The fenced block already paints one continuous code surface.
-        // Painting the syntax theme's own per-span background on top of it
-        // drew a lighter pill around every token, which broke the block into
-        // ragged chips instead of the mockup's uniform `pre`.
+        // Painting a per-span background on top of it drew a lighter pill
+        // around every token, which broke the block into ragged chips
+        // instead of the mockup's uniform `pre`.
         background: Color32::TRANSPARENT,
         ..Default::default()
-    };
-    if style.bold() {
-        format.font_id = FontId::monospace(CODE_TEXT_SIZE + 0.5);
     }
-    if style.underline() {
-        format.underline = egui::Stroke::new(1.0, format.color);
-    }
-    if style.italic() {
-        format.italics = true;
-    }
-    format
 }
+
 
 fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
     let inline_code = style.code_like;

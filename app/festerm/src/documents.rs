@@ -24,6 +24,8 @@ use festerm_document::{
     TextDocument, UnavailableReason,
 };
 
+use festerm_syntax::{DocumentSyntax, SyntaxStatus};
+
 use crate::document_store::{self, Freshness, Generation, LoadFailure, SaveFailure};
 
 /// How often an open local document is re-checked against its file. Short
@@ -69,6 +71,10 @@ pub(crate) struct OpenDocument {
     /// The content revision last seen by Auto-save and when it was seen, which
     /// is what turns a stream of keystrokes into one write once typing stops.
     settled: Option<(u64, Instant)>,
+    /// The parse tree and span cache for this document's text, living beside
+    /// the bytes so two views — and a Split's two panes — parse it once
+    /// (ADR 0035 §1).
+    syntax: DocumentSyntax,
     /// The revision an Auto-save last failed at. Auto-save does not try that
     /// same content again: a failing write retried on a timer would bury the
     /// error under its own repetition (ADR 0034 §7).
@@ -128,6 +134,23 @@ impl OpenDocument {
             remote: self.origin.is_remote(),
             recently_reloaded: self.reloaded.is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
         })
+    }
+
+    /// The spans covering `range`, reparsing only if the text has moved on.
+    ///
+    /// Read-only over the text: this produces colour, never bytes, so it
+    /// cannot dirty the document or enter its undo history (ADR 0035 §1).
+    pub(crate) fn syntax_spans(
+        &mut self,
+        range: std::ops::Range<usize>,
+    ) -> &[festerm_syntax::Span] {
+        let Self { text, syntax, .. } = self;
+        syntax.spans(text.text(), text.revision(), range)
+    }
+
+    /// Why this document has no colour, when it has none.
+    pub(crate) fn syntax_status(&self) -> SyntaxStatus {
+        self.syntax.status()
     }
 
     /// Whether a debounced auto-save should actually write right now.
@@ -247,10 +270,12 @@ impl DocumentRegistry {
     ) -> DocumentId {
         self.next_id += 1;
         let id = DocumentId::from_raw(self.next_id);
+        let syntax = DocumentSyntax::new(origin.file_name(), text.text());
         self.by_key.insert(origin.key(), id);
         self.documents.insert(
             id,
             OpenDocument {
+                syntax,
                 origin,
                 text,
                 generation,
@@ -703,6 +728,10 @@ mod tests {
         }
     }
 
+    fn registry_length(registry: &DocumentRegistry, id: DocumentId) -> usize {
+        registry.get(id).unwrap().text().text().len()
+    }
+
     fn type_into(registry: &mut DocumentRegistry, id: DocumentId, text: &str) {
         let document = registry.get_mut(id).unwrap();
         let end = document.text().text().len();
@@ -725,6 +754,87 @@ mod tests {
         type_into(&mut registry, first, "beta\n");
         assert_eq!(registry.get(second).unwrap().text().text(), "alpha\nbeta\n");
         assert!(registry.get(second).unwrap().text().is_dirty());
+    }
+
+    #[test]
+    fn highlighting_is_read_only_over_the_document_it_describes() {
+        let directory = TemporaryDirectory::new("syntax-read-only");
+        let path = directory.file("main.rs", "fn main() { let x = 1; }\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+
+        let before = registry.get(id).unwrap().text().clone();
+        let spans = registry
+            .get_mut(id)
+            .unwrap()
+            .syntax_spans(0..before.text().len())
+            .to_vec();
+
+        assert!(!spans.is_empty(), "a Rust file is coloured");
+        let after = registry.get(id).unwrap().text();
+        assert_eq!(after.revision(), before.revision());
+        assert_eq!(after.text(), before.text());
+        assert_eq!(after.to_bytes(), before.to_bytes());
+        assert!(!after.is_dirty(), "colour is not a change");
+        assert!(!after.can_undo(), "colour is not in the undo history");
+    }
+
+    #[test]
+    fn two_views_of_one_file_share_the_one_parse() {
+        let directory = TemporaryDirectory::new("syntax-shared");
+        let path = directory.file("main.rs", "fn main() { let x = 1; }\n");
+        let mut registry = DocumentRegistry::new();
+        let first = registry.open_local(&path).unwrap();
+        let second = registry.open_local(&path).unwrap();
+        assert_eq!(first, second, "one document, two views");
+
+        let length = registry.get(first).unwrap().text().text().len();
+        let from_first = registry
+            .get_mut(first)
+            .unwrap()
+            .syntax_spans(0..length)
+            .to_vec();
+        let from_second = registry
+            .get_mut(second)
+            .unwrap()
+            .syntax_spans(0..length)
+            .to_vec();
+
+        assert_eq!(
+            from_first, from_second,
+            "the second view reads the tree the first one paid for"
+        );
+
+        type_into(&mut registry, first, "fn other() {}\n");
+        let grown = registry_length(&registry, second);
+        let after = registry
+            .get_mut(second)
+            .unwrap()
+            .syntax_spans(0..grown)
+            .to_vec();
+        assert!(
+            after.len() > from_second.len(),
+            "an edit in one view recolours the other"
+        );
+    }
+
+    #[test]
+    fn a_file_without_a_grammar_is_simply_not_coloured() {
+        let directory = TemporaryDirectory::new("syntax-unknown");
+        let path = directory.file("notes.unknownext", "alpha beta\n");
+        let mut registry = DocumentRegistry::new();
+        let id = registry.open_local(&path).unwrap();
+
+        assert!(registry.get_mut(id).unwrap().syntax_spans(0..11).is_empty());
+        assert_eq!(
+            registry.get(id).unwrap().syntax_status(),
+            festerm_syntax::SyntaxStatus::UnknownLanguage
+        );
+        assert_eq!(
+            registry.get(id).unwrap().syntax_status().note(),
+            None,
+            "no grammar is not a failure, so there is nothing to explain"
+        );
     }
 
     #[test]

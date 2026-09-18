@@ -588,12 +588,16 @@ mod tests {
     #[test]
     fn editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width() {
         let settings = InterfaceSettings::DEFAULT.with_editor(
-            EditorSettings::new(false, Some(80), true, true),
+            EditorSettings::new(false, Some(80), true, true, false),
         );
         let written = toml::to_string(&settings).unwrap();
         let read: InterfaceSettings = toml::from_str(&written).unwrap();
 
         assert_eq!(read.editor(), settings.editor());
+        assert!(
+            !read.editor().syntax(),
+            "highlighting turned off stays off across a restart (ADR 0035 §7)"
+        );
         assert!(
             written.contains("[editor]"),
             "the block has to be written where it can be read back: {written}"
@@ -606,6 +610,18 @@ mod tests {
             None,
             "a settings file is not a place to argue with the reader"
         );
+    }
+
+    #[test]
+    fn syntax_highlighting_is_on_unless_the_file_says_otherwise() {
+        let quiet: InterfaceSettings = toml::from_str("[editor]\nvi_keys = true\n").unwrap();
+        assert!(
+            quiet.editor().syntax(),
+            "a file written before the option existed still gets colour"
+        );
+
+        let off: InterfaceSettings = toml::from_str("[editor]\nsyntax = false\n").unwrap();
+        assert!(!off.editor().syntax());
     }
 
     #[test]
@@ -648,6 +664,15 @@ pub struct EditorSettings {
     vi_keys: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     outline: bool,
+    /// Syntax highlighting, on by default: an editor that has grammars and
+    /// does not use them is surprising in a way the reverse is not
+    /// (ADR 0035 §7).
+    #[serde(default = "default_syntax", skip_serializing_if = "is_true")]
+    syntax: bool,
+}
+
+const fn default_syntax() -> bool {
+    true
 }
 
 const fn default_line_numbers() -> bool {
@@ -660,6 +685,7 @@ impl EditorSettings {
         fixed_columns: None,
         vi_keys: false,
         outline: false,
+        syntax: true,
     };
 
     pub const fn new(
@@ -667,12 +693,14 @@ impl EditorSettings {
         fixed_columns: Option<u32>,
         vi_keys: bool,
         outline: bool,
+        syntax: bool,
     ) -> Self {
         Self {
             line_numbers,
             fixed_columns,
             vi_keys,
             outline,
+            syntax,
         }
     }
 
@@ -691,6 +719,12 @@ impl EditorSettings {
     #[must_use]
     pub const fn with_outline(mut self, outline: bool) -> Self {
         self.outline = outline;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_syntax(mut self, syntax: bool) -> Self {
+        self.syntax = syntax;
         self
     }
 
@@ -714,11 +748,16 @@ impl EditorSettings {
         self.outline
     }
 
+    pub const fn syntax(&self) -> bool {
+        self.syntax
+    }
+
     const fn is_default(&self) -> bool {
         self.line_numbers == Self::DEFAULT.line_numbers
             && self.fixed_columns.is_none()
             && !self.vi_keys
             && !self.outline
+            && self.syntax == Self::DEFAULT.syntax
     }
 }
 

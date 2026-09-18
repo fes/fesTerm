@@ -80,6 +80,10 @@ pub(crate) struct EditorViewOptions {
     /// renders as Markdown, because a heading list of a shell script would be
     /// an empty rail taking 216 pixels from the text.
     pub(crate) outline: bool,
+    /// Colours source by its syntax (ADR 0035). Off means off: no parse, no
+    /// cache, no cost, which is the honest escape hatch for anyone whose file
+    /// or machine makes it expensive.
+    pub(crate) syntax: bool,
 }
 
 impl Default for EditorViewOptions {
@@ -89,6 +93,7 @@ impl Default for EditorViewOptions {
             fixed_columns: None,
             vi_keys: false,
             outline: false,
+            syntax: true,
         }
     }
 }
@@ -105,6 +110,7 @@ impl EditorViewOptions {
             fixed_columns: settings.fixed_columns().map(|columns| columns as usize),
             vi_keys: settings.vi_keys(),
             outline: settings.outline(),
+            syntax: settings.syntax(),
         }
     }
 
@@ -115,6 +121,7 @@ impl EditorViewOptions {
             self.fixed_columns.map(|columns| columns as u32),
             self.vi_keys,
             self.outline,
+            self.syntax,
         )
     }
 
@@ -642,23 +649,30 @@ impl TextEditorTab {
         self.status_bar_visible = visible;
     }
 
-    /// The language the status bar names, inferred only from the file name:
-    /// guessing from content would change under the user as they type.
+    /// The language the status bar names.
+    ///
+    /// The same detection the highlighter uses, so there is one answer to
+    /// "what does fesTerm think this is" rather than two (ADR 0035 §4).
     pub(crate) fn language_label(&self) -> &'static str {
-        match self
-            .title
-            .rsplit_once('.')
-            .map(|(_, extension)| extension.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("md" | "markdown") => "Markdown",
-            Some("rs") => "Rust",
-            Some("toml") => "TOML",
-            Some("json") => "JSON",
-            Some("yaml" | "yml") => "YAML",
-            Some("sh" | "bash" | "zsh") => "Shell",
-            Some("py") => "Python",
-            _ => "Text",
+        festerm_syntax::Language::detect(&self.title, self.buffer.lines().next().unwrap_or(""))
+            .map_or("Text", festerm_syntax::Language::label)
+    }
+
+    /// The language, and — when there is colour missing and a reason for it —
+    /// the reason, because a silent difference between two files with the
+    /// same extension is a bug report waiting to happen (ADR 0035 §6).
+    pub(crate) fn status_bar_language(&self, documents: &SharedDocuments) -> String {
+        let language = self.language_label();
+        if !self.options.syntax {
+            return language.to_owned();
+        }
+        let note = documents
+            .borrow()
+            .get(self.document)
+            .and_then(|open| open.syntax_status().note());
+        match note {
+            Some(note) => format!("{language} · {note}"),
+            None => language.to_owned(),
         }
     }
 
@@ -2302,6 +2316,8 @@ impl TextEditorTab {
             );
             ui.add_space(OPTIONS_MENU_GAP);
             ui.checkbox(&mut self.options.vi_keys, "vi compatibility");
+            ui.add_space(OPTIONS_MENU_GAP);
+            ui.checkbox(&mut self.options.syntax, "Syntax highlighting");
             if self.renders_markdown() {
                 ui.add_space(OPTIONS_MENU_GAP);
                 ui.checkbox(&mut self.options.outline, "Show outline");
@@ -2411,8 +2427,21 @@ impl TextEditorTab {
         } else {
             Vec::new()
         };
+        // Only what is on screen is coloured (ADR 0035 §2): the range the
+        // reader can see, plus a margin so a small scroll does not arrive
+        // ahead of its colour.
+        let spans: Vec<festerm_syntax::Span> = if self.options.syntax {
+            let range = visible_byte_range(&self.buffer, self.top_visible_offset, ui);
+            let mut registry = documents.borrow_mut();
+            registry
+                .get_mut(self.document)
+                .map(|open| open.syntax_spans(range).to_vec())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut job = highlight_matches(text.as_str(), &highlights);
+            let mut job = editor_layout_job(text.as_str(), &highlights, &spans);
             job.wrap.max_width = wrap_width;
             ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
         };
@@ -2824,65 +2853,126 @@ fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
 /// Lays the body out with every match behind a wash of colour and the current
 /// one behind a stronger one, so "which of these is Next going to take me to"
 /// is answerable by looking (ADR 0034 §10a).
-fn highlight_matches(text: &str, highlights: &[(usize, usize, bool)]) -> egui::text::LayoutJob {
+/// How far above and below the visible text is parsed for colour, in lines.
+///
+/// A small margin only: enough that a flick of the wheel lands on coloured
+/// text rather than on a frame of grey, and not so much that the cost stops
+/// being proportional to the window.
+const SYNTAX_MARGIN_LINES: usize = 60;
+
+/// The byte range worth colouring for what the reader can currently see.
+fn visible_byte_range(
+    text: &str,
+    top_offset: usize,
+    ui: &egui::Ui,
+) -> std::ops::Range<usize> {
+    let line_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
+    let rows = (ui.clip_rect().height() / line_height).ceil() as usize + 1;
+    let start = step_lines_back(text, top_offset, SYNTAX_MARGIN_LINES);
+    let end = step_lines_forward(text, top_offset, rows + SYNTAX_MARGIN_LINES);
+    start..end
+}
+
+fn step_lines_back(text: &str, from: usize, lines: usize) -> usize {
+    let mut at = from.min(text.len());
+    for _ in 0..=lines {
+        match text[..at].rfind('\n') {
+            Some(newline) => at = newline,
+            None => return 0,
+        }
+    }
+    at
+}
+
+fn step_lines_forward(text: &str, from: usize, lines: usize) -> usize {
+    let mut at = from.min(text.len());
+    for _ in 0..lines {
+        match text[at..].find('\n') {
+            Some(newline) => at += newline + 1,
+            None => return text.len(),
+        }
+    }
+    at
+}
+
+/// The colour a syntax role is painted in. One mapping, shared by the editor
+/// and by the preview's fenced code, so the two cannot drift (ADR 0035 §5, §8).
+pub(crate) const fn role_colour(role: festerm_syntax::Role) -> egui::Color32 {
+    match role {
+        festerm_syntax::Role::Keyword => theme::SYNTAX_KEYWORD,
+        festerm_syntax::Role::StringLiteral => theme::SYNTAX_STRING,
+        festerm_syntax::Role::Number => theme::SYNTAX_NUMBER,
+        festerm_syntax::Role::Comment => theme::SYNTAX_COMMENT,
+        festerm_syntax::Role::Type => theme::SYNTAX_TYPE,
+        festerm_syntax::Role::Function => theme::SYNTAX_FUNCTION,
+        festerm_syntax::Role::Punctuation => theme::SYNTAX_PUNCTUATION,
+        festerm_syntax::Role::Variable => theme::SYNTAX_VARIABLE,
+        festerm_syntax::Role::Constant => theme::SYNTAX_CONSTANT,
+    }
+}
+
+/// The body's layout: syntax decides the ink, a find match decides the ground.
+///
+/// The two are deliberately different channels. A match keeps its wash and its
+/// rule whatever the text under it is, so a keyword that matches the search is
+/// still legible as both (ADR 0034 §8, ADR 0035 §5).
+fn editor_layout_job(
+    text: &str,
+    highlights: &[(usize, usize, bool)],
+    spans: &[festerm_syntax::Span],
+) -> egui::text::LayoutJob {
     let font = FontId::monospace(EDITOR_TEXT_SIZE);
     let mut job = egui::text::LayoutJob::default();
-    let mut cursor = 0;
-    let push = |job: &mut egui::text::LayoutJob,
-                range: std::ops::Range<usize>,
-                background,
-                underline: egui::Stroke| {
-        if range.is_empty() {
-            return;
+    // Every boundary either channel cares about, so each run that is appended
+    // is uniform in both.
+    let mut cuts: Vec<usize> = vec![0, text.len()];
+    for &(start, end, _) in highlights {
+        cuts.push(start);
+        cuts.push(end);
+    }
+    for span in spans {
+        cuts.push(span.start);
+        cuts.push(span.end);
+    }
+    cuts.retain(|cut| *cut <= text.len() && text.is_char_boundary(*cut));
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    for pair in cuts.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        if start >= end {
+            continue;
         }
+        let matched = highlights
+            .iter()
+            .find(|(match_start, match_end, _)| *match_start <= start && *match_end >= end);
+        let (background, underline) = match matched {
+            // The current match is filled; the rest are washed and ruled. The
+            // two differ in shape as well as in colour, so which match Enter
+            // will take is readable without telling two dark blues apart.
+            Some((_, _, true)) => (theme::SURFACE_SELECTION, egui::Stroke::NONE),
+            Some(_) => (
+                theme::SEARCH_MATCH_FILL,
+                egui::Stroke::new(1.0, theme::SEARCH_MATCH_RULE),
+            ),
+            None => (egui::Color32::TRANSPARENT, egui::Stroke::NONE),
+        };
+        let colour = spans
+            .iter()
+            .find(|span| span.start <= start && span.end >= end)
+            .map_or(theme::TEXT_PRIMARY, |span| role_colour(span.role));
         job.append(
-            &text[range],
+            &text[start..end],
             0.0,
             egui::TextFormat {
                 font_id: font.clone(),
-                color: theme::TEXT_PRIMARY,
+                color: colour,
                 background,
                 underline,
                 ..Default::default()
             },
         );
-    };
-    for &(start, end, current) in highlights {
-        // A stale result set describes text that has since moved on; skip
-        // rather than slice through a character.
-        if start < cursor
-            || end > text.len()
-            || !text.is_char_boundary(start)
-            || !text.is_char_boundary(end)
-        {
-            continue;
-        }
-        push(
-            &mut job,
-            cursor..start,
-            egui::Color32::TRANSPARENT,
-            egui::Stroke::NONE,
-        );
-        // The current match is filled; the rest are washed and ruled. The two
-        // differ in shape as well as in colour, so which match Enter will take
-        // is readable without telling two dark blues apart.
-        let (background, underline) = if current {
-            (theme::SURFACE_SELECTION, egui::Stroke::NONE)
-        } else {
-            (
-                theme::SEARCH_MATCH_FILL,
-                egui::Stroke::new(1.0, theme::SEARCH_MATCH_RULE),
-            )
-        };
-        push(&mut job, start..end, background, underline);
-        cursor = end;
     }
-    push(
-        &mut job,
-        cursor..text.len(),
-        egui::Color32::TRANSPARENT,
-        egui::Stroke::NONE,
-    );
     job
 }
 
@@ -3013,6 +3103,108 @@ mod tests {
         assert_eq!(editor.status_bar_position(), "Ln 1, Col 1");
         // The bytes written back, not the bytes held: the file keeps its CRLF.
         assert_eq!(editor.status_bar_size(&documents), "13 bytes");
+    }
+
+    #[test]
+    fn the_status_bar_names_the_language_the_highlighter_decided_on() {
+        let directory = TemporaryDirectory::new("syntax-language");
+        let path = directory.file("relay.toml", "[relay]\nlisten = \"0.0.0.0\"\n");
+        let (documents, editor) = editor_for(&path);
+
+        assert_eq!(editor.language_label(), "TOML");
+        assert_eq!(
+            editor.status_bar_language(&documents),
+            "TOML",
+            "with colour working there is nothing to explain"
+        );
+    }
+
+    #[test]
+    fn a_file_too_large_to_parse_says_so_where_it_says_the_language() {
+        let directory = TemporaryDirectory::new("syntax-too-large");
+        let source = "// filler\n".repeat(festerm_syntax::MAX_HIGHLIGHT_LINES + 1);
+        let path = directory.file("huge.rs", &source);
+        let (documents, editor) = editor_for(&path);
+
+        // Asking for colour is what discovers the bound, exactly as a frame
+        // would.
+        let length = documents
+            .borrow()
+            .get(editor.document)
+            .unwrap()
+            .text()
+            .text()
+            .len();
+        documents
+            .borrow_mut()
+            .get_mut(editor.document)
+            .unwrap()
+            .syntax_spans(0..length.min(4_000));
+
+        assert_eq!(
+            editor.status_bar_language(&documents),
+            "Rust · No colour · file too large",
+            "a silent difference between two .rs files is a bug report waiting to happen"
+        );
+    }
+
+    #[test]
+    fn turning_highlighting_off_stops_asking_for_colour_at_all() {
+        let directory = TemporaryDirectory::new("syntax-off");
+        let source = "// filler\n".repeat(festerm_syntax::MAX_HIGHLIGHT_LINES + 1);
+        let path = directory.file("huge.rs", &source);
+        let (documents, mut editor) = editor_for(&path);
+        editor.options.syntax = false;
+
+        assert_eq!(
+            editor.status_bar_language(&documents),
+            "Rust",
+            "with colour off there is no bound to report and no parse to pay for"
+        );
+    }
+
+    #[test]
+    fn syntax_decides_the_ink_and_a_find_match_decides_the_ground() {
+        let text = "fn main() {}\n";
+        let spans = [festerm_syntax::Span {
+            start: 0,
+            end: 2,
+            role: festerm_syntax::Role::Keyword,
+        }];
+        let job = editor_layout_job(text, &[(3, 7, true)], &spans);
+
+        let section_for = |needle: &str| {
+            let at = job.text.find(needle).expect("the run is laid out");
+            job.sections
+                .iter()
+                .find(|section| usize::from(section.byte_range.start) == at)
+                .expect("a run starts there")
+                .clone()
+        };
+        let keyword = section_for("fn");
+        assert_eq!(keyword.format.color, theme::SYNTAX_KEYWORD);
+        assert_eq!(keyword.format.background, egui::Color32::TRANSPARENT);
+        let matched = section_for("main");
+        assert_eq!(
+            matched.format.background,
+            theme::SURFACE_SELECTION,
+            "the current match keeps its ground whatever the syntax under it"
+        );
+        assert_eq!(
+            job.text, text,
+            "colouring text never rewrites it"
+        );
+    }
+
+    #[test]
+    fn with_highlighting_off_every_run_is_ordinary_text() {
+        let text = "fn main() {}\n";
+        let job = editor_layout_job(text, &[], &[]);
+
+        assert!(job
+            .sections
+            .iter()
+            .all(|section| section.format.color == theme::TEXT_PRIMARY));
     }
 
     #[test]

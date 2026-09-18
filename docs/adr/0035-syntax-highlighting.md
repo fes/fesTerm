@@ -1,6 +1,6 @@
 # ADR 0035: Syntax Highlighting as a Cached View of Parsed Text
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-17
 - **Supersedes:** None
 - **Extends:** ADR 0034 (shared mutable documents), whose document/view split
@@ -190,8 +190,13 @@ is on screen. Two views of one file parse it once. The grammar set is a list a
 reviewer can read. Colour rules stay compatible with the non-colour state cues
 the editor already promises.
 
-**Costs.** Ten C grammars are a real build-time and binary-size cost, and must
-be measured and recorded rather than assumed. tree-sitter's C API needs careful
+**Costs.** Eleven C grammars are a real build-time and binary-size cost, and
+were measured rather than assumed: on macOS arm64 the optimised binary grew
+from 92.9 MB to 102.0 MB (+9.1 MB, +9.8%) and a cold build of the crate and its
+grammars takes 14.8 s wall, 58.6 s CPU. Some of that is bought back: the
+Markdown crate's `syntect` dependency, its regex engine and its bundled syntax
+and theme sets are gone, because §8's one engine turned out to mean replacing
+the renderer's highlighter rather than adding a second one beside it. tree-sitter's C API needs careful
 lifetime handling around a tree that outlives the edit that produced it.
 Highlight queries are per-grammar data files that need vendoring and updating
 with their grammars.

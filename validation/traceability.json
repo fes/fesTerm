@@ -1860,11 +1860,36 @@
       "decisions": [
         "ADR-0035"
       ],
-      "automated_tests": [],
+      "automated_tests": [
+        "a_file_name_decides_the_language_before_anything_else",
+        "an_extensionless_script_is_read_from_its_shebang",
+        "a_well_known_bare_name_is_recognised",
+        "a_language_without_a_grammar_is_not_an_error",
+        "a_known_language_produces_spans_for_what_it_recognises",
+        "only_the_range_asked_for_is_queried",
+        "a_file_past_the_size_bound_says_why_it_has_no_colour",
+        "an_edit_reparses_from_the_change_and_keeps_colouring",
+        "an_edit_is_described_as_the_change_it_was",
+        "every_grammar_in_the_set_loads_and_its_query_compiles",
+        "highlighting_is_read_only_over_the_document_it_describes",
+        "two_views_of_one_file_share_the_one_parse",
+        "a_file_without_a_grammar_is_simply_not_coloured",
+        "the_status_bar_names_the_language_the_highlighter_decided_on",
+        "a_file_too_large_to_parse_says_so_where_it_says_the_language",
+        "turning_highlighting_off_stops_asking_for_colour_at_all",
+        "syntax_decides_the_ink_and_a_find_match_decides_the_ground",
+        "with_highlighting_off_every_run_is_ordinary_text",
+        "a_fenced_block_is_highlighted_by_role_not_by_colour",
+        "a_fence_naming_a_language_festerm_has_no_grammar_for_is_not_an_error",
+        "syntax_highlighting_is_on_unless_the_file_says_otherwise",
+        "editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width",
+        "every_syntax_role_is_readable_on_the_editor_background"
+      ],
       "manual_scenarios": [],
-      "status": "deferred",
+      "status": "partial",
       "prerequisites": [
-        "tree-sitter grammars vendored and the highlighter implemented (ADR 0035)"
+        "a grammar or query that fails to load has no automated trigger: the fallback is exercised by construction (an unknown language) rather than by a broken grammar",
+        "scroll smoothness over a large real source file while a session produces output, and the binary-size delta on Windows and Linux, are manual evidence"
       ]
     }
   ]

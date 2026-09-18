@@ -689,7 +689,7 @@ The accepted shape is:
 - **One document, many views.** A file opened in several tabs or windows is one
   document. Text, undo history, dirty state, save generation, conflict state,
   and Auto-save belong to the document; caret, selection, scroll, find, line
-  numbers, fixed columns, and vi mode belong to each view. An editor and a
+  numbers, fixed columns, syntax highlighting, and vi mode belong to each view. An editor and a
   Markdown Preview of the same file are two views, and Preview shows unsaved
   edits on the next frame without any disk or SFTP round trip.
 - **Editing surfaces.** A view is `Edit`, `Preview`, or `Split`; Split is one
@@ -697,6 +697,11 @@ The accepted shape is:
   opens in `Preview` in its editor tab rather than in a viewer tab of its own.
   **Duplicate view** opens a second view of the same document, which can be dragged
   to another window like any other tab.
+- **Colour.** Source is highlighted by syntax, on by default, from one closed
+  grammar set shared with the Markdown preview's fenced code. Colour carries
+  syntax only: no document or application state is expressed through it, and a
+  file with no grammar, one past the parsing bound, or one whose parse fails
+  falls back to plain monospace and says which in the status bar.
 - **Commands.** Save, Save As…, Find, Replace, Duplicate view, and Refresh are
   application commands shared by toolbar, menus, palette, keyboard bindings, and
   vi's `:` equivalents. A disabled command explains why. Refresh never discards

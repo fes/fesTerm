@@ -4445,6 +4445,12 @@ impl FesTermApp {
         };
         let show_durable_session = self.state.show_durable_session_in_status_bar();
         let mut durable_session = None;
+        // Held here rather than built in the arm below because the editor's
+        // context is a sentence about this document, not a fixed word.
+        let editor_context = match &self.state.active_tab().content {
+            TabContent::TextEditor(tab) => Some(tab.status_bar_language(self.state.documents())),
+            _ => None,
+        };
         let (context, dimensions, system, status, status_label, detail, port_forwards) =
             match &self.state.active_tab().content {
                 TabContent::Launcher
@@ -4464,7 +4470,7 @@ impl FesTermApp {
                 // plus where the caret is and how large the buffer is, which
                 // is what the mockup's status band shows (ADR 0034 §8).
                 TabContent::TextEditor(tab) => (
-                    Some(tab.language_label()),
+                    editor_context.as_deref(),
                     Some(tab.status_bar_position()),
                     Some(std::borrow::Cow::Owned(
                         tab.status_bar_encoding(self.state.documents()),

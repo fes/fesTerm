@@ -13,17 +13,12 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
+        Arc,
     },
 };
 
+use festerm_syntax::{DocumentSyntax, Language, Role};
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use syntect::{
-    easy::HighlightLines,
-    highlighting::{FontStyle, ThemeSet},
-    parsing::SyntaxSet,
-    util::LinesWithEndings,
-};
 
 /// Maximum Markdown source size accepted for one snapshot.
 pub const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
@@ -39,7 +34,6 @@ pub const MAX_CODE_BLOCK_BYTES: usize = 256 * 1024;
 pub const MAX_RESOURCE_REFERENCES: usize = 2_048;
 
 const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
-const HIGHLIGHT_THEME_NAME: &str = "base16-ocean.dark";
 const BINARY_HEURISTIC_SAMPLE_CHARS: usize = 4_096;
 const BINARY_HEURISTIC_CONTROL_RATIO_DENOMINATOR: usize = 32;
 
@@ -828,11 +822,15 @@ impl HighlightedCodeLine {
     }
 }
 
-/// One syntax-highlighted span.
+/// One highlighted span, named by what it means rather than by a colour.
+///
+/// The role is deliberately not a colour: this crate is UI-agnostic, and the
+/// theme decides how a keyword looks in exactly one place, shared with the
+/// editor (ADR 0035 §5, §8).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HighlightedSpan {
     text: String,
-    style: HighlightStyle,
+    role: Option<Role>,
 }
 
 impl HighlightedSpan {
@@ -840,67 +838,8 @@ impl HighlightedSpan {
         &self.text
     }
 
-    pub fn style(&self) -> HighlightStyle {
-        self.style
-    }
-}
-
-/// UI-agnostic color and font metadata derived from `syntect`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HighlightStyle {
-    foreground: RgbaColor,
-    background: RgbaColor,
-    bold: bool,
-    italic: bool,
-    underline: bool,
-}
-
-impl HighlightStyle {
-    pub fn foreground(self) -> RgbaColor {
-        self.foreground
-    }
-
-    pub fn background(self) -> RgbaColor {
-        self.background
-    }
-
-    pub const fn bold(self) -> bool {
-        self.bold
-    }
-
-    pub const fn italic(self) -> bool {
-        self.italic
-    }
-
-    pub const fn underline(self) -> bool {
-        self.underline
-    }
-}
-
-/// RGBA color derived from `syntect` themes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RgbaColor {
-    red: u8,
-    green: u8,
-    blue: u8,
-    alpha: u8,
-}
-
-impl RgbaColor {
-    pub const fn red(self) -> u8 {
-        self.red
-    }
-
-    pub const fn green(self) -> u8 {
-        self.green
-    }
-
-    pub const fn blue(self) -> u8 {
-        self.blue
-    }
-
-    pub const fn alpha(self) -> u8 {
-        self.alpha
+    pub const fn role(&self) -> Option<Role> {
+        self.role
     }
 }
 
@@ -2501,33 +2440,49 @@ fn normalize_code_language(language: Option<&str>) -> Option<String> {
 }
 
 fn highlight_code(language: Option<&str>, code_text: &str) -> Vec<HighlightedCodeLine> {
-    let syntax_set = syntax_set();
-    let theme = highlight_theme();
-    let syntax = language
-        .and_then(|language| syntax_set.find_syntax_by_token(language))
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
-    let mut highlighter = HighlightLines::new(syntax, theme);
+    let spans = language
+        .and_then(fenced_language)
+        .map(|language| {
+            let mut syntax = DocumentSyntax::for_language(language);
+            syntax.spans(code_text, 0, 0..code_text.len()).to_vec()
+        })
+        .unwrap_or_default();
+
     let mut lines = Vec::new();
-    for line in LinesWithEndings::from(code_text) {
-        let spans = highlighter
-            .highlight_line(line, syntax_set)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(style, text)| HighlightedSpan {
-                text: text.to_owned(),
-                style: HighlightStyle {
-                    foreground: rgba(style.foreground),
-                    background: rgba(style.background),
-                    bold: style.font_style.contains(FontStyle::BOLD),
-                    italic: style.font_style.contains(FontStyle::ITALIC),
-                    underline: style.font_style.contains(FontStyle::UNDERLINE),
-                },
-            })
-            .collect();
+    let mut line_start = 0;
+    for line in code_text.split_inclusive('\n') {
+        let line_end = line_start + line.len();
+        let mut pieces: Vec<HighlightedSpan> = Vec::new();
+        let mut cursor = line_start;
+        for span in spans
+            .iter()
+            .filter(|span| span.start < line_end && span.end > line_start)
+        {
+            let start = span.start.max(line_start);
+            let end = span.end.min(line_end);
+            if start > cursor {
+                pieces.push(HighlightedSpan {
+                    text: code_text[cursor..start].to_owned(),
+                    role: None,
+                });
+            }
+            pieces.push(HighlightedSpan {
+                text: code_text[start..end].to_owned(),
+                role: Some(span.role),
+            });
+            cursor = end;
+        }
+        if cursor < line_end && !pieces.is_empty() {
+            pieces.push(HighlightedSpan {
+                text: code_text[cursor..line_end].to_owned(),
+                role: None,
+            });
+        }
         lines.push(HighlightedCodeLine {
             text: line.to_owned(),
-            spans,
+            spans: pieces,
         });
+        line_start = line_end;
     }
     if code_text.is_empty() {
         lines.push(HighlightedCodeLine {
@@ -2538,27 +2493,26 @@ fn highlight_code(language: Option<&str>, code_text: &str) -> Vec<HighlightedCod
     lines
 }
 
-fn syntax_set() -> &'static SyntaxSet {
-    static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
-
-fn highlight_theme() -> &'static syntect::highlighting::Theme {
-    static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
-    let theme_set = THEME_SET.get_or_init(ThemeSet::load_defaults);
-    theme_set
-        .themes
-        .get(HIGHLIGHT_THEME_NAME)
-        .expect("default syntect theme must exist")
-}
-
-fn rgba(color: syntect::highlighting::Color) -> RgbaColor {
-    RgbaColor {
-        red: color.r,
-        green: color.g,
-        blue: color.b,
-        alpha: color.a,
-    }
+/// The language a fence's info string names, when fesTerm has a grammar for
+/// it. A fence naming something else is not an error: the code renders in
+/// plain monospace (ADR 0035 §3).
+fn fenced_language(info: &str) -> Option<Language> {
+    let token = info.split_whitespace().next().unwrap_or(info);
+    let lowered = token.to_ascii_lowercase();
+    Some(match lowered.as_str() {
+        "rust" | "rs" => Language::Rust,
+        "c" | "h" => Language::C,
+        "cpp" | "c++" | "cc" | "hpp" => Language::Cpp,
+        "python" | "py" => Language::Python,
+        "toml" => Language::Toml,
+        "json" => Language::Json,
+        "yaml" | "yml" => Language::Yaml,
+        "bash" | "sh" | "shell" | "zsh" | "console" => Language::Bash,
+        "markdown" | "md" => Language::Markdown,
+        "javascript" | "js" | "jsx" => Language::JavaScript,
+        "typescript" | "ts" | "tsx" => Language::TypeScript,
+        _ => return None,
+    })
 }
 
 fn inline_plain_text(inlines: &[Inline]) -> String {
@@ -2647,6 +2601,46 @@ mod tests {
         )
         .unwrap()
         .into()
+    }
+
+    #[test]
+    fn a_fenced_block_is_highlighted_by_role_not_by_colour() {
+        let document = local_document("```rust\nfn main() { let x = 1; }\n```\n");
+        let Block::CodeBlock(block) = &document.blocks()[0] else {
+            panic!("the first block is the fence");
+        };
+        let roles: Vec<Role> = block
+            .highlighted_lines()
+            .iter()
+            .flat_map(|line| line.spans().iter().filter_map(HighlightedSpan::role))
+            .collect();
+        assert!(
+            roles.contains(&Role::Keyword),
+            "the same roles the editor uses, from the same engine: {roles:?}"
+        );
+        let rebuilt: String = block
+            .highlighted_lines()
+            .iter()
+            .map(HighlightedCodeLine::text)
+            .collect();
+        assert_eq!(
+            rebuilt,
+            "fn main() { let x = 1; }\n",
+            "highlighting is read-only over the code it describes"
+        );
+    }
+
+    #[test]
+    fn a_fence_naming_a_language_festerm_has_no_grammar_for_is_not_an_error() {
+        let document = local_document("```brainfuck\n+[-]\n```\n");
+        let Block::CodeBlock(block) = &document.blocks()[0] else {
+            panic!("the first block is the fence");
+        };
+        assert!(block
+            .highlighted_lines()
+            .iter()
+            .all(|line| line.spans().is_empty()));
+        assert_eq!(block.code_text(), "+[-]\n");
     }
 
     #[test]
