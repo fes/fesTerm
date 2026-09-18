@@ -1,0 +1,237 @@
+# fesTerm Native Text Editor — Product/UI specification
+
+**Status:** implemented against [ADR 0034](adr/0034-shared-mutable-text-documents.md);
+vi compatibility and the remote destination are staged (see "What is not built yet")
+
+**Feature request:** [#166](https://github.com/fes/fesTerm/issues/166)
+
+**Mockups:** `images/gui-mockups/text-editor-*.png`
+**Rendered state gallery:** `images/ui-state/text-editor-*.png`
+
+## Product decision
+
+fesTerm includes a native text editor for the files a terminal user is already
+working with: configuration, notes, scripts, and the Markdown it can already
+render. It is deliberately not an IDE. It has no language server, no project
+model, no build integration, and no plugin surface.
+
+What it does promise is the thing a terminal emulator is uniquely placed to get
+right: **one open file is one document**, however many views are looking at it.
+A file opened twice is not two buffers that can disagree. Two windows, a split,
+and a live Markdown preview are all views of the same text, the same undo
+history, and the same unsaved marker.
+
+## One document, many views
+
+The application owns a registry of open documents. A view owns only
+presentation: its scroll position, its caret, whether it shows line numbers,
+and how wide it wraps. Nothing a view does to its own presentation can change
+another view, and nothing a view does to the text can fail to reach every other
+view on the next frame.
+
+Consequences that follow from that and are worth stating plainly:
+
+- Typing in one window moves the caret in that window only, but changes the
+  text in all of them.
+- Undo is the **document's** history, not the view's. The editor takes Cmd+Z
+  away from the text widget, which keeps a private history of its own string
+  and knows nothing about the other views, a reload, or a substitution
+  committed as one transaction.
+- Closing a view does not close the document. The document is forgotten when
+  the last view goes, which is also the only point at which the dirty-close
+  question is worth asking.
+- **Save As is not a rename.** The saving view follows the file it wrote; any
+  other view still holding the original carries on looking at the original.
+- Saving onto a file that is already open binds the view to that **existing**
+  document rather than making a second buffer for one file.
+
+## Layout
+
+From the top: the tab chip row, the origin bar (`LOCAL` or `REMOTE` plus the
+path, and the `Edit | Preview | Split` toggle), the command bar, the Find bar
+when it is open, a state banner when there is something to say, the body with
+its line-number gutter, and the status bar.
+
+The command bar reads left to right as: **Save**, **Auto-save**, a separator,
+**Save As…**, **Find**, **Replace**, a separator, **Open in Markdown**,
+**Refresh**, and — right-aligned — a summary of this view's options beside the
+**Editor options** menu that changes them.
+
+Auto-save sits beside Save rather than beside `Edit | Preview | Split`, because
+it belongs to the document every view shares, not to the view that happens to
+be showing it.
+
+## State is legible without colour
+
+Every document state is carried by **shape and words**, never by colour alone.
+The tab chip marker is filled when the document is saved, hollow when it has
+unsaved changes, and a triangle when it is in conflict. The chip's accessible
+name says the same thing — `NOTES.md, unsaved chip` — so a screen reader hears
+the state the shape is showing.
+
+A triangle drawn to a circle's radius covers only about 58% of its optical
+area, and centring it on its bounding box rather than its centroid sits it
+visibly low. The conflict marker is therefore sized to the full slot width with
+its height equal to the circle's diameter, and centred on its centroid.
+
+## Freshness, conflict, and refusal
+
+The editor never resolves a divergence silently.
+
+- A **clean** document whose file changed underneath simply adopts the change.
+  There is nothing to lose and nothing to ask.
+- A **dirty** document whose file changed underneath enters **Conflict**, and
+  the banner offers Compare, Reload, Keep my version, and Save As. Nothing is
+  overwritten and nothing is discarded until the user says which version wins.
+- A save is **generation-validated and atomic**: written to a temporary file in
+  the destination directory, flushed durably, permissions carried over on a
+  best-effort basis, then renamed over the target.
+- A document that breaches a bound is **refused before anything changes**, and
+  the refusal says what the limit was, never what the content was.
+
+Auto-save runs one debounce per document and is coalesced by construction,
+because a write is only considered once the content has stopped changing.
+Failures are not retried on a timer: the document stays dirty, keeps its error,
+and is reconsidered only when the user edits again — which is the only new
+information there is.
+
+### No file watcher
+
+Freshness is **polled and bounded**, not watched. A watcher was considered and
+rejected: watcher behaviour differs materially across macOS, Windows and Linux,
+degrades silently under overflow, and reports editor-style atomic saves — write
+temporary, rename over — as a delete followed by a create, which is exactly the
+pattern the editor's own saves produce. A bounded poll that revalidates on
+Save, on Refresh, on focus, and on a timer is less clever and far easier to
+state honestly to a user. Where the source is remote, the same rule holds with
+no local watcher at all.
+
+## Per-view options
+
+Line numbers, a fixed column count, and vi compatibility belong to the view.
+Two windows on one file may be set up differently without disagreeing about the
+text.
+
+A fixed column count is a **soft visual width**. Long lines wrap visually at
+the chosen column; no newline is ever inserted into the document. A count that
+does not parse, or one below one, is not applied at all — a number still being
+typed is not a new setting — and changing any of these options never enters the
+undo history.
+
+## Find and Replace
+
+Find and Replace in the toolbar, vi's `/` and `?`, and `:s` all use **one**
+regular-expression dialect: Rust `regex` syntax, Unicode-aware and bounded
+against catastrophic backtracking, without look-around or backreferences. It is
+not called "Vim regex", because it is not. Two dialects in one editor would
+mean the same expression finding different things in two boxes a centimetre
+apart.
+
+The toolbar reaches the engine through a structured constructor rather than by
+synthesising a `%s/…/…/g` string, because doing the latter would escape the
+user's `/` and `\` only for the parser to unescape them, giving the toolbar a
+subtly different effective dialect from `:s`.
+
+Every match is highlighted with the current one kept distinct, and the bar says
+which match of how many. An invalid or half-typed expression is reported in two
+words with the engine's full complaint on hover; it keeps the last valid
+results and neither moves the caret nor touches text. Replace All commits as
+**one** undo transaction.
+
+Undo is editor-wide, not body-only: after pressing Replace All the button holds
+focus, and Cmd+Z must still take the substitution back. The only places it is
+not intercepted are the editor's own small text fields, where it means "undo
+what I typed into this box".
+
+### Narrow windows
+
+The Find bar's two fields and its match counter hold the row at every width.
+When the row can no longer hold the verbs, Previous, Next, Replace and Replace
+All collapse into a single overflow menu rather than being clipped off the
+edge, and the control that closes the bar stays beside them. A control that
+cannot be reached is worse than one that has to be opened.
+
+## Save As
+
+Save As is offered in every state, including — especially — the states in which
+Save itself is disabled: a conflict, an unavailable source, an offline origin,
+lost permissions. It is the escape hatch for all of them.
+
+The destination sheet browses with the same widget the SFTP panes use, so one
+control covers both origins and neither is privileged. An existing target is
+stated in words before the fact — "A file with this name already exists here.
+Saving will replace it." — and a single Save press is still all it takes. It is
+a statement, not a second confirmation. Choosing a **directory** is different:
+that is refused, because a directory cannot be replaced by a document.
+
+## vi compatibility
+
+vi mode is per-view and off by default, and what it promises is written down as
+a fidelity matrix before a key is bound. Each row is **Full**, **fesTerm-routed**
+(the keystroke converges on an existing application command and its safety
+policy), or **Partial**. Anything outside the matrix shows a concise error and
+has **no side effect**, because half-executing an unsupported command is worse
+than refusing it: the user cannot tell what happened to their text.
+
+The `:` commands are all fesTerm-routed, which is the whole point of them.
+`:w` dispatches Save and reports success only once the durable replacement
+completes. `:w {path}` and `:saveas` dispatch the reviewed Save As sheet with
+no silent overwrite. `:q!` and `ZQ` open the ordinary final-view discard
+confirmation rather than silently discarding state other views can see.
+
+The current mode is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
+`REPLACE`, `COMMAND` — in the status bar. Cursor shape or colour alone is not
+an acceptable indicator: it is invisible to a screen reader, unreliable under
+high-contrast themes, and ambiguous the moment the caret is off screen.
+
+vi keys are live only while the editor owns focus. Find/Replace fields,
+dialogs, toolbar controls, IME composition and accessibility navigation keep
+their ordinary behaviour, and `:` or `/` in the editor does not open the
+command palette. There is always a visible, non-vi way to turn it off.
+
+## Remote documents
+
+A remote document has no local watcher and revalidates on Save, on Refresh, and
+on reconnect. Where a remote server cannot rename over an existing file, the
+fallback is stated rather than silently skipped: the editor falls back to a
+write-then-rename sequence that leaves the original in place until the new
+bytes are durable, and says so when it has had to.
+
+## Accessibility
+
+- Every state is carried by shape and words as well as colour.
+- Disabled controls state why they are disabled rather than merely being inert.
+- Accessible labels are written for a screen reader and may differ from the
+  visible text: the Find bar's "Next" button is named "Next match".
+- A control clipped out of the window is not merely unseen, it is unreachable —
+  which is why the Find bar collapses rather than clips.
+
+## What is not built yet
+
+- The remote half of the Save As sheet is present and disabled, and says
+  plainly that it needs a connected SFTP session. No remote document origin is
+  wired into the editor yet.
+- vi compatibility and the `:` command area are staged behind the per-view
+  option.
+
+## Acceptance sequence
+
+1. Open a file from the Markdown viewer's **Edit** action; confirm the chip
+   shows a filled marker and the status bar reads `Saved`.
+2. Open the same file a second time, type in one view, and confirm the other
+   view shows the text and the unsaved marker immediately, with one undo
+   history between them.
+3. Change the file underneath a **clean** view and Refresh; it adopts the
+   change. Repeat with a **dirty** view; it enters Conflict, offers Compare,
+   Reload, Keep my version and Save As, and loses nothing.
+4. Find a pattern, confirm every match is highlighted with the current one
+   distinct, press Replace All, then Cmd+Z; the substitution comes back as one
+   transaction even though the button holds focus.
+5. Narrow the window until the Find verbs no longer fit; confirm they collapse
+   into a menu and every action is still reachable.
+6. Set a fixed column count, confirm the body wraps visually, and confirm by
+   reading the file on disk that no newline was inserted.
+7. Save As onto a new name; confirm the view follows the new file, the original
+   is untouched, and a second window still holding the original stays on it.
+8. Save As onto a file that is already open in another tab; confirm one buffer,
+   not two, and that the other tab shows the new bytes.

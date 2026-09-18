@@ -97,6 +97,8 @@ native GUI evidence is tracked separately in `docs/manual-validation.md` CP-12.
   workflow, transfer safety policy, keyboard model, and interactive mockups.
 - [Native Markdown viewer design](docs/markdown-viewer-design.md) — approved
   readability-first scope, resource security, lifecycle, and workflow mockups.
+- [Native text editor design](docs/text-editor-design.md) — one open file as one
+  shared document, freshness and conflict policy, Save As, and vi bounds.
 - [GUI exploration action graph](docs/gui-action-graph.md) — stable state and
   transition IDs with assertions, cancellation, inverse, and checkpoint recovery paths.
 - [Validation traceability](validation/README.md) — machine-checked mappings

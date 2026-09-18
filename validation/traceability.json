@@ -12,6 +12,7 @@
     "docs/development-governance.md",
     "docs/gui-design.md",
     "docs/markdown-viewer-design.md",
+    "docs/text-editor-design.md",
     "docs/ui-test-plan.md"
   ],
   "legacy_adrs_without_validation_impact": [
@@ -129,9 +130,16 @@
     },
     {
       "id": "running-session-discovery",
-      "edges": ["LAUNCH-12"],
-      "requirements": ["docs/gui-design.md#session-launcher"],
-      "decisions": ["ADR-0018", "ADR-0025"],
+      "edges": [
+        "LAUNCH-12"
+      ],
+      "requirements": [
+        "docs/gui-design.md#session-launcher"
+      ],
+      "decisions": [
+        "ADR-0018",
+        "ADR-0025"
+      ],
       "automated_tests": [
         "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
         "a_provider_timeout_is_visible_and_explicit_refresh_recovers",
@@ -177,7 +185,9 @@
         "cursor_query_guard_replies_once_to_fragmented_queries",
         "isolated_multiplexer_discovery_churn"
       ],
-      "manual_scenarios": ["CP-12"],
+      "manual_scenarios": [
+        "CP-12"
+      ],
       "status": "partial",
       "prerequisites": []
     },
@@ -1091,17 +1101,44 @@
       ],
       "requirements": [
         "docs/gui-design.md#approved-native-text-editing",
+        "docs/text-editor-design.md",
         "docs/adr/0034-shared-mutable-text-documents.md"
       ],
       "decisions": [
         "ADR-0034"
       ],
-      "automated_tests": [],
-      "manual_scenarios": [],
-      "status": "deferred",
+      "automated_tests": [
+        "opening_one_path_twice_shares_a_single_buffer",
+        "typing_into_the_body_reaches_the_shared_document_and_dirties_it",
+        "undoing_in_one_view_undoes_the_document_for_every_view",
+        "a_whole_run_of_typing_is_one_undo_rather_than_one_per_keystroke",
+        "a_document_survives_until_its_last_view_closes",
+        "saving_writes_the_file_and_clears_the_unsaved_marker",
+        "saving_into_a_file_that_changed_first_conflicts_and_writes_nothing",
+        "a_clean_document_follows_the_file_when_it_changes_elsewhere",
+        "a_dirty_document_conflicts_rather_than_losing_what_was_typed",
+        "a_file_too_large_to_edit_is_refused_with_its_limit",
+        "auto_save_waits_for_typing_to_settle_and_then_writes_once",
+        "auto_save_pauses_on_conflict_rather_than_overwriting_the_other_version",
+        "command_f_opens_find_and_counts_what_the_pattern_matches",
+        "replace_all_changes_every_match_in_one_undo",
+        "an_uncompilable_pattern_says_so_briefly_and_keeps_its_full_reason",
+        "a_narrow_window_puts_the_find_verbs_in_a_menu_rather_than_off_the_edge",
+        "changing_view_options_is_not_something_undo_can_take_back",
+        "saving_somewhere_else_writes_there_and_leaves_the_original_alone",
+        "saving_onto_an_already_open_file_binds_to_that_document_rather_than_a_second_copy",
+        "save_as_matching_an_existing_file_states_the_overwrite_and_still_saves",
+        "save_as_matching_an_existing_directory_disables_save_and_says_why",
+        "save_as_remote_destination_is_present_but_refuses_and_explains"
+      ],
+      "manual_scenarios": [
+        "CP-15"
+      ],
+      "status": "partial",
       "prerequisites": [
-        "the native text editor is design-approved only; the document registry, write path, freshness/conflict model, and vi subset are unimplemented",
-        "a manual scenario for real watcher behaviour, atomic replacement, permission preservation, and remote disconnect/reconnect is registered with the implementation"
+        "atomic replacement, permission preservation, and real filesystem freshness polling across macOS, Windows, and Linux are exercised interactively; automated coverage is headless",
+        "remote documents are unimplemented, so the Save As remote destination refuses rather than connecting, and remote disconnect/reconnect has no coverage",
+        "vi compatibility is staged behind a per-view option and its fidelity matrix is not yet fully covered"
       ]
     },
     {

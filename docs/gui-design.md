@@ -678,7 +678,9 @@ Product review accepts extending the viewer into a bounded native text editor
 for supported local and SFTP text and Markdown files. The architecture — shared
 mutable documents, identity, write atomicity, freshness, conflict, auto-save,
 per-view presentation, and the vi subset — is decided in
-[ADR 0034](adr/0034-shared-mutable-text-documents.md). Implementation and
+[ADR 0034](adr/0034-shared-mutable-text-documents.md), and the product/UI
+specification is [`text-editor-design.md`](text-editor-design.md).
+Implementation and
 native validation remain pending; builds must not offer a disabled or
 non-working editing promise before the corresponding capability exists.
 
