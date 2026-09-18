@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "3bab80e8d165a2db73c18fae89f162cb7a07d1d0d6ba08ee63a945c114917151"
+      "sha256": "d02fe7151f21c459f09c996ebb77a79590c693de85846c12b7d4df6e023c9037"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "b0179655ff577bebf420ee7dc2b178feafb6608b3880d443865b8a750a300bd5"
+      "sha256": "bee8aa2b3f6174762fd33a1128b232c3a2f5340f74bb4768c4d9a2010e9f8052"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "f1e58082cccacb2895847a06283b452c2e0600764c9b89f6a1838feadfaf256c"
+      "sha256": "7867e6a7357d28710ed9e4e4d9165a480ffc6c4aa7622e147b53200cf623576b"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "99abe1373b4414112c84c6ffeff1bf75fd5e6e49361dbba7cf46e24ea2b882eb"
+      "sha256": "65c032511b6592860a6337cd3b8f6ac76c4df32ec5e010832464e0b381563d50"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "1037f71600792400f09fad4020896fe24fed36361af76bff932ddd521eed26bc"
+      "sha256": "a89e0b6578270a4186677c59e69ae819d798c9d0859c86a91e2c1b1e56810ae5"
     },
     {
       "id": "text-editor-save-as",
@@ -153,7 +153,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "fb8e7298ae2f85ef7194e5ccff1e9492072cdb9ac8e83248902be67d00015f84"
+      "sha256": "365533c910f7ee6315bf6ef30956eb47b2466524bd4c1a51361399ba905b4a30"
     },
     {
       "id": "text-editor-saved",
@@ -164,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "f6238be387398f82f1b4d0fc22080d3b0d7310bf2bf4f70a63aeadef952afb5e"
+      "sha256": "f5dd86e46f93d4cb62a57074ceaeacf5a9d6fed24f077a08fb5340461a8b9bab"
     },
     {
       "id": "text-editor-split",
@@ -175,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4bfdc7cbf0f6bdeb50badce4f23b340dd960bced046a219bcdfe05e013e0bd14"
+      "sha256": "cf19b3784ba062b99bf981e86a6e4365c6e55692eac1c4db1367bd6db2449e79"
     },
     {
       "id": "text-editor-unsaved",
@@ -186,7 +186,29 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "a4eba0d07e15da7dbe7b44d7fd24c387efc1cebb573b1fc90849f1a1b2ab81d9"
+      "sha256": "0b0106d47356a9be505b6df2fbf90f830ec48470d92a3d9cfc7d1015bcb90985"
+    },
+    {
+      "id": "text-editor-vi-command",
+      "section": "editor",
+      "title": "The vi command area over the open document",
+      "caption": "One line above the persistent status bar, never in place of it: what the document is and where the caret sits stay readable while a command is being typed.",
+      "image": "text-editor-vi-command.png",
+      "width": 900,
+      "height": 819,
+      "tier": "headless",
+      "sha256": "6b4e99342d5f855ee16bd6fd8a90ce8b534a7ac24ad07d3803792036c86ae463"
+    },
+    {
+      "id": "text-editor-vi-search",
+      "section": "editor",
+      "title": "A vi search matching as it is typed",
+      "caption": "The same regular-expression dialect the Find bar uses, counting what Enter is about to accept rather than what was last run.",
+      "image": "text-editor-vi-search.png",
+      "width": 900,
+      "height": 819,
+      "tier": "headless",
+      "sha256": "94462fe3a4bf076f0ff7adccbacb2635f4b1a4081692b632872e20ecdae9ed74"
     },
     {
       "id": "keyboard-editor-collapsed",

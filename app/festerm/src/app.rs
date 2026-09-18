@@ -7505,12 +7505,8 @@ mod tests {
         std::fs::write(&path, contents).unwrap();
 
         let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
-        app.state.dispatch(
-            AppCommand::OpenTextEditor {
-                path: path.clone(),
-            },
-            context,
-        );
+        app.state
+            .dispatch(AppCommand::OpenTextEditor { path: path.clone() }, context);
         (app, directory, path)
     }
 
@@ -7542,7 +7538,6 @@ mod tests {
             .find(|label| label.ends_with("chip"))
             .unwrap_or_else(|| panic!("no chip for {file}"))
     }
-
 
     #[test]
     fn save_as_opens_a_destination_sheet_from_the_toolbar() {
@@ -7630,7 +7625,10 @@ mod tests {
 
         fs::write(&path, "somebody else\n").unwrap();
         let documents = harness.state().state.documents().clone();
-        let id = documents.borrow().find_local(&path).expect("the open document");
+        let id = documents
+            .borrow()
+            .find_local(&path)
+            .expect("the open document");
         documents.borrow_mut().refresh(id);
         harness.run();
 

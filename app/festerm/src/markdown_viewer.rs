@@ -11,6 +11,7 @@ use eframe::egui::{
     self, text::LayoutJob, text::TextFormat, vec2, Align, Color32, FontId, RichText, Sense,
     WidgetInfo, WidgetType,
 };
+use festerm_document::DocumentId;
 use festerm_markdown::{
     Block, CodeBlock, ContainerInline, HeadingBlock, HighlightStyle, HighlightedCodeLine,
     ImageInline, Inline, LinkInline, ListBlock, ListKind, LocalMarkdownSource, MarkdownDocument,
@@ -18,7 +19,6 @@ use festerm_markdown::{
     RemoteMarkdownSource, ResourceReferenceClass, ResourceReferenceKind, SourceSpan,
     TableAlignment, TableBlock, TaskState, TextBlock, TextMatch,
 };
-use festerm_document::DocumentId;
 use festerm_ui_egui::{icon, icon::Icon, theme};
 
 use crate::tabs::{AppCommand, ExternalLinkTarget, TabId};
@@ -609,12 +609,7 @@ impl MarkdownViewerTab {
     fn reparse_live(&mut self, text: String) {
         let bytes = text.as_bytes();
         let result = MarkdownLoader::default()
-            .load(
-                self.source.clone(),
-                bytes.len(),
-                bytes,
-                &Default::default(),
-            )
+            .load(self.source.clone(), bytes.len(), bytes, &Default::default())
             .map(|document| (self.display_path.clone(), document))
             .map_err(MarkdownViewerLoadFailure::Load);
         self.apply_load_result(result);
@@ -3499,11 +3494,7 @@ pub(crate) fn toolbar_button_response(
 /// that sits after the words, not before them.
 /// The width `toolbar_button_response` would take for this label, so a bar
 /// can work out whether its controls fit before it lays any of them out.
-pub(crate) fn toolbar_button_width(
-    ui: &egui::Ui,
-    icon_name: Option<Icon>,
-    label: &str,
-) -> f32 {
+pub(crate) fn toolbar_button_width(ui: &egui::Ui, icon_name: Option<Icon>, label: &str) -> f32 {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         FontId::proportional(TOOLBAR_TEXT_SIZE),

@@ -59,11 +59,11 @@ use festerm_ui_egui::{
 use crate::{
     inspector::{self, InspectorContent, PersistentSessionFacts, TransportFacts},
     markdown_viewer::MarkdownViewerTab,
-    text_editor::TextEditorTab,
     multiplexer_sessions::MultiplexerSession,
     screens::{self, SettingsViewModel},
     sftp_file_manager::SftpFileManagerTab,
     tabs::{AppCommand, AppState, NewProfileKind},
+    text_editor::TextEditorTab,
 };
 
 /// One screenshot scenario: what it renders, and the caption a reader of
@@ -371,6 +371,24 @@ fn scenarios() -> Vec<Scenario> {
                       this view alone: another window on the same file keeps its \
                       own, and none of them touches the text.",
             capture: capture_text_editor_options,
+        },
+        Scenario {
+            id: "text-editor-vi-command",
+            section: "editor",
+            title: "The vi command area over the open document",
+            caption: "One line above the persistent status bar, never in place of \
+                      it: what the document is and where the caret sits stay \
+                      readable while a command is being typed.",
+            capture: capture_text_editor_vi_command,
+        },
+        Scenario {
+            id: "text-editor-vi-search",
+            section: "editor",
+            title: "A vi search matching as it is typed",
+            caption: "The same regular-expression dialect the Find bar uses, \
+                      counting what Enter is about to accept rather than what was \
+                      last run.",
+            capture: capture_text_editor_vi_search,
         },
         Scenario {
             id: "text-editor-split",
@@ -1327,6 +1345,29 @@ fn capture_text_editor_saved() -> image::RgbaImage {
     render_text_editor(None)
 }
 
+fn capture_text_editor_vi_command() -> image::RgbaImage {
+    render_text_editor_in(
+        None,
+        crate::text_editor::EditorMode::Edit,
+        Some(&|_documents, editor, _path| {
+            editor.open_command_area_for_gallery(crate::vi_command::CommandPrompt::Ex, "wq");
+        }),
+    )
+}
+
+fn capture_text_editor_vi_search() -> image::RgbaImage {
+    render_text_editor_in(
+        None,
+        crate::text_editor::EditorMode::Edit,
+        Some(&|_documents, editor, _path| {
+            editor.open_command_area_for_gallery(
+                crate::vi_command::CommandPrompt::SearchForward,
+                "queue(s)?",
+            );
+        }),
+    )
+}
+
 fn capture_text_editor_find() -> image::RgbaImage {
     render_text_editor_in(
         None,
@@ -1410,7 +1451,9 @@ fn capture_text_editor_dirty_close() -> image::RgbaImage {
     harness.run();
     let body = harness.get_by_role(egui::accesskit::Role::MultilineTextInput);
     body.focus();
-    body.type_text("\n## Known Issues\n\n- The relay drops duplicate webhook deliveries silently.\n");
+    body.type_text(
+        "\n## Known Issues\n\n- The relay drops duplicate webhook deliveries silently.\n",
+    );
     harness.run();
 
     harness
@@ -1501,7 +1544,6 @@ fn capture_text_editor_conflict_chip() -> image::RgbaImage {
     image
 }
 
-
 /// The Save As sheet over a real editor, so the destination browser can be
 /// reviewed against the same chrome it actually sits on.
 fn capture_text_editor_save_as() -> image::RgbaImage {
@@ -1520,15 +1562,15 @@ fn capture_text_editor_save_as() -> image::RgbaImage {
     fs::write(&path, synthetic_markdown_prose()).expect("the gallery can write its fixture");
     fs::write(directory.join("README.md"), synthetic_markdown_prose())
         .expect("the gallery can write its fixture");
-    fs::write(directory.join("relay.toml"), "[relay]\nlisten = \"0.0.0.0:8443\"\n")
-        .expect("the gallery can write its fixture");
+    fs::write(
+        directory.join("relay.toml"),
+        "[relay]\nlisten = \"0.0.0.0:8443\"\n",
+    )
+    .expect("the gallery can write its fixture");
 
     let context = egui::Context::default();
     let mut app = crate::app::FesTermApp::for_test_with_configuration(Configuration::empty());
-    app.dispatch_for_gallery(
-        crate::tabs::AppCommand::OpenTextEditor { path },
-        &context,
-    );
+    app.dispatch_for_gallery(crate::tabs::AppCommand::OpenTextEditor { path }, &context);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1080.0, 760.0))

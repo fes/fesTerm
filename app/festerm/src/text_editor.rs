@@ -362,6 +362,9 @@ pub(crate) struct TextEditorTab {
     /// Where the caret is in bytes, which is what `:s` needs in order to know
     /// which line "the current line" is.
     caret_offset: usize,
+    /// Whether the matches on screen came from a vi search, which keeps them
+    /// lit after the command area closes the way `n` and `N` will need.
+    searching_with_vi: bool,
     /// Set by `:wq`, `:x` and `ZZ`: the view closes only once the save this
     /// dispatched has actually landed, so a failed write cannot take the
     /// buffer with it.
@@ -391,6 +394,7 @@ impl TextEditorTab {
             command: CommandArea::default(),
             caret_offset: 0,
             close_after_save: false,
+            searching_with_vi: false,
             tab: None,
             find: FindState::default(),
         }
@@ -551,6 +555,15 @@ impl TextEditorTab {
         self.sync_compare(documents);
         self.route_find_shortcuts(ui);
         self.route_command_area_keys(ui);
+        // Matches are collected wherever they are shown, because the Find bar
+        // and a vi search are one search behind two surfaces.
+        if self.highlighting_matches() {
+            let revision = documents
+                .borrow()
+                .get(self.document)
+                .map_or(0, |open| open.text().revision());
+            self.find.refresh(&self.buffer, revision);
+        }
 
         let mut command = None;
         egui::Frame::new()
@@ -581,6 +594,9 @@ impl TextEditorTab {
                     // bar and never in place of it, so mode, format, position
                     // and save state stay readable while a command is being
                     // typed (ADR 0034 §10a).
+                    if self.command.reserved_height() > 0.0 {
+                        hairline(ui);
+                    }
                     if let Some(area_command) = self.show_command_area(ui, tab_id, documents) {
                         command = Some(area_command);
                     }
@@ -639,11 +655,32 @@ impl TextEditorTab {
                 self.preview_search(documents);
                 None
             }
-            CommandAreaEvent::Cancelled => None,
+            CommandAreaEvent::Cancelled => {
+                // An abandoned search leaves nothing lit: highlights that
+                // outlived the command that made them would claim the editor
+                // was still looking for something.
+                if !self.find.open {
+                    self.find.query.clear();
+                    self.find.searched = None;
+                    self.searching_with_vi = false;
+                }
+                None
+            }
             CommandAreaEvent::Run { prompt, line } => {
                 self.run_command_line(prompt, &line, tab_id, documents)
             }
         }
+    }
+
+    /// Whether the body should wash its matches, which is true for the Find bar
+    /// and for a vi search alike: they are one search, shown two ways.
+    fn highlighting_matches(&self) -> bool {
+        self.find.open
+            || self
+                .command
+                .prompt()
+                .is_some_and(|prompt| prompt != CommandPrompt::Ex)
+            || (!self.find.query.is_empty() && self.searching_with_vi)
     }
 
     /// A search prompt matches as it is typed, so the highlights and the count
@@ -655,7 +692,9 @@ impl TextEditorTab {
         if prompt == CommandPrompt::Ex {
             return;
         }
-        self.find.open = true;
+        // The Find bar deliberately stays shut: a vi search is not a second
+        // copy of the toolbar, and opening one would move the text down the
+        // moment a `/` was typed.
         self.find.query = self.command.input().to_owned();
         let revision = documents
             .borrow()
@@ -673,6 +712,7 @@ impl TextEditorTab {
     ) -> Option<AppCommand> {
         if prompt != CommandPrompt::Ex {
             self.preview_search(documents);
+            self.searching_with_vi = true;
             let summary = self.find.summary();
             self.command.finish(CommandOutcome::Message(summary));
             return None;
@@ -797,6 +837,17 @@ impl TextEditorTab {
     /// already in it, so the gallery can show the bar in the state it spends
     /// its life in rather than empty.
     #[cfg(test)]
+    /// Opens the command area with a line already typed, so the gallery can
+    /// show it doing its job rather than empty.
+    #[cfg(test)]
+    pub(crate) fn open_command_area_for_gallery(&mut self, prompt: CommandPrompt, line: &str) {
+        self.options.vi_keys = true;
+        self.command.open_for_gallery(prompt, line);
+        if prompt != CommandPrompt::Ex {
+            self.find.query = line.to_owned();
+        }
+    }
+
     pub(crate) fn open_find_for_gallery(&mut self, query: &str, replacement: Option<&str>) {
         self.find.open(replacement.is_some());
         self.find.query = query.to_owned();
@@ -1026,11 +1077,6 @@ impl TextEditorTab {
 
     fn show_find_bar(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
         let (query_id, replacement_id) = (self.find_field_id(0), self.find_field_id(1));
-        let revision = documents
-            .borrow()
-            .get(self.document)
-            .map_or(0, |open| open.text().revision());
-        self.find.refresh(&self.buffer, revision);
 
         egui::Frame::new()
             .fill(theme::SURFACE_PANEL)
@@ -1357,7 +1403,12 @@ impl TextEditorTab {
 
     fn show_body(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments) {
         let footer = if self.status_bar_visible { 0.0 } else { 24.0 };
-        let height = (ui.available_height() - footer).max(120.0);
+        // The command area is given its height before the body takes the rest,
+        // because it belongs above the status bar rather than wherever the
+        // text happens to end (ADR 0034 §10a).
+        let command_area = self.command.reserved_height();
+        let separator = if command_area > 0.0 { 1.0 } else { 0.0 };
+        let height = (ui.available_height() - footer - command_area - separator).max(120.0);
         if let Some(compare) = self.compare.as_mut() {
             // Compare replaces the body rather than sitting beside it: two
             // versions side by side already use the whole width.
@@ -1638,7 +1689,7 @@ impl TextEditorTab {
         let body_id = ui.id().with("text-editor-text");
         self.route_undo_shortcuts(ui, documents, read_only);
         // Taken out of `self` before the widget borrows the buffer mutably.
-        let highlights: Vec<(usize, usize, bool)> = if self.find.open {
+        let highlights: Vec<(usize, usize, bool)> = if self.highlighting_matches() {
             let current = self.find.current;
             self.find
                 .matches()

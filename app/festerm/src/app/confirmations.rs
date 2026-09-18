@@ -285,7 +285,8 @@ impl FesTermApp {
             })
         {
             self.overlays.pending_document_close = None;
-            self.state.dispatch(AppCommand::CloseTab(pending.tab), context);
+            self.state
+                .dispatch(AppCommand::CloseTab(pending.tab), context);
             self.continue_document_close(pending.then, context);
             return;
         }
@@ -388,18 +389,22 @@ impl FesTermApp {
             self.overlays.pending_document_close = None;
             match self.state.save_document(pending.document) {
                 Some(festerm_document::SaveOutcome::Saved) => {
-                    self.state.dispatch(AppCommand::CloseTab(pending.tab), context);
+                    self.state
+                        .dispatch(AppCommand::CloseTab(pending.tab), context);
                     self.continue_document_close(pending.then, context);
                 }
                 // The write did not happen, so neither does the close: the
                 // banner now says why, and the user still has their text.
-                _ => self.state.dispatch(AppCommand::ActivateTab(pending.tab), context),
+                _ => self
+                    .state
+                    .dispatch(AppCommand::ActivateTab(pending.tab), context),
             }
             return;
         }
         if discard {
             self.overlays.pending_document_close = None;
-            self.state.dispatch(AppCommand::CloseTab(pending.tab), context);
+            self.state
+                .dispatch(AppCommand::CloseTab(pending.tab), context);
             self.continue_document_close(pending.then, context);
         }
     }

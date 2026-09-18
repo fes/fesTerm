@@ -341,6 +341,13 @@ impl CommandArea {
         self.focus_pending = true;
     }
 
+    /// Opens with a line already in it, for the state gallery.
+    #[cfg(test)]
+    pub fn open_for_gallery(&mut self, prompt: CommandPrompt, line: &str) {
+        self.open(prompt);
+        self.input = line.to_owned();
+    }
+
     pub fn close(&mut self) {
         self.prompt = None;
         self.input.clear();
@@ -428,6 +435,15 @@ const AREA_PADDING_Y: i8 = 7;
 const PROMPT_GAP: f32 = 8.0;
 
 impl CommandArea {
+    /// The height the area needs, so the body can give it up rather than push
+    /// it off the bottom of the view.
+    pub fn reserved_height(&self) -> f32 {
+        if !self.is_open() && self.result.is_none() {
+            return 0.0;
+        }
+        f32::from(AREA_PADDING_Y) * 2.0 + AREA_TEXT_SIZE + 6.0
+    }
+
     /// Renders the area, or the result of the last command when it is closed.
     ///
     /// `summary` is the search progress the view already knows (`1 of 3`); it
@@ -521,7 +537,7 @@ impl CommandArea {
             egui::vec2(field_width, AREA_TEXT_SIZE + 4.0),
             egui::TextEdit::singleline(&mut self.input)
                 .id(field_id(tab))
-                .background_color(theme::SURFACE_CHROME)
+                .frame(egui::Frame::NONE)
                 .desired_width(field_width)
                 .font(FontId::monospace(AREA_TEXT_SIZE))
                 .hint_text(prompt.hint())

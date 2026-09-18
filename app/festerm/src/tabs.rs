@@ -3227,7 +3227,11 @@ impl AppState {
     /// dirty document takes nothing away, because the text and its undo
     /// history live in the registry rather than in the tab (ADR 0034 §7).
     pub(crate) fn document_close_consequence(&self, tab: TabId) -> Option<DirtyDocumentClose> {
-        let content = &self.tabs.iter().find(|candidate| candidate.id == tab)?.content;
+        let content = &self
+            .tabs
+            .iter()
+            .find(|candidate| candidate.id == tab)?
+            .content;
         let document = view_document(content)?;
         let registry = self.documents.borrow();
         let open = registry.get(document)?;

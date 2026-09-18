@@ -14,9 +14,7 @@ use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
 use festerm_document::{DiffSide, LineChange, LineComparison, LineComparisonRow};
 use festerm_ui_egui::theme;
 
-use crate::markdown_viewer::{
-    toolbar_button_response, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
-};
+use crate::markdown_viewer::{toolbar_button_response, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT};
 
 const COMPARE_TEXT_SIZE: f32 = 13.0;
 const ROW_PADDING_X: f32 = 10.0;
@@ -65,7 +63,10 @@ impl ComparePane {
         if self.mine == mine && self.source == source {
             return;
         }
-        let focused_row = self.focused.and_then(|index| self.changes.get(index)).copied();
+        let focused_row = self
+            .focused
+            .and_then(|index| self.changes.get(index))
+            .copied();
         *self = Self::new(mine, source, self.remote);
         // Keep looking at roughly the change the user was looking at, rather
         // than throwing them back to the top of a document they were part way
@@ -219,9 +220,8 @@ impl ComparePane {
                     let (rect, response) =
                         ui.allocate_exact_size(vec2(width, row_height), Sense::hover());
                     let accessible = row_accessible_label(row);
-                    response.widget_info(|| {
-                        WidgetInfo::labeled(WidgetType::Label, true, &accessible)
-                    });
+                    response
+                        .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &accessible));
                     match row {
                         LineComparisonRow::Collapsed { lines } => {
                             paint_collapsed(ui, rect, half, *lines, &font);
@@ -536,7 +536,11 @@ mod tests {
         pane.focus_next();
         let focused = pane.focused_change();
         pane.sync(MINE, SOURCE);
-        assert_eq!(pane.focused_change(), focused, "an unchanged pair is left alone");
+        assert_eq!(
+            pane.focused_change(),
+            focused,
+            "an unchanged pair is left alone"
+        );
 
         pane.sync("alpha\nbravo\ncharlie\ndelta\necho\n", SOURCE);
         assert_eq!(pane.change_count(), 3, "{}", pane.as_text());

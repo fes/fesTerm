@@ -126,9 +126,7 @@ impl OpenDocument {
             auto_save_requested: self.auto_save_requested,
             last_error: self.last_error.clone(),
             remote: self.origin.is_remote(),
-            recently_reloaded: self
-                .reloaded
-                .is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
+            recently_reloaded: self.reloaded.is_some_and(|at| at.elapsed() < RELOAD_NOTICE),
         })
     }
 
@@ -463,7 +461,10 @@ impl DocumentRegistry {
                 document.settled = Some((revision, now));
                 // New content is new information, so an earlier failure stops
                 // standing in the way.
-                if document.auto_save_blocked_at.is_some_and(|at| at != revision) {
+                if document
+                    .auto_save_blocked_at
+                    .is_some_and(|at| at != revision)
+                {
                     document.auto_save_blocked_at = None;
                 }
                 continue;
@@ -774,7 +775,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn saving_somewhere_else_writes_there_and_leaves_the_original_alone() {
         let directory = TemporaryDirectory::new("save-as");
@@ -788,7 +788,10 @@ mod tests {
 
         assert_eq!(outcome, SaveOutcome::Saved);
         let moved = moved.expect("the view has somewhere to follow");
-        assert_ne!(moved, id, "a new destination is a new document, not a rename");
+        assert_ne!(
+            moved, id,
+            "a new destination is a new document, not a rename"
+        );
         assert_eq!(fs::read_to_string(&destination).unwrap(), "alpha\nbeta\n");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
@@ -1074,7 +1077,10 @@ mod tests {
         let second = registry.open_local(&path).unwrap();
         assert_eq!(first, second, "two views, one document");
 
-        registry.get_mut(first).unwrap().set_auto_save_requested(true);
+        registry
+            .get_mut(first)
+            .unwrap()
+            .set_auto_save_requested(true);
 
         assert_eq!(
             registry.get(second).unwrap().status().auto_save(),
@@ -1126,14 +1132,9 @@ mod tests {
         change_outside(&path, "second\n");
         // Before the interval is up, nothing is even looked at.
         assert!(documents.borrow_mut().poll(Instant::now()).is_empty());
-        assert_eq!(
-            documents.borrow().get(id).unwrap().text().text(),
-            "first\n"
-        );
+        assert_eq!(documents.borrow().get(id).unwrap().text().text(), "first\n");
 
-        let changed = documents
-            .borrow_mut()
-            .poll(Instant::now() + POLL_INTERVAL);
+        let changed = documents.borrow_mut().poll(Instant::now() + POLL_INTERVAL);
         assert_eq!(changed, vec![(id, RefreshOutcome::Reloaded)]);
         assert_eq!(
             documents.borrow().get(id).unwrap().text().text(),
@@ -1161,9 +1162,7 @@ mod tests {
             .unwrap();
 
         change_outside(&path, "theirs\n");
-        let changed = documents
-            .borrow_mut()
-            .poll(Instant::now() + POLL_INTERVAL);
+        let changed = documents.borrow_mut().poll(Instant::now() + POLL_INTERVAL);
 
         assert_eq!(changed, vec![(id, RefreshOutcome::Conflict)]);
         // The user's text is untouched and the other version is in hand for
@@ -1171,10 +1170,7 @@ mod tests {
         let registry = documents.borrow();
         let document = registry.get(id).unwrap();
         assert_eq!(document.text().text(), "mine\n");
-        assert_eq!(
-            document.conflict().unwrap().source_text(),
-            Some("theirs\n")
-        );
+        assert_eq!(document.conflict().unwrap().source_text(), Some("theirs\n"));
         assert_eq!(document.status().severity(), Severity::Blocking);
     }
 
@@ -1192,9 +1188,7 @@ mod tests {
             .sync_from_view("mine\n")
             .unwrap();
         change_outside(&path, "theirs\n");
-        documents
-            .borrow_mut()
-            .poll(Instant::now() + POLL_INTERVAL);
+        documents.borrow_mut().poll(Instant::now() + POLL_INTERVAL);
 
         change_outside(&path, "theirs again\n");
         let changed = documents
@@ -1237,17 +1231,12 @@ mod tests {
         let id = documents.borrow_mut().open_local(&path).unwrap();
 
         fs::remove_file(&path).unwrap();
-        let changed = documents
-            .borrow_mut()
-            .poll(Instant::now() + POLL_INTERVAL);
+        let changed = documents.borrow_mut().poll(Instant::now() + POLL_INTERVAL);
 
         assert_eq!(
             changed,
             vec![(id, RefreshOutcome::Unavailable(UnavailableReason::Missing))]
         );
-        assert_eq!(
-            documents.borrow().get(id).unwrap().text().text(),
-            "first\n"
-        );
+        assert_eq!(documents.borrow().get(id).unwrap().text().text(), "first\n");
     }
 }
