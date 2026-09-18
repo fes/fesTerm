@@ -35,6 +35,7 @@ mod text_editor;
 #[cfg(test)]
 mod ui_gallery;
 mod updates;
+mod vi_command;
 
 use app::FesTermApp;
 use application::FesTermApplication;

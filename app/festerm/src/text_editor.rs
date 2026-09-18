@@ -9,21 +9,23 @@
 use std::path::PathBuf;
 
 use eframe::egui::{self, vec2, Align, FontId, Sense, WidgetInfo, WidgetType};
-use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
 use festerm_document::{
     AutoSaveControl, BannerAction, CompiledSearch, DocumentId, DocumentStatus, MatchRange,
     SearchOutcome, Severity, StatusAccent, SubstituteCommand, SubstituteFlags, SubstituteRange,
 };
+use festerm_markdown::{LocalMarkdownSource, MarkdownSource};
 use festerm_ui_egui::{chrome::ChipStatus, icon, icon::Icon, theme};
 
 use crate::documents::SharedDocuments;
 use crate::markdown_viewer::{
     elide_middle, toolbar_button, toolbar_button_response, toolbar_button_width,
-    toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP,
-    TOOLBAR_BUTTON_HEIGHT,
+    toolbar_button_with_trailing, MarkdownPreviewPane, TOOLBAR_BUTTON_GAP, TOOLBAR_BUTTON_HEIGHT,
 };
 use crate::tabs::{AppCommand, TabId};
 use crate::text_compare::ComparePane;
+use crate::vi_command::{
+    parse as parse_command, CommandArea, CommandAreaEvent, CommandOutcome, CommandPrompt, ViCommand,
+};
 
 /// Width of the line-number gutter's digits area before padding.
 const GUTTER_PADDING_X: f32 = 12.0;
@@ -50,7 +52,6 @@ const BODY_MARGIN_X: f32 = 14.0;
 const SPLIT_DIVIDER_WIDTH: f32 = 9.0;
 const BANNER_PADDING_X: i8 = BAR_PADDING_X;
 const BANNER_PADDING_Y: i8 = BAR_PADDING_Y;
-
 
 const LABEL_TEXT_SIZE: f32 = 11.0;
 const PRIMARY_BUTTON_PADDING_X: f32 = 11.0;
@@ -120,7 +121,11 @@ pub(crate) struct OptionsState {
 impl OptionsState {
     /// Reads the draft as a column count, or `None` if it cannot be applied.
     fn parsed(&self) -> Option<usize> {
-        self.columns_draft.trim().parse::<usize>().ok().filter(|count| *count >= 1)
+        self.columns_draft
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|count| *count >= 1)
     }
 }
 
@@ -303,7 +308,6 @@ impl FindState {
         self.current = Some(index);
         self.matches().get(index).cloned()
     }
-
 }
 
 /// What a view is showing of its document. Per-view, not per-document: two
@@ -353,6 +357,15 @@ pub(crate) struct TextEditorTab {
     /// The Compare view, while it is open. Per-view: comparing is looking,
     /// not changing, so another window goes on editing (ADR 0034 §6).
     compare: Option<ComparePane>,
+    /// The `:` / `/` command area (ADR 0034 §10a).
+    command: CommandArea,
+    /// Where the caret is in bytes, which is what `:s` needs in order to know
+    /// which line "the current line" is.
+    caret_offset: usize,
+    /// Set by `:wq`, `:x` and `ZZ`: the view closes only once the save this
+    /// dispatched has actually landed, so a failed write cannot take the
+    /// buffer with it.
+    close_after_save: bool,
 }
 
 impl TextEditorTab {
@@ -375,6 +388,9 @@ impl TextEditorTab {
             mode: EditorMode::Edit,
             preview: None,
             compare: None,
+            command: CommandArea::default(),
+            caret_offset: 0,
+            close_after_save: false,
             tab: None,
             find: FindState::default(),
         }
@@ -534,6 +550,7 @@ impl TextEditorTab {
         self.adopt_external_edits(documents);
         self.sync_compare(documents);
         self.route_find_shortcuts(ui);
+        self.route_command_area_keys(ui);
 
         let mut command = None;
         egui::Frame::new()
@@ -560,9 +577,184 @@ impl TextEditorTab {
                         }
                     }
                     self.show_body(ui, documents);
+                    // The area sits immediately above the persistent status
+                    // bar and never in place of it, so mode, format, position
+                    // and save state stay readable while a command is being
+                    // typed (ADR 0034 §10a).
+                    if let Some(area_command) = self.show_command_area(ui, tab_id, documents) {
+                        command = Some(area_command);
+                    }
                 });
             });
+        if let Some(pending) = self.close_when_saved(tab_id, documents) {
+            command = Some(pending);
+        }
         command
+    }
+
+    /// Opens the command area on `:`, `/` and `?`.
+    ///
+    /// The characters are consumed rather than observed so they cannot also
+    /// reach the body as text, and they are only live with vi keys on: in an
+    /// ordinary view a colon is a colon.
+    fn route_command_area_keys(&mut self, ui: &egui::Ui) {
+        if !self.options.vi_keys || self.command.is_open() {
+            return;
+        }
+        let opened = ui.input_mut(|input| {
+            let mut opened = None;
+            input.events.retain(|event| {
+                let egui::Event::Text(text) = event else {
+                    return true;
+                };
+                match text.as_str() {
+                    ":" => opened = Some(CommandPrompt::Ex),
+                    "/" => opened = Some(CommandPrompt::SearchForward),
+                    "?" => opened = Some(CommandPrompt::SearchBackward),
+                    _ => return true,
+                }
+                false
+            });
+            opened
+        });
+        if let Some(prompt) = opened {
+            self.command.open(prompt);
+        }
+    }
+
+    fn show_command_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        tab_id: TabId,
+        documents: &SharedDocuments,
+    ) -> Option<AppCommand> {
+        let summary = self
+            .command
+            .prompt()
+            .filter(|prompt| *prompt != CommandPrompt::Ex)
+            .map(|_| self.find.summary());
+        let event = self.command.show(ui, tab_id, summary.as_deref())?;
+        match event {
+            CommandAreaEvent::Changed => {
+                self.preview_search(documents);
+                None
+            }
+            CommandAreaEvent::Cancelled => None,
+            CommandAreaEvent::Run { prompt, line } => {
+                self.run_command_line(prompt, &line, tab_id, documents)
+            }
+        }
+    }
+
+    /// A search prompt matches as it is typed, so the highlights and the count
+    /// describe what Enter is about to accept rather than the last thing run.
+    fn preview_search(&mut self, documents: &SharedDocuments) {
+        let Some(prompt) = self.command.prompt() else {
+            return;
+        };
+        if prompt == CommandPrompt::Ex {
+            return;
+        }
+        self.find.open = true;
+        self.find.query = self.command.input().to_owned();
+        let revision = documents
+            .borrow()
+            .get(self.document)
+            .map_or(0, |open| open.text().revision());
+        self.find.refresh(&self.buffer, revision);
+    }
+
+    fn run_command_line(
+        &mut self,
+        prompt: CommandPrompt,
+        line: &str,
+        tab_id: TabId,
+        documents: &SharedDocuments,
+    ) -> Option<AppCommand> {
+        if prompt != CommandPrompt::Ex {
+            self.preview_search(documents);
+            let summary = self.find.summary();
+            self.command.finish(CommandOutcome::Message(summary));
+            return None;
+        }
+        match parse_command(line) {
+            Err(error) => {
+                self.command.finish(CommandOutcome::Failed(error));
+                None
+            }
+            Ok(command) => self.dispatch_command(command, tab_id, documents),
+        }
+    }
+
+    fn dispatch_command(
+        &mut self,
+        command: ViCommand,
+        tab_id: TabId,
+        documents: &SharedDocuments,
+    ) -> Option<AppCommand> {
+        match command {
+            ViCommand::Write => {
+                // The write itself reports through the document's own status,
+                // which every view already shows; claiming success here would
+                // be guessing at a result this view has not seen.
+                self.command
+                    .finish(CommandOutcome::Message("Saving…".to_owned()));
+                Some(AppCommand::SaveTextDocument)
+            }
+            ViCommand::WriteAs { .. } => {
+                // A named destination still goes through the reviewed picker:
+                // ADR 0034 §10 forbids `:w {path}` from overwriting silently.
+                self.command
+                    .finish(CommandOutcome::Message("Choose where to save.".to_owned()));
+                Some(AppCommand::SaveTextDocumentAs)
+            }
+            ViCommand::WriteQuit => {
+                self.close_after_save = true;
+                self.command
+                    .finish(CommandOutcome::Message("Saving…".to_owned()));
+                Some(AppCommand::SaveTextDocument)
+            }
+            ViCommand::Quit | ViCommand::QuitDiscarding => {
+                // Both reach the ordinary close, which raises the ordinary
+                // dirty-close confirmation. `:q!` does not discard behind the
+                // user's back, because other views can see what it would throw
+                // away (ADR 0034 §10).
+                self.command.close();
+                Some(AppCommand::CloseTab(tab_id))
+            }
+            ViCommand::Refresh { .. } => {
+                self.command.close();
+                Some(AppCommand::RefreshTextDocument)
+            }
+            ViCommand::Substitute(command) => {
+                self.run_substitution(*command, documents);
+                None
+            }
+        }
+    }
+
+    /// `:wq` closes only once the save it asked for has actually landed.
+    fn close_when_saved(
+        &mut self,
+        tab_id: TabId,
+        documents: &SharedDocuments,
+    ) -> Option<AppCommand> {
+        if !self.close_after_save {
+            return None;
+        }
+        let registry = documents.borrow();
+        let open = registry.get(self.document)?;
+        if open.text().is_dirty() || open.conflict().is_some() {
+            // The write did not land, so the request is dropped rather than
+            // held: closing later, on a save the user did not connect to it,
+            // would be worse than making them ask again.
+            if open.conflict().is_some() {
+                self.close_after_save = false;
+            }
+            return None;
+        }
+        self.close_after_save = false;
+        Some(AppCommand::CloseTab(tab_id))
     }
 
     /// The version the source now holds, when a conflict captured one.
@@ -776,13 +968,7 @@ impl TextEditorTab {
                     ui.separator();
                     ui.add_space(TOOLBAR_GROUP_GAP);
                     if self.renders_markdown()
-                        && toolbar_button(
-                            ui,
-                            None,
-                            "Open in Markdown",
-                            "Open in Markdown",
-                            false,
-                        )
+                        && toolbar_button(ui, None, "Open in Markdown", "Open in Markdown", false)
                     {
                         command = Some(AppCommand::OpenTextDocumentInMarkdown);
                     }
@@ -938,7 +1124,6 @@ impl TextEditorTab {
             });
     }
 
-
     /// The verbs the bar offers, in the order they are laid out. Replace only
     /// appears once a replacement can be typed.
     fn find_actions(&self) -> Vec<FindAction> {
@@ -1087,6 +1272,63 @@ impl TextEditorTab {
         }
     }
 
+    /// A `:s` from the command area, committed through exactly the same path
+    /// as Replace All so the two cannot disagree about what a pattern means.
+    fn run_substitution(&mut self, command: SubstituteCommand, documents: &SharedDocuments) {
+        let line = self.current_line_range();
+        let plan = command.plan(&self.buffer, line, None, MATCH_LIMIT);
+        let edits = plan.and_then(|plan| {
+            let count = plan.replacement_count();
+            plan.to_text_edits(&self.buffer).map(|edits| (count, edits))
+        });
+        let (count, edits) = match edits {
+            Ok(planned) => planned,
+            Err(error) => {
+                self.command.finish(CommandOutcome::Failed(
+                    crate::vi_command::CommandError::new(error.headline(), error.detail()),
+                ));
+                return;
+            }
+        };
+        if command.flags.count_only || edits.is_empty() {
+            self.command
+                .finish(CommandOutcome::Message(match_count_message(count)));
+            return;
+        }
+        let mut registry = documents.borrow_mut();
+        let Some(open) = registry.get_mut(self.document) else {
+            return;
+        };
+        match open.text_mut().apply_edits(edits) {
+            Ok(_) => {
+                self.buffer = open.text().text().to_owned();
+                self.find.searched = None;
+                drop(registry);
+                self.command
+                    .finish(CommandOutcome::Message(match_count_message(count)));
+            }
+            Err(refusal) => {
+                let error =
+                    crate::vi_command::CommandError::new(refusal.headline(), refusal.detail());
+                drop(registry);
+                self.command.finish(CommandOutcome::Failed(error));
+            }
+        }
+    }
+
+    /// The byte range of the line the caret is on, which is what `:s` without a
+    /// range addresses.
+    fn current_line_range(&self) -> std::ops::Range<usize> {
+        let offset = self.caret_offset.min(self.buffer.len());
+        let start = self.buffer[..offset]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+        let end = self.buffer[offset..]
+            .find('\n')
+            .map_or(self.buffer.len(), |index| offset + index);
+        start..end
+    }
+
     /// Cmd+F and Cmd+Alt+F, taken before the body sees them so they cannot
     /// reach the text as characters, and Esc while the bar is open.
     fn route_find_shortcuts(&mut self, ui: &mut egui::Ui) {
@@ -1138,15 +1380,16 @@ impl TextEditorTab {
                 EditorMode::Edit => self.show_edit_pane(ui, documents, ui.available_width()),
                 EditorMode::Preview => self.show_preview_pane(ui, height),
                 EditorMode::Split => {
-                    let pane_width = ((ui.available_width() - SPLIT_DIVIDER_WIDTH) / 2.0).max(120.0);
+                    let pane_width =
+                        ((ui.available_width() - SPLIT_DIVIDER_WIDTH) / 2.0).max(120.0);
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.allocate_ui(vec2(pane_width, height), |ui| {
                             ui.set_height(height);
                             self.show_edit_pane(ui, documents, pane_width);
                         });
-                        let (divider, _) =
-                            ui.allocate_exact_size(vec2(SPLIT_DIVIDER_WIDTH, height), Sense::hover());
+                        let (divider, _) = ui
+                            .allocate_exact_size(vec2(SPLIT_DIVIDER_WIDTH, height), Sense::hover());
                         ui.painter().line_segment(
                             [divider.center_top(), divider.center_bottom()],
                             egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
@@ -1229,8 +1472,7 @@ impl TextEditorTab {
         // it must not be intercepted are the editor's own small text fields,
         // where it means "undo what I typed into this box".
         let in_small_field = ui.memory(|memory| {
-            (self.find.open
-                && (0..2).any(|index| memory.has_focus(self.find_field_id(index))))
+            (self.find.open && (0..2).any(|index| memory.has_focus(self.find_field_id(index))))
                 || memory.has_focus(self.options_field_id())
         });
         if read_only || in_small_field {
@@ -1239,8 +1481,10 @@ impl TextEditorTab {
         let (undo, redo) = ui.ctx().input_mut(|input| {
             // Redo first: `consume_key` ignores an extra Shift, so asking for
             // Cmd+Z first would swallow Cmd+Shift+Z as an undo.
-            let redo = input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::Z)
-                | input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y);
+            let redo = input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            ) | input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y);
             let undo = input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z);
             (undo, redo)
         });
@@ -1281,29 +1525,32 @@ impl TextEditorTab {
             popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
         }
         popup.show(|ui| {
-                ui.set_min_width(OPTIONS_MENU_WIDTH);
-                ui.set_max_width(OPTIONS_MENU_WIDTH);
-                label(ui, "Editor options", theme::TEXT_PRIMARY, true);
-                ui.add_space(OPTIONS_MENU_GAP);
-                ui.checkbox(&mut self.options.line_numbers, "Show line numbers");
-                ui.add_space(OPTIONS_MENU_GAP);
-                self.show_fixed_columns_control(ui);
-                ui.add_space(OPTIONS_MENU_GAP);
-                ui.checkbox(&mut self.options.vi_keys, "vi compatibility");
-                ui.add_space(OPTIONS_MENU_GAP);
-                let explanation = if self.options_state.invalid {
-                    "A fixed column count must be a whole number of at least one."
-                } else {
-                    "Fixed columns wrap visually at the chosen boundary. They never insert line breaks."
-                };
-                let color = if self.options_state.invalid {
-                    theme::STATUS_ERROR
-                } else {
-                    theme::TEXT_MUTED
-                };
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                ui.colored_label(color, egui::RichText::new(explanation).size(LABEL_TEXT_SIZE));
-            });
+            ui.set_min_width(OPTIONS_MENU_WIDTH);
+            ui.set_max_width(OPTIONS_MENU_WIDTH);
+            label(ui, "Editor options", theme::TEXT_PRIMARY, true);
+            ui.add_space(OPTIONS_MENU_GAP);
+            ui.checkbox(&mut self.options.line_numbers, "Show line numbers");
+            ui.add_space(OPTIONS_MENU_GAP);
+            self.show_fixed_columns_control(ui);
+            ui.add_space(OPTIONS_MENU_GAP);
+            ui.checkbox(&mut self.options.vi_keys, "vi compatibility");
+            ui.add_space(OPTIONS_MENU_GAP);
+            let explanation = if self.options_state.invalid {
+                "A fixed column count must be a whole number of at least one."
+            } else {
+                "Fixed columns wrap visually at the chosen boundary. They never insert line breaks."
+            };
+            let color = if self.options_state.invalid {
+                theme::STATUS_ERROR
+            } else {
+                theme::TEXT_MUTED
+            };
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.colored_label(
+                color,
+                egui::RichText::new(explanation).size(LABEL_TEXT_SIZE),
+            );
+        });
     }
 
     /// The "Fixed column count" row: a box that turns wrapping at a column on
@@ -1437,12 +1684,16 @@ impl TextEditorTab {
             let start = self.buffer[..found.start.min(self.buffer.len())]
                 .chars()
                 .count();
-            let end = self.buffer[..found.end.min(self.buffer.len())].chars().count();
+            let end = self.buffer[..found.end.min(self.buffer.len())]
+                .chars()
+                .count();
             let mut state = output.state.clone();
-            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(start),
-                egui::text::CCursor::new(end),
-            )));
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(start),
+                    egui::text::CCursor::new(end),
+                )));
             state.store(ui.ctx(), body_id);
             ui.ctx().memory_mut(|memory| memory.request_focus(body_id));
         }
@@ -1451,8 +1702,19 @@ impl TextEditorTab {
             if let Some(open) = documents.borrow().get(self.document) {
                 let offset = open.text().byte_offset_of_char(range.primary.index.0);
                 self.caret = open.text().line_and_column(offset);
+                self.caret_offset = offset;
             }
         }
+    }
+}
+
+/// `1 replacement` reads better than `1 replacements`, and the count is the
+/// whole of what a substitution has to report.
+fn match_count_message(count: usize) -> String {
+    match count {
+        0 => "No matches".to_owned(),
+        1 => "1 replacement".to_owned(),
+        many => format!("{many} replacements"),
     }
 }
 
@@ -1680,7 +1942,11 @@ fn highlight_matches(text: &str, highlights: &[(usize, usize, bool)]) -> egui::t
     for &(start, end, current) in highlights {
         // A stale result set describes text that has since moved on; skip
         // rather than slice through a character.
-        if start < cursor || end > text.len() || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+        if start < cursor
+            || end > text.len()
+            || !text.is_char_boundary(start)
+            || !text.is_char_boundary(end)
+        {
             continue;
         }
         push(&mut job, cursor..start, egui::Color32::TRANSPARENT);
@@ -1884,9 +2150,7 @@ mod tests {
     /// Find/Replace puts eight controls in one row, so its tests need a window
     /// wide enough to hold them; a clipped button is not in the accessibility
     /// tree and would fail for a reason that has nothing to do with the test.
-    fn find_harness(
-        path: &std::path::Path,
-    ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+    fn find_harness(path: &std::path::Path) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
         typing_harness_sized(path, egui::vec2(1180.0, 420.0))
     }
 
@@ -1896,14 +2160,12 @@ mod tests {
     ) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
         let (documents, editor) = editor_for(path);
         let tab_id = crate::tabs::TabId::next_for_test();
-        let mut harness = Harness::builder()
-            .with_size(size)
-            .build_ui_state(
-                move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
-                    state.1.show(ui, tab_id, &state.0);
-                },
-                (documents, editor),
-            );
+        let mut harness = Harness::builder().with_size(size).build_ui_state(
+            move |ui, state: &mut (SharedDocuments, TextEditorTab)| {
+                state.1.show(ui, tab_id, &state.0);
+            },
+            (documents, editor),
+        );
         harness.run();
         harness
     }
@@ -1965,7 +2227,6 @@ mod tests {
             .expect("the Find bar's field")
     }
 
-
     /// Opens the options menu by clicking it, the way a user reaches it.
     fn open_options_menu(harness: &mut Harness<'static, (SharedDocuments, TextEditorTab)>) {
         harness.get_by_label("Editor options").click();
@@ -1982,7 +2243,6 @@ mod tests {
             .next()
             .expect("the fixed column count field")
     }
-
 
     #[test]
     fn a_narrow_window_puts_the_find_verbs_in_a_menu_rather_than_off_the_edge() {
@@ -2109,9 +2369,13 @@ mod tests {
         let path = directory.file("notes.md", "alpha\n");
         let mut harness = find_harness(&path);
 
-        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .focus();
         harness.run();
-        harness.get_by_role(egui::accesskit::Role::MultilineTextInput).type_text("beta");
+        harness
+            .get_by_role(egui::accesskit::Role::MultilineTextInput)
+            .type_text("beta");
         harness.run();
         let typed = document_text(&harness);
         assert!(typed.contains("beta"));
@@ -2190,6 +2454,217 @@ mod tests {
         assert!(
             harness.query_by_label("1 of 2").is_some(),
             "Next past the last match wraps to the first"
+        );
+    }
+
+    /// An editor with vi keys on, focused on its body, which is the only state
+    /// in which `:` and `/` mean anything.
+    fn vi_harness(path: &std::path::Path) -> Harness<'static, (SharedDocuments, TextEditorTab)> {
+        let mut harness = find_harness(path);
+        harness.state_mut().1.options.vi_keys = true;
+        harness.run();
+        harness
+    }
+
+    fn command_field<'h>(
+        harness: &'h Harness<'static, (SharedDocuments, TextEditorTab)>,
+    ) -> egui_kittest::Node<'h> {
+        harness
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .next()
+            .expect("the command area's field")
+    }
+
+    #[test]
+    fn a_colon_opens_the_command_area_instead_of_reaching_the_text() {
+        let directory = TemporaryDirectory::new("vi-command-open");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = vi_harness(&path);
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text(":".into()));
+        harness.run();
+
+        assert_eq!(
+            harness.state().1.command.prompt(),
+            Some(CommandPrompt::Ex),
+            "a colon with vi keys on opens the command area"
+        );
+        assert_eq!(
+            document_text(&harness),
+            "alpha\n",
+            "the colon that opened the area must not also land in the document"
+        );
+    }
+
+    #[test]
+    fn without_vi_keys_a_colon_is_only_a_colon() {
+        let directory = TemporaryDirectory::new("vi-command-off");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = find_harness(&path);
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text(":".into()));
+        harness.run();
+
+        assert!(
+            !harness.state().1.command.is_open(),
+            "an ordinary view has no command area to open"
+        );
+    }
+
+    #[test]
+    fn a_substitution_from_the_command_area_lands_in_one_undo() {
+        let directory = TemporaryDirectory::new("vi-command-substitute");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = vi_harness(&path);
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text(":".into()));
+        harness.run();
+        command_field(&harness).focus();
+        harness.run();
+        command_field(&harness).type_text("%s/alpha/gamma/g");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+
+        assert_eq!(document_text(&harness), "gamma\nbeta\ngamma\n");
+        assert_eq!(
+            harness.state().1.command.outcome(),
+            Some(&CommandOutcome::Message("2 replacements".to_owned())),
+            "the area replaces itself with what the command did"
+        );
+
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        assert_eq!(
+            document_text(&harness),
+            "alpha\nbeta\nalpha\n",
+            "a substitution comes back in one press, like Replace All"
+        );
+    }
+
+    #[test]
+    fn a_substitution_without_a_range_only_touches_the_line_the_caret_is_on() {
+        let directory = TemporaryDirectory::new("vi-command-current-line");
+        let path = directory.file("notes.md", "alpha\nalpha\n");
+        let mut harness = vi_harness(&path);
+        harness.state_mut().1.caret_offset = 6;
+        harness.run();
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text(":".into()));
+        harness.run();
+        command_field(&harness).focus();
+        harness.run();
+        command_field(&harness).type_text("s/alpha/gamma/");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+
+        assert_eq!(document_text(&harness), "alpha\ngamma\n");
+    }
+
+    #[test]
+    fn a_command_that_is_not_supported_refuses_and_changes_nothing() {
+        let directory = TemporaryDirectory::new("vi-command-refusal");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = vi_harness(&path);
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text(":".into()));
+        harness.run();
+        command_field(&harness).focus();
+        harness.run();
+        command_field(&harness).type_text("set number");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        harness.run();
+
+        let Some(CommandOutcome::Failed(error)) = harness.state().1.command.outcome() else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(error.headline(), "Not supported");
+        assert_eq!(document_text(&harness), "alpha\n");
+    }
+
+    #[test]
+    fn a_search_from_the_command_area_counts_as_it_is_typed() {
+        let directory = TemporaryDirectory::new("vi-command-search");
+        let path = directory.file("notes.md", "alpha\nbeta\nalpha\n");
+        let mut harness = vi_harness(&path);
+
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Text("/".into()));
+        harness.run();
+        command_field(&harness).focus();
+        harness.run();
+        command_field(&harness).type_text("alpha");
+        harness.run();
+
+        assert_eq!(
+            harness.state().1.find.summary(),
+            "1 of 2",
+            "the count describes what Enter is about to accept"
+        );
+        assert_eq!(
+            document_text(&harness),
+            "alpha\nbeta\nalpha\n",
+            "searching never touches the text"
+        );
+    }
+
+    #[test]
+    fn save_and_close_closes_only_once_the_save_has_landed() {
+        let directory = TemporaryDirectory::new("vi-command-wq");
+        let path = directory.file("notes.md", "alpha\n");
+        let (documents, mut editor) = editor_for(&path);
+        let tab = crate::tabs::TabId::next_for_test();
+        editor.tab = Some(tab);
+
+        {
+            let mut registry = documents.borrow_mut();
+            let open = registry.get_mut(editor.document()).unwrap();
+            open.text_mut()
+                .apply_edits(vec![festerm_document::TextEdit {
+                    start: 0,
+                    removed: String::new(),
+                    inserted: "x".to_owned(),
+                }])
+                .unwrap();
+        }
+        editor.buffer = "xalpha\n".to_owned();
+
+        let command = editor.dispatch_command(ViCommand::WriteQuit, tab, &documents);
+        assert!(matches!(command, Some(AppCommand::SaveTextDocument)));
+        assert!(
+            editor.close_when_saved(tab, &documents).is_none(),
+            "a dirty document has not been written yet, so nothing closes"
+        );
+
+        documents.borrow_mut().save(editor.document()).unwrap();
+        assert!(
+            matches!(
+                editor.close_when_saved(tab, &documents),
+                Some(AppCommand::CloseTab(closed)) if closed == tab
+            ),
+            "the view closes once the write has actually landed"
         );
     }
 
@@ -2462,12 +2937,7 @@ mod tests {
         documents.borrow_mut().save(document);
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "alpha\nbeta ");
-        assert!(!documents
-            .borrow()
-            .get(document)
-            .unwrap()
-            .text()
-            .is_dirty());
+        assert!(!documents.borrow().get(document).unwrap().text().is_dirty());
     }
 
     #[test]
@@ -2485,8 +2955,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(700.0, 420.0))
             .build_ui_state(
-                move |ui,
-                      state: &mut (SharedDocuments, TextEditorTab, TextEditorTab)| {
+                move |ui, state: &mut (SharedDocuments, TextEditorTab, TextEditorTab)| {
                     ui.horizontal(|ui| {
                         ui.push_id("first", |ui| {
                             state.1.show(ui, first_id, &state.0);
@@ -2501,7 +2970,10 @@ mod tests {
         harness.run();
 
         let bodies = harness.get_all_by_role(egui::accesskit::Role::MultilineTextInput);
-        let first_body = bodies.into_iter().next().expect("the first view has a body");
+        let first_body = bodies
+            .into_iter()
+            .next()
+            .expect("the first view has a body");
         first_body.focus();
         first_body.type_text("typed ");
         harness.run();
@@ -2539,7 +3011,11 @@ mod tests {
         );
         harness.run();
 
-        assert_eq!(document_text(&harness), "alpha\nbeta", "and redo brings it back");
+        assert_eq!(
+            document_text(&harness),
+            "alpha\nbeta",
+            "and redo brings it back"
+        );
     }
 
     #[test]
@@ -2572,7 +3048,10 @@ mod tests {
         harness.run();
 
         let bodies = harness.get_all_by_role(egui::accesskit::Role::MultilineTextInput);
-        let first_body = bodies.into_iter().next().expect("the first view has a body");
+        let first_body = bodies
+            .into_iter()
+            .next()
+            .expect("the first view has a body");
         first_body.focus();
         first_body.type_text("typed");
         harness.run();
@@ -2648,7 +3127,12 @@ mod tests {
         // The pane beside the editor is rendering this document's text, not
         // a stale copy of a file. (Its blocks are painted rather than built
         // from widgets, so the rendering itself is not in the a11y tree.)
-        let pane = harness.state().1.preview.as_ref().expect("split built a preview");
+        let pane = harness
+            .state()
+            .1
+            .preview
+            .as_ref()
+            .expect("split built a preview");
         assert_eq!(pane.rendered_text(), "# Title\n\nProse.\n");
 
         harness.get_by_label("Preview").click();
@@ -2702,8 +3186,7 @@ mod tests {
     #[test]
     fn pressing_compare_shows_both_versions_side_by_side() {
         let directory = TemporaryDirectory::new("compare-open");
-        let mut harness =
-            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+        let mut harness = conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
 
         harness.get_by_label("This file changed on disk");
         assert!(harness.state().1.compare().is_none());
@@ -2736,8 +3219,7 @@ mod tests {
     #[test]
     fn pressing_compare_again_closes_it() {
         let directory = TemporaryDirectory::new("compare-toggle");
-        let mut harness =
-            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+        let mut harness = conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
 
         harness.get_by_label("Compare").click();
         harness.run();
@@ -2752,8 +3234,7 @@ mod tests {
     #[test]
     fn next_change_walks_the_comparison() {
         let directory = TemporaryDirectory::new("compare-navigate");
-        let mut harness =
-            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+        let mut harness = conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
 
         harness.get_by_label("Compare").click();
         harness.run();
@@ -2776,8 +3257,7 @@ mod tests {
     #[test]
     fn resolving_the_conflict_closes_compare() {
         let directory = TemporaryDirectory::new("compare-resolved");
-        let mut harness =
-            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+        let mut harness = conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
 
         harness.get_by_label("Compare").click();
         harness.run();
@@ -2790,7 +3270,11 @@ mod tests {
         harness.run();
         let (documents, editor) = harness.state_mut();
         let id = editor.document();
-        documents.borrow_mut().get_mut(id).unwrap().keep_my_version();
+        documents
+            .borrow_mut()
+            .get_mut(id)
+            .unwrap()
+            .keep_my_version();
         harness.run();
 
         assert!(harness.state().1.compare().is_none());
@@ -2800,8 +3284,7 @@ mod tests {
     #[test]
     fn compare_follows_a_sibling_view_that_keeps_typing() {
         let directory = TemporaryDirectory::new("compare-live");
-        let mut harness =
-            conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
+        let mut harness = conflicted_harness(&directory, "delta", "alpha\nBRAVO\ncharlie\n");
 
         harness.get_by_label("Compare").click();
         harness.run();
@@ -2844,9 +3327,8 @@ mod tests {
 
     #[test]
     fn the_preview_reparses_only_once_typing_settles() {
-        let source = MarkdownSource::from(
-            LocalMarkdownSource::new(PathBuf::from("NOTES.md")).unwrap(),
-        );
+        let source =
+            MarkdownSource::from(LocalMarkdownSource::new(PathBuf::from("NOTES.md")).unwrap());
         let mut pane = MarkdownPreviewPane::new(source, "# One\n");
         let ctx = egui::Context::default();
 
