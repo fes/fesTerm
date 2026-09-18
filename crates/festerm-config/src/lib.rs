@@ -37,8 +37,8 @@ pub use profiles::{
 };
 pub use settings::{
     ChipLayoutPreference, EditorSettings, EmojiPresentationPreference, InterfaceSettings,
-    ScrollSpeedPreference,
-    ScrollbackLimitPreference, SftpPaneOrderPreference, TerminalFontPreference,
+    ScrollSpeedPreference, ScrollbackLimitPreference, SftpPaneOrderPreference,
+    TerminalFontPreference,
 };
 pub use workspace::{
     LauncherTabConfiguration, ProfilesTabConfiguration, SessionTabConfiguration,

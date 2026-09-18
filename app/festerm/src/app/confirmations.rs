@@ -448,9 +448,7 @@ impl FesTermApp {
                 ui.add_space(12.0);
                 ui.label(headline);
                 ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(detail).color(theme::TEXT_SECONDARY),
-                );
+                ui.label(egui::RichText::new(detail).color(theme::TEXT_SECONDARY));
                 ui.add_space(14.0);
                 ui.label(
                     egui::RichText::new(path)

@@ -22,7 +22,8 @@ ET.register_namespace("", SVG_NS)
 
 EXPECTED = {
     "activate", "app-mark", "auth-required", "back", "clear", "close", "command-palette",
-    "copy", "diagnostics", "disconnect", "error", "file-transfer", "home-directory",
+    "copy", "diagnostics", "disclosure", "disconnect", "error", "file-transfer",
+    "home-directory",
     "host-key-verification",
     "edit", "keyboard-shortcuts", "local-terminal", "maximize", "minimize",
     "external-link", "markdown-document", "new-profile", "new-session", "next-match", "outline",

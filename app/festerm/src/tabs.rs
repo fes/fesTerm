@@ -3394,9 +3394,11 @@ impl AppState {
         // viewer of a remote snapshot is still a viewer, but there is nothing
         // local left for it to become, so it gives way to the editor.
         if let Some(target) = replacing {
-            if self.tabs.iter().any(|tab| {
-                tab.id == target && matches!(tab.content, TabContent::MarkdownViewer(_))
-            }) {
+            if self
+                .tabs
+                .iter()
+                .any(|tab| tab.id == target && matches!(tab.content, TabContent::MarkdownViewer(_)))
+            {
                 self.close(target);
             }
         }
@@ -5075,7 +5077,10 @@ mod tests {
             .iter()
             .filter(|tab| matches!(tab.content, TabContent::TextEditor(_)))
             .count();
-        assert_eq!(editors, 1, "a Markdown file is a document, not a viewer tab");
+        assert_eq!(
+            editors, 1,
+            "a Markdown file is a document, not a viewer tab"
+        );
         assert!(
             !state
                 .tabs

@@ -7777,9 +7777,9 @@ mod tests {
         let context = egui::Context::default();
         let (mut app, directory, path) = app_with_open_editor(&context, "alpha\n");
         app.state.dispatch(
-            AppCommand::SetEditorSettings(festerm_config::EditorSettings::default().with_vi_keys(
-                true,
-            )),
+            AppCommand::SetEditorSettings(
+                festerm_config::EditorSettings::default().with_vi_keys(true),
+            ),
             &context,
         );
         // Reopened so the view picks up vi keys the way the next view a

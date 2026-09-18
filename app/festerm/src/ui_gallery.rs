@@ -1377,7 +1377,13 @@ fn render_text_editor_in(
     mode: crate::text_editor::EditorMode,
     prepare: Option<PrepareEditor<'_>>,
 ) -> image::RgbaImage {
-    render_editor_over("NOTES.md", &synthetic_markdown_prose(), typed, mode, prepare)
+    render_editor_over(
+        "NOTES.md",
+        &synthetic_markdown_prose(),
+        typed,
+        mode,
+        prepare,
+    )
 }
 
 /// The same editor, over a named fixture, so a source file can be shown being

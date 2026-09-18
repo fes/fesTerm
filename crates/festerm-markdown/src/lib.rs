@@ -2624,8 +2624,7 @@ mod tests {
             .map(HighlightedCodeLine::text)
             .collect();
         assert_eq!(
-            rebuilt,
-            "fn main() { let x = 1; }\n",
+            rebuilt, "fn main() { let x = 1; }\n",
             "highlighting is read-only over the code it describes"
         );
     }

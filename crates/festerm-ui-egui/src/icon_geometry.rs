@@ -126,6 +126,13 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
             ]),
             Primitive::Rectangle { x: 3.0, y: 3.0, width: 18.0, height: 18.0, radius: 2.0 },
         ],
+        Icon::Disclosure => &[
+            Primitive::Polyline(&[
+                (6.0, 10.0),
+                (12.0, 16.0),
+                (18.0, 10.0),
+            ]),
+        ],
         Icon::Disconnect => &[
             Primitive::Polyline(&[
                 (9.5, 14.5),
@@ -428,13 +435,6 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
                 (5.0, 9.0),
                 (12.0, 16.0),
                 (19.0, 9.0),
-            ]),
-        ],
-        Icon::Disclosure => &[
-            Primitive::Polyline(&[
-                (6.0, 10.0),
-                (12.0, 16.0),
-                (18.0, 10.0),
             ]),
         ],
         Icon::Outline => &[

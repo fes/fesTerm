@@ -12,11 +12,11 @@ use eframe::egui::{
     WidgetInfo, WidgetType,
 };
 use festerm_markdown::{
-    Block, CodeBlock, ContainerInline, HeadingBlock, HighlightedCodeLine,
-    ImageInline, Inline, LinkInline, ListBlock, ListKind, LocalMarkdownSource, MarkdownDocument,
-    MarkdownLoadError, MarkdownLoader, MarkdownSource, MarkdownSourceError, RawHtmlBlock,
-    RemoteMarkdownSource, ResourceReferenceClass, ResourceReferenceKind, SourceSpan,
-    TableAlignment, TableBlock, TaskState, TextBlock, TextMatch,
+    Block, CodeBlock, ContainerInline, HeadingBlock, HighlightedCodeLine, ImageInline, Inline,
+    LinkInline, ListBlock, ListKind, LocalMarkdownSource, MarkdownDocument, MarkdownLoadError,
+    MarkdownLoader, MarkdownSource, MarkdownSourceError, RawHtmlBlock, RemoteMarkdownSource,
+    ResourceReferenceClass, ResourceReferenceKind, SourceSpan, TableAlignment, TableBlock,
+    TaskState, TextBlock, TextMatch,
 };
 use festerm_ui_egui::{icon, icon::Icon, theme};
 
@@ -547,7 +547,6 @@ impl MarkdownViewerTab {
         tab.apply_load_result(result);
         tab
     }
-
 
     pub fn title(&self) -> &str {
         &self.title
@@ -2898,12 +2897,13 @@ fn source_syntax_spans(ui: &egui::Ui, source: &str) -> std::sync::Arc<Vec<fester
     source[..head].hash(&mut hasher);
     source[source.len() - head..].hash(&mut hasher);
     let key = egui::Id::new(("markdown-source-syntax", hasher.finish()));
-    if let Some(cached) = ui
-        .data(|data| data.get_temp::<std::sync::Arc<Vec<festerm_syntax::Span>>>(key))
+    if let Some(cached) =
+        ui.data(|data| data.get_temp::<std::sync::Arc<Vec<festerm_syntax::Span>>>(key))
     {
         return cached;
     }
-    let mut syntax = festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
+    let mut syntax =
+        festerm_syntax::DocumentSyntax::for_language(festerm_syntax::Language::Markdown);
     let spans = std::sync::Arc::new(syntax.spans(source, 0, 0..source.len()).to_vec());
     ui.data_mut(|data| data.insert_temp(key, std::sync::Arc::clone(&spans)));
     spans
@@ -3129,7 +3129,6 @@ fn text_format_from_highlight(span: &festerm_markdown::HighlightedSpan) -> TextF
         ..Default::default()
     }
 }
-
 
 fn base_text_format(font: FontId, style: InlineRenderStyle) -> TextFormat {
     let inline_code = style.code_like;

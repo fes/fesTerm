@@ -476,8 +476,7 @@ fn mode_segment(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
             theme::TEXT_SECONDARY
         },
     );
-    let width =
-        (TOOLBAR_BUTTON_PADDING_X * 2.0 + galley.size().x).max(TOOLBAR_BUTTON_HEIGHT);
+    let width = (TOOLBAR_BUTTON_PADDING_X * 2.0 + galley.size().x).max(TOOLBAR_BUTTON_HEIGHT);
     let (rect, response) =
         ui.allocate_exact_size(vec2(width, TOOLBAR_BUTTON_HEIGHT), Sense::click());
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, label));
@@ -2861,11 +2860,7 @@ fn monospace_label(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
 const SYNTAX_MARGIN_LINES: usize = 60;
 
 /// The byte range worth colouring for what the reader can currently see.
-fn visible_byte_range(
-    text: &str,
-    top_offset: usize,
-    ui: &egui::Ui,
-) -> std::ops::Range<usize> {
+fn visible_byte_range(text: &str, top_offset: usize, ui: &egui::Ui) -> std::ops::Range<usize> {
     let line_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
     let rows = (ui.clip_rect().height() / line_height).ceil() as usize + 1;
     let start = step_lines_back(text, top_offset, SYNTAX_MARGIN_LINES);
@@ -3043,10 +3038,7 @@ mod tests {
 
     /// A second Edit-mode view of an already-open document, which is what
     /// Duplicate view gives a reader who then presses Edit.
-    fn second_view_of(
-        document: DocumentId,
-        documents: &SharedDocuments,
-    ) -> TextEditorTab {
+    fn second_view_of(document: DocumentId, documents: &SharedDocuments) -> TextEditorTab {
         let mut editor = TextEditorTab::new(document, documents);
         editor.mode = EditorMode::Edit;
         editor
@@ -3190,10 +3182,7 @@ mod tests {
             theme::SURFACE_SELECTION,
             "the current match keeps its ground whatever the syntax under it"
         );
-        assert_eq!(
-            job.text, text,
-            "colouring text never rewrites it"
-        );
+        assert_eq!(job.text, text, "colouring text never rewrites it");
     }
 
     #[test]

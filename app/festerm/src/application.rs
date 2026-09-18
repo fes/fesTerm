@@ -714,10 +714,9 @@ mod tests {
         context: &egui::Context,
     ) -> crate::tabs::TabId {
         let file = movable_tab_file(path);
-        application.window_mut(window).dispatch_for_test(
-            AppCommand::OpenTextEditor { path: file },
-            context,
-        );
+        application
+            .window_mut(window)
+            .dispatch_for_test(AppCommand::OpenTextEditor { path: file }, context);
         application.window_mut(window).active_tab_id_for_test()
     }
 

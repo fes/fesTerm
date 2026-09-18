@@ -198,6 +198,129 @@ The same document toggled to raw source, for readers who want to see the Markdow
 
 ![Markdown workspace, source mode](images/ui-state/markdown-source.png)
 
+## Editing text
+
+The editor exists because reading a remote runbook almost always turns into
+changing one, and the alternative was leaving fesTerm for something else. Its
+organising rule is that one open file is one document: every view of it shares
+the same text, the same undo history and the same saved-or-not state, so two
+windows on one file cannot disagree about what it contains.
+
+That rule is what the first captures are about. The banner, the tab chip and
+the status band are three reports of a single fact, and the chip states are
+distinguishable by shape before they are distinguishable by colour. When the
+file changes underneath an open document, the editor says so and then offers
+Compare rather than asking anyone to choose blind; closing the last view of
+unsaved text asks first, and names the file it is asking about.
+
+Editing conveniences are per view, not per file. Line numbers, a fixed column
+width, vi keys and syntax colour belong to the view they are switched on in —
+another window on the same document keeps its own — while Find, replace and
+the vi command area share one regular-expression dialect so there is nothing
+to relearn between them. When vi keys are on, the view says which mode it is
+in above the text as well as in the status bar, because a letter that has
+quietly become a command is the worst kind of surprise.
+
+Markdown is handled as a mode of the same tab rather than a separate viewer.
+A Markdown file lands in Preview, reading as the finished thing, with the
+mode control above it as the way to the source and Split showing both at
+once. Source is coloured by role — keyword, string, type, comment — from the
+same palette the preview's fenced code uses, so the two halves of a split view
+agree about what a string looks like. Colour is a reading aid and nothing
+more: it never carries meaning that the text does not already state, and when
+a file is too large to parse within budget the editor says the colour is
+missing and why.
+
+### Compare, after the file changed underneath the editor
+
+The conflict banner stays pinned above a read-only, line-oriented comparison of the unsaved version against the one the file now holds, so the choice is made with both versions in sight.
+
+![Compare, after the file changed underneath the editor](images/ui-state/text-editor-compare.png)
+
+### A document's three states side by side on the chips
+
+Saved, edited, and changed-underneath are three different shapes before they are three different colours, so the row still reads with the colour taken away.
+
+![A document's three states side by side on the chips](images/ui-state/text-editor-conflict-chip.png)
+
+### Closing the last view of a document with unsaved changes
+
+Closing the only remaining view of a typed-in document asks before anything is lost, names the file and where it lives, and makes Save the action the keyboard already has hold of.
+
+![Closing the last view of a document with unsaved changes](images/ui-state/text-editor-dirty-close.png)
+
+### Find and Replace over the open document
+
+One regular-expression dialect for the toolbar and the command area alike, saying which match of how many is current before anything is replaced.
+
+![Find and Replace over the open document](images/ui-state/text-editor-find.png)
+
+### The per-view editor options
+
+Line numbers, a fixed column count and vi keys belong to this view alone: another window on the same file keeps its own, and none of them touches the text.
+
+![The per-view editor options](images/ui-state/text-editor-options.png)
+
+### The editor with the Markdown outline beside it
+
+The same rail the Markdown viewer has, offered while the file renders as Markdown: the headings stay in reach without scrolling to find out where you are.
+
+![The editor with the Markdown outline beside it](images/ui-state/text-editor-outline.png)
+
+### A Markdown file as it opens
+
+A Markdown document lands in Preview, reading as the finished thing; the mode control above it is the way back to the source.
+
+![A Markdown file as it opens](images/ui-state/text-editor-preview.png)
+
+### Choosing where a document is written
+
+One destination browser for both origins, stating an overwrite in words before the fact rather than asking a second time after the Save is already pressed.
+
+![Choosing where a document is written](images/ui-state/text-editor-save-as.png)
+
+### The native editor, everything saved
+
+A fictional project's notes open for editing, with the origin, the commands, and the status band the editor reports through.
+
+![The native editor, everything saved](images/ui-state/text-editor-saved.png)
+
+### The editor split with its live preview
+
+One view, two panes: the text on the left and the same document rendered on the right, so a Markdown change can be read as it is typed.
+
+![The editor split with its live preview](images/ui-state/text-editor-split.png)
+
+### Source coloured by what it means
+
+Keywords, strings, numbers, types and comments are told apart by role rather than by language, from the same palette the Markdown preview's fenced code uses.
+
+![Source coloured by what it means](images/ui-state/text-editor-syntax.png)
+
+### The native editor holding unsaved changes
+
+The same document after typing: the banner, the chip state, and the status band all report one unsaved document rather than disagreeing.
+
+![The native editor holding unsaved changes](images/ui-state/text-editor-unsaved.png)
+
+### The vi command area over the open document
+
+One line above the persistent status bar, never in place of it: what the document is and where the caret sits stay readable while a command is being typed.
+
+![The vi command area over the open document](images/ui-state/text-editor-vi-command.png)
+
+### A view with vi compatibility switched on
+
+The view says which mode it is in, in words, above the text as well as in the status bar, so a letter behaving as a command is never a surprise.
+
+![A view with vi compatibility switched on](images/ui-state/text-editor-vi-mode.png)
+
+### A vi search matching as it is typed
+
+The same regular-expression dialect the Find bar uses, counting what Enter is about to accept rather than what was last run.
+
+![A vi search matching as it is typed](images/ui-state/text-editor-vi-search.png)
+
 ## Session diagnostics
 
 The Session Inspector answers "what exactly am I connected to, and how?" — a

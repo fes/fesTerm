@@ -14,8 +14,8 @@
 
 use std::ops::Range;
 
-use tree_sitter::{InputEdit, Language as TsLanguage, Parser, Point, Query, QueryCursor, Tree};
 use tree_sitter::StreamingIterator;
+use tree_sitter::{InputEdit, Language as TsLanguage, Parser, Point, Query, QueryCursor, Tree};
 
 /// Files above this many bytes open without highlighting.
 ///
@@ -651,8 +651,9 @@ mod tests {
         let spans = syntax.spans(&text, 1, window.clone()).to_vec();
         assert!(!spans.is_empty());
         assert!(
-            spans.iter().all(|span| span.start >= window.start
-                && span.end <= window.end),
+            spans
+                .iter()
+                .all(|span| span.start >= window.start && span.end <= window.end),
             "nothing outside the visible range is coloured"
         );
         let all = syntax.spans(&text, 1, 0..text.len()).len();

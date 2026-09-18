@@ -587,9 +587,13 @@ mod tests {
 
     #[test]
     fn editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width() {
-        let settings = InterfaceSettings::DEFAULT.with_editor(
-            EditorSettings::new(false, Some(80), true, true, false),
-        );
+        let settings = InterfaceSettings::DEFAULT.with_editor(EditorSettings::new(
+            false,
+            Some(80),
+            true,
+            true,
+            false,
+        ));
         let written = toml::to_string(&settings).unwrap();
         let read: InterfaceSettings = toml::from_str(&written).unwrap();
 
@@ -603,8 +607,7 @@ mod tests {
             "the block has to be written where it can be read back: {written}"
         );
 
-        let zero: InterfaceSettings =
-            toml::from_str("[editor]\nfixed_columns = 0\n").unwrap();
+        let zero: InterfaceSettings = toml::from_str("[editor]\nfixed_columns = 0\n").unwrap();
         assert_eq!(
             zero.editor().fixed_columns(),
             None,
