@@ -211,8 +211,10 @@ already counting in the same units — `:$` is the last line, and a number past
 the end of the file goes as far as the file goes rather than refusing.
 
 Normal and Visual paint a **block** caret over the character under it; Insert
-and Replace keep the platform's own bar. The shape is a second signal, never
-the only one:
+and Replace keep the platform's own bar. Exactly one caret is drawn at a time:
+while the block is up, the text widget's blinking bar is switched off, because
+a bar flashing inside the block is two carets claiming the same character.
+The shape is a second signal, never the only one:
 
 The current mode is always shown as **text** — `NORMAL`, `INSERT`, `VISUAL`,
 `REPLACE`, `COMMAND`, `SEARCH` — in the status bar. Cursor shape or colour

@@ -1395,14 +1395,19 @@ fn render_editor_over(
     mode: crate::text_editor::EditorMode,
     prepare: Option<PrepareEditor<'_>>,
 ) -> image::RgbaImage {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    let directory = std::env::temp_dir().join(format!(
-        "festerm-ui-gallery-editor-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
+    // The editor names the file it is editing, so the fixture's own path ends
+    // up in the capture. A per-process temporary directory would put a
+    // different machine-specific path in every run, rewriting these images
+    // whether or not the UI changed and publishing the host's temporary
+    // directory layout along with them. One fixed, synthetic-looking
+    // directory keeps a capture a function of the UI alone; the scenarios run
+    // one after another, each cleaning up after itself.
+    let directory = if cfg!(unix) {
+        std::path::PathBuf::from("/tmp/festerm-ui-gallery")
+    } else {
+        std::env::temp_dir().join("festerm-ui-gallery")
+    };
+    let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("the gallery can write a temporary directory");
     let path = directory.join(file_name);
     std::fs::write(&path, contents).expect("the gallery can write its fixture");
@@ -1429,6 +1434,12 @@ fn render_editor_over(
             },
             (documents, editor),
         );
+    harness.run();
+    // A blinking caret makes a capture depend on when it was taken, which
+    // would rewrite these files on every run and bury real changes in churn.
+    harness
+        .ctx
+        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
     harness.run();
     let image = finish(&mut harness);
     let _ = std::fs::remove_dir_all(&directory);

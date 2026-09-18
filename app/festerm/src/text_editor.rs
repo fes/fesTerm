@@ -2143,6 +2143,17 @@ impl TextEditorTab {
         }
     }
 
+    /// Whether this view paints its own block caret, which is also the reason
+    /// the text widget must not paint its blinking bar: two carets in one
+    /// place is worse than either one alone.
+    fn draws_block_caret(&self) -> bool {
+        self.options.vi_keys
+            && matches!(
+                self.vi.mode(),
+                ViMode::Normal | ViMode::Visual | ViMode::VisualLine
+            )
+    }
+
     /// Paints the block caret Normal and Visual mode are owed.
     ///
     /// A modal editor whose caret looks the same in both modes is asking the
@@ -2155,13 +2166,7 @@ impl TextEditorTab {
         output: &egui::text_edit::TextEditOutput,
         index: usize,
     ) {
-        if !self.options.vi_keys || !output.response.has_focus() {
-            return;
-        }
-        if !matches!(
-            self.vi.mode(),
-            ViMode::Normal | ViMode::Visual | ViMode::VisualLine
-        ) {
+        if !self.draws_block_caret() || !output.response.has_focus() {
             return;
         }
         let offset = output.galley_pos.to_vec2();
@@ -2444,6 +2449,17 @@ impl TextEditorTab {
             job.wrap.max_width = wrap_width;
             ui.ctx().fonts_mut(|fonts| fonts.layout_job(job))
         };
+        // Normal and Visual mode draw their own block caret below, so the
+        // widget's blinking bar is taken away for the duration of the widget
+        // rather than left to flash inside the block.
+        let widget_caret = self.draws_block_caret().then(|| {
+            let previous = ui.visuals().text_cursor.clone();
+            let hidden = &mut ui.visuals_mut().text_cursor;
+            hidden.stroke.width = 0.0;
+            hidden.blink = false;
+            hidden.preview = false;
+            previous
+        });
         let output = egui::TextEdit::multiline(&mut self.buffer)
             .id(body_id)
             .font(FontId::monospace(EDITOR_TEXT_SIZE))
@@ -2453,6 +2469,9 @@ impl TextEditorTab {
             .margin(egui::Margin::symmetric(BODY_MARGIN_X as i8, 8))
             .layouter(&mut layouter)
             .show(ui);
+        if let Some(previous) = widget_caret {
+            ui.visuals_mut().text_cursor = previous;
+        }
 
         if gutter > 0.0 {
             paint_line_numbers(ui, &output, left, gutter);
@@ -3635,6 +3654,39 @@ mod tests {
         // it at the start the way a reader who has just opened a file sees it.
         harness.state_mut().1.vi_caret = Some(0);
         harness.run();
+    }
+
+    #[test]
+    fn normal_mode_has_one_caret_and_insert_mode_has_the_other() {
+        let directory = TemporaryDirectory::new("vi-one-caret");
+        let path = directory.file("notes.md", "alpha beta\n");
+        let mut harness = vi_harness(&path);
+        focus_body(&mut harness);
+
+        assert!(
+            harness.state().1.draws_block_caret(),
+            "Normal mode is drawn as a block, so the widget's blinking bar is taken away"
+        );
+        vi_type(&mut harness, "v");
+        assert!(harness.state().1.draws_block_caret(), "so is Visual mode");
+        harness.key_press(egui::Key::Escape);
+        harness.run();
+
+        vi_type(&mut harness, "i");
+        assert!(
+            !harness.state().1.draws_block_caret(),
+            "Insert mode keeps the bar the platform draws, and only that",
+        );
+    }
+
+    #[test]
+    fn a_view_without_vi_keys_never_draws_a_block_caret() {
+        let directory = TemporaryDirectory::new("no-vi-caret");
+        let path = directory.file("notes.md", "alpha\n");
+        let mut harness = find_harness(&path);
+        focus_body(&mut harness);
+
+        assert!(!harness.state().1.draws_block_caret());
     }
 
     #[test]

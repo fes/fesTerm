@@ -1402,6 +1402,19 @@ impl TabContent {
     pub const fn movable_across_windows(&self) -> bool {
         !matches!(self, Self::Launcher | Self::Settings | Self::Profiles)
     }
+
+    /// Whether leaving a tab holding this content is worth remembering, so
+    /// that closing whatever was opened next returns here.
+    ///
+    /// The same three per-window singletons are excluded, for the same
+    /// underlying reason: Launcher, Settings and Profiles are surfaces a user
+    /// passes *through* on the way to doing something, and every window can
+    /// reopen one at any time. Being returned to Settings because that is
+    /// where a file was opened from would be an answer to a question nobody
+    /// asked.
+    pub const fn remembered_as_last_used(&self) -> bool {
+        !matches!(self, Self::Launcher | Self::Settings | Self::Profiles)
+    }
 }
 
 /// The document a tab is a view of, for the reference count that decides which
@@ -2002,6 +2015,12 @@ impl std::fmt::Debug for PrivateKeyToStore {
 /// Converts the saved interface preference into the UI-crate layout enum
 /// used by rendering. This is the one place `AppState` bridges the
 /// config-crate and UI-crate chip layout types.
+/// How many tabs back the "return to where I just was" history reaches. A
+/// window with more open tabs than this has long since stopped being a list
+/// anyone navigates by memory, and the history is a convenience rather than a
+/// record: forgetting the oldest entry costs nothing.
+const ACTIVATION_HISTORY_LIMIT: usize = 32;
+
 const fn chip_layout_from_preference(preference: ChipLayoutPreference) -> ChipLayout {
     match preference {
         ChipLayoutPreference::Wrap => ChipLayout::Wrap,
@@ -2039,6 +2058,14 @@ pub struct AppState {
     pending_resume: Option<PendingResume>,
     tabs: Vec<Tab>,
     active: TabId,
+    /// Which tabs were looked at, oldest first, so that closing the active tab
+    /// can return to the one it was opened from rather than to whichever tab
+    /// happens to sit next to it. Only tabs carrying their own content are
+    /// recorded: Launcher, Settings and Profiles are per-window singletons a
+    /// user passes through, not places to be sent back to. Window-local, and
+    /// deliberately not part of the persisted workspace — "where I just was"
+    /// does not survive a restart.
+    activation_history: Vec<TabId>,
     /// Every text document open anywhere in the application (ADR 0034 §2).
     /// Held here so tabs and command dispatch reach it, but owned by the
     /// process: secondary windows are given the registry that already exists.
@@ -2135,6 +2162,7 @@ impl AppState {
             pending_resume: None,
             tabs,
             active,
+            activation_history: Vec::new(),
             documents: DocumentRegistry::shared(),
             configuration,
             inspector_open: false,
@@ -3515,9 +3543,15 @@ impl AppState {
         let index = self.tabs.iter().position(|tab| tab.id == id)?;
         let tab = self.tabs.remove(index);
         self.workspace_dirty = true;
+        self.activation_history.retain(|open| *open != id);
         if self.active == id {
-            if let Some(next) = self.tabs.get(index.min(self.tabs.len().saturating_sub(1))) {
-                let next = next.id;
+            let next = self.last_used_tab().or_else(|| {
+                let fallback = index
+                    .checked_sub(1)
+                    .or_else(|| self.tabs.len().checked_sub(1))?;
+                self.tabs.get(fallback).map(|tab| tab.id)
+            });
+            if let Some(next) = next {
                 self.set_active(next);
             }
         }
@@ -3555,6 +3589,7 @@ impl AppState {
             "a detached tab may only replace a new window's placeholder Launcher",
         );
         self.tabs.clear();
+        self.activation_history.clear();
         self.adopt_tab(tab, None);
     }
 
@@ -4316,12 +4351,48 @@ impl AppState {
     /// #68): once the user is looking at it again there is nothing left to
     /// notify them about.
     fn set_active(&mut self, id: TabId) {
+        if self.active != id {
+            self.remember_departing_tab();
+        }
         self.active = id;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
             if let TabContent::Session(session) = &mut tab.content {
                 session.has_new_output_since_active = false;
             }
         }
+    }
+
+    /// Records the tab being left as the most recent place to return to.
+    ///
+    /// A tab that is no longer in the list is not recorded: it has just been
+    /// closed or detached, and neither is somewhere to go back to. Re-visiting
+    /// a tab moves it to the end rather than adding a second entry, so the
+    /// history holds each tab once, in the order it was last left.
+    fn remember_departing_tab(&mut self) {
+        let departing = self.active;
+        let remembered = self
+            .tabs
+            .iter()
+            .any(|tab| tab.id == departing && tab.content.remembered_as_last_used());
+        if !remembered {
+            return;
+        }
+        self.activation_history.retain(|id| *id != departing);
+        self.activation_history.push(departing);
+        if self.activation_history.len() > ACTIVATION_HISTORY_LIMIT {
+            self.activation_history.remove(0);
+        }
+    }
+
+    /// The most recently left tab that is still open, discarding entries for
+    /// tabs that have since gone.
+    fn last_used_tab(&mut self) -> Option<TabId> {
+        while let Some(candidate) = self.activation_history.pop() {
+            if self.tabs.iter().any(|tab| tab.id == candidate) {
+                return Some(candidate);
+            }
+        }
+        None
     }
 
     /// Relocates `moved` to sit immediately before `before` (or at the end of
@@ -4404,8 +4475,15 @@ impl AppState {
             return;
         }
         if self.active == id {
-            let next_index = index.min(self.tabs.len() - 1);
-            self.set_active(self.tabs[next_index].id);
+            self.activation_history.retain(|open| *open != id);
+            // Where the reader just was, if that tab is still open; otherwise
+            // the neighbour to the left, and the rightmost tab when the
+            // leftmost one is what closed.
+            let next = self.last_used_tab().unwrap_or_else(|| {
+                let fallback = index.checked_sub(1).unwrap_or(self.tabs.len() - 1);
+                self.tabs[fallback].id
+            });
+            self.set_active(next);
         }
     }
 }
@@ -6068,6 +6146,125 @@ mod tests {
 
         state.dispatch(AppCommand::ToggleSessionInspector, &context);
         assert!(state.inspector_open());
+    }
+
+    #[test]
+    fn closing_a_tab_returns_to_the_one_it_was_opened_from() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let first = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let third = state.active();
+
+        state.dispatch(AppCommand::ActivateTab(first), &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let opened = state.active();
+        assert_ne!(opened, third);
+
+        state.dispatch(AppCommand::CloseTab(opened), &context);
+        assert_eq!(
+            state.active(),
+            first,
+            "a close returns to where the closed tab was opened from, not to its neighbour",
+        );
+    }
+
+    #[test]
+    fn a_singleton_tab_is_never_where_a_close_returns_to() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let session = state.active();
+
+        state.dispatch(AppCommand::OpenSettings, &context);
+        assert!(matches!(state.active_tab().content, TabContent::Settings));
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let opened = state.active();
+
+        state.dispatch(AppCommand::CloseTab(opened), &context);
+        assert_eq!(
+            state.active(),
+            session,
+            "Settings is passed through, not returned to",
+        );
+    }
+
+    #[test]
+    fn without_a_history_a_close_falls_back_to_the_tab_on_the_left() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let left = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let closing = state.active();
+        state.activation_history.clear();
+
+        state.dispatch(AppCommand::CloseTab(closing), &context);
+        assert_eq!(state.active(), left);
+    }
+
+    #[test]
+    fn closing_the_leftmost_tab_without_a_history_falls_back_to_the_rightmost() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        let leftmost = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let rightmost = state.active();
+
+        state.dispatch(AppCommand::ActivateTab(leftmost), &context);
+        state.activation_history.clear();
+        state.dispatch(AppCommand::CloseTab(leftmost), &context);
+        assert_eq!(state.active(), rightmost);
+    }
+
+    #[test]
+    fn a_revisited_tab_is_remembered_once_and_most_recently() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let first = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let second = state.active();
+
+        state.dispatch(AppCommand::ActivateTab(first), &context);
+        state.dispatch(AppCommand::ActivateTab(second), &context);
+        assert_eq!(state.activation_history, vec![second, first]);
+
+        state.dispatch(AppCommand::CloseTab(second), &context);
+        assert_eq!(state.active(), first);
+    }
+
+    #[test]
+    fn a_closed_tab_is_not_returned_to_later() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let first = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let second = state.active();
+        state.dispatch(AppCommand::StartLocalSession, &context);
+        let third = state.active();
+        assert_eq!(state.activation_history, vec![first, second]);
+
+        state.dispatch(AppCommand::CloseTab(second), &context);
+        assert_eq!(
+            state.active(),
+            third,
+            "closing an inactive tab moves nobody"
+        );
+
+        state.dispatch(AppCommand::CloseTab(third), &context);
+        assert_eq!(
+            state.active(),
+            first,
+            "a tab that has itself been closed is skipped over, not returned to",
+        );
     }
 
     #[test]

@@ -729,7 +729,13 @@
         "selecting_an_action_expands_the_editor_under_its_own_row",
         "every_action_documents_what_it_does",
         "every_scope_explains_where_its_actions_apply",
-        "settings_presents_each_shortcut_exactly_once"
+        "settings_presents_each_shortcut_exactly_once",
+        "closing_a_tab_returns_to_the_one_it_was_opened_from",
+        "a_singleton_tab_is_never_where_a_close_returns_to",
+        "without_a_history_a_close_falls_back_to_the_tab_on_the_left",
+        "closing_the_leftmost_tab_without_a_history_falls_back_to_the_rightmost",
+        "a_revisited_tab_is_remembered_once_and_most_recently",
+        "a_closed_tab_is_not_returned_to_later"
       ],
       "manual_scenarios": [
         "AS-04",
@@ -1171,7 +1177,9 @@
         "editor_settings_round_trip_and_read_a_stored_zero_as_a_fluid_width",
         "a_default_editor_block_is_not_written_at_all",
         "a_markdown_file_opens_in_the_editor_showing_its_preview_and_only_once",
-        "a_markdown_file_opens_in_preview_and_a_plain_one_opens_in_edit"
+        "a_markdown_file_opens_in_preview_and_a_plain_one_opens_in_edit",
+        "normal_mode_has_one_caret_and_insert_mode_has_the_other",
+        "a_view_without_vi_keys_never_draws_a_block_caret"
       ],
       "manual_scenarios": [
         "CP-15"

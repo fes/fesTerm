@@ -2218,7 +2218,16 @@ Expected commands include:
 - New Tab opens the session launcher.
 - **Start Local Shell** opens the default local profile directly with the
   platform shortcut shown below and remains available from the command palette.
-- Close Tab closes the current launcher or session tab.
+- Close Tab closes the current launcher or session tab. Closing the active tab
+  returns to the tab it was opened from — the most recently left tab that is
+  still open — because opening a file, reading it and closing it should put a
+  reader back where they were rather than wherever the closed tab happened to
+  sit. Launcher/New Session, Settings and Profiles are passed through rather
+  than returned to, so they are never recorded as that place; they remain
+  ordinary fallbacks when nothing better is open. With no remembered tab, focus
+  falls to the neighbour on the left, or to the rightmost tab when the leftmost
+  one is what closed. The history is per window and deliberately not persisted:
+  "where I just was" does not survive a restart.
 - Next/Previous Tab switch predictably.
 - The combined command palette/session switcher finds tabs by stable identity
   and optional secondary content and exposes applicable application commands.
