@@ -111,9 +111,7 @@ impl ViCommand {
 ///
 /// Completion offers only these, so it cannot advertise something that will
 /// then fail — which is the ADR's rule for the command area.
-const COMMAND_NAMES: &[&str] = &[
-    "e", "edit", "q", "quit", "s", "saveas", "w", "wq", "write", "x",
-];
+const COMMAND_NAMES: &[&str] = &["e", "edit", "q", "quit", "saveas", "w", "wq", "write", "x"];
 
 /// Parse a command line, without its leading `:`.
 pub fn parse(line: &str) -> Result<ViCommand, CommandError> {
@@ -184,6 +182,13 @@ pub fn parse(line: &str) -> Result<ViCommand, CommandError> {
                 "`:{name}` belongs to Vim's configuration environment, which fesTerm does not \
                  implement. Use Editor options for per-view settings."
             ),
+        )),
+        // A bare `s` is a supported command missing its argument, not an
+        // unknown one, and saying otherwise would hide substitution from the
+        // reader who was closest to finding it.
+        "s" | "%s" | "'<,'>s" => Err(CommandError::new(
+            "Substitution needs a pattern",
+            "Type a pattern and a replacement, as in `:s/old/new/`, or `:%s/old/new/g` for the              whole file.",
         )),
         _ => Err(CommandError::new(
             "Unknown command",
@@ -645,12 +650,23 @@ impl CommandArea {
                 );
             }
             Some(CommandOutcome::Failed(error)) => {
+                // The reason is shown, not hovered: a refusal a reader has to
+                // find with a pointer is not an honest refusal.
                 ui.label(
                     egui::RichText::new(error.headline())
                         .size(AREA_TEXT_SIZE - 1.0)
                         .color(theme::STATUS_ERROR),
-                )
-                .on_hover_text(error.detail());
+                );
+                ui.label(
+                    egui::RichText::new("·")
+                        .size(AREA_TEXT_SIZE - 1.0)
+                        .color(theme::TEXT_MUTED),
+                );
+                ui.label(
+                    egui::RichText::new(error.detail())
+                        .size(AREA_TEXT_SIZE - 1.0)
+                        .color(theme::TEXT_SECONDARY),
+                );
             }
             None => {}
         }
@@ -933,5 +949,28 @@ mod tests {
         area.open(CommandPrompt::Ex);
         assert_eq!(area.outcome(), None);
         assert_eq!(area.input(), "");
+    }
+
+    #[test]
+    fn a_substitution_without_a_pattern_is_told_what_is_missing() {
+        let error = parse("s").expect_err("`:s` alone cannot run");
+        assert_eq!(error.headline(), "Substitution needs a pattern");
+        assert!(
+            error.detail().contains(":s/old/new/"),
+            "the refusal shows the shape of the command it wanted: {}",
+            error.detail()
+        );
+        assert!(
+            !error.detail().contains("is not one of"),
+            "a supported command missing its argument is not an unknown command"
+        );
+    }
+
+    #[test]
+    fn completion_never_offers_a_bare_substitution() {
+        assert!(
+            !completions("s").contains(&"s"),
+            "`:s` alone always fails, so it is not something to offer"
+        );
     }
 }

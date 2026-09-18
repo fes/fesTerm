@@ -98,7 +98,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "4a14321ed3e50a54bf3684391d972e2267f76c318f0a4d7d5228f0aa27219c94"
+      "sha256": "e2d7eaa98140c7e194c55e948352228e6b8ca4f8209f6e5d7f2fbd7374506301"
     },
     {
       "id": "text-editor-conflict-chip",
@@ -109,7 +109,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "2f579140a0ae48dc79495b321ca3d140aa525a7c5ba99c08e82ba6b30a7617d3"
+      "sha256": "6a80f147f4f97ed1a345183cc9ffeb9fc6f89072e4fcf55e6d0f09c6b0a766ea"
     },
     {
       "id": "text-editor-dirty-close",
@@ -120,7 +120,7 @@
       "width": 980,
       "height": 700,
       "tier": "headless",
-      "sha256": "645fdc04f80b4c22e1ec91a27f1a6499ba8b68847e63554bdaef02b9d758a989"
+      "sha256": "bb21bcf4ffd111af99fc882c2d05f5a68eba638b0099ac86059c71a7c49eaf48"
     },
     {
       "id": "text-editor-find",
@@ -131,7 +131,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "5c77c7d37ae11e67046a20fac317ed8b81b36dc952d867c520e4bbac2767209e"
+      "sha256": "205f68c262b037dbd1552db1e21ab1893017be66eeb9e4198847c4d07625793f"
     },
     {
       "id": "text-editor-options",
@@ -142,7 +142,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "824eee3df9e64422b7ada98356f41c77b9d1cca1b5267e976db7bc73b4494487"
+      "sha256": "ac1f10291f2d18a89b92fca691f290877edd275b06bdee9cdb84e132c834491b"
     },
     {
       "id": "text-editor-save-as",
@@ -153,7 +153,7 @@
       "width": 1080,
       "height": 760,
       "tier": "headless",
-      "sha256": "cd86918669d7f82a723e8357cf8c7c976adb11d1f73ca3621433b2a416e2036a"
+      "sha256": "99f21d9dd9f7d3ffeff943b29e450a5a860cfa1deb11e63995f197d58ea7a877"
     },
     {
       "id": "text-editor-saved",
@@ -164,7 +164,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "70b8a193a2769d0a0b146953e95dae4e4027c34962cc93bb8561d38d377887dd"
+      "sha256": "7e4ac3c3ca5564a075da466a0d4acacd2c92b982f8b9bf0cc906f61745616ba6"
     },
     {
       "id": "text-editor-split",
@@ -175,7 +175,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "c9c56b9a5c9d31bb22cfdce689ebe39ed8810ee5c05f633faff9018b827fefeb"
+      "sha256": "cab501ea686a66f44617680e8ad88917102c78fd4df22ee124b1901fd6ec9bed"
     },
     {
       "id": "text-editor-unsaved",
@@ -186,7 +186,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "008e9b58c6ddf487f97a5a6c3c575df5203c3e6c1e2e48e35fe945f39ba2c788"
+      "sha256": "b84c998a6ac0acde3616317a1047d3b428dd682875ff4f1f1a428ddcd103b788"
     },
     {
       "id": "text-editor-vi-command",
@@ -197,7 +197,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "bd357a1ee016bad6c8087e0cc86f0a051f13316b8d453a137c9b3768f20c8ed4"
+      "sha256": "9fd6816844191d94dbb8892d9d353033718f9657b9e2424d3f14c7f2ce20df83"
     },
     {
       "id": "text-editor-vi-mode",
@@ -208,7 +208,7 @@
       "width": 900,
       "height": 820,
       "tier": "headless",
-      "sha256": "92e855870e917e4f3c6c2b8fbed6bd00822ec3a517b063730f23de47fff77f84"
+      "sha256": "a80312cc821d967837a4dcac439dfbc84f5576677cda522cb7dd61a8cd4af162"
     },
     {
       "id": "text-editor-vi-search",
@@ -219,7 +219,7 @@
       "width": 900,
       "height": 819,
       "tier": "headless",
-      "sha256": "3691319fb63dc4a4fa4ea6e90ebbfdce14bfe9b418480c8b96c76146c50425cb"
+      "sha256": "839cca0f908d458f5271ce9ae7c3bdefabaa73ad12c56922dbac2915067c75cd"
     },
     {
       "id": "keyboard-editor-collapsed",

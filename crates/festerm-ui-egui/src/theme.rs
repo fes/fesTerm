@@ -22,6 +22,13 @@ pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xa7, 0xb2, 0xbd);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x78, 0x85, 0x92);
 pub const TEXT_ON_ACCENT: Color32 = Color32::WHITE;
 
+/// A search match that is not the current one: a faint amber wash under an
+/// amber rule, so a match is recognisable by its shape and not only by a
+/// colour a reader may not be able to tell from the background.
+pub const SEARCH_MATCH_FILL: Color32 = Color32::from_rgb(0x2c, 0x25, 0x14);
+/// The rule drawn under every match that is not the current one.
+pub const SEARCH_MATCH_RULE: Color32 = Color32::from_rgb(0xd2, 0xa9, 0x4b);
+
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x35, 0x41, 0x4e);
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x91, 0xa7, 0xb8);
 pub const ACCENT_PRIMARY: Color32 = Color32::from_rgb(0x42, 0xbf, 0xd0);

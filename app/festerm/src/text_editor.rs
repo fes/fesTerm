@@ -674,7 +674,7 @@ impl TextEditorTab {
                 let detail = if self.command.input().is_empty() {
                     "Rust-compatible Unicode regex · matching as it is typed.".to_owned()
                 } else if matches == 1 {
-                    "Rust-compatible Unicode regex · one match is highlighted in the current \
+                    "Rust-compatible Unicode regex · 1 match is highlighted in the current \
                      buffer."
                         .to_owned()
                 } else {
@@ -2359,7 +2359,10 @@ fn highlight_matches(text: &str, highlights: &[(usize, usize, bool)]) -> egui::t
     let font = FontId::monospace(EDITOR_TEXT_SIZE);
     let mut job = egui::text::LayoutJob::default();
     let mut cursor = 0;
-    let push = |job: &mut egui::text::LayoutJob, range: std::ops::Range<usize>, background| {
+    let push = |job: &mut egui::text::LayoutJob,
+                range: std::ops::Range<usize>,
+                background,
+                underline: egui::Stroke| {
         if range.is_empty() {
             return;
         }
@@ -2370,6 +2373,7 @@ fn highlight_matches(text: &str, highlights: &[(usize, usize, bool)]) -> egui::t
                 font_id: font.clone(),
                 color: theme::TEXT_PRIMARY,
                 background,
+                underline,
                 ..Default::default()
             },
         );
@@ -2384,19 +2388,32 @@ fn highlight_matches(text: &str, highlights: &[(usize, usize, bool)]) -> egui::t
         {
             continue;
         }
-        push(&mut job, cursor..start, egui::Color32::TRANSPARENT);
         push(
             &mut job,
-            start..end,
-            if current {
-                theme::SURFACE_SELECTION
-            } else {
-                theme::SURFACE_CARD
-            },
+            cursor..start,
+            egui::Color32::TRANSPARENT,
+            egui::Stroke::NONE,
         );
+        // The current match is filled; the rest are washed and ruled. The two
+        // differ in shape as well as in colour, so which match Enter will take
+        // is readable without telling two dark blues apart.
+        let (background, underline) = if current {
+            (theme::SURFACE_SELECTION, egui::Stroke::NONE)
+        } else {
+            (
+                theme::SEARCH_MATCH_FILL,
+                egui::Stroke::new(1.0, theme::SEARCH_MATCH_RULE),
+            )
+        };
+        push(&mut job, start..end, background, underline);
         cursor = end;
     }
-    push(&mut job, cursor..text.len(), egui::Color32::TRANSPARENT);
+    push(
+        &mut job,
+        cursor..text.len(),
+        egui::Color32::TRANSPARENT,
+        egui::Stroke::NONE,
+    );
     job
 }
 
