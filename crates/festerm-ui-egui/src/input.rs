@@ -143,11 +143,38 @@ fn route_mouse_input_in_viewport(
     sink: &mut impl EncodedInputSink,
     viewport_offset_rows: usize,
 ) -> InputRoute {
+    route_mouse_input_with_policy(
+        terminal,
+        event,
+        selection,
+        sink,
+        viewport_offset_rows,
+        false,
+    )
+}
+
+fn route_mouse_input_with_policy(
+    terminal: &mut Terminal,
+    event: MouseEvent,
+    selection: &mut Selection,
+    sink: &mut impl EncodedInputSink,
+    viewport_offset_rows: usize,
+    force_local_selection: bool,
+) -> InputRoute {
     let position = CellPosition {
         column: event.column,
         row: event.row,
     };
-    let route = route_input(terminal, InputEvent::Mouse(event), sink);
+    let route = if force_local_selection {
+        sink.observe_local_gesture("mouse-left", "forced-local-selection", 1);
+        InputRoute {
+            outcome: InputEventOutcome::SelectionAllowed,
+            queue_depth: terminal.queued_input().len(),
+            delivered_bytes: 0,
+        }
+    } else {
+        route_input(terminal, InputEvent::Mouse(event), sink)
+    };
     match route.outcome {
         InputEventOutcome::SelectionAllowed => {
             let snapshot = TerminalSnapshot::from_terminal_viewport(terminal, viewport_offset_rows);
@@ -277,6 +304,7 @@ impl KeyboardOwnership {
 pub(crate) struct TerminalPointerState {
     pub(crate) pressed: [bool; 3],
     pub(crate) captured: [bool; 3],
+    local_selection: [bool; 3],
     pub(crate) last_position: Option<Pos2>,
     pub(crate) modifiers: Modifiers,
 }
@@ -295,11 +323,13 @@ impl TerminalPointerState {
         button: MouseButton,
         position: Pos2,
         capture: bool,
+        local_selection: bool,
         modifiers: Modifiers,
     ) {
         let index = Self::button_index(button);
         self.pressed[index] = true;
         self.captured[index] = capture;
+        self.local_selection[index] = local_selection;
         self.last_position = Some(position);
         self.modifiers = modifiers;
     }
@@ -308,6 +338,7 @@ impl TerminalPointerState {
         let index = Self::button_index(button);
         self.pressed[index] = false;
         self.captured[index] = false;
+        self.local_selection[index] = false;
         self.last_position = Some(position);
         self.modifiers = modifiers;
     }
@@ -326,6 +357,11 @@ impl TerminalPointerState {
     pub(crate) fn button_captured(&self, button: MouseButton) -> bool {
         let index = Self::button_index(button);
         self.pressed[index] && self.captured[index]
+    }
+
+    pub(crate) fn local_selection_owned(&self, button: MouseButton) -> bool {
+        let index = Self::button_index(button);
+        self.pressed[index] && self.local_selection[index]
     }
 
     pub(crate) fn held_button(&self) -> Option<MouseButton> {
@@ -682,9 +718,12 @@ pub(crate) fn route_pointer_event(
             modifiers,
         } => {
             let cell = layout.cell_geometry().hit_test(position);
-            pointer.press(button, position, cell.is_some(), modifiers);
+            let local_selection = button == MouseButton::Left
+                && cell.is_some()
+                && modifiers.contains(Modifiers::SHIFT);
+            pointer.press(button, position, cell.is_some(), local_selection, modifiers);
             cell.map(|position| {
-                route_mouse_input_in_viewport(
+                route_mouse_input_with_policy(
                     terminal,
                     MouseEvent {
                         kind: MouseEventKind::Press(button),
@@ -695,6 +734,7 @@ pub(crate) fn route_pointer_event(
                     selection,
                     sink,
                     viewport_offset_rows,
+                    local_selection,
                 )
             })
         }
@@ -704,6 +744,7 @@ pub(crate) fn route_pointer_event(
             pressed: false,
             modifiers,
         } => {
+            let local_selection = pointer.local_selection_owned(button);
             let cell = layout.cell_geometry().hit_test(position).or_else(|| {
                 (pointer.button_captured(button) || selection.is_active()).then(|| {
                     clamped_cell_from_point(
@@ -715,7 +756,7 @@ pub(crate) fn route_pointer_event(
                 })?
             });
             let route = cell.map(|position| {
-                route_mouse_input_in_viewport(
+                route_mouse_input_with_policy(
                     terminal,
                     MouseEvent {
                         kind: MouseEventKind::Release(button),
@@ -726,6 +767,7 @@ pub(crate) fn route_pointer_event(
                     selection,
                     sink,
                     viewport_offset_rows,
+                    local_selection,
                 )
             });
             pointer.release(button, position, modifiers);
@@ -747,7 +789,7 @@ pub(crate) fn route_pointer_event(
                     })?
                 })
                 .map(|position| {
-                    route_mouse_input_in_viewport(
+                    route_mouse_input_with_policy(
                         terminal,
                         MouseEvent {
                             kind: MouseEventKind::Move {
@@ -760,13 +802,14 @@ pub(crate) fn route_pointer_event(
                         selection,
                         sink,
                         viewport_offset_rows,
+                        pointer.local_selection_owned(MouseButton::Left),
                     )
                 })
         }
         PointerInputEvent::Wheel { delta_y, modifiers } if delta_y != 0.0 => {
             pointer.last_position.and_then(|position| {
                 layout.cell_geometry().hit_test(position).map(|position| {
-                    route_mouse_input_in_viewport(
+                    route_mouse_input_with_policy(
                         terminal,
                         MouseEvent {
                             kind: MouseEventKind::Wheel(if delta_y > 0.0 {
@@ -781,6 +824,7 @@ pub(crate) fn route_pointer_event(
                         selection,
                         sink,
                         viewport_offset_rows,
+                        false,
                     )
                 })
             })
@@ -1202,6 +1246,60 @@ mod tests {
                 b"\x1b[<32;3;1M".to_vec(),
                 b"\x1b[<0;3;1m".to_vec(),
             ]
+        );
+    }
+
+    #[test]
+    fn shift_drag_forces_local_selection_while_application_tracks_mouse() {
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(b"select me\x1b[?1002h\x1b[?1006h");
+        let mut selection = Selection::default();
+        let mut pointer = TerminalPointerState::default();
+        let mut sink = Sink::default();
+        let layout = grid_layout(8, 2);
+
+        for event in [
+            PointerInputEvent::Button {
+                position: Pos2::new(6.0, 8.0),
+                button: MouseButton::Left,
+                pressed: true,
+                modifiers: Modifiers::SHIFT,
+            },
+            PointerInputEvent::Moved {
+                position: Pos2::new(36.0, 8.0),
+            },
+            PointerInputEvent::Button {
+                position: Pos2::new(36.0, 8.0),
+                button: MouseButton::Left,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            },
+        ] {
+            assert_eq!(
+                route_pointer_event(
+                    event,
+                    layout,
+                    &mut terminal,
+                    &mut selection,
+                    &mut pointer,
+                    &mut sink,
+                    0,
+                )
+                .map(|route| route.outcome),
+                Some(InputEventOutcome::SelectionAllowed)
+            );
+        }
+
+        assert!(
+            sink.0.is_empty(),
+            "forced local selection must not send mouse reports to the application"
+        );
+        assert_eq!(
+            selection.range(),
+            Some(CellRange::new(
+                CellPosition { column: 0, row: 0 },
+                CellPosition { column: 3, row: 0 },
+            ))
         );
     }
 
