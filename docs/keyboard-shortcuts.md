@@ -355,10 +355,11 @@ the write payload or arbitrary transport error text.
 For mouse events, **SelectionAllowed** may begin/extend/finish local selection.
 **SelectionClaimed** means terminal-owned but unreported: no bytes **and no
 local selection**. **Encoded** means a report was produced; old local selection
-is cleared. For drag selection Shift remains an ordinary reported modifier:
-there is **no Shift-drag selection override**. Existing view-owned Shift
-right-click/middle-click/wheel gestures still select local context-menu/paste/
-history behavior, and are recorded separately. A click focusing a terminal, pointer
+is cleared. Shift+left-drag is intercepted by the view before core routing and
+forces local selection for the whole latched gesture, so it emits no terminal
+mouse report. Existing view-owned Shift right-click/middle-click/wheel gestures
+likewise select local context-menu/paste/history behavior, and are recorded
+separately. A click focusing a terminal, pointer
 bookkeeping, or clearing old selection is not competing consumption. Forwarded
 mouse reports do not prove the TUI selected text; tmux/Screen can consume them.
 Selection and subsequent Copy are separately observable, without selected text.
