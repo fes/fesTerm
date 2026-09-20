@@ -478,51 +478,55 @@ fn local_path_field(
             }
         }
 
-        if active && !display.suggestions.is_empty() {
-            ui.add_space(4.0);
-            let dropdown = egui::Frame::new()
-                .fill(theme::SURFACE_TAB_INACTIVE)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                .corner_radius(6.0)
-                .inner_margin(6.0)
-                .show(ui, |ui| {
-                    for candidate in &display.suggestions {
-                        let text = candidate.display().to_string();
-                        let response = ui.add(
-                            egui::Button::selectable(
-                                false,
-                                egui::RichText::new(&text).color(theme::TEXT_PRIMARY),
-                            )
-                            .wrap_mode(egui::TextWrapMode::Extend),
-                        );
-                        if response.clicked() {
-                            *value = text;
-                            suppress = true;
-                        }
+        let has_feedback = !display.suggestions.is_empty()
+            || start_error.is_some()
+            || display.error.is_some()
+            || display.limited
+            || display.truncated
+            || display.pending;
+        // Completion changes must not reflow the form beneath a pointer click.
+        let dropdown = egui::Popup::from_response(&field)
+            .id(dropdown_rect_id)
+            .open(active && has_feedback)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE_TAB_INACTIVE)
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
+                    .corner_radius(6.0)
+                    .inner_margin(6.0),
+            )
+            .show(|ui| {
+                for candidate in &display.suggestions {
+                    let text = candidate.display().to_string();
+                    let response = ui.add(
+                        egui::Button::selectable(
+                            false,
+                            egui::RichText::new(&text).color(theme::TEXT_PRIMARY),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                    if response.clicked() {
+                        *value = text;
+                        suppress = true;
                     }
-                });
+                }
+                if let Some(error) = start_error.or(display.error) {
+                    ui.colored_label(theme::STATUS_ERROR, error);
+                } else if display.limited {
+                    ui.colored_label(theme::TEXT_SECONDARY, "Search limited; narrow query.");
+                } else if display.truncated {
+                    ui.colored_label(
+                        theme::TEXT_SECONDARY,
+                        format!("Showing the first {PATH_SUGGESTION_LIMIT} matches."),
+                    );
+                } else if display.pending && display.suggestions.is_empty() {
+                    ui.colored_label(theme::TEXT_SECONDARY, "Searching…");
+                }
+            });
+        if let Some(dropdown) = dropdown {
             ui.data_mut(|data| data.insert_temp(dropdown_rect_id, dropdown.response.rect));
         } else {
             ui.data_mut(|data| data.remove::<egui::Rect>(dropdown_rect_id));
-        }
-
-        if active {
-            if let Some(error) = start_error.or(display.error) {
-                ui.add_space(4.0);
-                ui.colored_label(theme::STATUS_ERROR, error);
-            } else if display.limited {
-                ui.add_space(4.0);
-                ui.colored_label(theme::TEXT_SECONDARY, "Search limited; narrow query.");
-            } else if display.truncated {
-                ui.add_space(4.0);
-                ui.colored_label(
-                    theme::TEXT_SECONDARY,
-                    format!("Showing the first {PATH_SUGGESTION_LIMIT} matches."),
-                );
-            } else if display.pending && display.suggestions.is_empty() {
-                ui.add_space(4.0);
-                ui.colored_label(theme::TEXT_SECONDARY, "Searching…");
-            }
         }
 
         ui.data_mut(|data| {
@@ -568,6 +572,7 @@ pub(super) fn install_executable_fixture(context: &egui::Context) -> std::path::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
     use std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -676,6 +681,82 @@ mod tests {
             query: query.to_owned(),
             limit: PATH_SUGGESTION_LIMIT,
         }
+    }
+
+    #[test]
+    fn autocomplete_updates_and_focus_loss_do_not_move_save() {
+        struct Form {
+            query: String,
+            save_rect: egui::Rect,
+            saved: bool,
+        }
+        let backend = Arc::new(ControlledBackend::default());
+        let release = backend.with_query("alpha");
+        let service = service_for_test(backend);
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, state: &mut Form| {
+                local_working_directory_field(ui, egui::Id::new("directory"), &mut state.query);
+                ui.add_space(200.0);
+                let save = ui.button("Save");
+                state.save_rect = save.rect;
+                state.saved |= save.clicked();
+            },
+            Form {
+                query: "alpha".to_owned(),
+                save_rect: egui::Rect::NOTHING,
+                saved: false,
+            },
+        );
+        harness.ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("festerm-local-path-autocomplete-service"),
+                service.clone(),
+            );
+        });
+        harness.run();
+        let save_rect = harness.state().save_rect;
+        harness.get_by_label("Working directory (optional)").focus();
+        harness.run();
+        assert!(harness.query_by_label("Searching…").is_some());
+        let pending_rect = harness.state().save_rect;
+
+        release
+            .send(festerm_pty::PathSearchResult::new(
+                vec![std::path::PathBuf::from("/alpha")],
+                false,
+                false,
+                None,
+            ))
+            .unwrap();
+        wait_for(
+            Duration::from_secs(1),
+            || {
+                !service
+                    .display_state(&request("alpha"))
+                    .suggestions
+                    .is_empty()
+            },
+            "controlled suggestions should arrive",
+        );
+        harness.run();
+        let ready_rect = harness.state().save_rect;
+        harness.get_by_label("Save").click();
+        harness.run();
+
+        assert_eq!(
+            pending_rect, save_rect,
+            "pending feedback must not move Save"
+        );
+        assert_eq!(ready_rect, save_rect, "arriving results must not move Save");
+        assert_eq!(
+            harness.state().save_rect,
+            save_rect,
+            "focus loss must not move Save"
+        );
+        assert!(
+            harness.state().saved,
+            "one real pointer click must save the form"
+        );
     }
 
     #[test]

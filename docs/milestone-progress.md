@@ -26,6 +26,13 @@ bound. Errors and partial results remain visible. A blocked operating-system
 filesystem call still cannot be cancelled, but it no longer blocks terminal
 rendering or admits more worker threads for each keystroke.
 
+The v0.2.1 release gate then caught a missed Save click: inline completion
+feedback changed form height when an asynchronous result arrived or the field
+lost focus. A controlled blocked-search regression reproduces the target moving
+without scheduler retries. Suggestions and feedback now use an anchored popup,
+keeping form geometry stable through pending, result arrival, and focus loss.
+The failed, unpublished v0.2.1 tag is retained; v0.2.2 carries the correction.
+
 ## Running Sessions discovery under churn (#155, September 2026)
 
 The refreshed Launcher exposed two correctness gaps behind apparently simple

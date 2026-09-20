@@ -1413,7 +1413,10 @@ bounded filesystem-backed completion. That completion is asynchronous: it
 caches exact prior queries, performs slow filesystem scans off the UI thread,
 admits at most one running scan plus the latest pending query, rejects stale
 results when typing moves on, and caps candidate memory while preserving sorted
-absolute-path suggestions for click selection. SSH profiles contain name, host, port, username,
+absolute-path suggestions for click selection. Suggestions and search feedback
+appear in a popup anchored to the field, never in the form's layout: arrival,
+dismissal, and focus changes must not move Save or other form controls underneath
+a pointer click. SSH profiles contain name, host, port, username,
 stored-password/private-key reference state, saved port-forward mappings, and an authentication
 preference. Serial profiles contain name, exact device
 identifier, baud rate, data bits, parity, stop bits, and flow control. Profiles
