@@ -8824,7 +8824,11 @@ mod tests {
     fn a_focused_terminal_keeps_plain_control_o_for_the_program_inside_it() {
         let mut harness = harness();
         harness.run();
-        harness.key_press(egui::Key::Enter);
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
         harness.step();
         assert!(
             matches!(
@@ -9437,8 +9441,12 @@ mod tests {
         // the next keystroke until the user presses Escape.
         let mut harness = harness();
         harness.run();
-        harness.key_press(egui::Key::Enter);
-        harness.run();
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
+        harness.step();
 
         let selection_before = match &harness.state().state.active_tab().content {
             TabContent::Session(session) => session.view.selection().clone(),
@@ -10065,7 +10073,11 @@ mod tests {
         let output_path = std::env::temp_dir().join("festerm-gui-review");
         let mut harness = harness();
         harness.run();
-        harness.key_press(egui::Key::Enter);
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
         harness.step();
         if let TabContent::Session(session) =
             &mut harness.state_mut().state.active_tab_mut().content
@@ -10631,7 +10643,11 @@ mod tests {
     fn platform_close_tab_shortcut_closes_the_active_tab_end_to_end() {
         let mut harness = harness();
         harness.run();
-        harness.key_press(egui::Key::Enter);
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
         harness.step();
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.step();
@@ -10644,7 +10660,7 @@ mod tests {
     }
 
     #[test]
-    fn pressing_enter_on_the_launcher_starts_the_highlighted_option_end_to_end() {
+    fn pressing_enter_on_the_launcher_opens_and_submits_the_highlighted_local_form_end_to_end() {
         let mut harness = harness();
         harness.run();
         assert!(matches!(
@@ -10653,11 +10669,12 @@ mod tests {
         ));
 
         harness.key_press(egui::Key::Enter);
-        // A freshly started local shell session keeps requesting repaints
-        // as it pumps live process output, so `run()` (which loops to
-        // quiescence) can never stabilize here; a single `step()` is enough
-        // to apply the dispatched command and observe the tab-content
-        // change.
+        harness.run();
+        assert!(harness.query_by_label("Start").is_some());
+        harness.get_by_label("Start").click();
+        // A freshly started local shell session keeps requesting repaints as
+        // it pumps live process output, so one step is enough to apply the
+        // submitted command and observe the tab-content change.
         harness.step();
 
         assert!(matches!(
@@ -10696,7 +10713,11 @@ mod tests {
         harness.run();
         // Replace the startup Launcher with a session, then open the singleton
         // Launcher so closing it leaves the session behind.
-        harness.key_press(egui::Key::Enter);
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
         harness.step();
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
@@ -10720,12 +10741,19 @@ mod tests {
         // the user separately clicked inside the terminal viewport.
         let mut harness = harness();
         harness.run();
-        harness.key_press(egui::Key::Enter);
-        harness.run();
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
+        harness.step();
         harness.key_press_modifiers(tab_management_modifiers(), egui::Key::T);
         harness.run();
-        harness.key_press(egui::Key::Enter);
-        harness.run();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
+        harness.step();
         // Two local sessions now exist; the second (just started) is active
         // and already holds terminal keyboard focus by construction.
         let chips = harness
@@ -10802,7 +10830,11 @@ mod tests {
     fn cancelling_chip_rename_restores_terminal_focus_without_leaking_escape() {
         let mut harness = harness();
         harness.run();
-        harness.key_press(egui::Key::Enter);
+        let context = harness.ctx.clone();
+        harness
+            .state_mut()
+            .state
+            .dispatch(AppCommand::StartLocalSession, &context);
         harness.step();
 
         harness.get_by_label("Local Shell chip").click_secondary();

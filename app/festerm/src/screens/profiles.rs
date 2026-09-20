@@ -691,9 +691,8 @@ fn profile_text_edit_inner(
     )
 }
 
-/// Maximum number of `PATH` matches offered below the Local profile
-/// executable field as the user types.
-const EXECUTABLE_SUGGESTION_LIMIT: usize = 6;
+/// Maximum number of filesystem matches offered below a Local path field.
+const PATH_SUGGESTION_LIMIT: usize = 6;
 
 /// The Local profile editor's executable field, with a live `PATH`-search
 /// dropdown: as the user types a bare command name (e.g. `cmd`), this
@@ -703,16 +702,44 @@ const EXECUTABLE_SUGGESTION_LIMIT: usize = 6;
 /// Selecting a suggestion fills in its absolute path; leaving the field as
 /// a bare name is equally valid — it is resolved against `PATH` normally
 /// when the profile launches.
-fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut String) {
+pub(super) fn local_executable_field(
+    ui: &mut Ui,
+    autocomplete_id: egui::Id,
+    value: &mut String,
+) -> egui::Response {
+    local_path_field(ui, autocomplete_id, "Executable", value, |query| {
+        festerm_pty::search_path_executables(query, PATH_SUGGESTION_LIMIT)
+    })
+}
+
+pub(super) fn local_working_directory_field(
+    ui: &mut Ui,
+    autocomplete_id: egui::Id,
+    value: &mut String,
+) -> egui::Response {
+    local_path_field(
+        ui,
+        autocomplete_id,
+        "Working directory (optional)",
+        value,
+        |query| festerm_pty::search_working_directories(query, PATH_SUGGESTION_LIMIT),
+    )
+}
+
+fn local_path_field(
+    ui: &mut Ui,
+    autocomplete_id: egui::Id,
+    label_text: &str,
+    value: &mut String,
+    suggestions_for: impl FnOnce(&str) -> Vec<std::path::PathBuf>,
+) -> egui::Response {
     let dropdown_rect_id = autocomplete_id.with("suggestions-rect");
     ui.vertical(|ui| {
         let field = ui
             .horizontal(|ui| {
                 let label = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new("Executable").color(theme::TEXT_SECONDARY),
-                    )
-                    .selectable(false),
+                    egui::Label::new(egui::RichText::new(label_text).color(theme::TEXT_SECONDARY))
+                        .selectable(false),
                 );
                 let field = ui.add(TextEdit::singleline(value).desired_width(240.0));
                 field.labelled_by(label.id)
@@ -745,8 +772,7 @@ fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut St
 
         if (field.has_focus() || click_started_in_dropdown) && !suppress && !value.trim().is_empty()
         {
-            let suggestions =
-                festerm_pty::search_path_executables(value.trim(), EXECUTABLE_SUGGESTION_LIMIT);
+            let suggestions = suggestions_for(value.trim());
             if !suggestions.is_empty() {
                 ui.add_space(4.0);
                 let dropdown = egui::Frame::new()
@@ -781,7 +807,9 @@ fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut St
             ui.data_mut(|data| data.remove::<egui::Rect>(dropdown_rect_id));
         }
         ui.data_mut(|data| data.insert_temp(autocomplete_id, suppress));
-    });
+        field
+    })
+    .inner
 }
 
 pub(crate) fn show_profiles(
@@ -1093,11 +1121,9 @@ pub(crate) fn show_profiles(
                             "Arguments (space-separated)",
                             &mut draft.arguments,
                         );
-                        profile_text_edit(
+                        local_working_directory_field(
                             ui,
-                            tab_id,
-                            "working_directory",
-                            "Working directory (optional)",
+                            profiles_state_id(tab_id).with("working_directory_autocomplete"),
                             &mut draft.working_directory,
                         );
                         ui.add_space(10.0);
@@ -2345,6 +2371,45 @@ mod tests {
             harness.query_by_label(&expected_label).is_none(),
             "the suggestion dropdown must be hidden immediately after a selection"
         );
+    }
+
+    #[test]
+    fn local_profile_working_directory_field_offers_directory_matches() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-profile-directory-autocomplete-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let expected_path = root.join("project-alpha");
+        std::fs::create_dir_all(&expected_path).expect("test directory can be created");
+
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        open_new_profile(&mut harness, "Local");
+        harness.get_by_label("Working directory (optional)").focus();
+        harness
+            .get_by_label("Working directory (optional)")
+            .type_text(&root.join("project").display().to_string());
+        harness.run();
+
+        let expected_label = expected_path.display().to_string();
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, &expected_label)
+            .click_accesskit();
+        harness.run();
+
+        assert_eq!(
+            harness
+                .get_by_label("Working directory (optional)")
+                .value()
+                .as_deref(),
+            Some(expected_label.as_str())
+        );
+        drop(harness);
+        std::fs::remove_dir_all(root).expect("test directory can be removed");
     }
 
     #[test]

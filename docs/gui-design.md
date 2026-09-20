@@ -319,10 +319,13 @@ group on timeout, rather than leaving an orphaned reader thread.
 The initial launcher shows the usable top-level choices Local Shell, SSH,
 SFTP, Serial, and Markdown. A choice whose transport is not yet implemented
 remains absent from a shipped build rather than appearing as a disabled
-promise. Local Shell launches immediately; SSH, SFTP, and Serial navigate
-within the same launcher tab to focused connection forms, while Markdown opens
-the Markdown workspace picker. Back or Escape returns from a form to the
-launcher without creating another chip. Escape closes a Launcher opened from
+promise. Local Shell, SSH, SFTP, and Serial navigate within the same launcher
+tab to focused connection forms, while Markdown opens the Markdown workspace
+picker. The Local Shell form defaults to the configured platform shell and
+accepts an executable, arguments, and optional initial working directory;
+executable and directory fields offer bounded filesystem-backed completion.
+Back or Escape returns from a form to the launcher without creating another
+chip. Escape closes a Launcher opened from
 another session and restores that session, but does nothing when Launcher is
 the window's only surface. Partially entered non-secret connection fields live
 only for that Launcher lifetime.
@@ -1405,7 +1408,8 @@ initially-off durable local-session option. Enabling it selects the local
 name; it affects only future launches of that saved profile. The built-in
 **Local Shell** has no persistence control and always starts a fresh plain
 shell unless the user later resumes an already-running `festerm-sessiond`
-session from the Launcher. SSH profiles contain name, host, port, username,
+session from the Launcher. Local executable and initial-directory fields share
+bounded filesystem-backed completion. SSH profiles contain name, host, port, username,
 stored-password/private-key reference state, saved port-forward mappings, and an authentication
 preference. Serial profiles contain name, exact device
 identifier, baud rate, data bits, parity, stop bits, and flow control. Profiles

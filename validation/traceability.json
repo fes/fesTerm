@@ -73,6 +73,7 @@
       ],
       "automated_tests": [
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
+        "pressing_enter_on_the_launcher_opens_and_submits_the_highlighted_local_form_end_to_end",
         "ssh_form_returns_a_typed_password_command_with_default_port",
         "ssh_form_never_offers_automatic_reconnect_for_a_plain_shell",
         "ssh_form_can_attach_to_a_named_tmux_session",
@@ -99,6 +100,9 @@
         "saved_profiles_are_listed_below_the_launch_cards",
         "a_markdown_launch_card_opens_a_markdown_workspace",
         "local_profile_is_keyboard_accessible_and_returns_a_typed_command",
+        "local_profile_working_directory_field_offers_directory_matches",
+        "local_shell_form_autocompletes_working_directory_and_returns_typed_profile",
+        "transient_local_profile_command_replaces_launcher_without_saved_profile_identity",
         "saved_profiles_always_stack_one_row_per_profile",
         "saved_ssh_profile_card_dispatches_a_configured_launch_regardless_of_stored_credential",
         "a_profile_rows_menu_connects_the_profile",

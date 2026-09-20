@@ -290,6 +290,67 @@ pub fn search_path_executables(query: &str, limit: usize) -> Vec<PathBuf> {
     search_path_executables_in(query, std::env::split_paths(&path_var), limit)
 }
 
+/// Searches the directory named by the parent portion of `query` for child
+/// directories whose names begin with its final component. Relative input is
+/// resolved against the process working directory, and suggestions are
+/// returned as concrete absolute paths.
+pub fn search_working_directories(query: &str, limit: usize) -> Vec<PathBuf> {
+    let Ok(current_directory) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    search_working_directories_from(query, &current_directory, limit)
+}
+
+fn search_working_directories_from(
+    query: &str,
+    current_directory: &Path,
+    limit: usize,
+) -> Vec<PathBuf> {
+    if query.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let query_path = Path::new(query);
+    let ends_with_separator = query.ends_with(['/', '\\']);
+    let parent = if ends_with_separator {
+        query_path
+    } else {
+        query_path.parent().unwrap_or_else(|| Path::new(""))
+    };
+    let prefix = if ends_with_separator {
+        ""
+    } else {
+        query_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+    }
+    .to_lowercase();
+    let resolved_parent = if parent.is_absolute() {
+        parent.to_path_buf()
+    } else {
+        current_directory.join(parent)
+    };
+    let Ok(entries) = std::fs::read_dir(resolved_parent) else {
+        return Vec::new();
+    };
+
+    let mut matches = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.to_lowercase().starts_with(&prefix))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by_cached_key(|path| path.to_string_lossy().to_lowercase());
+    matches.dedup();
+    matches.truncate(limit);
+    matches
+}
+
 fn search_path_executables_in(
     query: &str,
     directories: impl Iterator<Item = PathBuf>,
@@ -1421,6 +1482,48 @@ mod tests {
             search_path_executables_in("", directories, 10).is_empty(),
             "an empty query returns no suggestions"
         );
+
+        std::fs::remove_dir_all(&root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn working_directory_search_matches_relative_and_absolute_prefixes_and_excludes_files() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-directory-search-test-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let alpha = root.join("Alpha");
+        let alpine = root.join("alpine");
+        std::fs::create_dir_all(alpha.join("nested")).expect("test directory can be created");
+        std::fs::create_dir_all(&alpine).expect("test directory can be created");
+        std::fs::write(root.join("also-a-file"), b"not a directory")
+            .expect("test file can be created");
+
+        assert_eq!(
+            search_working_directories_from("al", &root, 10),
+            vec![alpha.clone(), alpine],
+            "relative matches are absolute, case-insensitive, sorted, and directory-only"
+        );
+        let absolute_query = format!("{}al", root.join("").display());
+        assert_eq!(
+            search_working_directories_from(&absolute_query, &root, 1),
+            vec![alpha.clone()],
+            "absolute matches honor the result limit"
+        );
+        assert_eq!(
+            search_working_directories_from(
+                &format!("{}{}", alpha.display(), std::path::MAIN_SEPARATOR),
+                &root,
+                10,
+            ),
+            vec![alpha.join("nested")],
+            "a trailing separator lists children of the typed directory"
+        );
+        assert!(search_working_directories_from("", &root, 10).is_empty());
 
         std::fs::remove_dir_all(&root).expect("test directory can be removed");
     }
