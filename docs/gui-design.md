@@ -1409,7 +1409,11 @@ name; it affects only future launches of that saved profile. The built-in
 **Local Shell** has no persistence control and always starts a fresh plain
 shell unless the user later resumes an already-running `festerm-sessiond`
 session from the Launcher. Local executable and initial-directory fields share
-bounded filesystem-backed completion. SSH profiles contain name, host, port, username,
+bounded filesystem-backed completion. That completion is asynchronous: it
+caches exact prior queries, performs slow filesystem scans off the UI thread,
+admits at most one running scan plus the latest pending query, rejects stale
+results when typing moves on, and caps candidate memory while preserving sorted
+absolute-path suggestions for click selection. SSH profiles contain name, host, port, username,
 stored-password/private-key reference state, saved port-forward mappings, and an authentication
 preference. Serial profiles contain name, exact device
 identifier, baud rate, data bits, parity, stop bits, and flow control. Profiles

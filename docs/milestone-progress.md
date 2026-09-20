@@ -17,6 +17,15 @@ and refusal to overwrite the replacement. This fixes the merge-blocking
 failure without weakening the test or claiming the remaining CP-15 native
 editor acceptance.
 
+The same review caught filesystem autocomplete running on every repaint of a
+focused field. Local Shell and saved Local Profile fields now share cached,
+background completion rather than scanning directories on the UI thread.
+Admission coalesces typing into one running search and the latest pending
+query; scan and result limits keep large directories from growing work without
+bound. Errors and partial results remain visible. A blocked operating-system
+filesystem call still cannot be cancelled, but it no longer blocks terminal
+rendering or admits more worker threads for each keystroke.
+
 ## Running Sessions discovery under churn (#155, September 2026)
 
 The refreshed Launcher exposed two correctness gaps behind apparently simple

@@ -48,6 +48,7 @@ pub use festerm_windows_runtime::{
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_RETRY: Duration = Duration::from_millis(5);
 const READER_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+const PATH_SCAN_ENTRY_BUDGET: usize = 4_096;
 
 /// How the child process environment is established.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -286,8 +287,20 @@ fn discover_windows_shell(
 /// valid: the launched process resolves it against `PATH` at spawn time,
 /// exactly as it does today.
 pub fn search_path_executables(query: &str, limit: usize) -> Vec<PathBuf> {
+    search_path_executables_detailed(query, limit).into_suggestions()
+}
+
+/// Like [`search_path_executables`], but also reports whether the result set
+/// was truncated and any search-specific warning that should be surfaced in
+/// the UI.
+pub fn search_path_executables_detailed(query: &str, limit: usize) -> PathSearchResult {
     let path_var = std::env::var_os("PATH").unwrap_or_default();
-    search_path_executables_in(query, std::env::split_paths(&path_var), limit)
+    search_path_executables_in_with_budget(
+        query,
+        std::env::split_paths(&path_var),
+        limit,
+        PATH_SCAN_ENTRY_BUDGET,
+    )
 }
 
 /// Searches the directory named by the parent portion of `query` for child
@@ -295,19 +308,62 @@ pub fn search_path_executables(query: &str, limit: usize) -> Vec<PathBuf> {
 /// resolved against the process working directory, and suggestions are
 /// returned as concrete absolute paths.
 pub fn search_working_directories(query: &str, limit: usize) -> Vec<PathBuf> {
-    let Ok(current_directory) = std::env::current_dir() else {
-        return Vec::new();
-    };
-    search_working_directories_from(query, &current_directory, limit)
+    search_working_directories_detailed(query, limit).into_suggestions()
 }
 
+/// Like [`search_working_directories`], but also reports whether the result
+/// set was truncated and any search-specific error that should be surfaced in
+/// the UI.
+pub fn search_working_directories_detailed(query: &str, limit: usize) -> PathSearchResult {
+    search_working_directories_from_current_directory(query, std::env::current_dir(), limit)
+}
+
+fn search_working_directories_from_current_directory(
+    query: &str,
+    current_directory: std::io::Result<PathBuf>,
+    limit: usize,
+) -> PathSearchResult {
+    let current_directory = match current_directory {
+        Ok(current_directory) => current_directory,
+        Err(error) => {
+            return PathSearchResult::new(
+                Vec::new(),
+                false,
+                false,
+                Some(format!("Could not resolve the current directory: {error}")),
+            );
+        }
+    };
+    search_working_directories_from_with_budget(
+        query,
+        &current_directory,
+        limit,
+        PATH_SCAN_ENTRY_BUDGET,
+    )
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn search_working_directories_from(
     query: &str,
     current_directory: &Path,
     limit: usize,
-) -> Vec<PathBuf> {
+) -> PathSearchResult {
+    search_working_directories_from_with_budget(
+        query,
+        current_directory,
+        limit,
+        PATH_SCAN_ENTRY_BUDGET,
+    )
+}
+
+fn search_working_directories_from_with_budget(
+    query: &str,
+    current_directory: &Path,
+    limit: usize,
+    scan_budget: usize,
+) -> PathSearchResult {
     if query.is_empty() || limit == 0 {
-        return Vec::new();
+        return PathSearchResult::default();
     }
 
     let query_path = Path::new(query);
@@ -331,42 +387,106 @@ fn search_working_directories_from(
     } else {
         current_directory.join(parent)
     };
-    let Ok(entries) = std::fs::read_dir(resolved_parent) else {
-        return Vec::new();
+    let mut budget = ScanBudget::new(scan_budget);
+    let entries = match std::fs::read_dir(&resolved_parent) {
+        Ok(entries) => entries,
+        Err(error) => {
+            budget.consume_failure();
+            return PathSearchResult::new(
+                Vec::new(),
+                false,
+                budget.limited(),
+                Some(format!(
+                    "Could not read {}: {error}",
+                    resolved_parent.display()
+                )),
+            );
+        }
     };
 
-    let mut matches = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .filter(|path| {
-            path.file_name()
-                .and_then(OsStr::to_str)
-                .is_some_and(|name| name.to_lowercase().starts_with(&prefix))
-        })
-        .collect::<Vec<_>>();
-    matches.sort_by_cached_key(|path| path.to_string_lossy().to_lowercase());
-    matches.dedup();
-    matches.truncate(limit);
-    matches
+    let mut matches = BoundedMatches::new(limit);
+    let mut error = None;
+    for entry in entries {
+        if !budget.try_take() {
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(entry_error) => {
+                error.get_or_insert_with(|| {
+                    format!(
+                        "Could not read {}: {entry_error}",
+                        resolved_parent.display()
+                    )
+                });
+                continue;
+            }
+        };
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        if !name.to_lowercase().starts_with(&prefix) {
+            continue;
+        }
+        matches.push(path);
+    }
+    matches.finish(budget.limited(), error)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn search_path_executables_in(
     query: &str,
     directories: impl Iterator<Item = PathBuf>,
     limit: usize,
-) -> Vec<PathBuf> {
+) -> PathSearchResult {
+    search_path_executables_in_with_budget(query, directories, limit, PATH_SCAN_ENTRY_BUDGET)
+}
+
+fn search_path_executables_in_with_budget(
+    query: &str,
+    directories: impl Iterator<Item = PathBuf>,
+    limit: usize,
+    scan_budget: usize,
+) -> PathSearchResult {
     if query.is_empty() || limit == 0 {
-        return Vec::new();
+        return PathSearchResult::default();
     }
     let query = query.to_lowercase();
+    let mut budget = ScanBudget::new(scan_budget);
     let mut seen = std::collections::BTreeSet::new();
-    let mut matches = Vec::new();
+    let mut matches = BoundedMatches::new(limit);
+    let mut error = None;
     for directory in directories {
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
+        if budget.exhausted() {
+            break;
+        }
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(read_error) => {
+                budget.consume_failure();
+                error.get_or_insert_with(|| {
+                    format!("Could not read {}: {read_error}", directory.display())
+                });
+                continue;
+            }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            if !budget.try_take() {
+                break;
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(entry_error) => {
+                    error.get_or_insert_with(|| {
+                        format!("Could not read {}: {entry_error}", directory.display())
+                    });
+                    continue;
+                }
+            };
             let path = entry.path();
             let Some(name) = path.file_name().and_then(OsStr::to_str) else {
                 continue;
@@ -382,9 +502,151 @@ fn search_path_executables_in(
             }
         }
     }
-    matches.sort();
-    matches.truncate(limit);
-    matches
+    matches.finish(budget.limited(), error)
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PathSearchResult {
+    suggestions: Vec<PathBuf>,
+    truncated: bool,
+    limited: bool,
+    error: Option<String>,
+}
+
+impl PathSearchResult {
+    pub fn new(
+        suggestions: Vec<PathBuf>,
+        truncated: bool,
+        limited: bool,
+        error: Option<String>,
+    ) -> Self {
+        Self {
+            suggestions,
+            truncated,
+            limited,
+            error,
+        }
+    }
+
+    pub fn suggestions(&self) -> &[PathBuf] {
+        &self.suggestions
+    }
+
+    pub fn into_suggestions(self) -> Vec<PathBuf> {
+        self.suggestions
+    }
+
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    pub const fn limited(&self) -> bool {
+        self.limited
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
+struct ScanBudget {
+    remaining: usize,
+    limited: bool,
+}
+
+impl ScanBudget {
+    fn new(remaining: usize) -> Self {
+        Self {
+            remaining,
+            limited: false,
+        }
+    }
+
+    fn try_take(&mut self) -> bool {
+        if self.remaining == 0 {
+            self.limited = true;
+            return false;
+        }
+        self.remaining -= 1;
+        true
+    }
+
+    fn consume_failure(&mut self) {
+        if !self.try_take() {
+            self.limited = true;
+        }
+    }
+
+    const fn exhausted(&self) -> bool {
+        self.remaining == 0
+    }
+
+    const fn limited(&self) -> bool {
+        self.limited
+    }
+}
+
+#[derive(Eq, PartialEq)]
+struct RankedPath {
+    sort_key: String,
+    path: PathBuf,
+}
+
+impl Ord for RankedPath {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.sort_key
+            .cmp(&other.sort_key)
+            .then_with(|| self.path.cmp(&other.path))
+    }
+}
+
+impl PartialOrd for RankedPath {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct BoundedMatches {
+    limit: usize,
+    kept: std::collections::BinaryHeap<RankedPath>,
+    truncated: bool,
+}
+
+impl BoundedMatches {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            kept: std::collections::BinaryHeap::new(),
+            truncated: false,
+        }
+    }
+
+    fn push(&mut self, path: PathBuf) {
+        let candidate = RankedPath {
+            sort_key: path.to_string_lossy().to_lowercase(),
+            path,
+        };
+        if self.kept.len() < self.limit {
+            self.kept.push(candidate);
+            return;
+        }
+        self.truncated = true;
+        if self.kept.peek().is_some_and(|largest| candidate < *largest) {
+            let _ = self.kept.pop();
+            self.kept.push(candidate);
+        }
+    }
+
+    fn finish(self, limited: bool, error: Option<String>) -> PathSearchResult {
+        let mut ranked = self.kept.into_vec();
+        ranked.sort();
+        PathSearchResult::new(
+            ranked.into_iter().map(|candidate| candidate.path).collect(),
+            self.truncated,
+            limited,
+            error,
+        )
+    }
 }
 
 /// Whether an executable literally named `name` (ignoring any extension, so
@@ -1468,18 +1730,29 @@ mod tests {
         let directories = [first.clone(), second.clone()].into_iter();
         let matches = search_path_executables_in("cmd", directories, 10);
         assert_eq!(
-            matches,
+            matches.suggestions(),
             vec![first.join("Cmd.exe"), second.join(&cmdlet_name)],
             "matches are case-insensitive-prefix filtered, executable-only, and sorted"
+        );
+        assert!(
+            !matches.limited(),
+            "full scans within budget should not be marked limited"
         );
 
         let directories = [first.clone(), second.clone()].into_iter();
         let capped = search_path_executables_in("cmd", directories, 1);
-        assert_eq!(capped.len(), 1, "the limit truncates the result set");
+        assert_eq!(
+            capped.suggestions().len(),
+            1,
+            "the limit truncates the result set"
+        );
+        assert!(capped.truncated(), "truncated results are reported");
 
         let directories = [first, second].into_iter();
         assert!(
-            search_path_executables_in("", directories, 10).is_empty(),
+            search_path_executables_in("", directories, 10)
+                .suggestions()
+                .is_empty(),
             "an empty query returns no suggestions"
         );
 
@@ -1505,13 +1778,13 @@ mod tests {
 
         assert_eq!(
             search_working_directories_from("al", &root, 10),
-            vec![alpha.clone(), alpine],
+            PathSearchResult::new(vec![alpha.clone(), alpine], false, false, None),
             "relative matches are absolute, case-insensitive, sorted, and directory-only"
         );
         let absolute_query = format!("{}al", root.join("").display());
         assert_eq!(
             search_working_directories_from(&absolute_query, &root, 1),
-            vec![alpha.clone()],
+            PathSearchResult::new(vec![alpha.clone()], true, false, None),
             "absolute matches honor the result limit"
         );
         assert_eq!(
@@ -1520,12 +1793,147 @@ mod tests {
                 &root,
                 10,
             ),
-            vec![alpha.join("nested")],
+            PathSearchResult::new(vec![alpha.join("nested")], false, false, None),
             "a trailing separator lists children of the typed directory"
         );
-        assert!(search_working_directories_from("", &root, 10).is_empty());
+        assert!(search_working_directories_from("", &root, 10)
+            .suggestions()
+            .is_empty());
 
         std::fs::remove_dir_all(&root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn working_directory_search_reports_truncation_and_read_errors() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-directory-search-truncation-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        for name in ["gamma-2", "gamma-1", "gamma-0"] {
+            std::fs::create_dir_all(root.join(name)).expect("test directory can be created");
+        }
+
+        let result = search_working_directories_from("gamma", &root, 2);
+        assert_eq!(
+            result.suggestions(),
+            &[root.join("gamma-0"), root.join("gamma-1")],
+            "bounded searches keep the earliest sorted matches"
+        );
+        assert!(
+            result.truncated(),
+            "extra matches are reported as truncated"
+        );
+        assert!(
+            result.error().is_none(),
+            "successful searches have no error"
+        );
+        assert!(
+            !result.limited(),
+            "small scans stay within the entry budget"
+        );
+
+        let missing = root.join("missing");
+        let error = search_working_directories_from(
+            &format!("{}{}", missing.display(), std::path::MAIN_SEPARATOR),
+            &root,
+            2,
+        );
+        assert!(
+            error.suggestions().is_empty(),
+            "failed searches yield no suggestions"
+        );
+        assert!(
+            error
+                .error()
+                .is_some_and(|message| message.contains("Could not read")),
+            "read failures are surfaced to the caller"
+        );
+
+        std::fs::remove_dir_all(&root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn path_and_directory_searches_report_scan_limits() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-directory-search-budget-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let executable_dir = root.join("bin");
+        let working_dir = root.join("work");
+        std::fs::create_dir_all(&executable_dir).expect("test directory can be created");
+        std::fs::create_dir_all(&working_dir).expect("test directory can be created");
+        for index in 0..8 {
+            make_executable(&executable_dir.join(executable_fixture_name(&format!("cmd-{index}"))));
+            std::fs::create_dir_all(working_dir.join(format!("project-{index}")))
+                .expect("test directory can be created");
+        }
+
+        let executable_result =
+            search_path_executables_in_with_budget("cmd", [executable_dir].into_iter(), 6, 3);
+        assert!(
+            executable_result.limited(),
+            "PATH scans that stop at the entry budget must report a limited search"
+        );
+        assert!(
+            executable_result.suggestions().len() <= 3,
+            "the limited search must stop at the budget rather than enumerate the whole directory"
+        );
+
+        let directory_result =
+            search_working_directories_from_with_budget("project", &working_dir, 6, 3);
+        assert!(
+            directory_result.limited(),
+            "directory scans that stop at the entry budget must report a limited search"
+        );
+        assert!(
+            directory_result.suggestions().len() <= 3,
+            "the limited search must stop at the budget rather than enumerate the whole directory"
+        );
+
+        std::fs::remove_dir_all(&root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn working_directory_search_surfaces_current_directory_failures() {
+        let error = search_working_directories_from_current_directory(
+            "alpha",
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "current directory unavailable",
+            )),
+            6,
+        );
+        assert!(error.suggestions().is_empty());
+        assert!(
+            error
+                .error()
+                .is_some_and(|message| message.contains("Could not resolve the current directory")),
+            "current-directory lookup failures must surface to the caller"
+        );
+    }
+
+    #[test]
+    fn bounded_matches_keep_only_the_smallest_requested_paths() {
+        let mut bounded = BoundedMatches::new(2);
+        bounded.push(PathBuf::from("/zeta"));
+        bounded.push(PathBuf::from("/beta"));
+        bounded.push(PathBuf::from("/alpha"));
+
+        let result = bounded.finish(false, None);
+        assert_eq!(
+            result.suggestions(),
+            &[PathBuf::from("/alpha"), PathBuf::from("/beta")],
+            "candidate memory stays bounded while preserving sorted output"
+        );
+        assert!(result.truncated());
     }
 
     #[test]

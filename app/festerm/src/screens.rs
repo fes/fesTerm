@@ -39,13 +39,12 @@ use crate::tabs::{
 };
 
 mod destination;
+mod path_autocomplete;
 mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
+use path_autocomplete::{local_executable_field, local_working_directory_field};
 pub(crate) use profiles::show_profiles;
-use profiles::{
-    local_executable_field, local_working_directory_field, profile_text_edit_with_id,
-    serial_enum_combo,
-};
+use profiles::{profile_text_edit_with_id, serial_enum_combo};
 mod settings;
 use settings::toggle_switch;
 pub(crate) use settings::{show_settings, SettingsViewModel};
@@ -4596,6 +4595,24 @@ mod tests {
             )
     }
 
+    fn wait_for_launcher_suggestion(
+        harness: &mut Harness<'static, LauncherHarnessState>,
+        label: &str,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            harness.run();
+            if harness.query_by_label(label).is_some() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for launcher suggestion {label:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn local_shell_form_autocompletes_working_directory_and_returns_typed_profile() {
         let root = std::env::temp_dir().join(format!(
@@ -4622,8 +4639,8 @@ mod tests {
         harness
             .get_by_label("Working directory (optional)")
             .type_text(&root.join("workspace").display().to_string());
-        harness.run();
         let expected_label = expected_path.display().to_string();
+        wait_for_launcher_suggestion(&mut harness, &expected_label);
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
             .click_accesskit();
