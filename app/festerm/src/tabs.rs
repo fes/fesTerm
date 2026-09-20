@@ -1574,6 +1574,11 @@ pub enum AppCommand {
     /// A separate action that opens the default local profile directly,
     /// bypassing the launcher for users who prefer that workflow.
     StartLocalSession,
+    /// Starts one transient local session from explicit launcher metadata
+    /// without creating or recording a saved profile.
+    StartLocalSessionWithProfile {
+        profile: LocalProfile,
+    },
     /// Starts a local session from a reusable configuration profile. The
     /// profile identifier is resolved only against this application's
     /// explicitly supplied immutable configuration.
@@ -2872,6 +2877,9 @@ impl AppState {
             }
             AppCommand::OpenProfileEditor { identifier } => self.open_profile_editor(identifier),
             AppCommand::StartLocalSession => self.start_local_session(context),
+            AppCommand::StartLocalSessionWithProfile { profile } => {
+                self.start_local_session_with_profile(profile, context)
+            }
             AppCommand::StartConfiguredLocalProfile { profile_id } => {
                 self.start_configured_local_profile(&profile_id, context)
             }
@@ -3636,6 +3644,26 @@ impl AppState {
             context,
             dimensions,
             self.prefer_powershell,
+        ));
+    }
+
+    fn start_local_session_with_profile(&mut self, profile: LocalProfile, context: &egui::Context) {
+        let dimensions = self.current_session_dimensions();
+        let profile = crate::environment::with_corrected_local_path(profile);
+        let launch_secondary = local_profile_secondary(&profile);
+        let dimensions =
+            dimensions.unwrap_or_else(|| Dimensions::new(80, 24).expect("valid default size"));
+        let size = terminal_size(dimensions).expect("terminal dimensions fit PTY limits");
+        let result = LocalPtySession::start_with_notifier(profile, size, make_notifier(context))
+            .map(ApplicationSession::Local)
+            .map_err(|error| error.to_string());
+        self.place_session(SessionTab::from_local_session_result(
+            result,
+            dimensions,
+            "Local Shell",
+            launch_secondary,
+            None,
+            None,
         ));
     }
 
@@ -4598,6 +4626,29 @@ mod tests {
             local_profile_secondary(&profile).as_deref(),
             Some("cmd.exe")
         );
+    }
+
+    #[test]
+    fn transient_local_profile_command_replaces_launcher_without_saved_profile_identity() {
+        let context = egui::Context::default();
+        let working_directory = std::env::current_dir().expect("test working directory is valid");
+        let mut state = AppState::for_test();
+        let launcher_id = state.active();
+
+        state.dispatch(
+            AppCommand::StartLocalSessionWithProfile {
+                profile: LocalProfile::new("festerm-transient-command-that-does-not-exist")
+                    .with_working_directory(working_directory),
+            },
+            &context,
+        );
+
+        assert_eq!(state.active(), launcher_id);
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("transient local launch must replace the active launcher");
+        };
+        assert_eq!(session.label, "Local Shell");
+        assert_eq!(session.profile_identifier, None);
     }
 
     #[test]

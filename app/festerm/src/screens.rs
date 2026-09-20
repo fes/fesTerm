@@ -39,8 +39,10 @@ use crate::tabs::{
 };
 
 mod destination;
+mod path_autocomplete;
 mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
+use path_autocomplete::{local_executable_field, local_working_directory_field};
 pub(crate) use profiles::show_profiles;
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 mod settings;
@@ -245,7 +247,9 @@ impl LauncherItem<'_> {
 
     fn command(&self) -> AppCommand {
         match self.kind {
-            LauncherItemKind::LocalDefault => AppCommand::StartLocalSession,
+            LauncherItemKind::LocalDefault => {
+                unreachable!("the Local Shell item opens a launch form, not an AppCommand")
+            }
             LauncherItemKind::NewSsh => {
                 unreachable!("the New SSH Connection item opens the SSH form, not an AppCommand")
             }
@@ -1179,9 +1183,56 @@ impl Default for SerialLauncherForm {
     }
 }
 
+#[derive(Clone, Default)]
+struct LocalLauncherForm {
+    executable: String,
+    arguments: String,
+    working_directory: String,
+    feedback: Option<String>,
+    initialized: bool,
+    focus_working_directory: bool,
+}
+
+impl LocalLauncherForm {
+    fn initialize_default(&mut self, prefer_powershell: bool) {
+        if self.initialized {
+            return;
+        }
+        self.initialized = true;
+        match festerm_pty::default_local_profile_with_powershell_preference(prefer_powershell) {
+            Ok(profile) => {
+                self.executable = profile.executable().display().to_string();
+                self.arguments = profile
+                    .arguments()
+                    .iter()
+                    .map(|argument| argument.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+            Err(error) => self.feedback = Some(error.to_string()),
+        }
+    }
+
+    fn submit(&mut self) -> Result<AppCommand, String> {
+        let executable = self.executable.trim();
+        if executable.is_empty() {
+            return Err("Enter a non-empty executable.".to_owned());
+        }
+        let mut profile = festerm_pty::LocalProfile::new(executable)
+            .with_arguments(self.arguments.split_whitespace());
+        if !self.working_directory.trim().is_empty() {
+            profile = profile.with_working_directory(self.working_directory.trim());
+        }
+        profile.validate().map_err(|error| error.to_string())?;
+        Ok(AppCommand::StartLocalSessionWithProfile { profile })
+    }
+}
+
 #[derive(Clone)]
 struct LauncherState {
     selected: usize,
+    local_open: bool,
+    local: LocalLauncherForm,
     ssh_open: bool,
     ssh: SshLauncherForm,
     ssh_profile_prefilled: bool,
@@ -1209,6 +1260,8 @@ impl Default for LauncherState {
     fn default() -> Self {
         Self {
             selected: 0,
+            local_open: false,
+            local: LocalLauncherForm::default(),
             ssh_open: false,
             ssh: SshLauncherForm::default(),
             ssh_profile_prefilled: false,
@@ -1233,6 +1286,56 @@ fn launcher_state_id(tab_id: TabId) -> egui::Id {
 
 fn ssh_field_id(ui: &Ui, tab_id: TabId, field: &'static str) -> egui::Id {
     ui.make_persistent_id(("launcher_ssh", tab_id, field))
+}
+
+fn show_local_form(ui: &mut Ui, tab_id: TabId, form: &mut LocalLauncherForm) -> Option<AppCommand> {
+    ui.add_space(16.0);
+    let mut result = None;
+    egui::Frame::new()
+        .fill(theme::SURFACE_TAB_INACTIVE)
+        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(340.0);
+            local_executable_field(
+                ui,
+                launcher_state_id(tab_id).with("local_executable_autocomplete"),
+                &mut form.executable,
+            );
+            profile_text_edit_with_id(
+                ui,
+                tab_id,
+                "local_arguments",
+                "Arguments (space-separated)",
+                &mut form.arguments,
+            );
+            let working_directory = local_working_directory_field(
+                ui,
+                launcher_state_id(tab_id).with("local_working_directory_autocomplete"),
+                &mut form.working_directory,
+            );
+            if std::mem::take(&mut form.focus_working_directory) {
+                working_directory.request_focus();
+            }
+            ui.add_space(12.0);
+            if let Some(feedback) = &form.feedback {
+                ui.colored_label(theme::STATUS_ERROR, feedback);
+                ui.add_space(8.0);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if launcher_text_button(ui, "Start", None, true).clicked() {
+                    match form.submit() {
+                        Ok(command) => {
+                            form.feedback = None;
+                            result = Some(command);
+                        }
+                        Err(feedback) => form.feedback = Some(feedback),
+                    }
+                }
+            });
+        });
+    result
 }
 
 pub(super) const CONTENT_SCROLLBAR_LANE: f32 = 26.0;
@@ -3283,6 +3386,48 @@ pub fn show_launcher(
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
     state.selected = state.selected.min(items.len().saturating_sub(1));
 
+    if state.local_open {
+        state
+            .local
+            .initialize_default(configuration.interface_settings().prefer_powershell());
+        let mut command = None;
+        let mut back_clicked = false;
+        show_bounded_content_scroll(ui, (tab_id, "local_connection_surface"), |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(24.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(34.0);
+                    ui.vertical(|ui| {
+                        if ssh_back_button(ui).clicked() {
+                            back_clicked = true;
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("Start Local Shell")
+                                .size(24.0)
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "Choose the shell and optional initial working directory.",
+                            )
+                            .size(11.0)
+                            .color(theme::TEXT_SECONDARY),
+                        );
+                        if !back_clicked {
+                            command = show_local_form(ui, tab_id, &mut state.local);
+                        }
+                    });
+                });
+            });
+        });
+        if back_clicked || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            state.local_open = false;
+        }
+        ui.data_mut(|data| data.insert_temp(state_id, state));
+        return command;
+    }
+
     if state.ssh_open {
         let mut command = None;
         let mut back_clicked = false;
@@ -3670,7 +3815,10 @@ pub fn show_launcher(
     });
 
     if command.is_none() && launch_via_keyboard {
-        if matches!(items[state.selected].kind, LauncherItemKind::NewSsh) {
+        if matches!(items[state.selected].kind, LauncherItemKind::LocalDefault) {
+            state.local_open = true;
+            state.local.focus_working_directory = true;
+        } else if matches!(items[state.selected].kind, LauncherItemKind::NewSsh) {
             state.ssh_open = true;
             state.ssh.focus_username = true;
         } else if matches!(items[state.selected].kind, LauncherItemKind::NewSftp) {
@@ -3682,11 +3830,15 @@ pub fn show_launcher(
             command = Some(items[state.selected].command());
         }
     }
-    // The three fixed entries open an in-tab form rather than dispatching a
+    // The four fixed entries open an in-tab form rather than dispatching a
     // command, so a card click is translated here for the same reason the
     // keyboard path above translates it: `command()` has no form variant.
     if let Some(opened) = state.pending_form.take() {
         match opened {
+            LauncherForm::Local => {
+                state.local_open = true;
+                state.local.focus_working_directory = true;
+            }
             LauncherForm::Ssh => {
                 state.ssh_open = true;
                 state.ssh.focus_username = true;
@@ -3706,6 +3858,7 @@ pub fn show_launcher(
 /// Which in-tab connection form a launch card asked to open.
 #[derive(Clone, Copy)]
 enum LauncherForm {
+    Local,
     Ssh,
     Sftp,
     Serial,
@@ -3752,6 +3905,9 @@ fn show_launch_card_row(
                 );
                 if response.clicked() {
                     match item.kind {
+                        LauncherItemKind::LocalDefault => {
+                            state.pending_form = Some(LauncherForm::Local);
+                        }
                         LauncherItemKind::NewSsh => state.pending_form = Some(LauncherForm::Ssh),
                         LauncherItemKind::NewSftp => state.pending_form = Some(LauncherForm::Sftp),
                         LauncherItemKind::NewSerial => {
@@ -4437,6 +4593,69 @@ mod tests {
                     command: None,
                 },
             )
+    }
+
+    fn wait_for_launcher_suggestion(
+        harness: &mut Harness<'static, LauncherHarnessState>,
+        label: &str,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            harness.run();
+            if harness.query_by_label(label).is_some() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for launcher suggestion {label:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn local_shell_form_autocompletes_working_directory_and_returns_typed_profile() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-launcher-directory-autocomplete-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let expected_path = root.join("workspace-alpha");
+        std::fs::create_dir_all(&expected_path).expect("test directory can be created");
+
+        let mut harness = harness();
+        harness.run();
+        harness
+            .get_by_label("Local Shell — Start a local terminal session")
+            .click();
+        harness.run();
+        assert!(harness
+            .get_by_label("Working directory (optional)")
+            .is_focused());
+
+        harness
+            .get_by_label("Working directory (optional)")
+            .type_text(&root.join("workspace").display().to_string());
+        let expected_label = expected_path.display().to_string();
+        wait_for_launcher_suggestion(&mut harness, &expected_label);
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, &expected_label)
+            .click_accesskit();
+        harness.run();
+        harness.get_by_label("Start").click();
+        harness.run();
+
+        let Some(AppCommand::StartLocalSessionWithProfile { profile }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("the Local Shell form must return a typed local profile command");
+        };
+        assert_eq!(profile.working_directory(), Some(expected_path.as_path()));
+        drop(harness);
+        std::fs::remove_dir_all(root).expect("test directory can be removed");
     }
 
     fn populated_launcher_harness(

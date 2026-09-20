@@ -4,6 +4,7 @@ use super::destination::{
     labeled_text_edit, pad_to_label_lane, DestinationFields, DestinationPane, FieldOptions,
     FieldStyle,
 };
+use super::path_autocomplete::{local_executable_field, local_working_directory_field};
 use super::*;
 
 /// Which staged view the Profiles surface is currently showing. Multi-field
@@ -691,99 +692,6 @@ fn profile_text_edit_inner(
     )
 }
 
-/// Maximum number of `PATH` matches offered below the Local profile
-/// executable field as the user types.
-const EXECUTABLE_SUGGESTION_LIMIT: usize = 6;
-
-/// The Local profile editor's executable field, with a live `PATH`-search
-/// dropdown: as the user types a bare command name (e.g. `cmd`), this
-/// offers up to [`EXECUTABLE_SUGGESTION_LIMIT`] concrete absolute paths
-/// found on `PATH` so they can pin down exactly which one to launch
-/// instead of relying on fesTerm's own search order at spawn time.
-/// Selecting a suggestion fills in its absolute path; leaving the field as
-/// a bare name is equally valid — it is resolved against `PATH` normally
-/// when the profile launches.
-fn local_executable_field(ui: &mut Ui, autocomplete_id: egui::Id, value: &mut String) {
-    let dropdown_rect_id = autocomplete_id.with("suggestions-rect");
-    ui.vertical(|ui| {
-        let field = ui
-            .horizontal(|ui| {
-                let label = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new("Executable").color(theme::TEXT_SECONDARY),
-                    )
-                    .selectable(false),
-                );
-                let field = ui.add(TextEdit::singleline(value).desired_width(240.0));
-                field.labelled_by(label.id)
-            })
-            .inner;
-
-        let mut suppress = ui.data(|data| data.get_temp::<bool>(autocomplete_id).unwrap_or(false));
-        if field.changed() {
-            suppress = false;
-        }
-
-        // A real mouse click on a suggestion first lands here as a click
-        // "elsewhere" as far as the text field is concerned, so egui drops
-        // the field's focus *before* this function runs again this frame.
-        // Without this fallback, `field.has_focus()` would already be false
-        // by the time we decide whether to show the dropdown, so the
-        // suggestion would vanish out from under the click and never
-        // receive it. Keep the dropdown alive for this frame if the click
-        // that just happened started inside last frame's dropdown rect.
-        let last_dropdown_rect: Option<egui::Rect> =
-            ui.data(|data| data.get_temp(dropdown_rect_id));
-        let click_started_in_dropdown = ui.input(|input| {
-            input.pointer.primary_clicked()
-                && input
-                    .pointer
-                    .interact_pos()
-                    .zip(last_dropdown_rect)
-                    .is_some_and(|(pos, rect)| rect.contains(pos))
-        });
-
-        if (field.has_focus() || click_started_in_dropdown) && !suppress && !value.trim().is_empty()
-        {
-            let suggestions =
-                festerm_pty::search_path_executables(value.trim(), EXECUTABLE_SUGGESTION_LIMIT);
-            if !suggestions.is_empty() {
-                ui.add_space(4.0);
-                let dropdown = egui::Frame::new()
-                    .fill(theme::SURFACE_TAB_INACTIVE)
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
-                    .corner_radius(6.0)
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        for candidate in &suggestions {
-                            let text = candidate.display().to_string();
-                            // Force a single line and an explicit bright color:
-                            // the default inactive-widget text style is dim
-                            // (hard to read against the suggestion frame), and
-                            // wrapping onto a second line makes long absolute
-                            // paths harder to scan at a glance.
-                            let response = ui.add(
-                                egui::Button::selectable(
-                                    false,
-                                    egui::RichText::new(&text).color(theme::TEXT_PRIMARY),
-                                )
-                                .wrap_mode(egui::TextWrapMode::Extend),
-                            );
-                            if response.clicked() {
-                                *value = text;
-                                suppress = true;
-                            }
-                        }
-                    });
-                ui.data_mut(|data| data.insert_temp(dropdown_rect_id, dropdown.response.rect));
-            }
-        } else {
-            ui.data_mut(|data| data.remove::<egui::Rect>(dropdown_rect_id));
-        }
-        ui.data_mut(|data| data.insert_temp(autocomplete_id, suppress));
-    });
-}
-
 pub(crate) fn show_profiles(
     ui: &mut Ui,
     tab_id: TabId,
@@ -1093,11 +1001,9 @@ pub(crate) fn show_profiles(
                             "Arguments (space-separated)",
                             &mut draft.arguments,
                         );
-                        profile_text_edit(
+                        local_working_directory_field(
                             ui,
-                            tab_id,
-                            "working_directory",
-                            "Working directory (optional)",
+                            profiles_state_id(tab_id).with("working_directory_autocomplete"),
                             &mut draft.working_directory,
                         );
                         ui.add_space(10.0);
@@ -2270,6 +2176,21 @@ mod tests {
             .is_some());
     }
 
+    fn wait_for_suggestion(harness: &mut Harness<'static, ProfilesHarnessState>, label: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            harness.run();
+            if harness.query_by_label(label).is_some() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for suggestion {label:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn local_profile_executable_field_survives_a_real_pointer_click_on_a_suggestion() {
         // Unlike the sibling test above, this uses a raw `.click()` (a
@@ -2277,14 +2198,9 @@ mod tests {
         // does: it first defocuses the text field as a "click elsewhere",
         // which used to hide the dropdown out from under the click before
         // the suggestion ever received it.
-        let Some(expected_path) = festerm_pty::search_path_executables("cargo", 1)
-            .into_iter()
-            .next()
-        else {
-            panic!("`cargo` must be discoverable on PATH while running under `cargo test`");
-        };
-
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        let expected_path =
+            super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
         harness.run();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
@@ -2294,6 +2210,7 @@ mod tests {
         harness.run();
 
         let expected_label = expected_path.display().to_string();
+        wait_for_suggestion(&mut harness, &expected_label);
         harness
             .get_by_role_and_label(accesskit::Role::Button, &expected_label)
             .click();
@@ -2308,17 +2225,9 @@ mod tests {
 
     #[test]
     fn local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path() {
-        // `cargo` must be resolvable on `PATH` for `cargo test` itself to be
-        // running, so this environment always has at least one real match
-        // without this test needing to mutate the process-wide `PATH`.
-        let Some(expected_path) = festerm_pty::search_path_executables("cargo", 1)
-            .into_iter()
-            .next()
-        else {
-            panic!("`cargo` must be discoverable on PATH while running under `cargo test`");
-        };
-
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        let expected_path =
+            super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
         harness.run();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
@@ -2328,6 +2237,7 @@ mod tests {
         harness.run();
 
         let expected_label = expected_path.display().to_string();
+        wait_for_suggestion(&mut harness, &expected_label);
         // `click_accesskit()` dispatches a direct accesskit click action rather
         // than a synthetic pointer press/release, which reliably lands on the
         // suggestion regardless of exact pixel geometry.
@@ -2345,6 +2255,120 @@ mod tests {
             harness.query_by_label(&expected_label).is_none(),
             "the suggestion dropdown must be hidden immediately after a selection"
         );
+    }
+
+    #[test]
+    fn local_profile_working_directory_field_offers_directory_matches() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-profile-directory-autocomplete-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let expected_path = root.join("project-alpha");
+        std::fs::create_dir_all(&expected_path).expect("test directory can be created");
+
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        open_new_profile(&mut harness, "Local");
+        harness.get_by_label("Working directory (optional)").focus();
+        harness
+            .get_by_label("Working directory (optional)")
+            .type_text(&root.join("project").display().to_string());
+
+        let expected_label = expected_path.display().to_string();
+        wait_for_suggestion(&mut harness, &expected_label);
+        harness
+            .get_by_role_and_label(accesskit::Role::Button, &expected_label)
+            .click_accesskit();
+        harness.run();
+
+        assert_eq!(
+            harness
+                .get_by_label("Working directory (optional)")
+                .value()
+                .as_deref(),
+            Some(expected_label.as_str())
+        );
+        drop(harness);
+        std::fs::remove_dir_all(root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn local_profile_fields_do_not_cancel_each_others_autocomplete_work() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-profile-dual-autocomplete-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let expected_path = root.join("project-alpha");
+        std::fs::create_dir_all(&expected_path).expect("test directory can be created");
+
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        open_new_profile(&mut harness, "Local");
+        harness.get_by_label("Executable").focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Executable").type_text("cargo");
+        harness.run();
+
+        harness.get_by_label("Working directory (optional)").focus();
+        harness
+            .get_by_label("Working directory (optional)")
+            .type_text(&root.join("project").display().to_string());
+
+        let expected_label = expected_path.display().to_string();
+        wait_for_suggestion(&mut harness, &expected_label);
+
+        drop(harness);
+        std::fs::remove_dir_all(root).expect("test directory can be removed");
+    }
+
+    #[test]
+    fn local_profile_working_directory_refreshes_when_refocused_after_filesystem_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-profile-refocus-autocomplete-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let query = root.join("project").display().to_string();
+        let expected_path = root.join("project-alpha");
+        std::fs::create_dir_all(&root).expect("test directory can be created");
+
+        let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        harness.run();
+        open_new_profile(&mut harness, "Local");
+        harness.get_by_label("Working directory (optional)").focus();
+        harness
+            .get_by_label("Working directory (optional)")
+            .type_text(&query);
+        harness.run();
+        assert!(
+            harness
+                .query_by_label(&expected_path.display().to_string())
+                .is_none(),
+            "no suggestion should exist before the matching directory is created"
+        );
+
+        std::fs::create_dir_all(&expected_path).expect("test directory can be created");
+        harness.get_by_label("Executable").focus();
+        harness.run();
+        harness.get_by_label("Working directory (optional)").focus();
+
+        let expected_label = expected_path.display().to_string();
+        wait_for_suggestion(&mut harness, &expected_label);
+
+        drop(harness);
+        std::fs::remove_dir_all(root).expect("test directory can be removed");
     }
 
     #[test]
