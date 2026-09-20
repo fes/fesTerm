@@ -767,6 +767,7 @@
         "terminal_context_menu_intercepts_local_right_click_without_pty_input",
         "terminal_context_menu_exposes_copy_for_selection_without_clearing_it",
         "selection_expands_continuations_and_copies_leading_text",
+        "shift_drag_forces_local_selection_while_application_tracks_mouse",
         "terminal_context_menu_uses_explicit_link_under_pointer_only",
         "ordinary_click_never_activates_an_osc8_link",
         "command_click_emits_link_intent_without_terminal_input",

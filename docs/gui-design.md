@@ -2375,10 +2375,13 @@ disable them.
   The pinned adapter preserves per-event clipboard-key provenance. Copy only
   copies/clears a selection; without a selection it does nothing. It never
   synthesizes a terminal interrupt. Actual Ctrl+C remains terminal input.
-- Shift+drag does not override core mouse ownership. Shift+right-click opens the
-  local context menu. Without terminal mouse reporting, ordinary drag selects
-  and ordinary right-click opens the menu; with reporting, unmodified mouse
-  events go to the terminal application. Middle-click follows the same
+- Shift+left-drag forces local selection even while terminal mouse reporting is
+  enabled; ownership is latched from press through release so changing
+  modifiers mid-gesture cannot leak a partial report to the terminal
+  application. Shift+right-click opens the local context menu. Without terminal
+  mouse reporting, ordinary drag selects and ordinary right-click opens the
+  menu; with reporting, unmodified mouse events go to the terminal application.
+  Middle-click follows the same
   reporting-aware rule and pastes locally (the common X11/terminal-emulator
   convention) when not claimed by terminal mouse reporting; Shift+middle-click
   always pastes locally even while the terminal application is tracking the
