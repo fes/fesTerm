@@ -101,6 +101,7 @@
         "a_markdown_launch_card_opens_a_markdown_workspace",
         "local_profile_is_keyboard_accessible_and_returns_a_typed_command",
         "local_profile_working_directory_field_offers_directory_matches",
+        "path_search_budget_is_shared_fairly_between_directories",
         "local_profile_fields_do_not_cancel_each_others_autocomplete_work",
         "same_query_results_are_reused_from_cache",
         "latest_query_replaces_pending_work_and_stale_results_stay_hidden",

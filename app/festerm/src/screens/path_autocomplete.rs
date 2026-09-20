@@ -513,6 +513,37 @@ fn local_path_field(
 }
 
 #[cfg(test)]
+pub(super) fn install_executable_fixture(context: &egui::Context) -> std::path::PathBuf {
+    struct FixtureBackend(std::path::PathBuf);
+    impl SearchBackend for FixtureBackend {
+        fn search(&self, request: &SearchRequest) -> festerm_pty::PathSearchResult {
+            let suggestions = if request.kind == SearchKind::Executable && request.query == "cargo"
+            {
+                vec![self.0.clone()]
+            } else {
+                Vec::new()
+            };
+            festerm_pty::PathSearchResult::new(suggestions, false, false, None)
+        }
+    }
+    let path = std::env::current_exe()
+        .expect("test executable has an absolute path")
+        .with_file_name(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+    let service = PathAutocompleteService::new(
+        Arc::new(FixtureBackend(path.clone())),
+        Arc::new(spawn_worker),
+    )
+    .expect("fixture worker starts");
+    context.data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("festerm-local-path-autocomplete-service"),
+            service,
+        );
+    });
+    path
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{

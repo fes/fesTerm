@@ -49,6 +49,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_RETRY: Duration = Duration::from_millis(5);
 const READER_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const PATH_SCAN_ENTRY_BUDGET: usize = 4_096;
+const PATH_SCAN_DIRECTORY_LIMIT: usize = 64;
 
 /// How the child process environment is established.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -460,46 +461,51 @@ fn search_path_executables_in_with_budget(
     let mut seen = std::collections::BTreeSet::new();
     let mut matches = BoundedMatches::new(limit);
     let mut error = None;
-    for directory in directories {
-        if budget.exhausted() {
+    let mut scans = std::collections::VecDeque::new();
+    for (index, directory) in directories.enumerate() {
+        if index == PATH_SCAN_DIRECTORY_LIMIT {
+            budget.limited = true;
             break;
         }
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
+        if !budget.try_take() {
+            break;
+        }
+        match std::fs::read_dir(&directory) {
+            Ok(entries) => scans.push_back((directory, entries)),
             Err(read_error) => {
-                budget.consume_failure();
                 error.get_or_insert_with(|| {
                     format!("Could not read {}: {read_error}", directory.display())
                 });
+            }
+        }
+    }
+    // A large early PATH directory must not consume the entire search budget
+    // before later directories (for example, the user's tools) are considered.
+    while let Some((directory, mut entries)) = scans.pop_front() {
+        if !budget.try_take() {
+            break;
+        }
+        let entry = match entries.next() {
+            None => continue,
+            Some(Ok(entry)) => entry,
+            Some(Err(entry_error)) => {
+                error.get_or_insert_with(|| {
+                    format!("Could not read {}: {entry_error}", directory.display())
+                });
+                scans.push_back((directory, entries));
                 continue;
             }
         };
-        for entry in entries {
-            if !budget.try_take() {
-                break;
-            }
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(entry_error) => {
-                    error.get_or_insert_with(|| {
-                        format!("Could not read {}: {entry_error}", directory.display())
-                    });
-                    continue;
-                }
-            };
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(OsStr::to_str) else {
-                continue;
-            };
-            if !name.to_lowercase().starts_with(&query) {
-                continue;
-            }
-            if !is_executable_candidate(&path) {
-                continue;
-            }
-            if seen.insert(path.clone()) {
-                matches.push(path);
-            }
+        scans.push_back((directory, entries));
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        if !name.to_lowercase().starts_with(&query) || !is_executable_candidate(&path) {
+            continue;
+        }
+        if seen.insert(path.clone()) {
+            matches.push(path);
         }
     }
     matches.finish(budget.limited(), error)
@@ -575,10 +581,6 @@ impl ScanBudget {
         if !self.try_take() {
             self.limited = true;
         }
-    }
-
-    const fn exhausted(&self) -> bool {
-        self.remaining == 0
     }
 
     const fn limited(&self) -> bool {
@@ -1918,6 +1920,36 @@ mod tests {
                 .is_some_and(|message| message.contains("Could not resolve the current directory")),
             "current-directory lookup failures must surface to the caller"
         );
+    }
+
+    #[test]
+    fn path_search_budget_is_shared_fairly_between_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "festerm-path-fairness-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let large = root.join("large");
+        let tools = root.join("tools");
+        std::fs::create_dir_all(&large).unwrap();
+        std::fs::create_dir_all(&tools).unwrap();
+        for index in 0..32 {
+            std::fs::write(large.join(format!("unrelated-{index}")), b"").unwrap();
+        }
+        let expected = tools.join(executable_fixture_name("cargo"));
+        make_executable(&expected);
+
+        let result =
+            search_path_executables_in_with_budget("cargo", [large, tools].into_iter(), 6, 8);
+        assert_eq!(result.suggestions(), &[expected]);
+        assert!(
+            result.limited(),
+            "the large directory still exhausts the total budget"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

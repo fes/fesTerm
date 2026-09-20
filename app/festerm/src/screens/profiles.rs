@@ -2198,14 +2198,9 @@ mod tests {
         // does: it first defocuses the text field as a "click elsewhere",
         // which used to hide the dropdown out from under the click before
         // the suggestion ever received it.
-        let Some(expected_path) = festerm_pty::search_path_executables("cargo", 1)
-            .into_iter()
-            .next()
-        else {
-            panic!("`cargo` must be discoverable on PATH while running under `cargo test`");
-        };
-
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        let expected_path =
+            super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
         harness.run();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
@@ -2230,17 +2225,9 @@ mod tests {
 
     #[test]
     fn local_profile_executable_field_offers_path_matches_and_selecting_one_fills_absolute_path() {
-        // `cargo` must be resolvable on `PATH` for `cargo test` itself to be
-        // running, so this environment always has at least one real match
-        // without this test needing to mutate the process-wide `PATH`.
-        let Some(expected_path) = festerm_pty::search_path_executables("cargo", 1)
-            .into_iter()
-            .next()
-        else {
-            panic!("`cargo` must be discoverable on PATH while running under `cargo test`");
-        };
-
         let mut harness = profiles_harness(festerm_config::Configuration::new(Vec::new()).unwrap());
+        let expected_path =
+            super::super::path_autocomplete::install_executable_fixture(&harness.ctx);
         harness.run();
         open_new_profile(&mut harness, "Local");
         harness.get_by_label("Executable").focus();
