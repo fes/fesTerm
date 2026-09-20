@@ -132,6 +132,23 @@ struct SearchJob {
 }
 
 impl WorkerState {
+    fn prune_versions(&mut self, invalidating: Option<&SearchRequest>) {
+        // Keep in-flight generations even after cache eviction so late results
+        // cannot become valid again when an old query is revisited.
+        self.request_versions.retain(|request, _| {
+            self.cache.contains_key(request)
+                || self
+                    .running
+                    .as_ref()
+                    .is_some_and(|job| job.request == *request)
+                || self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|job| job.request == *request)
+                || invalidating == Some(request)
+        });
+    }
+
     fn version_for(&self, request: &SearchRequest) -> u64 {
         self.request_versions.get(request).copied().unwrap_or(0)
     }
@@ -155,6 +172,7 @@ impl WorkerState {
                 self.cache.remove(&oldest);
             }
         }
+        self.prune_versions(None);
     }
 
     fn invalidate(&mut self, request: &SearchRequest) {
@@ -169,6 +187,7 @@ impl WorkerState {
         {
             self.pending = None;
         }
+        self.prune_versions(Some(request));
     }
 }
 
@@ -261,6 +280,7 @@ impl PathAutocompleteService {
             version,
             repaint: repaint.clone(),
         });
+        state.prune_versions(None);
         self.shared.wake.notify_one();
     }
 
@@ -276,6 +296,7 @@ impl PathAutocompleteService {
             .is_some_and(|pending| pending.owner_id == owner_id)
         {
             state.pending = None;
+            state.prune_versions(None);
         }
     }
 
@@ -352,6 +373,7 @@ fn worker_loop(shared: Arc<SharedWorker>) {
             }) {
                 state.running = None;
             }
+            state.prune_versions(None);
         }
 
         job.repaint.request_repaint();
@@ -793,6 +815,14 @@ mod tests {
         );
         service.invalidate(&request);
         service.ensure(owner, request.clone(), &context);
+        for index in 0..CACHE_LIMIT * 4 {
+            service.invalidate(&self::request(&format!("abandoned-{index}")));
+        }
+        {
+            let state = service.shared.state.lock().unwrap();
+            assert!(state.request_versions.len() <= 3);
+            assert_eq!(state.version_for(&request), 1);
+        }
         first
             .send(festerm_pty::PathSearchResult::new(
                 vec![std::path::PathBuf::from("/stale")],
@@ -827,6 +857,33 @@ mod tests {
             },
             "the refreshed generation should replace the stale one",
         );
+    }
+
+    #[test]
+    fn request_versions_are_bounded_after_cache_eviction_and_abandoned_queries() {
+        let mut state = WorkerState {
+            cache: HashMap::new(),
+            cache_order: VecDeque::new(),
+            request_versions: HashMap::new(),
+            running: None,
+            pending: None,
+            shutdown: false,
+        };
+        for index in 0..CACHE_LIMIT * 4 {
+            let request = request(&format!("cached-{index}"));
+            state.invalidate(&request);
+            let version = state.version_for(&request);
+            state.cache_result(request, version, festerm_pty::PathSearchResult::default());
+            assert!(state.request_versions.len() <= CACHE_LIMIT);
+            assert_eq!(state.request_versions.len(), state.cache.len());
+        }
+        for index in 0..CACHE_LIMIT * 4 {
+            state.invalidate(&request(&format!("abandoned-{index}")));
+            assert!(state.request_versions.len() <= CACHE_LIMIT + 1);
+        }
+        state.prune_versions(None);
+        assert_eq!(state.request_versions.len(), CACHE_LIMIT);
+        assert_eq!(state.version_for(&request("cached-0")), 0);
     }
 
     #[test]

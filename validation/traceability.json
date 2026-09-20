@@ -104,6 +104,7 @@
         "path_search_budget_is_shared_fairly_between_directories",
         "local_profile_fields_do_not_cancel_each_others_autocomplete_work",
         "same_query_results_are_reused_from_cache",
+        "request_versions_are_bounded_after_cache_eviction_and_abandoned_queries",
         "latest_query_replaces_pending_work_and_stale_results_stay_hidden",
         "local_shell_form_autocompletes_working_directory_and_returns_typed_profile",
         "transient_local_profile_command_replaces_launcher_without_saved_profile_identity",
